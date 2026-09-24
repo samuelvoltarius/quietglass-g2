@@ -1,0 +1,28 @@
+{
+  "name": "@aigner-labs/babel-glass",
+  "version": "0.1.0",
+  "description": "Aigner Labs Babel Glass — live captions and translation on your own server",
+  "author": "Aigner Labs",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "evenhub-simulator --automation-port 9897 http://127.0.0.1:5197",
+    "pack": "evenhub pack app.json dist -o"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}
