@@ -1,5 +1,6 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { PrompterMode } from "../prompter/engine";
+import { SAMPLE_SCRIPT_SOURCE, SAMPLE_SCRIPT_TITLE } from "../script/sample";
 
 /**
  * Everything PromptFlow stores lives in the Even app's per-app storage on the
@@ -85,9 +86,24 @@ export async function save(bridge: EvenAppBridge, data: PromptFlowData): Promise
   await bridge.setLocalStorage(KEY, JSON.stringify(data));
 }
 
+/**
+ * On a first run the sample script is installed, so the glasses show something
+ * readable immediately and the script format is learnable by example. It is
+ * saved like any other script and can be removed.
+ */
 export async function load(bridge: EvenAppBridge): Promise<PromptFlowData> {
   const raw = await bridge.getLocalStorage(KEY);
-  return parseData(raw);
+  if (raw) return parseData(raw);
+  return {
+    scripts: [{
+      id: "sample",
+      title: SAMPLE_SCRIPT_TITLE,
+      source: SAMPLE_SCRIPT_SOURCE,
+      updatedAt: 0,
+    }],
+    activeId: "sample",
+    settings: DEFAULT_SETTINGS,
+  };
 }
 
 /** Tolerates partial or corrupted storage rather than starting from nothing. */
