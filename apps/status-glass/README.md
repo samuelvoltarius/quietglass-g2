@@ -7,6 +7,10 @@ when everything is fine, and becomes impossible to miss when it is not.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## The idea
 
 Existing G2 status apps are wired to one thing — a specific dashboard, a
@@ -68,14 +72,60 @@ because it cannot reach anything. In Status Glass:
 There are tests asserting each of these, because it is the property that
 matters most.
 
+## Controlling things, not just watching them
+
+A source can offer **actions** — toggle a light, run a scene, restart a
+service. They live on a **separate screen**, reached by holding the temple pad,
+because monitoring is something you glance at and switching your lights is
+something you do deliberately. A stray tap on the dashboard can never trigger
+anything.
+
+```
+Actions
+
+> ! home Everything off
+    home Kitchen light
+    nas  Restart media server
+
+tap = confirm first  ·  hold = back
+```
+
+Actions the source marks with `confirm` need a **second tap**, shown as
+`CONFIRM:`. Moving the selection cancels a pending confirmation, so the tap
+after a swipe can never run what was highlighted before it.
+
+**Sources are read-only by default.** One that lists no actions cannot be told
+to do anything at all.
+
+## Home Assistant
+
+[`examples/home-assistant-adapter.mjs`](examples/home-assistant-adapter.mjs)
+turns Home Assistant into a Status Glass source — readings **and** control.
+
+```bash
+HA_URL=http://homeassistant.local:8123 HA_TOKEN=<long-lived token> node examples/home-assistant-adapter.mjs
+```
+
+Edit two lists at the top: `METRICS` for what to show, `ACTIONS` for what may
+be triggered. That is the whole configuration.
+
+**Your Home Assistant token never reaches the glasses.** It stays in the
+adapter, on a machine you control. The glasses only ever see the handful of
+readings and actions you configured — they cannot browse your house, and a lost
+phone does not hand anyone control of it.
+
+`ACTIONS` is an **allow-list**: anything not named there is refused with a 404,
+and a client cannot smuggle its own service call into the request. Verified
+against a stand-in Home Assistant, including both refusal paths.
+
 ## Controls
 
-| Gesture | Effect |
-|---|---|
-| **Tap** | Acknowledge the highlighted problem |
-| **Swipe** | Move through the problem list |
-| **Hold** | Refresh every source now |
-| **Double tap** | Leave Status Glass |
+| Gesture | Status screen | Actions screen |
+|---|---|---|
+| **Tap** | Acknowledge the highlighted problem | Run it — or confirm first |
+| **Swipe** | Move through the problem list | Move through the actions |
+| **Hold** | Open the actions screen (or refresh, if none) | Back to status |
+| **Double tap** | Leave Status Glass | Leave Status Glass |
 
 ## Polling and failure
 
@@ -100,10 +150,11 @@ success.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5196
 npm run build      # typecheck + production bundle
-npm test           # 63 unit tests
+npm test           # 87 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 
-node examples/reference-server.mjs   # a source to point it at
+node examples/reference-server.mjs         # a plain source to point it at
+node examples/home-assistant-adapter.mjs   # or your own Home Assistant
 ```
 
 ## Known limitations

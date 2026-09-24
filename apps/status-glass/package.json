@@ -1,6 +1,6 @@
 {
   "name": "@aigner-labs/status-glass",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Aigner Labs Status Glass — homelab and service monitoring over an open protocol",
   "author": "Aigner Labs",
   "license": "MIT",

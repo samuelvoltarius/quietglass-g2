@@ -8,6 +8,10 @@ proprietary service — an account, a key, a quota. OpenGlance targets
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## Driving mode is the whole design
 
 A navigation display in a car competes with the road. So in driving mode the

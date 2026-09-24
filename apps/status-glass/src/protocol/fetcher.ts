@@ -73,3 +73,62 @@ export function backoffMs(consecutiveFailures: number, baseMs: number): number {
   const grown = baseMs * Math.pow(2, Math.min(consecutiveFailures, 5));
   return Math.min(grown, 300_000);
 }
+
+export interface ActionOutcome {
+  readonly ok: boolean;
+  readonly error: string | null;
+}
+
+/**
+ * Runs an action on a source.
+ *
+ * Posts to `<url>/action` with the action id. The id is sent in the body, not
+ * the path, so it needs no escaping and never lands in a server log line.
+ */
+export async function runAction(
+  url: string,
+  actionId: string,
+  options: FetchOptions = {},
+): Promise<ActionOutcome> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT);
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (options.token) headers["Authorization"] = "Bearer " + options.token;
+
+    const response = await doFetch(actionUrl(url), {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({ id: actionId }),
+    });
+
+    return response.ok
+      ? { ok: true, error: null }
+      : { ok: false, error: "HTTP " + response.status };
+  } catch (error) {
+    return { ok: false, error: describeError(error) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Derives the action endpoint from the status URL: the last path segment is
+ * replaced with `action`, so `https://h/status` becomes `https://h/action`.
+ */
+export function actionUrl(statusUrl: string): string {
+  try {
+    const parsed = new URL(statusUrl);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    segments.pop();
+    segments.push("action");
+    parsed.pathname = "/" + segments.join("/");
+    parsed.search = "";
+    return parsed.toString();
+  } catch {
+    return statusUrl.replace(/\/[^/]*$/, "") + "/action";
+  }
+}

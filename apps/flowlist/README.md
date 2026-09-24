@@ -7,6 +7,10 @@ both hands are busy: cooking, wiring, packing, servicing, inspecting.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## Why one step at a time
 
 A checklist app on a phone shows you twenty items and lets you hunt for your

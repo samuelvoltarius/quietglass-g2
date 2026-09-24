@@ -9,6 +9,10 @@ now.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## Read this first
 
 **DecibelGuard is an indicator, not a sound level meter.**

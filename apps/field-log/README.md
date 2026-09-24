@@ -8,6 +8,10 @@ FieldLog lets you say it and carry on.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## The walk
 
 1. **Tap** — dictate what you see.

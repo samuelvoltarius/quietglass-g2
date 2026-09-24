@@ -53,6 +53,66 @@ and reported as a warning.
   never look like health.
 - Anything older than **120 seconds** counts as stale.
 
+
+## Actions (optional)
+
+A source may offer things the user can trigger from the glasses. **Sources are
+read-only by default** — a source that lists no actions cannot be told to do
+anything.
+
+```json
+{
+  "name": "home",
+  "metrics": [ ... ],
+  "actions": [
+    { "id": "kitchen_light", "label": "Kitchen light" },
+    { "id": "all_off",       "label": "Everything off", "confirm": true }
+  ]
+}
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | **yes** | Sent back when the action is triggered. Must be unique. |
+| `label` | string | no | Shown on the glasses. Defaults to `id`. |
+| `confirm` | boolean | no | `true` makes the glasses require a second tap. |
+
+An action without an `id`, or with an `id` already used, is dropped and
+reported as a warning — a duplicate would run the wrong thing.
+
+### Running one
+
+The glasses POST to the **same URL with the last path segment replaced by
+`action`**, so `https://host/status` becomes `https://host/action`:
+
+```
+POST https://host/action
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"id": "kitchen_light"}
+```
+
+Any 2xx response counts as success. The id travels in the body rather than the
+path, so it needs no escaping and does not appear in server log lines.
+
+### Who decides what is dangerous
+
+**The source, not the app.** Only your server knows whether an action dims a
+lamp or unlocks a door, so `confirm` is set there. Set it for anything you
+would not want triggered by a stray tap.
+
+The app adds its own guard on top: a pending confirmation is cancelled the
+moment the selection moves, so the tap after a swipe can never run the action
+that was highlighted before it.
+
+### The allow-list belongs on your server
+
+A source should expose a short, fixed list of actions and refuse everything
+else — never map the incoming id onto an arbitrary service call. The Home
+Assistant adapter in `examples/` shows the pattern: unknown ids get a 404, and
+a client cannot smuggle its own service name into the request.
+
 ## Authentication
 
 Send a bearer token:

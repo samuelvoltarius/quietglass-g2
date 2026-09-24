@@ -8,6 +8,10 @@ while your ears stay free for the instrument.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## What it shows
 
 ```

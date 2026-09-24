@@ -8,6 +8,10 @@ memory at six o'clock.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## Why on glasses
 
 Time tracking fails for one reason: the moment you should record something is

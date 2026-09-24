@@ -9,6 +9,10 @@ minutes, and say so before the ache does.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## How it measures
 
 The Even Hub SDK reports IMU samples as `{x, y, z}` and documents **neither the

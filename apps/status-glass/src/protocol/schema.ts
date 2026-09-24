@@ -40,11 +40,33 @@ export interface Metric {
   readonly lowerIsWorse?: boolean;
 }
 
+/**
+ * Something the user can trigger from the glasses.
+ *
+ * A source that offers actions must accept `POST <url>/action` with
+ * `{"id": "<action id>"}`. Actions are opt-in on the source side: a source that
+ * lists none is read-only, which is the safe default.
+ */
+export interface Action {
+  readonly id: string;
+  readonly label: string;
+  /**
+   * Require a second tap before running.
+   *
+   * The source decides this, not the app — only the source knows whether an
+   * action unlocks a door or dims a lamp. Anything with consequences should
+   * set it.
+   */
+  readonly confirm?: boolean;
+}
+
 export interface SourceReport {
   readonly name: string;
   readonly metrics: readonly Metric[];
   /** Producer's timestamp in ms. Absent means "now".  */
   readonly timestamp?: number;
+  /** Optional; a source without actions is read-only. */
+  readonly actions?: readonly Action[];
 }
 
 export interface ParseResult {
@@ -102,14 +124,41 @@ export function reportFromValue(value: unknown, fallbackName = "source"): ParseR
     metrics.push(metric);
   });
 
+  const actions = readActions(root["actions"], errors);
+
   return {
     report: {
       name: typeof root["name"] === "string" && root["name"] ? root["name"] : fallbackName,
       metrics,
       ...(isNumber(root["timestamp"]) ? { timestamp: root["timestamp"] } : {}),
+      ...(actions.length > 0 ? { actions } : {}),
     },
     errors,
   };
+}
+
+function readActions(value: unknown, errors: string[]): Action[] {
+  if (!Array.isArray(value)) return [];
+  const actions: Action[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of value) {
+    const a = (candidate ?? {}) as Record<string, unknown>;
+    const id = typeof a["id"] === "string" ? a["id"].trim() : "";
+    if (!id) { errors.push("An action without an id was dropped."); continue; }
+    // A duplicate id would make the wrong thing run.
+    if (seen.has(id)) { errors.push('Duplicate action id "' + id + '" was dropped.'); continue; }
+    seen.add(id);
+
+    actions.push({
+      id,
+      label: typeof a["label"] === "string" && a["label"] ? a["label"] : id,
+      // Anything not explicitly false is treated as needing confirmation only
+      // when the source says so; the default is no confirmation.
+      ...(a["confirm"] === true ? { confirm: true } : {}),
+    });
+  }
+  return actions;
 }
 
 /** Judges one metric. An explicit state always wins over thresholds. */

@@ -7,6 +7,10 @@ difference from everything else on the G2: **the recogniser is yours.**
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## Why this exists
 
 Every captioning app found for the Even G2 routes your audio through a paid

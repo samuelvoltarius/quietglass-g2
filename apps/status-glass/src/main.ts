@@ -1,10 +1,11 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
-import { backoffMs, fetchReport } from "./protocol/fetcher";
+import { backoffMs, fetchReport, runAction } from "./protocol/fetcher";
 import {
   acknowledge, applyError, applyReport, createSource, problems, type SourceStatus,
 } from "./monitor/dashboard";
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type StatusView } from "./glasses/view";
+import { availableActions, buildActionsView } from "./glasses/actions-view";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
@@ -21,6 +22,15 @@ async function boot(): Promise<void> {
   let lastView: StatusView | null = null;
   let pageReady = false;
 
+  // The actions screen is a separate mode. Monitoring is something you glance
+  // at; triggering something in your house is deliberate, so a stray tap on the
+  // dashboard can never run anything.
+  let screen: "status" | "actions" = "status";
+  let actionCursor = 0;
+  let pendingActionId: string | null = null;
+  let actionBusy = false;
+  let actionResult: { label: string; ok: boolean } | null = null;
+
   const syncSources = (): void => {
     const next = new Map<string, SourceStatus>();
     for (const config of data.sources) {
@@ -33,8 +43,17 @@ async function boot(): Promise<void> {
     statuses = next;
   };
 
-  const currentView = (): StatusView =>
-    buildView([...statuses.values()], { cursor }, Date.now());
+  const currentView = (): StatusView => {
+    if (screen === "actions") {
+      return buildActionsView(availableActions([...statuses.values()]), {
+        cursor: actionCursor,
+        pendingId: pendingActionId,
+        result: actionResult,
+        busy: actionBusy,
+      });
+    }
+    return buildView([...statuses.values()], { cursor }, Date.now());
+  };
 
   const draw = async (): Promise<void> => {
     const view = currentView();
@@ -86,6 +105,27 @@ async function boot(): Promise<void> {
     }
   };
 
+  const executeAction = async (sourceId: string, actionId: string, label: string): Promise<void> => {
+    const config = data.sources.find((c) => c.id === sourceId);
+    if (!config) return;
+
+    actionBusy = true;
+    pendingActionId = null;
+    actionResult = null;
+    await draw();
+
+    const outcome = await runAction(config.url, actionId, {
+      ...(config.token ? { token: config.token } : {}),
+    });
+
+    actionBusy = false;
+    actionResult = { label: outcome.ok ? label : (outcome.error ?? "failed"), ok: outcome.ok };
+    await draw();
+
+    // Refresh straight away so the dashboard reflects what the action changed.
+    if (outcome.ok) void pollSource(sourceId);
+  };
+
   syncSources();
   await draw();
   startPolling();
@@ -94,7 +134,50 @@ async function boot(): Promise<void> {
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
-    const list = problems([...statuses.values()], Date.now());
+    const sources = [...statuses.values()];
+
+    if (screen === "actions") {
+      const actions = availableActions(sources);
+      switch (gesture.gesture) {
+        case "click": {
+          const entry = actions[actionCursor];
+          if (!entry || actionBusy) break;
+          // An action the source marked as consequential needs a second tap.
+          if (entry.action.confirm && pendingActionId !== entry.action.id) {
+            pendingActionId = entry.action.id;
+            actionResult = null;
+            break;
+          }
+          void executeAction(entry.sourceId, entry.action.id, entry.action.label);
+          return;
+        }
+        case "scrollUp":
+        case "scrollDown": {
+          // Moving the selection cancels a pending confirmation, so the tap
+          // that follows can never run the previously highlighted action.
+          pendingActionId = null;
+          actionResult = null;
+          const delta = gesture.gesture === "scrollDown" ? 1 : -1;
+          actionCursor = Math.min(Math.max(0, actions.length - 1), Math.max(0, actionCursor + delta));
+          break;
+        }
+        case "longPress":
+          screen = "status";
+          pendingActionId = null;
+          actionResult = null;
+          break;
+        case "doubleClick":
+          for (const timer of timers.values()) clearTimeout(timer);
+          void bridge.shutDownPageContainer();
+          return;
+        default:
+          return;
+      }
+      void draw();
+      return;
+    }
+
+    const list = problems(sources, Date.now());
 
     switch (gesture.gesture) {
       case "click": {
@@ -113,8 +196,16 @@ async function boot(): Promise<void> {
         cursor = Math.min(Math.max(0, list.length - 1), cursor + 1);
         break;
       case "longPress":
-        // Force an immediate refresh of everything.
-        startPolling();
+        // Hold opens the actions screen when anything is on offer; otherwise
+        // it keeps its old meaning of refreshing everything.
+        if (availableActions(sources).length > 0) {
+          screen = "actions";
+          actionCursor = 0;
+          pendingActionId = null;
+          actionResult = null;
+        } else {
+          startPolling();
+        }
         break;
       case "doubleClick":
         for (const timer of timers.values()) clearTimeout(timer);

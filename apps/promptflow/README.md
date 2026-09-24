@@ -8,6 +8,10 @@ your attention while you are talking.
 
 ---
 
+![On the glasses](docs/screenshot.png)
+
+*Captured from the Even Hub simulator at the real 576 × 288.*
+
 ## Why word-based pacing
 
 Most teleprompters scroll by pixels or lines per second. On a 576 × 288 display
