@@ -164,6 +164,19 @@ Consequences for any G2 app:
 Aigner Labs apps resolve this in `input/gestures.ts`, with a regression test
 that feeds in the exact payload above.
 
+## Verified pitfall: run one simulator at a time
+
+**Observed by Aigner Labs, 2026-09-25.**
+
+With several `evenhub-simulator` instances running at once, a newly started app
+can fail page creation with `StartUpPageCreateResult.invalid` and render a
+blank display, while the SDK's own `validateEvenHubPageContainer()` reports the
+very same page as valid.
+
+Killing the other instances and restarting made the identical build work
+immediately. Treat "blank display plus `invalid`" as a reason to check how many
+simulators are open before suspecting the page.
+
 ## Real-hardware caveats (community-reported, NOT yet verified by Aigner Labs)
 
 Source: `cc-g2/docs/known-limitations.md`, corroborated by `pong-even-g2` and

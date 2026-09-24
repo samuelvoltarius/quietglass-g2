@@ -1,0 +1,75 @@
+import { reportFromValue, type SourceReport } from "./schema";
+
+/**
+ * Talks to the configured sources.
+ *
+ * Two transports, one shape. HTTP polling is the default because it is what a
+ * five-line shell script can serve; WebSocket is offered for sources that
+ * would rather push.
+ */
+
+export interface FetchOutcome {
+  readonly report: SourceReport | null;
+  readonly error: string | null;
+  /** Non-fatal complaints about the payload. */
+  readonly warnings: readonly string[];
+}
+
+export interface FetchOptions {
+  readonly timeoutMs?: number;
+  /** Optional bearer token. Sent as a header, never in the URL. */
+  readonly token?: string;
+  /** Injectable for tests. */
+  readonly fetchImpl?: typeof fetch;
+}
+
+const DEFAULT_TIMEOUT = 8000;
+
+export async function fetchReport(
+  url: string,
+  name: string,
+  options: FetchOptions = {},
+): Promise<FetchOutcome> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT);
+
+  try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    // A credential belongs in a header: URLs end up in logs and proxies.
+    if (options.token) headers["Authorization"] = "Bearer " + options.token;
+
+    const response = await doFetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      return { report: null, error: "HTTP " + response.status, warnings: [] };
+    }
+
+    const parsed = reportFromValue(await response.json(), name);
+    return parsed.report === null
+      ? { report: null, error: parsed.errors[0] ?? "Unreadable response", warnings: parsed.errors }
+      : { report: parsed.report, error: null, warnings: parsed.errors };
+  } catch (error) {
+    return { report: null, error: describeError(error), warnings: [] };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Never leak a stack trace or a URL with a token into the display. */
+export function describeError(error: unknown): string {
+  if (error instanceof DOMException && error.name === "AbortError") return "timed out";
+  if (error instanceof TypeError) return "unreachable";
+  if (error instanceof Error && error.message) return error.message.slice(0, 60);
+  return "failed";
+}
+
+/**
+ * Backoff for a failing source: quick retries at first, then backing off so a
+ * server that is down does not get hammered, capped so recovery is still
+ * noticed promptly.
+ */
+export function backoffMs(consecutiveFailures: number, baseMs: number): number {
+  if (consecutiveFailures <= 0) return baseMs;
+  const grown = baseMs * Math.pow(2, Math.min(consecutiveFailures, 5));
+  return Math.min(grown, 300_000);
+}
