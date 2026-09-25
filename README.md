@@ -1,6 +1,6 @@
 # Quietglass — applications for Even Realities G2
 
-Ten apps for the [Even Realities G2](https://www.evenrealities.com) smart
+Eleven apps for the [Even Realities G2](https://www.evenrealities.com) smart
 glasses, built on the official Even Hub SDK.
 
 Two things run through all of them:
@@ -31,10 +31,11 @@ copying, so no app can break another.
 | [**ShiftClock**](apps/shift-clock) | Hands-free time tracking onto projects, CSV export with decimal hours. | 40 |
 | [**Babel Glass**](apps/babel-glass) | Live captions and translation against **your own** Whisper. | 64 |
 | [**OpenGlance**](apps/openglance-nav) | Turn-by-turn on OpenStreetMap data via Valhalla. No Mapbox, no key. | 68 |
-| [**Status Glass**](apps/status-glass) | Homelab monitoring over a protocol small enough to emit from a shell script. | 63 |
+| [**Status Glass**](apps/status-glass) | Homelab monitoring over a protocol small enough to emit from a shell script — now with actions and a Home Assistant adapter. | 87 |
+| [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. Photo from the phone, straight back to LUMEN. | 49 |
 
 ```
-616 tests · 10 builds · every app confirmed rendering in the Even Hub simulator
+691 tests · 11 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
