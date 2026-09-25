@@ -12,7 +12,7 @@ PostureLens has no network code, and it keeps no history of how you sat.
 | Thresholds and display settings | same | No |
 
 Written through `setLocalStorage()` under the single key
-`aignerlabs.posturelens.v1`.
+`quietglass.posturelens.v1`.
 
 ## What is deliberately not stored
 

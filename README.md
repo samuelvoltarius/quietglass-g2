@@ -1,4 +1,4 @@
-# Aigner Labs — applications for Even Realities G2
+# Quietglass — applications for Even Realities G2
 
 Ten apps for the [Even Realities G2](https://www.evenrealities.com) smart
 glasses, built on the official Even Hub SDK.

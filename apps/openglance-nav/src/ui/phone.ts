@@ -44,7 +44,7 @@ function template(data: NavData, notice: string, position: LatLng | null): strin
 
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>OpenGlance</h1>
   </header>
 

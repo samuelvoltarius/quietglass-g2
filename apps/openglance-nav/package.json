@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/openglance-nav",
+  "name": "@quietglass/openglance-nav",
   "version": "0.1.0",
-  "description": "Aigner Labs OpenGlance — turn-by-turn navigation on OpenStreetMap data",
-  "author": "Aigner Labs",
+  "description": "Quietglass OpenGlance — turn-by-turn navigation on OpenStreetMap data",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

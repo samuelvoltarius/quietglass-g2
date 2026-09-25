@@ -26,7 +26,7 @@ network code at all.
 | Calibration offset | Even app per-app storage, on the phone | No |
 | Dose thresholds | same | No |
 
-Written through `setLocalStorage()` under `aignerlabs.decibelguard.v1`.
+Written through `setLocalStorage()` under `quietglass.decibelguard.v1`.
 
 ## What is deliberately not stored
 

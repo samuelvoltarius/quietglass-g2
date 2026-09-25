@@ -18,7 +18,7 @@ export interface ClockData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.shiftclock.v1";
+const KEY = "quietglass.shiftclock.v1";
 
 export const EMPTY_DATA: ClockData = {
   projects: [],

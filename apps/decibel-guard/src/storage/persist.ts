@@ -21,7 +21,7 @@ export interface NoiseData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.decibelguard.v1";
+const KEY = "quietglass.decibelguard.v1";
 
 export const EMPTY_DATA: NoiseData = {
   dose: DEFAULT_DOSE,

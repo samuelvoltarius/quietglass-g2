@@ -1,6 +1,6 @@
 # Status Glass
 
-**Aigner Labs** · Homelab and service monitoring over a protocol anyone can implement.
+**Quietglass** · Homelab and service monitoring over a protocol anyone can implement.
 
 A healthy system should cost you no attention. Status Glass shows **one line**
 when everything is fine, and becomes impossible to miss when it is not.

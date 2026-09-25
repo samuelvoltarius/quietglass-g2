@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Creates the shared skeleton for one Aigner Labs app.
+ * Creates the shared skeleton for one Quietglass app.
  *
  * Conventions are shared by COPYING, never by importing: each app must stay
  * independently releasable, so there is no cross-app runtime dependency.
@@ -30,10 +30,10 @@ const write = (rel, content) => {
 };
 
 write("package.json", JSON.stringify({
-  name: `@aigner-labs/${dir}`,
+  name: `@quietglass/${dir}`,
   version: "0.1.0",
-  description: `Aigner Labs ${displayName} — ${description ?? ""}`.trim(),
-  author: "Aigner Labs",
+  description: `Quietglass ${displayName} — ${description ?? ""}`.trim(),
+  author: "Quietglass",
   license: "MIT",
   private: false,
   type: "module",
@@ -87,7 +87,7 @@ export default defineConfig({
 `);
 
 write("app.json", JSON.stringify({
-  package_id: `labs.aigner.${slug}`,
+  package_id: `glass.quiet.${slug}`,
   edition: "202601",
   name: displayName,
   version: "0.1.0",
@@ -103,7 +103,7 @@ write("index.html", `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>${displayName} — Aigner Labs</title>
+    <title>${displayName} — Quietglass</title>
     <link rel="stylesheet" href="/src/ui/phone.css" />
   </head>
   <body>
@@ -115,7 +115,7 @@ write("index.html", `<!doctype html>
 
 write("LICENSE", `MIT License
 
-Copyright (c) 2026 Aigner Labs
+Copyright (c) 2026 Quietglass
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

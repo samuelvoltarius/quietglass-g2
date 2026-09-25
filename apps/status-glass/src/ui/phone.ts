@@ -35,7 +35,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 function template(data: StatusData, notice: string): string {
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>Status Glass</h1>
   </header>
 

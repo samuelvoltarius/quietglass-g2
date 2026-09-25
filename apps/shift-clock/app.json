@@ -1,5 +1,5 @@
 {
-  "package_id": "labs.aigner.shiftclock",
+  "package_id": "glass.quiet.shiftclock",
   "edition": "202601",
   "name": "ShiftClock",
   "version": "0.1.0",

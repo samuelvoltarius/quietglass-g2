@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/posture-lens",
+  "name": "@quietglass/posture-lens",
   "version": "0.1.0",
-  "description": "Aigner Labs PostureLens — neck angle over time, from the IMU",
-  "author": "Aigner Labs",
+  "description": "Quietglass PostureLens — neck angle over time, from the IMU",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

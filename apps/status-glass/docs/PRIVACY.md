@@ -13,7 +13,7 @@ service, no account and no telemetry.
 | Bearer tokens | same | Only to that source, as a header |
 | Poll interval | same | No |
 
-Written through `setLocalStorage()` under `aignerlabs.statusglass.v1`.
+Written through `setLocalStorage()` under `quietglass.statusglass.v1`.
 
 Metric readings are held in memory only. No history is written.
 

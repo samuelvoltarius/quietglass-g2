@@ -35,7 +35,7 @@ function template(data: FlowListData, notice: string): string {
   const s = data.settings;
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>FlowList</h1>
   </header>
 

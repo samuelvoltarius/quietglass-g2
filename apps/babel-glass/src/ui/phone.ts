@@ -40,7 +40,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 function template(data: BabelData, notice: string): string {
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>Babel Glass</h1>
   </header>
 

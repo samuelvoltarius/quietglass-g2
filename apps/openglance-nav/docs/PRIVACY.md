@@ -36,7 +36,7 @@ at all**.
 | Saved places | same | Only the selected one, to the router |
 | Mode and settings | same | No |
 
-Written through `setLocalStorage()` under `aignerlabs.openglance.v1`.
+Written through `setLocalStorage()` under `quietglass.openglance.v1`.
 
 Saved places are yours to add and remove. Removing one deletes its coordinates.
 

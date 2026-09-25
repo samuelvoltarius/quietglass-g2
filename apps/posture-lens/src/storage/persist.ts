@@ -17,7 +17,7 @@ export interface PostureData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.posturelens.v1";
+const KEY = "quietglass.posturelens.v1";
 
 export const EMPTY_DATA: PostureData = {
   settings: DEFAULT_SETTINGS,

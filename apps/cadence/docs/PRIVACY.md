@@ -13,7 +13,7 @@ Cadence has no network code. Your practice log stays on your phone.
 | Practice session log | same | No |
 
 Written through `setLocalStorage()` under the single key
-`aignerlabs.cadence.v1`. The log is bounded to the most recent 500 sessions.
+`quietglass.cadence.v1`. The log is bounded to the most recent 500 sessions.
 
 ## What is not collected
 

@@ -1,5 +1,5 @@
 {
-  "package_id": "labs.aigner.promptflow",
+  "package_id": "glass.quiet.promptflow",
   "edition": "202601",
   "name": "PromptFlow",
   "version": "0.1.0",

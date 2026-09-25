@@ -23,7 +23,7 @@ export interface StatusData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.statusglass.v1";
+const KEY = "quietglass.statusglass.v1";
 
 export const EMPTY_DATA: StatusData = {
   sources: [],

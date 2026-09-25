@@ -122,6 +122,6 @@ describe("pack import", () => {
   });
 
   it("stamps the format marker so packs are identifiable", () => {
-    expect(JSON.parse(toPack(parsePack(pack).checklist)).format).toBe("aigner-labs/flowlist@1");
+    expect(JSON.parse(toPack(parsePack(pack).checklist)).format).toBe("quietglass/flowlist@1");
   });
 });

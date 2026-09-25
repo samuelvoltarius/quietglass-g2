@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/flowlist",
+  "name": "@quietglass/flowlist",
   "version": "0.1.0",
-  "description": "Aigner Labs FlowList — hands-free checklists and workflows",
-  "author": "Aigner Labs",
+  "description": "Quietglass FlowList — hands-free checklists and workflows",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

@@ -177,7 +177,7 @@ function readKind(value: unknown, hasChoices: boolean): StepKind {
 export function toPack(list: Checklist): string {
   return JSON.stringify(
     {
-      format: "aigner-labs/flowlist@1",
+      format: "quietglass/flowlist@1",
       id: list.id,
       title: list.title,
       ...(list.description ? { description: list.description } : {}),

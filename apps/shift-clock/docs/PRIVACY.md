@@ -13,7 +13,7 @@ ShiftClock has no network code and no account. Your hours stay on your phone.
 | The currently open entry | same | No |
 
 Written through `setLocalStorage()` under the single key
-`aignerlabs.shiftclock.v1`. The log is bounded to the most recent 2000 entries.
+`quietglass.shiftclock.v1`. The log is bounded to the most recent 2000 entries.
 
 The open entry is written as it happens rather than on exit, so a crash or a
 dropped connection cannot lose tracked time.

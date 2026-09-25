@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/field-log",
+  "name": "@quietglass/field-log",
   "version": "0.1.0",
-  "description": "Aigner Labs FieldLog — hands-free inspection logging",
-  "author": "Aigner Labs",
+  "description": "Quietglass FieldLog — hands-free inspection logging",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

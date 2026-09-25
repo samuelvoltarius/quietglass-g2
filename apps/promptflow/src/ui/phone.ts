@@ -32,7 +32,7 @@ function template(data: PromptFlowData): string {
   const s = data.settings;
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>PromptFlow</h1>
   </header>
 

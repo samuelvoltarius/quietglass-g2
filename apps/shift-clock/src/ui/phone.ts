@@ -35,7 +35,7 @@ function template(data: ClockData): string {
 
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>ShiftClock</h1>
   </header>
 

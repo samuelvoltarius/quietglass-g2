@@ -35,7 +35,7 @@ export interface PromptFlowData {
   readonly settings: PromptFlowSettings;
 }
 
-const KEY = "aignerlabs.promptflow.v1";
+const KEY = "quietglass.promptflow.v1";
 
 export const DEFAULT_SETTINGS: PromptFlowSettings = {
   mode: "speech",

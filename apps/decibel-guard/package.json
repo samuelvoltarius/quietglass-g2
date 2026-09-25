@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/decibel-guard",
+  "name": "@quietglass/decibel-guard",
   "version": "0.1.0",
-  "description": "Aigner Labs DecibelGuard — noise dose over time, level only",
-  "author": "Aigner Labs",
+  "description": "Quietglass DecibelGuard — noise dose over time, level only",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

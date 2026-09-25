@@ -13,7 +13,7 @@ because it has nowhere to send them to.
 | Display settings | same | No |
 
 Written through `setLocalStorage()` under the single key
-`aignerlabs.flowlist.v1`.
+`quietglass.flowlist.v1`.
 
 Run progress is held in memory only. Closing the app discards it; FlowList does
 not keep a record of what you did or when.

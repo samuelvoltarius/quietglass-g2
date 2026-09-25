@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/status-glass",
+  "name": "@quietglass/status-glass",
   "version": "0.2.0",
-  "description": "Aigner Labs Status Glass — homelab and service monitoring over an open protocol",
-  "author": "Aigner Labs",
+  "description": "Quietglass Status Glass — homelab and service monitoring over an open protocol",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

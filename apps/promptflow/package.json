@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/promptflow",
+  "name": "@quietglass/promptflow",
   "version": "0.1.0",
-  "description": "Aigner Labs PromptFlow — a distraction-free teleprompter for Even Realities G2.",
-  "author": "Aigner Labs",
+  "description": "Quietglass PromptFlow — a distraction-free teleprompter for Even Realities G2.",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

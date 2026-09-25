@@ -1,6 +1,6 @@
 # PromptFlow
 
-**Aigner Labs** · A distraction-free teleprompter for Even Realities G2 smart glasses.
+**Quietglass** · A distraction-free teleprompter for Even Realities G2 smart glasses.
 
 Your script sits in your field of view. It scrolls at the pace you speak, not at
 the pace of a timer, and one tap starts or stops it. Nothing else competes for
@@ -133,7 +133,7 @@ the rendered view actually changed.
 | Voice-follow absent | See Roadmap. |
 
 Behaviour marked *reported* comes from community documentation and has not yet
-been measured by Aigner Labs on its own device. It will be verified and this
+been measured by Quietglass on its own device. It will be verified and this
 table updated.
 
 ## License

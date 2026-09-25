@@ -29,7 +29,7 @@ First release.
 
 ### Known limitations
 - **Not verified on physical hardware.** IMU scale, noise and drift on a real
-  G2 have not been measured by Aigner Labs; thresholds may need tuning.
+  G2 have not been measured by Quietglass; thresholds may need tuning.
 - The simulator provides no head-motion data, so the measurement chain cannot
   be exercised end to end there.
 - Forward tilt and sideways tilt are not yet distinguished.

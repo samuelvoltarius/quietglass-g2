@@ -18,7 +18,7 @@ First release.
 - Detail text on demand — hold to read, release to hide. Holding commits nothing.
 - Markdown import: ordinary task lists work unchanged, with `(!)` and
   `(optional)` markers and indented detail lines.
-- JSON pack format (`aigner-labs/flowlist@1`) for branching and sharing, with
+- JSON pack format (`quietglass/flowlist@1`) for branching and sharing, with
   round-trip export. Unknown fields are ignored so newer packs still load.
 - Dangling `goto` targets are reported on import and fall through in list order
   at runtime, so a broken pack cannot strand a run.
@@ -41,4 +41,4 @@ First release.
 ### Known limitations
 - No editing on the glasses (no keyboard); checklists are written on the phone.
 - Voice commands are not implemented in 0.1.0. See README, "Roadmap".
-- Real-hardware swipe direction has not yet been measured by Aigner Labs.
+- Real-hardware swipe direction has not yet been measured by Quietglass.

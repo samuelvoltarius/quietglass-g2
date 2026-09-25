@@ -22,7 +22,7 @@ export interface FieldLogData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.fieldlog.v1";
+const KEY = "quietglass.fieldlog.v1";
 
 export const EMPTY_DATA: FieldLogData = {
   inspections: [],

@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/shift-clock",
+  "name": "@quietglass/shift-clock",
   "version": "0.1.0",
-  "description": "Aigner Labs ShiftClock — hands-free time tracking",
-  "author": "Aigner Labs",
+  "description": "Quietglass ShiftClock — hands-free time tracking",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

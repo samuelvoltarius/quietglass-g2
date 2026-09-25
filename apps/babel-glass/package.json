@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/babel-glass",
+  "name": "@quietglass/babel-glass",
   "version": "0.1.0",
-  "description": "Aigner Labs Babel Glass — live captions and translation on your own server",
-  "author": "Aigner Labs",
+  "description": "Quietglass Babel Glass — live captions and translation on your own server",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

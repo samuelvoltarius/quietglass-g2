@@ -1,6 +1,6 @@
 # Cadence
 
-**Aigner Labs** · Visual metronome and practice log for Even Realities G2.
+**Quietglass** · Visual metronome and practice log for Even Realities G2.
 
 The G2 has no speaker. That sounds like a reason not to build a metronome — it
 is actually the reason to build this one: the beat sits in your field of view

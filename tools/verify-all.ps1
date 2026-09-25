@@ -15,7 +15,7 @@ $apps = @(
   @{ dir = "openglance-nav"; port = 5199 }
 )
 
-$root = "F:\aigner-labs"
+$root = "F:\quietglass"
 $shots = "$root\.verify"
 New-Item -ItemType Directory -Force -Path $shots | Out-Null
 $automationPort = 9880

@@ -28,14 +28,21 @@ describe("storage round-trip", () => {
     await save(bridge, data);
 
     const loaded = await load(makeBridge({
-      "aignerlabs.promptflow.v1": (bridge.setLocalStorage as any).mock.calls[0][1],
+      "quietglass.promptflow.v1": (bridge.setLocalStorage as any).mock.calls[0][1],
     }));
     expect(loaded.scripts).toHaveLength(1);
     expect(loaded.settings.wpm).toBe(150);
   });
 
-  it("returns empty data when nothing is stored", async () => {
-    await expect(load(makeBridge())).resolves.toEqual(EMPTY_DATA);
+  it("installs the sample script on a first run rather than starting blank", async () => {
+    const loaded = await load(makeBridge());
+    expect(loaded.scripts).toHaveLength(1);
+    expect(loaded.scripts[0]?.id).toBe("sample");
+    expect(loaded.activeId).toBe("sample");
+  });
+
+  it("parses empty storage as empty data", () => {
+    expect(parseData("")).toEqual(EMPTY_DATA);
   });
 });
 

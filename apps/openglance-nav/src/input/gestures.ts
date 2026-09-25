@@ -1,7 +1,7 @@
 /**
  * Translates raw Even Hub events into named gestures.
  *
- * Shared Aigner Labs convention — each app carries its own copy so it stays
+ * Shared Quietglass convention — each app carries its own copy so it stays
  * independently releasable, but the mapping is identical across apps so the
  * controls feel the same on every one of them.
  */
@@ -39,7 +39,7 @@ export interface GestureOptions {
   /**
    * Real G2 hardware reports swipes inverted relative to the simulator: a
    * physical downward swipe arrives as SCROLL_TOP. Kept configurable because
-   * Aigner Labs has not yet measured this on its own device, and because a
+   * Quietglass has not yet measured this on its own device, and because a
    * firmware fix would otherwise break the mapping.
    */
   readonly invertScroll?: boolean;

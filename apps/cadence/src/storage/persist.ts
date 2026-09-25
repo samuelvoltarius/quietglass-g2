@@ -18,7 +18,7 @@ export interface CadenceData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.cadence.v1";
+const KEY = "quietglass.cadence.v1";
 
 export const EMPTY_DATA: CadenceData = {
   settings: DEFAULT_SETTINGS,

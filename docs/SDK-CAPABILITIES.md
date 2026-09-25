@@ -4,7 +4,7 @@
 **Method:** read from the shipped `dist/index.d.ts`, not from memory or documentation prose.
 **Date:** 2026-09-24
 
-Every Aigner Labs app targets this version. Nothing in this file is inferred — if an API
+Every Quietglass app targets this version. Nothing in this file is inferred — if an API
 is not listed under "Available", it does not exist in the SDK surface.
 
 ---
@@ -139,7 +139,7 @@ and `formatEvenHubPageContainerValidationError()` renders the reason.
 
 ## Verified pitfall: proto3 omits default values
 
-**Measured by Aigner Labs in the Even Hub simulator, 2026-09-25.**
+**Measured by Quietglass in the Even Hub simulator, 2026-09-25.**
 
 A tap on the touchpad arrives as exactly this:
 
@@ -161,12 +161,12 @@ Consequences for any G2 app:
   `TOUCH_EVENT_FORM_DUMMY_NULL`.
 - Read these fields as `value ?? 0`, never as `value ?? somethingElse`.
 
-Aigner Labs apps resolve this in `input/gestures.ts`, with a regression test
+Quietglass apps resolve this in `input/gestures.ts`, with a regression test
 that feeds in the exact payload above.
 
 ## Verified pitfall: run one simulator at a time
 
-**Observed by Aigner Labs, 2026-09-25.**
+**Observed by Quietglass, 2026-09-25.**
 
 With several `evenhub-simulator` instances running at once, a newly started app
 can fail page creation with `StartUpPageCreateResult.invalid` and render a
@@ -177,7 +177,7 @@ Killing the other instances and restarting made the identical build work
 immediately. Treat "blank display plus `invalid`" as a reason to check how many
 simulators are open before suspecting the page.
 
-## Real-hardware caveats (community-reported, NOT yet verified by Aigner Labs)
+## Real-hardware caveats (community-reported, NOT yet verified by Quietglass)
 
 Source: `cc-g2/docs/known-limitations.md`, corroborated by `pong-even-g2` and
 `nickustinov/even-g2-notes`. **Flagged as unverified until measured on our own G2.**
@@ -192,5 +192,5 @@ Source: `cc-g2/docs/known-limitations.md`, corroborated by `pong-even-g2` and
 4. `rebuildPageContainer()` must still be *called* even though it fails — the call
    registers hardware event routing as a side effect.
 
-These drive the shared UI rule used by every Aigner Labs app:
+These drive the shared UI rule used by every Quietglass app:
 **one screen, updated in place — never a multi-step dialog.**

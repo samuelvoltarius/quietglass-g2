@@ -1,6 +1,6 @@
 # ShiftClock
 
-**Aigner Labs** · Hands-free time tracking for Even Realities G2.
+**Quietglass** · Hands-free time tracking for Even Realities G2.
 
 Tap to start a project. Tap to stop. The running total sits in your field of
 view. No phone in your hand, no app switching, no reconstructing the day from

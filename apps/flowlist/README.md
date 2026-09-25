@@ -1,6 +1,6 @@
 # FlowList
 
-**Aigner Labs** · Hands-free checklists and workflows for Even Realities G2 smart glasses.
+**Quietglass** · Hands-free checklists and workflows for Even Realities G2 smart glasses.
 
 One step at a time, in your field of view, advanced with a single tap. For when
 both hands are busy: cooking, wiring, packing, servicing, inspecting.
@@ -75,7 +75,7 @@ For branching and sharing, use the JSON pack format:
 
 ```json
 {
-  "format": "aigner-labs/flowlist@1",
+  "format": "quietglass/flowlist@1",
   "title": "Camera pre-flight",
   "steps": [
     { "id": "card", "text": "Card formatted", "kind": "critical",

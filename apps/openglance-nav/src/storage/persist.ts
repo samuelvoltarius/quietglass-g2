@@ -26,7 +26,7 @@ export interface NavData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.openglance.v1";
+const KEY = "quietglass.openglance.v1";
 
 export const EMPTY_DATA: NavData = {
   valhallaUrl: "",

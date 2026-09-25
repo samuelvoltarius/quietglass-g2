@@ -43,7 +43,7 @@ function template(data: NoiseData): string {
   const d = data.dose;
   return `
   <header class="brand">
-    <span class="brand-mark">Aigner Labs</span>
+    <span class="brand-mark">Quietglass</span>
     <h1>DecibelGuard</h1>
   </header>
 

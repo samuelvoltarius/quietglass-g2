@@ -27,7 +27,7 @@ without that action.
 | Inspections, entries, photos | Even app per-app storage, on the phone | No |
 | Speech server URL and token | same | Token only to that server |
 
-Written through `setLocalStorage()` under `aignerlabs.fieldlog.v1`.
+Written through `setLocalStorage()` under `quietglass.fieldlog.v1`.
 
 Audio is **never** stored — it is streamed to your recogniser and discarded.
 

@@ -1,6 +1,6 @@
 # DecibelGuard
 
-**Aigner Labs** · Noise dose over time. Measures the level, records nothing.
+**Quietglass** · Noise dose over time. Measures the level, records nothing.
 
 Hearing damage is cumulative and silent. A single loud moment is rarely the
 problem; four hours in a workshop is. DecibelGuard watches the level around you

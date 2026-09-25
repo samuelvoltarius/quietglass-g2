@@ -1,6 +1,6 @@
 # Babel Glass
 
-**Aigner Labs** · Live captions and translation — on your own server.
+**Quietglass** · Live captions and translation — on your own server.
 
 Speech appears as text in your field of view, optionally translated. The
 difference from everything else on the G2: **the recogniser is yours.**

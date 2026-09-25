@@ -1,8 +1,8 @@
 {
-  "name": "@aigner-labs/cadence",
+  "name": "@quietglass/cadence",
   "version": "0.1.0",
-  "description": "Aigner Labs Cadence — visual metronome and practice log",
-  "author": "Aigner Labs",
+  "description": "Quietglass Cadence — visual metronome and practice log",
+  "author": "Quietglass",
   "license": "MIT",
   "private": false,
   "type": "module",

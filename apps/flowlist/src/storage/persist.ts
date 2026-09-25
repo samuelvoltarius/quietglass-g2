@@ -24,7 +24,7 @@ export interface FlowListData {
   readonly settings: FlowListSettings;
 }
 
-const KEY = "aignerlabs.flowlist.v1";
+const KEY = "quietglass.flowlist.v1";
 
 export const DEFAULT_SETTINGS: FlowListSettings = {
   showNext: true,

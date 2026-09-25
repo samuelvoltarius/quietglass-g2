@@ -1,6 +1,6 @@
 # OpenGlance Navigation
 
-**Aigner Labs** · Turn-by-turn navigation on OpenStreetMap data. No Mapbox, no API key.
+**Quietglass** · Turn-by-turn navigation on OpenStreetMap data. No Mapbox, no API key.
 
 Every navigation app found for the Even G2 routes through Mapbox or another
 proprietary service — an account, a key, a quota. OpenGlance targets

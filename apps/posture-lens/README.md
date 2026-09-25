@@ -1,6 +1,6 @@
 # PostureLens
 
-**Aigner Labs** · Neck angle over time, measured on your head.
+**Quietglass** · Neck angle over time, measured on your head.
 
 The IMU in the G2 sits on your head all day. Of roughly 150 community projects
 for these glasses, two touch it. PostureLens uses it for the thing it is
@@ -96,7 +96,7 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Limitation | Detail |
 |---|---|
-| **Not verified on hardware** | Built and tested against SDK 0.0.16 and the simulator. The IMU's behaviour on a physical G2 — sample scale, noise, drift — has not been measured by Aigner Labs. Thresholds may need tuning once it has. |
+| **Not verified on hardware** | Built and tested against SDK 0.0.16 and the simulator. The IMU's behaviour on a physical G2 — sample scale, noise, drift — has not been measured by Quietglass. Thresholds may need tuning once it has. |
 | **Simulator has no real IMU** | The simulator does not produce head-motion data, so the measurement chain cannot be exercised end to end there. The maths and the state machine are covered by unit tests with synthetic vectors. |
 | Forward vs. sideways | 0.1.0 measures total deviation from your calibrated pose. It does not yet distinguish leaning forward from tilting sideways. |
 | Not a medical device | It counts degrees and minutes. It does not diagnose anything. |

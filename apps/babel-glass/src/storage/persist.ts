@@ -25,7 +25,7 @@ export interface BabelData {
   readonly invertScroll: boolean;
 }
 
-const KEY = "aignerlabs.babelglass.v1";
+const KEY = "quietglass.babelglass.v1";
 
 export const EMPTY_DATA: BabelData = {
   mode: "conversation",

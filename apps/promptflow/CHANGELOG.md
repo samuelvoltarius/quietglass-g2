@@ -35,4 +35,4 @@ First release.
 ### Known limitations
 - Voice-follow mode is not implemented in 0.1.0. See README, "Roadmap".
 - Real-hardware behaviour (swipe direction, page rebuild cost) is documented
-  from community reports and has not yet been measured by Aigner Labs.
+  from community reports and has not yet been measured by Quietglass.

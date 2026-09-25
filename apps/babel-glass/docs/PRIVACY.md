@@ -38,7 +38,7 @@ Holding the temple pad clears the transcript immediately.
 | Tokens / API keys | same | Only to that server |
 | Languages and mode | same | No |
 
-Written through `setLocalStorage()` under `aignerlabs.babelglass.v1`.
+Written through `setLocalStorage()` under `quietglass.babelglass.v1`.
 
 Secrets are never logged and are never shown in full in the phone app — only
 "set (24 chars)".
