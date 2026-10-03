@@ -164,6 +164,25 @@ Consequences for any G2 app:
 Quietglass apps resolve this in `input/gestures.ts`, with a regression test
 that feeds in the exact payload above.
 
+## Simulator automation: more than `click`
+
+**Measured 2026-09-29.** The `--automation-port` server accepts more than the
+one action previously recorded here. Sending an invalid action makes it list
+the valid ones:
+
+```
+POST /api/input  {"action":"<name>"}
+  up   down   click   double_click   long_press   long_press_release
+```
+
+That is the whole gesture vocabulary the apps use, so a full interaction pass
+can be driven from a script rather than only tapping. `up` and `down` arrive
+as `scrollUp` / `scrollDown`.
+
+```bash
+curl -s -X POST -H "Content-Type: application/json"   -d '{"action":"long_press"}' http://127.0.0.1:9902/api/input
+```
+
 ## Verified pitfall: run one simulator at a time
 
 **Observed by Quietglass, 2026-09-25.**

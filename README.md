@@ -1,6 +1,6 @@
 # Quietglass — applications for Even Realities G2
 
-Eleven apps for the [Even Realities G2](https://www.evenrealities.com) smart
+Eighteen apps for the [Even Realities G2](https://www.evenrealities.com) smart
 glasses, built on the official Even Hub SDK.
 
 Two things run through all of them:
@@ -33,9 +33,16 @@ copying, so no app can break another.
 | [**OpenGlance**](apps/openglance-nav) | Turn-by-turn on OpenStreetMap data via Valhalla. No Mapbox, no key. | 68 |
 | [**Status Glass**](apps/status-glass) | Homelab monitoring over a protocol small enough to emit from a shell script — now with actions and a Home Assistant adapter. | 87 |
 | [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. Photo from the phone, straight back to LUMEN. | 49 |
+| [**NextStop**](apps/nextstop) | Departures at the stop you are standing at, and the next stop while riding. Two keyless backends: ÖBB for live Austrian delays, Transitous/MOTIS for everywhere else. | 70 |
+| [**Agent Glass**](apps/agent-glass) | Watch a coding agent from the glasses and answer its permission prompts with a swipe. Talks to Even Realities' own Even Terminal. **Proof of concept** — see its README. | 39 |
+| [**RainLens**](apps/rain-lens) | A 15-minute Open-Meteo rain timeline using phone location or saved coordinates. | 3 |
+| [**Dayline**](apps/dayline) | Calendar and reminders with direct `.ics` file import; the local bridge is optional. | 3 |
+| [**PodCaption**](apps/podcaption) | Podcast captions from a local VTT/SRT/JSON/text file or Podcasting 2.0 RSS transcripts. | 3 |
+| [**Companion**](apps/companion) | Push-to-talk personal assistant with a user-configurable local endpoint and explicit microphone control. | 3 |
+| [**Map Glass**](apps/map-glass) | Visual routing from the phone's live position to saved destination coordinates through OSRM. | 3 |
 
 ```
-691 tests · 11 builds · every app confirmed rendering in the Even Hub simulator
+815 tests · 18 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
@@ -58,7 +65,7 @@ It is useful to anyone building for the G2. The most expensive one:
 
 ## Reference servers
 
-Three apps talk to something you host. Each ships a working implementation, so
+Several apps talk to something you host. Each ships a working implementation, so
 "self-hosted" is an afternoon rather than a project:
 
 | App | Server | Size |
@@ -66,6 +73,10 @@ Three apps talk to something you host. Each ships a working implementation, so
 | Status Glass | [`reference-server.mjs`](apps/status-glass/examples/reference-server.mjs) | ~100 lines, no dependencies |
 | Babel Glass | [`whisper-server.py`](apps/babel-glass/examples/whisper-server.py) | ~80 lines on faster-whisper |
 | FieldLog | uses Babel Glass's server — the wire format is identical | — |
+| Dayline | [`dayline-bridge.mjs`](apps/dayline/examples/dayline-bridge.mjs) | Calendar/reminder JSON endpoint |
+| PodCaption | [`podcast-bridge.mjs`](apps/podcaption/examples/podcast-bridge.mjs) | Feed and transcript proxy restricted to one configured feed |
+| Companion | [`assistant-bridge.mjs`](apps/companion/examples/assistant-bridge.mjs) | Push-to-talk upload and optional assistant upstream |
+| Map Glass | [`route-bridge.mjs`](apps/map-glass/examples/route-bridge.mjs) | Route geometry endpoint |
 
 OpenGlance needs a Valhalla instance; its README gives the one-line Docker
 command.
@@ -80,7 +91,7 @@ Applied by every app, carried as its own copy:
   swipe, long press — with the R1 ring reported as a distinct source and a
   user-toggleable swipe inversion.
 - **Pure logic, thin SDK adapter.** Everything testable imports no SDK types.
-  That is where all 616 tests live.
+  That is where all 815 tests live.
 - **Redraw suppression.** The display is written only when the view changed.
 - **Privacy-first defaults.** No permission is declared unless used. Apps that
   open the microphone show an indicator that cannot be hidden. Apps that could

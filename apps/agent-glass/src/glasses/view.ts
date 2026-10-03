@@ -1,0 +1,165 @@
+import type { AgentState } from "../terminal/types";
+
+/**
+ * What the glasses show while an agent works.
+ *
+ * One screen matters more than all the others: the moment the agent stops and
+ * asks permission. Everything else here is context you may glance at; that one
+ * is the reason to look up at all, so it takes the whole display and says
+ * plainly what will happen.
+ *
+ * Display lessons already paid for elsewhere in Quietglass and applied here:
+ * the font is **proportional**, so columns built from spaces do not line up —
+ * separators are explicit. And the glasses draw nothing at all for characters
+ * like "▸", so markers stay ASCII.
+ */
+
+export interface AgentView {
+  readonly header: string;
+  readonly body: readonly string[];
+  readonly footer: string;
+}
+
+export const LINE_WIDTH = 46;
+export const BODY_ROWS = 7;
+
+/** Wraps text to the display width, keeping words intact. */
+export function wrap(text: string, width: number = LINE_WIDTH): readonly string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split("\n")) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (words.length === 0) { out.push(""); continue; }
+    let line = "";
+    for (const word of words) {
+      // A single word longer than the display is hard-cut; without this it
+      // would silently push the whole line past the right edge.
+      if (word.length > width) {
+        if (line) { out.push(line); line = ""; }
+        for (let i = 0; i < word.length; i += width) out.push(word.slice(i, i + width));
+        continue;
+      }
+      if (!line) line = word;
+      else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+      else { out.push(line); line = word; }
+    }
+    if (line) out.push(line);
+  }
+  return out;
+}
+
+/**
+ * Keeps the **end** of a long text rather than the beginning.
+ *
+ * While the agent is typing, the newest sentence is the one worth reading; the
+ * start of a long answer has already scrolled out of interest.
+ */
+export function tail(lines: readonly string[], rows: number): readonly string[] {
+  return lines.length <= rows ? lines : lines.slice(lines.length - rows);
+}
+
+export function elapsed(since: Date | null, now: Date): string {
+  if (!since) return "";
+  const seconds = Math.max(0, Math.round((now.getTime() - since.getTime()) / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** Shortens a session title to something readable in one glance. */
+export function shortTitle(title: string, width = 40): string {
+  return title.length <= width ? title : title.slice(0, width - 1) + "…";
+}
+
+export function buildView(state: AgentState, now: Date): AgentView {
+  if (state.error) {
+    return {
+      header: "Agent Glass",
+      body: ["", ...wrap(state.error), "", "Läuft Even Terminal? Wurde es mit",
+        "--allow-cors gestartet?"],
+      footer: "tippen = nochmal versuchen",
+    };
+  }
+
+  if (!state.session) {
+    return {
+      header: "Agent Glass",
+      body: ["", "Keine Sitzung ausgewählt."],
+      footer: "halten = Sitzung wählen",
+    };
+  }
+
+  // The decision screen. It deliberately drops the running text: while the
+  // agent is blocked, nothing else on the display can be acted on, and a wall
+  // of context is exactly what you do not want to read before saying yes.
+  if (state.pending) {
+    const detail = wrap(state.pending.detail);
+    return {
+      header: state.pending.kind === "permission" ? "Erlaubnis nötig" : "Rückfrage",
+      body: [
+        state.pending.title,
+        "",
+        ...tail(detail, BODY_ROWS - 2),
+      ],
+      // Neither answer sits on a plain tap. A stray touch must not be able to
+      // authorise a command, and swiping in two directions is symmetric,
+      // deliberate, and unmistakable in either direction.
+      //
+      // On a session Even Terminal does not own, the swipes would 404. Saying
+      // where the answer has to be given beats offering a control that fails
+      // in silence.
+      footer: state.controllable
+        ? "hoch = erlauben · runter = ablehnen"
+        : "nur mitlesen — am Rechner beantworten",
+    };
+  }
+
+  const lines = wrap(state.text || "…");
+  const body = [...tail(lines, state.tool ? BODY_ROWS - 2 : BODY_ROWS)];
+
+  if (state.tool) {
+    body.push("");
+    body.push(`> ${state.tool}`);
+  }
+
+  const status = state.busy
+    ? `arbeitet · ${elapsed(state.startedAt, now)}`
+    : state.controllable ? "bereit" : "nur mitlesen";
+
+  const action = !state.controllable
+    ? "halten = Sitzungswechsel"
+    : state.busy ? "halten = anhalten" : "halten = Sitzungswechsel";
+
+  return {
+    header: shortTitle(state.session.title),
+    body,
+    footer: `${status} · ${action}`,
+  };
+}
+
+/** The session picker, shown on a long press. */
+export function sessionList(
+  sessions: readonly { title: string; cwd: string; status: string }[],
+  selected: number,
+): AgentView {
+  if (sessions.length === 0) {
+    return {
+      header: "Sitzungen",
+      body: ["", "Even Terminal meldet keine Sitzung.",
+        "", "Läuft dort ein Agent?"],
+      footer: "tippen = zurück",
+    };
+  }
+
+  const first = Math.max(0, Math.min(selected - BODY_ROWS + 1, sessions.length - BODY_ROWS));
+  const window = sessions.slice(Math.max(0, first), Math.max(0, first) + BODY_ROWS);
+
+  return {
+    header: `Sitzungen (${sessions.length})`,
+    body: window.map((session, offset) => {
+      const index = Math.max(0, first) + offset;
+      const cursor = index === selected ? ">" : " ";
+      const busy = session.status && session.status !== "idle" ? " *" : "";
+      return `${cursor} ${shortTitle(session.title, 38)}${busy}`.slice(0, LINE_WIDTH);
+    }),
+    footer: "wischen = wählen · tippen = öffnen",
+  };
+}

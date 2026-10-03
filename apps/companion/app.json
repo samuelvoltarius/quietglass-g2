@@ -1,0 +1,14 @@
+{
+  "package_id": "glass.quiet.companion",
+  "edition": "202601",
+  "name": "Companion",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    { "name": "g2-microphone", "desc": "Record only while the user explicitly holds or toggles push-to-talk." },
+    { "name": "network", "desc": "Send the captured utterance to the optional local assistant bridge.", "whitelist": ["http://127.0.0.1:8790", "http://localhost:8790"] }
+  ],
+  "supported_languages": ["de", "en", "fr", "es", "it"]
+}

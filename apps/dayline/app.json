@@ -1,0 +1,15 @@
+{
+  "package_id": "glass.quiet.dayline",
+  "edition": "202601",
+  "name": "Dayline",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [{
+    "name": "network",
+    "desc": "Read calendar and reminder items from the optional local Dayline bridge.",
+    "whitelist": ["http://127.0.0.1:8788", "http://localhost:8788"]
+  }],
+  "supported_languages": ["de", "en", "fr", "es", "it"]
+}
