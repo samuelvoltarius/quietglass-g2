@@ -9,7 +9,8 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, type LumenData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
-const PIXEL_ICON = ["##......##", "####..####", ".########.", "..######..", "...####...", "....##....", "...####...", "..##..##..", ".##....##.", "##......##"] as const;
+const PIXEL_ICON = ["#........#", "###....###", ".###..###.", "..######..", "...####...", "....##....", "...####...", "..##..##..", ".##....##.", "##......##"] as const;
+const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 /** How often the moth and the light window refresh. */
 const POLL_MS = 60_000;
@@ -18,7 +19,7 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: LumenData = await load(bridge);
-  let status: LumenStatus | null = null;
+  let status: LumenStatus | null = DEMO ? { moth: { light: 72, state: "wach", gesture: "circling in the light", streak: 6 }, quest: { id: 1, title: "Reflected Light", task: "Photograph a reflection that changes the scene.", medium: "foto", minutes: 15, checkable: null }, openQuests: 1, window: { kind: "golden", minutesAway: 24 } } : null;
   let phase: Phase = "idle";
   let result: { ok: boolean; text: string } | null = null;
   let error: string | null = null;
@@ -107,8 +108,7 @@ async function boot(): Promise<void> {
   };
 
   await draw();
-  await refresh();
-  schedule();
+  if (!DEMO) { await refresh(); schedule(); }
 
   bridge.onEvenHubEvent((event) => {
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });

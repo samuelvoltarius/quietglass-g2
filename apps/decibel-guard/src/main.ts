@@ -10,7 +10,7 @@ import { createPage, updatePage } from "./glasses/render";
 import { isCalibrated, load, save, type NoiseData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
-const PIXEL_ICON = ["....##......", "...####.....", "..######....", "########....", "########..#.", "########..##", "########..##", "########..#.", "..######....", "...####.....", "....##......"] as const;
+const PIXEL_ICON = ["..........", "...##.....", "..###...#.", "#####....#", "#####..#.#", "#####..#.#", "#####....#", "..###...#.", "...##.....", ".........."] as const;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();

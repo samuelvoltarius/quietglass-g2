@@ -18,13 +18,15 @@ import {
 import { mountPhoneUi } from "./ui/phone";
 
 const PIXEL_ICON = [".....##...", "....####..", "...######.", "..########", ".####.####.", "####..###.", ".......##.", ".......##.", ".......##.", ".......##."] as const;
+const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: NavData = await load(bridge);
+  if (DEMO) data = { ...data, places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }], destinationId: "demo", valhallaUrl: "" };
   let nav: NavState | null = null;
-  let position: LatLng | null = null;
+  let position: LatLng | null = DEMO ? { lat: 47.805, lon: 13.042 } : null;
   let rerouting = false;
   let error: string | null = null;
   let lastView: NavView | null = null;
@@ -93,7 +95,7 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  await draw();
+  if (DEMO && position) await computeRoute(position); else await draw();
 
   // Location updates: the distance filter keeps the callback quiet while
   // stationary, which matters for battery on a long walk.

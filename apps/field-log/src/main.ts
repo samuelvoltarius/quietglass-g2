@@ -2,7 +2,7 @@ import {
   AudioInputSource, waitForEvenAppBridge, type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import { createMockStt, createWebSocketStt, type SttProvider, type SttStatus } from "./stt/provider";
-import { addEntry, attachToLatest, type Inspection, type Severity } from "./log/entries";
+import { addEntry, attachToLatest, startInspection, type Inspection, type Severity } from "./log/entries";
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type LogView, type Phase } from "./glasses/view";
 import { sameView } from "./glasses/diff";
@@ -13,11 +13,17 @@ import {
 import { mountPhoneUi } from "./ui/phone";
 
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
+const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: FieldLogData = await load(bridge);
+  if (DEMO) {
+    const now = Date.now(); let sample: Inspection = { ...startInspection("demo", "Hotel inspection", now - 1_380_000), section: "Room 204" };
+    sample = addEntry(sample, "Window seal is damaged", "major", now - 480_000); sample = addEntry(sample, "Lamp flickers above desk", "minor", now - 180_000); sample = addEntry(sample, "Smoke detector tested", "note", now - 30_000);
+    data = { ...data, inspections: [sample], activeId: sample.id };
+  }
   let phase: Phase = "idle";
   let pending: string | null = null;
   let stt: SttProvider | null = null;

@@ -4,6 +4,8 @@
 
 The glasses view now gives LUMEN its own monochrome pixel moth instead of relying on text alone.
 
+For a non-persistent simulator showcase without a running LUMEN server, open the development URL with `?demo=1`.
+
 [LUMEN](https://github.com/) is a self-hosted app built around a moth that
 lives on light. It gets tired when you stop photographing, and it never dies —
 a bad week must not kill the thing, or you never open it again.

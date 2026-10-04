@@ -1,5 +1,7 @@
 # FieldLog
 
+Use `?demo=1` on the development URL to render a non-persistent sample inspection for screenshots and layout testing.
+
 **Quietglass** · Walk an inspection hands-free. Speak the defect, attach a photo, export the report.
 
 Handover, survey, snag list, vehicle return, plant maintenance. You see

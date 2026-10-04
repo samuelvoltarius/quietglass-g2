@@ -10,7 +10,7 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, setSettings, type CadenceData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
-const PIXEL_ICON = ["....##....", "...####...", "...####...", "..##..##..", "..##..##..", ".##....##.", ".##....##.", "##......##", "##########", "##########"] as const;
+const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
 
 /** Tempo step for a swipe on the glasses. */
 const BPM_STEP = 4;

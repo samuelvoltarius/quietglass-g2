@@ -4,6 +4,8 @@
 
 A compact pixel clock separates the running timer visually from project and history text.
 
+For a non-persistent simulator showcase, open the development URL with `?demo=1`.
+
 Tap to start a project. Tap to stop. The running total sits in your field of
 view. No phone in your hand, no app switching, no reconstructing the day from
 memory at six o'clock.

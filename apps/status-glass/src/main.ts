@@ -11,10 +11,13 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
+const DEMO = new URLSearchParams(location.search).get("demo") === "1";
+
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: StatusData = await load(bridge);
+  if (DEMO) data = { ...data, sources: [{ id: "nas", name: "NAS", url: "http://demo.local/nas" }, { id: "home", name: "Home", url: "http://demo.local/home" }] };
   let statuses = new Map<string, SourceStatus>();
   const failures = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -127,8 +130,13 @@ async function boot(): Promise<void> {
   };
 
   syncSources();
+  if (DEMO) {
+    const now = Date.now(); const nas = statuses.get("nas"); const home = statuses.get("home");
+    if (nas) statuses.set("nas", applyReport(nas, { name: "NAS", metrics: [{ id: "disk", label: "Disk", value: 91, unit: "%", warn: 85, critical: 96 }, { id: "backup", label: "Backup", state: "ok" }] }, now));
+    if (home) statuses.set("home", applyReport(home, { name: "Home", metrics: [{ id: "heat", label: "Heating", state: "ok" }, { id: "battery", label: "Sensor battery", value: 12, unit: "%", warn: 20, critical: 8, lowerIsWorse: true }] }, now));
+  }
   await draw();
-  startPolling();
+  if (!DEMO) startPolling();
 
   bridge.onEvenHubEvent((event) => {
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });

@@ -1,5 +1,7 @@
 # Status Glass
 
+Use `?demo=1` on the development URL to render non-persistent sample service metrics for screenshots and layout testing.
+
 **Quietglass** · Homelab and service monitoring over a protocol anyone can implement.
 
 A healthy system should cost you no attention. Status Glass shows **one line**

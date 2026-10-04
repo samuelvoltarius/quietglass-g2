@@ -20,6 +20,8 @@ copying, so no app can break another.
 
 ## The apps
 
+See all twenty native-resolution simulator captures in the [screenshot gallery](docs/GALLERY.md).
+
 | App | What it does | Tests |
 |---|---|---|
 | [**PromptFlow**](apps/promptflow) | Teleprompter. Pacing counted in words read, not lines scrolled, so speed stays honest however the text wraps. | 90 |

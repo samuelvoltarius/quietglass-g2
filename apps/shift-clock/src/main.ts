@@ -10,11 +10,16 @@ import { load, save, type ClockData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
 const PIXEL_ICON = ["...####...", ".########.", ".##....##.", "##...#.###", "##...#.###", "##...####.", "##......##", ".##....##.", ".########.", "...####..."] as const;
+const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: ClockData = await load(bridge);
+  if (DEMO) {
+    const now = Date.now();
+    data = { ...data, projects: ["Client Portal", "Research"], entries: [{ id: "demo-1", project: "Research", startedAt: now - 7_200_000, endedAt: now - 5_850_000 }], open: { project: "Client Portal", startedAt: now - 2_754_000 } };
+  }
   let clock: ClockState = data.open;
   /** Non-null while the user is picking a project on the glasses. */
   let selecting: string | null = null;
