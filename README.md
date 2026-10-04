@@ -1,6 +1,6 @@
 # Quietglass — applications for Even Realities G2
 
-Eighteen apps for the [Even Realities G2](https://www.evenrealities.com) smart
+Twenty apps for the [Even Realities G2](https://www.evenrealities.com) smart
 glasses, built on the official Even Hub SDK.
 
 Two things run through all of them:
@@ -40,9 +40,11 @@ copying, so no app can break another.
 | [**PodCaption**](apps/podcaption) | Podcast captions from a local VTT/SRT/JSON/text file or Podcasting 2.0 RSS transcripts. | 3 |
 | [**Companion**](apps/companion) | Push-to-talk personal assistant with a user-configurable local endpoint and explicit microphone control. | 3 |
 | [**Map Glass**](apps/map-glass) | Visual routing from the phone's live position to saved destination coordinates through OSRM. | 3 |
+| [**Endurance HUD**](apps/endurance-hud) | Live running and cycling metrics from Garmin Connect IQ, a bike computer, Cloudflare, or any JSON telemetry source. | 3 |
+| [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions; account secrets remain in the local bridge and no trading actions exist. | 3 |
 
 ```
-815 tests · 18 builds · every app confirmed rendering in the Even Hub simulator
+821 tests · 20 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
@@ -77,6 +79,8 @@ Several apps talk to something you host. Each ships a working implementation, so
 | PodCaption | [`podcast-bridge.mjs`](apps/podcaption/examples/podcast-bridge.mjs) | Feed and transcript proxy restricted to one configured feed |
 | Companion | [`assistant-bridge.mjs`](apps/companion/examples/assistant-bridge.mjs) | Push-to-talk upload and optional assistant upstream |
 | Map Glass | [`route-bridge.mjs`](apps/map-glass/examples/route-bridge.mjs) | Route geometry endpoint |
+| Endurance HUD | [`telemetry-bridge.mjs`](apps/endurance-hud/examples/telemetry-bridge.mjs) | Live run/bike telemetry ingest and display feed |
+| Market Glance | [`market-bridge.mjs`](apps/market-glance/examples/market-bridge.mjs) | Read-only Polymarket/Kalshi position normalizer |
 
 OpenGlance needs a Valhalla instance; its README gives the one-line Docker
 command.
@@ -91,7 +95,7 @@ Applied by every app, carried as its own copy:
   swipe, long press — with the R1 ring reported as a distinct source and a
   user-toggleable swipe inversion.
 - **Pure logic, thin SDK adapter.** Everything testable imports no SDK types.
-  That is where all 815 tests live.
+  That is where all 821 tests live.
 - **Redraw suppression.** The display is written only when the view changed.
 - **Privacy-first defaults.** No permission is declared unless used. Apps that
   open the microphone show an indicator that cannot be hidden. Apps that could
