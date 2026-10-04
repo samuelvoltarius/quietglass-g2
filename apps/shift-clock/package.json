@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/shift-clock",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quietglass ShiftClock — hands-free time tracking",
   "author": "Quietglass",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9894 http://127.0.0.1:5194",
-    "pack": "evenhub pack app.json dist -o"
+    "pack": "evenhub pack app.json dist -o shift-clock.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16"

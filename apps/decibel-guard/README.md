@@ -2,6 +2,8 @@
 
 **Quietglass** · Noise dose over time. Measures the level, records nothing.
 
+A monochrome speaker-and-wave pixel symbol makes the live noise screen immediately recognizable without storing audio.
+
 Hearing damage is cumulative and silent. A single loud moment is rarely the
 problem; four hours in a workshop is. DecibelGuard watches the level around you
 and tells you when the day's dose is used up — not just that it is loud right

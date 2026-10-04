@@ -1,5 +1,8 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -7,6 +10,7 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { NavView } from "./view";
+import { renderPixelIcon, type PixelIcon } from "./pixel";
 
 /**
  * Renders the navigation onto the G2.
@@ -39,15 +43,16 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: NavView): CreateStartUpPageContainer {
+export function buildPage(view: NavView, icon?: PixelIcon): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: 3,
+    containerTotalNum: icon ? 4 : 3,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true),
+      text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon)),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
+    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
   });
 }
 
@@ -56,13 +61,14 @@ function text(
   content: string,
   zOrderIndex: number,
   captureEvents: boolean,
+  compact = false,
 ): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: 0,
+    xPosition: compact ? 104 : 0,
     yPosition: spec.y,
-    width: SCREEN_WIDTH,
+    width: compact ? SCREEN_WIDTH - 104 : SCREEN_WIDTH,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
@@ -76,8 +82,8 @@ function text(
  * though it is reported to always fail on hardware: the call itself registers
  * event routing, and skipping it leaves the app deaf to input.
  */
-export async function createPage(bridge: EvenAppBridge, view: NavView): Promise<RenderResult> {
-  const page = buildPage(view);
+export async function createPage(bridge: EvenAppBridge, view: NavView, icon?: PixelIcon): Promise<RenderResult> {
+  const page = buildPage(view, icon);
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
@@ -86,7 +92,7 @@ export async function createPage(bridge: EvenAppBridge, view: NavView): Promise<
 
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return { ok: true };
+    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -94,7 +100,7 @@ export async function createPage(bridge: EvenAppBridge, view: NavView): Promise<
 }
 
 /** Fast path: change the text of the three containers in place. */
-export async function updatePage(bridge: EvenAppBridge, view: NavView): Promise<RenderResult> {
+export async function updatePage(bridge: EvenAppBridge, view: NavView, icon?: PixelIcon): Promise<RenderResult> {
   const updates: Array<[ContainerSpec, string]> = [
     [CONTAINER.header, view.header],
     [CONTAINER.body, view.body.join("\n")],
@@ -109,10 +115,19 @@ export async function updatePage(bridge: EvenAppBridge, view: NavView): Promise<
         content,
       }));
     }
-    return { ok: true };
+    return updatePixel(bridge, icon);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+}
+
+async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
+  if (!icon) return { ok: true };
+  try {
+    const imageData = await renderPixelIcon(icon);
+    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "pixel-icon", imageData }));
+    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
+  } catch (error) { return { ok: false, reason: errorMessage(error) }; }
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

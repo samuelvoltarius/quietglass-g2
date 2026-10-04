@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/lumen-glass",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quietglass Lumen Glass — your LUMEN moth, in view",
   "author": "Quietglass",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9900 http://127.0.0.1:5200",
-    "pack": "evenhub pack app.json dist -o"
+    "pack": "evenhub pack app.json dist -o lumen-glass.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16"

@@ -2,6 +2,8 @@
 
 **Quietglass** · Your LUMEN moth, in view — so the thing that gets you outside is where you can see it.
 
+The glasses view now gives LUMEN its own monochrome pixel moth instead of relying on text alone.
+
 [LUMEN](https://github.com/) is a self-hosted app built around a moth that
 lives on light. It gets tired when you stop photographing, and it never dies —
 a bad week must not kill the thing, or you never open it again.

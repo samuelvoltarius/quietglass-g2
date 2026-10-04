@@ -2,6 +2,8 @@
 
 **Quietglass** · Live-Lauf- und Raddaten für die Even Realities G2.
 
+Je nach Sport erscheint ein eigenes monochromes Lauf- oder Fahrrad-Pixelpiktogramm neben den Live-Werten.
+
 Endurance HUD zeigt Tempo oder Pace, Leistung, Herzfrequenz, Kadenz, Distanz und Trainingszeit. Die lokale Bridge nimmt schlankes JSON von Garmin Connect IQ, einem Cloudflare Worker, Radcomputer oder eigenen Sensor-Gateway entgegen.
 
 ![Endurance HUD im Even-Hub-Simulator](docs/screenshot.png)

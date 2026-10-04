@@ -2,6 +2,8 @@
 
 **Quietglass** · Visual metronome and practice log for Even Realities G2.
 
+A dedicated pixel metronome marks the beat screen while the numeric tempo remains the primary information.
+
 The G2 has no speaker. That sounds like a reason not to build a metronome — it
 is actually the reason to build this one: the beat sits in your field of view
 while your ears stay free for the instrument.

@@ -2,6 +2,8 @@
 
 **Quietglass** · Turn-by-turn navigation on OpenStreetMap data. No Mapbox, no API key.
 
+A high-contrast pixel turn arrow gives the maneuver an instant visual anchor beside the route text.
+
 Every navigation app found for the Even G2 routes through Mapbox or another
 proprietary service — an account, a key, a quota. OpenGlance targets
 **Valhalla** on OpenStreetMap data, which you can host yourself.

@@ -9,6 +9,8 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, type LumenData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
+const PIXEL_ICON = ["##......##", "####..####", ".########.", "..######..", "...####...", "....##....", "...####...", "..##..##..", ".##....##.", "##......##"] as const;
+
 /** How often the moth and the light window refresh. */
 const POLL_MS = 60_000;
 
@@ -35,7 +37,7 @@ async function boot(): Promise<void> {
     const view = currentView();
     if (sameView(lastView, view)) return;
 
-    const outcome = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    const outcome = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
     if (outcome.ok) { pageReady = true; lastView = view; return; }
     pageReady = false;
     console.warn("[lumen] draw failed:", outcome.reason);

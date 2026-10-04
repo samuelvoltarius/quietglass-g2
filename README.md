@@ -43,6 +43,10 @@ copying, so no app can break another.
 | [**Endurance HUD**](apps/endurance-hud) | Live running and cycling metrics from Garmin Connect IQ, a bike computer, Cloudflare, or any JSON telemetry source. | 3 |
 | [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions; account secrets remain in the local bridge and no trading actions exist. | 3 |
 
+### Pixel-first glance UI
+
+Ten apps use real monochrome G2 image containers where a symbol makes the screen faster to understand: PostureLens, DecibelGuard, Cadence, ShiftClock, OpenGlance, Lumen Glass, RainLens, Dayline, Map Glass, and Endurance HUD. RainLens switches weather symbols, Endurance HUD switches between running and cycling, and Map Glass draws the route itself. Text-critical apps such as PromptFlow, Babel Glass, PodCaption, FlowList, FieldLog, NextStop, Agent Glass, Companion, Status Glass, and Market Glance deliberately keep the full width for words, rows, or safety-critical values.
+
 ```
 821 tests · 20 builds · every app confirmed rendering in the Even Hub simulator
 ```

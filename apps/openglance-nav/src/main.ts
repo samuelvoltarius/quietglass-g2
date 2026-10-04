@@ -17,6 +17,8 @@ import {
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
+const PIXEL_ICON = [".....##...", "....####..", "...######.", "..########", ".####.####.", "####..###.", ".......##.", ".......##.", ".......##.", ".......##."] as const;
+
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
@@ -47,7 +49,7 @@ async function boot(): Promise<void> {
     const view = currentView();
     if (sameView(lastView, view)) return;
 
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
     if (result.ok) { pageReady = true; lastView = view; return; }
     pageReady = false;
     console.warn("[openglance] draw failed:", result.reason);

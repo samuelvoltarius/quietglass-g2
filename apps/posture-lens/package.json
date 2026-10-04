@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/posture-lens",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quietglass PostureLens — neck angle over time, from the IMU",
   "author": "Quietglass",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9892 http://127.0.0.1:5192",
-    "pack": "evenhub pack app.json dist -o"
+    "pack": "evenhub pack app.json dist -o posture-lens.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16"

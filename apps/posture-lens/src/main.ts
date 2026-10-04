@@ -12,6 +12,8 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, type PostureData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
+const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "..######..", "..#.##.#..", "....##....", "...#..#...", "..##..##..", ".##....##."] as const;
+
 /**
  * IMU sampling rate. 500 ms is plenty for posture, which changes over minutes,
  * and keeps the BLE link and battery quiet compared with the 100 ms option.
@@ -42,7 +44,7 @@ async function boot(): Promise<void> {
     const view = currentView();
     if (sameView(lastView, view)) return;
 
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
     if (result.ok) {
       pageReady = true;
       lastView = view;

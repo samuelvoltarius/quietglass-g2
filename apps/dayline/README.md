@@ -2,6 +2,8 @@
 
 **Quietglass** · Kalender und Erinnerungen in einer Tageslinie.
 
+Ein monochromes Pixel-Kalenderblatt macht die Tagesansicht auf der Brille sofort erkennbar.
+
 ![Dayline im Even-Hub-Simulator](docs/screenshot.png)
 
 Dayline kombiniert Termine und Aufgaben, ohne einen Cloudanbieter vorzuschreiben. Eine `.ics`-Datei kann direkt auf dem Telefon ausgewählt oder in die Phone-UI eingefügt werden; dafür ist kein Server nötig. Für laufende Synchronisierung liegt zusätzlich eine kleine lokale JSON-Bridge bei. Die Oberfläche und die Brillensteuerung unterstützen Deutsch, Englisch, Französisch, Spanisch und Italienisch.

@@ -2,6 +2,8 @@
 
 **Quietglass** · Neck angle over time, measured on your head.
 
+A monochrome posture silhouette now anchors the readout, so the warning is recognizable before the angle text is read.
+
 The IMU in the G2 sits on your head all day. Of roughly 150 community projects
 for these glasses, two touch it. PostureLens uses it for the thing it is
 uniquely placed to do: notice that your head has been forward for twenty
