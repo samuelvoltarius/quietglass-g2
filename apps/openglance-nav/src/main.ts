@@ -12,12 +12,12 @@ import { gestureFromEvent } from "./input/gestures";
 import { buildView, type NavView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
+import { pixelArrowFor } from "./glasses/icons";
 import {
   destinationOf, load, save, usesMockRouter, type NavData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
-const PIXEL_ICON = [".....##...", "....####..", "...######.", "..########", ".####.####.", "####..###.", ".......##.", ".......##.", ".......##.", ".......##."] as const;
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 async function boot(): Promise<void> {
@@ -51,7 +51,10 @@ async function boot(): Promise<void> {
     const view = currentView();
     if (sameView(lastView, view)) return;
 
-    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
+    const maneuver = nav ? progressOf(nav).maneuver : null;
+    const icon = pixelArrowFor(maneuver?.type);
+
+    const result = pageReady ? await updatePage(bridge, view, icon) : await createPage(bridge, view, icon);
     if (result.ok) { pageReady = true; lastView = view; return; }
     pageReady = false;
     console.warn("[openglance] draw failed:", result.reason);

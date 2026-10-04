@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/agent-glass",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quietglass Agent Glass — watch and steer a coding agent from the glasses",
   "author": "Quietglass",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9902 http://127.0.0.1:5202",
-    "pack": "evenhub pack app.json dist -o"
+    "pack": "evenhub pack app.json dist -o agent-glass.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16"

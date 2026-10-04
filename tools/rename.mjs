@@ -16,8 +16,6 @@ const SKIP = new Set(["node_modules", "dist", ".git", ".sim", ".verify"]);
 const RULES = [
   // Identifiers first, so the prose rules cannot corrupt them.
   [/@quietglass\//g, "@quietglass/"],
-  [/labs\.aigner\./g, "glass.quiet."],
-  [/aignerlabs\./g, "quietglass."],
   [/quietglass\/flowlist@1/g, "quietglass/flowlist@1"],
   [/quietglass-g2/g, "quietglass-g2"],
   [/Quietglass/g, "Quietglass"],

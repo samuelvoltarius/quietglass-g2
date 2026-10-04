@@ -8,6 +8,16 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, parsePairingUrl, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 
+const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
+const DEMO_SESSION: Session = {
+  id: "demo",
+  title: "Improve dashboard loading state",
+  cwd: "/workspace/example-app",
+  provider: "codex",
+  status: "running",
+  timestamp: new Date("2026-01-01T12:00:00Z"),
+};
+
 /**
  * Agent Glass.
  *
@@ -26,7 +36,7 @@ import { mountPhoneUi } from "./ui/phone";
  *     http://127.0.0.1:5202/?pair=http://127.0.0.1:3456%3Ftoken%3D…
  *
  * The simulator has no way to type a token, so without this the app can only
- * ever be seen saying "kein Token". A value stored in the app always wins, so
+ * ever be seen saying "no token". A value stored in the app always wins, so
  * this seeds the first run and is then out of the way.
  */
 export function pairingFromUrl(search: string): Partial<Settings> | null {
@@ -45,12 +55,20 @@ async function boot(): Promise<void> {
 
   // A stored token always wins; the URL only helps the very first run.
   const seeded = pairingFromUrl(globalThis.location?.search ?? "");
-  if (seeded && !settings.token) {
+  if (!DEMO && seeded && !settings.token) {
     settings = { ...settings, ...seeded };
     await save(bridge, settings);
   }
-  let state: AgentState = EMPTY_STATE;
-  let sessions: readonly Session[] = [];
+  let state: AgentState = DEMO ? {
+    ...EMPTY_STATE,
+    session: DEMO_SESSION,
+    text: "I am updating the loading state and checking the component tests.",
+    tool: "Edit",
+    busy: true,
+    startedAt: new Date(Date.now() - 12000),
+    controllable: true,
+  } : EMPTY_STATE;
+  let sessions: readonly Session[] = DEMO ? [DEMO_SESSION] : [];
   let screen: Screen = "agent";
   let selected = 0;
   let stopStream: (() => void) | null = null;
@@ -128,7 +146,7 @@ async function boot(): Promise<void> {
     if (!session || !state.pending) return;
 
     if (!state.controllable) {
-      state = { ...state, error: "Diese Sitzung läuft nicht unter Even Terminal — nur mitlesen." };
+      state = { ...state, error: "This session is not running under Even Terminal — watch only." };
       await draw();
       return;
     }
@@ -136,7 +154,7 @@ async function boot(): Promise<void> {
     if (state.pending.kind === "question") {
       // A free-text question cannot be answered by a swipe. Saying so beats
       // silently sending "allow", which the agent would read as an answer.
-      state = { ...state, error: "Rückfrage braucht Text — bitte am Rechner beantworten." };
+      state = { ...state, error: "This question needs text — answer it on the computer." };
       await draw();
       return;
     }
@@ -154,21 +172,26 @@ async function boot(): Promise<void> {
     }
   };
 
-  if (!settings.token) {
-    state = { ...state, error: "Kein Token — bitte in der Handy-App eintragen." };
-  }
-  await draw();
+  if (DEMO) {
+    await draw();
+  } else {
+    if (!settings.token) {
+      state = { ...state, error: "No token — enter one in the phone app." };
+    }
+    await draw();
 
-  if (settings.token) {
-    await loadSessions();
-    const previous = sessions.find((session) => session.id === settings.sessionId);
-    if (previous) await open(previous);
-    else if (sessions.length > 0) { screen = "sessions"; await draw(); }
+    if (settings.token) {
+      await loadSessions();
+      const previous = sessions.find((session) => session.id === settings.sessionId);
+      if (previous) await open(previous);
+      else if (sessions.length > 0) { screen = "sessions"; await draw(); }
+    }
   }
 
   bridge.onEvenHubEvent((event) => {
     const gesture = gestureFromEvent(event, { invertScroll: false });
     if (!gesture) return;
+    if (DEMO && gesture.gesture !== "doubleClick") return;
 
     // While a decision is pending it outranks every other binding: the swipes
     // mean allow and deny and nothing else, so no other screen can steal them.

@@ -2,7 +2,9 @@
 
 **Quietglass** · Turn-by-turn navigation on OpenStreetMap data. No Mapbox, no API key.
 
-A high-contrast pixel turn arrow gives the maneuver an instant visual anchor beside the route text.
+A large high-contrast pixel arrow now changes with every manoeuvre: left,
+right, straight, U-turn, roundabout, or arrival. It is the primary visual cue;
+the smaller text arrow remains as a redundant accessibility fallback.
 
 For a non-persistent mock route in the simulator, open the development URL with `?demo=1`.
 

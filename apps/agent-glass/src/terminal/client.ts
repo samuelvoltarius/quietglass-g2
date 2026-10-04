@@ -56,7 +56,7 @@ export class TerminalClient {
         signal: controller.signal,
       });
       if (response.status === 401 || response.status === 403) {
-        throw new Error("Token abgelehnt");
+        throw new Error("Token rejected");
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
@@ -99,7 +99,7 @@ export class TerminalClient {
       const stamp = asString(record["timestamp"]);
       return [{
         id,
-        title: asString(record["title"]) ?? "(ohne Titel)",
+        title: asString(record["title"]) ?? "(untitled)",
         cwd: asString(record["cwd"]) ?? "",
         provider: asString(record["provider"]) ?? "",
         status: asString(record["status"]) ?? "",
@@ -192,7 +192,7 @@ export function subscribe(
   source.onerror = (): void => {
     // EventSource reconnects by itself; this only surfaces the gap so the
     // display can stop pretending it is current.
-    onError("Verbindung unterbrochen");
+    onError("Connection interrupted");
   };
 
   return () => source.close();
@@ -200,8 +200,8 @@ export function subscribe(
 
 export function describeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/Token/.test(message)) return "Token abgelehnt";
-  if (/aborted|timeout/i.test(message)) return "Zeitüberschreitung";
-  if (/fetch|network|failed/i.test(message)) return "Even Terminal nicht erreichbar";
+  if (/Token/.test(message)) return "Token rejected";
+  if (/aborted|timeout/i.test(message)) return "Timed out";
+  if (/fetch|network|failed/i.test(message)) return "Even Terminal unreachable";
   return message.slice(0, 60);
 }

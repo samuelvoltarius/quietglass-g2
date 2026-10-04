@@ -1,41 +1,33 @@
 # Changelog
 
+## [0.2.0] — 2026-10-05
+
+- Converted the glasses UI, phone UI, errors, tests, and documentation to English.
+- Added a private `?demo=1` mode with neutral in-memory data for safe screenshots.
+- Replaced the live-session screenshot and removed personal example content.
+- Fixed the package output name and updated the minimum Even App version.
+
 ## [0.1.0] — 2026-09-29
 
-Erste Fassung. **Machbarkeitsnachweis**, bewusst klein gehalten.
+Initial proof of concept:
 
-### Enthalten
+- Session list from Even Terminal with swipe selection.
+- Session history and live SSE stream on the glasses.
+- Permission requests answered with swipe up to allow or swipe down to deny.
+- Clear distinction between controllable and watch-only sessions.
+- Pairing by pasting the full address printed by the server.
 
-- Sitzungsliste aus Even Terminal, Auswahl per Wischen.
-- Verlauf und Live-Strom (SSE) einer Sitzung auf der Brille.
-- Erlaubnis-Anfragen mit Wischen beantworten — hoch erlaubt, runter lehnt ab.
-- Ehrliche Unterscheidung zwischen steuerbaren und nur lesbaren Sitzungen.
-- Kopplung durch Einfügen der vollständigen Adresse, die der Server ausgibt.
+### Implementation notes
 
-### Beim Bauen gefunden
+- Even Terminal can only control sessions it started itself.
+- `even-terminal claude` is a client; the server is `even-terminal start`.
+- All endpoints live under `/api`.
+- `--allow-cors` is required when the app and terminal run on different ports.
+- `EventSource` cannot set an authorization header, so the local SSE endpoint
+  accepts the token as a query parameter.
 
-- **Even Terminal steuert nur eigene Sitzungen.** Es liest den Verlauf jeder
-  Claude-Code-Sitzung von der Platte, aber `/api/status`, `/api/prompt` und
-  `/api/permission-response` antworten mit `404 Session not found`, sobald die
-  Sitzung nicht von ihm selbst gestartet wurde. Steht in keiner Dokumentation.
-  Von Alfred gefunden, nicht von mir.
-- **`even-terminal claude` ist kein Server**, sondern ein Client, der sich an
-  einen laufenden Server hängt. Der Server ist `even-terminal start`.
-- **Alles liegt unter `/api`.** `/info` gibt 404 und sieht aus wie ein toter
-  Server; es heißt `/api/info`.
-- **`--allow-cors` ist Pflicht**, weil Brillen-App und Terminal-Server auf
-  verschiedenen Ports liegen. Ohne den Schalter verwirft der Browser jede
-  Antwort — dasselbe Symptom wie ein toter Server. Dritter Fall dieser Falle
-  im Projekt nach LUMEN und Status Glass.
-- **`EventSource` kann keinen Authorization-Header setzen.** Der Server nimmt
-  den Token auch als Query-Parameter; ohne Token antwortet er sauber mit 401.
-- **Der Simulator kann mehr Eingaben als dokumentiert**: `up`, `down`,
-  `click`, `double_click`, `long_press`, `long_press_release`. Bisher war nur
-  `click` bekannt.
+### Not included
 
-### Nicht enthalten
-
-- Der Erlaubnis-Bildschirm ist durch Tests abgedeckt, aber **nicht auf der
-  Brille beobachtet** — dafür braucht es eine von Even Terminal selbst
-  gestartete Sitzung.
-- Keine Spracheingabe. Die kann `hermes-even-hub-app` bereits.
+- The permission view is covered by tests but has not yet been validated on
+  physical glasses with a session started by Even Terminal.
+- No voice input.

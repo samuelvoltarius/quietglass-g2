@@ -1,5 +1,9 @@
 # Status Glass
 
+> **Looking for the Home Assistant app? This is it.** Status Glass includes a
+> dedicated Home Assistant adapter for dashboards and allow-listed controls;
+> the same app can also monitor NAS, servers, and other local services.
+
 Use `?demo=1` on the development URL to render non-persistent sample service metrics for screenshots and layout testing.
 
 **Quietglass** · Homelab and service monitoring over a protocol anyone can implement.

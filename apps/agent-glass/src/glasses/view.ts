@@ -73,17 +73,17 @@ export function buildView(state: AgentState, now: Date): AgentView {
   if (state.error) {
     return {
       header: "Agent Glass",
-      body: ["", ...wrap(state.error), "", "Läuft Even Terminal? Wurde es mit",
-        "--allow-cors gestartet?"],
-      footer: "tippen = nochmal versuchen",
+      body: ["", ...wrap(state.error), "", "Is Even Terminal running with",
+        "--allow-cors enabled?"],
+      footer: "tap = retry",
     };
   }
 
   if (!state.session) {
     return {
       header: "Agent Glass",
-      body: ["", "Keine Sitzung ausgewählt."],
-      footer: "halten = Sitzung wählen",
+      body: ["", "No session selected."],
+      footer: "hold = choose session",
     };
   }
 
@@ -93,7 +93,7 @@ export function buildView(state: AgentState, now: Date): AgentView {
   if (state.pending) {
     const detail = wrap(state.pending.detail);
     return {
-      header: state.pending.kind === "permission" ? "Erlaubnis nötig" : "Rückfrage",
+      header: state.pending.kind === "permission" ? "Permission required" : "Question",
       body: [
         state.pending.title,
         "",
@@ -107,8 +107,8 @@ export function buildView(state: AgentState, now: Date): AgentView {
       // where the answer has to be given beats offering a control that fails
       // in silence.
       footer: state.controllable
-        ? "hoch = erlauben · runter = ablehnen"
-        : "nur mitlesen — am Rechner beantworten",
+        ? "up = allow · down = deny"
+        : "watch only — answer on computer",
     };
   }
 
@@ -121,12 +121,12 @@ export function buildView(state: AgentState, now: Date): AgentView {
   }
 
   const status = state.busy
-    ? `arbeitet · ${elapsed(state.startedAt, now)}`
-    : state.controllable ? "bereit" : "nur mitlesen";
+    ? `working · ${elapsed(state.startedAt, now)}`
+    : state.controllable ? "ready" : "watch only";
 
   const action = !state.controllable
-    ? "halten = Sitzungswechsel"
-    : state.busy ? "halten = anhalten" : "halten = Sitzungswechsel";
+    ? "hold = switch session"
+    : state.busy ? "hold = interrupt" : "hold = switch session";
 
   return {
     header: shortTitle(state.session.title),
@@ -142,10 +142,10 @@ export function sessionList(
 ): AgentView {
   if (sessions.length === 0) {
     return {
-      header: "Sitzungen",
-      body: ["", "Even Terminal meldet keine Sitzung.",
-        "", "Läuft dort ein Agent?"],
-      footer: "tippen = zurück",
+      header: "Sessions",
+      body: ["", "Even Terminal reports no sessions.",
+        "", "Is an agent running there?"],
+      footer: "tap = back",
     };
   }
 
@@ -153,13 +153,13 @@ export function sessionList(
   const window = sessions.slice(Math.max(0, first), Math.max(0, first) + BODY_ROWS);
 
   return {
-    header: `Sitzungen (${sessions.length})`,
+    header: `Sessions (${sessions.length})`,
     body: window.map((session, offset) => {
       const index = Math.max(0, first) + offset;
       const cursor = index === selected ? ">" : " ";
       const busy = session.status && session.status !== "idle" ? " *" : "";
       return `${cursor} ${shortTitle(session.title, 38)}${busy}`.slice(0, LINE_WIDTH);
     }),
-    footer: "wischen = wählen · tippen = öffnen",
+    footer: "swipe = select · tap = open",
   };
 }

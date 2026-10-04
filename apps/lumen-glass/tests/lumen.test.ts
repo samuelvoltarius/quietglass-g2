@@ -12,7 +12,7 @@ import { EMPTY_DATA, isLocal, maskToken, parseData, validateUrl } from "../src/s
  */
 const statusPayload = {
   kreatur: {
-    person: "Alfred", name: "Lumen", art: "Falter",
+    person: "Alex", name: "Lumen", art: "Moth",
     licht: 72.0, zustand: "wach", geste: "sitzt aufmerksam auf deiner Hand",
     streak: 3, bester_streak: 5, modus: "alltag",
   },

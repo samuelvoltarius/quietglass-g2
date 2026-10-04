@@ -163,7 +163,7 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
         busy: false,
         pending: {
           kind: "permission",
-          title: event.tool ?? "Werkzeug",
+          title: event.tool ?? "Tool",
           detail: event.text || describeInput(event.raw),
         },
       };
@@ -172,7 +172,7 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
       return {
         ...state,
         busy: false,
-        pending: { kind: "question", title: "Rückfrage", detail: event.text },
+        pending: { kind: "question", title: "Question", detail: event.text },
       };
 
     // The decision has been made — by these glasses or elsewhere. Either way
@@ -185,7 +185,7 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
       return { ...state, busy: false, tool: null, startedAt: null };
 
     case "error":
-      return { ...state, busy: false, error: event.text || "Fehler" };
+      return { ...state, busy: false, error: event.text || "Error" };
 
     default:
       return state;

@@ -51,15 +51,15 @@ export interface UrlCheck { readonly valid: boolean; readonly error?: string }
 
 export function validateUrl(url: string): UrlCheck {
   const trimmed = url.trim();
-  if (!trimmed) return { valid: false, error: "Adresse fehlt." };
+  if (!trimmed) return { valid: false, error: "Address is required." };
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { valid: false, error: "Adresse muss mit http:// oder https:// beginnen." };
+      return { valid: false, error: "Address must start with http:// or https://." };
     }
     return { valid: true };
   } catch {
-    return { valid: false, error: "Das ist keine gültige Adresse." };
+    return { valid: false, error: "This is not a valid address." };
   }
 }
 
@@ -82,6 +82,6 @@ export function parsePairingUrl(input: string): { baseUrl: string; token: string
 
 /** Shows that a token exists without revealing it. */
 export function maskToken(token: string): string {
-  if (!token) return "keiner";
-  return `gesetzt (${token.length} Zeichen, endet auf ${token.slice(-4)})`;
+  if (!token) return "none";
+  return `set (${token.length} characters, ends in ${token.slice(-4)})`;
 }

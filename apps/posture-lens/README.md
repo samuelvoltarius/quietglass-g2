@@ -1,6 +1,11 @@
 # PostureLens
 
-**Quietglass** · Neck angle over time, measured on your head.
+**Quietglass** · A private posture reminder for desk work.
+
+In plain language: sit upright once and tap to calibrate. The glasses then use
+their motion sensor to notice when your head has stayed far forward for too
+long. They show a quiet warning to straighten up. It is not a camera, does not
+record you, and is not a medical device.
 
 A monochrome posture silhouette now anchors the readout, so the warning is recognizable before the angle text is read.
 

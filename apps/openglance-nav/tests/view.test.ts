@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { arrowFor, buildView, roadLabel } from "../src/glasses/view";
+import { pixelArrowFor } from "../src/glasses/icons";
 import { createMockProvider } from "../src/routing/provider";
 import { progressOf, startNavigation, update } from "../src/nav/navigator";
 import {
@@ -109,6 +110,12 @@ describe("labels", () => {
   it("gives every manoeuvre a distinct arrow", () => {
     expect(arrowFor("left")).not.toBe(arrowFor("right"));
     expect(arrowFor("roundabout")).not.toBe(arrowFor("straight"));
+  });
+
+  it("uses a large pixel arrow that matches the turn direction", () => {
+    expect(pixelArrowFor("left")).not.toEqual(pixelArrowFor("right"));
+    expect(pixelArrowFor("straight")).not.toEqual(pixelArrowFor("roundabout"));
+    for (const row of pixelArrowFor("right")) expect(row).toHaveLength(10);
   });
 });
 

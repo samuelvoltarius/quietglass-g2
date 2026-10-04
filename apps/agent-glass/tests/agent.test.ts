@@ -9,7 +9,7 @@ import { pairingFromUrl } from "../src/main";
 
 const NOW = new Date("2026-09-29T15:00:00Z");
 const SESSION = {
-  id: "s1", title: "Even G2: Gesammeltes Wissen", cwd: "F:\\",
+  id: "s1", title: "Example refactor session", cwd: "/workspace/example-app",
   provider: "claude", status: "idle", timestamp: NOW,
 };
 
@@ -44,14 +44,14 @@ describe("folding events into what is on screen", () => {
     // A delta is a fragment of a sentence being typed; a `text` is the entire
     // message. Treating the second as a fragment prints the answer twice.
     const typed = fold(base,
-      { type: "text_delta", text: "Ich " },
-      { type: "text_delta", text: "prüfe" });
-    expect(typed.text).toBe("Ich prüfe");
-    expect(fold(typed, { type: "text", text: "Fertig." }).text).toBe("Fertig.");
+      { type: "text_delta", text: "I am " },
+      { type: "text_delta", text: "checking" });
+    expect(typed.text).toBe("I am checking");
+    expect(fold(typed, { type: "text", text: "Done." }).text).toBe("Done.");
   });
 
   it("clears the old answer when a new instruction arrives", () => {
-    const after = fold({ ...base, text: "alt" }, { type: "user_prompt", text: "mach was" });
+    const after = fold({ ...base, text: "old" }, { type: "user_prompt", text: "do something" });
     expect(after.text).toBe("");
     expect(after.busy).toBe(true);
   });
@@ -107,16 +107,16 @@ describe("the decision screen", () => {
 
   it("shows what will actually run, not just the tool name", () => {
     const view = buildView(asked, NOW);
-    expect(view.header).toBe("Erlaubnis nötig");
+    expect(view.header).toBe("Permission required");
     expect(view.body.join(" ")).toContain("curl");
   });
 
   it("puts neither answer on a plain tap", () => {
     // A stray touch must not be able to authorise a command.
     const footer = buildView({ ...asked, controllable: true }, NOW).footer;
-    expect(footer).toContain("hoch");
-    expect(footer).toContain("runter");
-    expect(footer).not.toMatch(/tippen = erlauben/);
+    expect(footer).toContain("up");
+    expect(footer).toContain("down");
+    expect(footer).not.toMatch(/tap = allow/);
   });
 
   it("offers no swipe at all on a session it cannot steer", () => {
@@ -124,13 +124,13 @@ describe("the decision screen", () => {
     // Offering "swipe to allow" there would promise something that fails in
     // silence -- the screen says where the answer has to be given instead.
     const footer = buildView({ ...asked, controllable: false }, NOW).footer;
-    expect(footer).toContain("nur mitlesen");
-    expect(footer).not.toContain("hoch");
+    expect(footer).toContain("watch only");
+    expect(footer).not.toContain("up");
   });
 
   it("drops the running commentary while a decision is pending", () => {
-    const withText = { ...asked, text: "Ein langer Absatz voller Kontext." };
-    expect(buildView(withText, NOW).body.join(" ")).not.toContain("Absatz");
+    const withText = { ...asked, text: "A long paragraph full of context." };
+    expect(buildView(withText, NOW).body.join(" ")).not.toContain("paragraph");
   });
 
   it("fits the display", () => {
@@ -145,8 +145,8 @@ describe("the working screen", () => {
 
   it("keeps the newest text rather than the oldest", () => {
     // While the agent types, the last sentence is the one worth reading.
-    const long = { ...base, text: Array.from({ length: 30 }, (_, i) => `Zeile ${i}`).join("\n") };
-    expect(buildView(long, NOW).body.join(" ")).toContain("Zeile 29");
+    const long = { ...base, text: Array.from({ length: 30 }, (_, i) => `Line ${i}`).join("\n") };
+    expect(buildView(long, NOW).body.join(" ")).toContain("Line 29");
   });
 
   it("names the running tool", () => {
@@ -159,16 +159,16 @@ describe("the working screen", () => {
     expect(buildView({ ...base, busy: true, startedAt: started }, NOW).footer).toContain("12 s");
   });
 
-  it("says bereit when nothing is running", () => {
-    expect(buildView({ ...base, controllable: true }, NOW).footer).toContain("bereit");
+  it("says ready when nothing is running", () => {
+    expect(buildView({ ...base, controllable: true }, NOW).footer).toContain("ready");
   });
 
   it("says plainly when it is only watching", () => {
-    expect(buildView(base, NOW).footer).toContain("nur mitlesen");
+    expect(buildView(base, NOW).footer).toContain("watch only");
   });
 
   it("explains the CORS trap, which looks exactly like a dead server", () => {
-    const view = buildView({ ...base, error: "Even Terminal nicht erreichbar" }, NOW);
+    const view = buildView({ ...base, error: "Even Terminal unreachable" }, NOW);
     expect(view.body.join(" ")).toContain("--allow-cors");
   });
 
@@ -181,7 +181,7 @@ describe("the working screen", () => {
 
 describe("the session list", () => {
   const many = Array.from({ length: 12 }, (_, i) => ({
-    title: `Sitzung ${i}`, cwd: "F:\\", status: i === 3 ? "running" : "idle",
+    title: `Session ${i}`, cwd: "/workspace", status: i === 3 ? "running" : "idle",
   }));
 
   it("marks the selected row with something the glasses can draw", () => {
@@ -192,7 +192,7 @@ describe("the session list", () => {
   });
 
   it("keeps the selection visible on a long list", () => {
-    expect(sessionList(many, 11).body.join(" ")).toContain("Sitzung 11");
+    expect(sessionList(many, 11).body.join(" ")).toContain("Session 11");
   });
 
   it("flags a session that is currently working", () => {
@@ -200,7 +200,7 @@ describe("the session list", () => {
   });
 
   it("says so plainly when there is nothing to show", () => {
-    expect(sessionList([], 0).body.join(" ")).toContain("keine Sitzung");
+    expect(sessionList([], 0).body.join(" ")).toContain("no sessions");
   });
 });
 
@@ -234,13 +234,13 @@ describe("pairing and the token", () => {
 
   it("refuses a URL without a token rather than storing a useless address", () => {
     expect(parsePairingUrl("http://127.0.0.1:3456")).toBeNull();
-    expect(parsePairingUrl("kein url")).toBeNull();
+    expect(parsePairingUrl("not a url")).toBeNull();
   });
 
   it("never reveals the token", () => {
     const shown = maskToken("0366d1d7440bab2495d39633bd9c5a45");
     expect(shown).not.toContain("0366d1d7440bab2495d39633bd9c5a45");
-    expect(shown).toContain("32 Zeichen");
+    expect(shown).toContain("32 characters");
   });
 
   it("falls back cleanly on corrupt storage", () => {
@@ -252,9 +252,9 @@ describe("pairing and the token", () => {
 
 describe("failures", () => {
   it("names the two that look identical from the glasses", () => {
-    expect(describeError(new Error("Token abgelehnt"))).toBe("Token abgelehnt");
+    expect(describeError(new Error("Token rejected"))).toBe("Token rejected");
     expect(describeError(new TypeError("Failed to fetch")))
-      .toBe("Even Terminal nicht erreichbar");
+      .toBe("Even Terminal unreachable");
   });
 });
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0] — 2026-10-05
+
+- Made the Home Assistant integration prominent in the README and repository
+  app list instead of leaving it hidden under generic monitoring.
+- Reworked demo mode and the simulator screenshot around a Home Assistant
+  dashboard with allow-listed household actions.
+
 All notable changes to Status Glass are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 

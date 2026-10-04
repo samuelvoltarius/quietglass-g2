@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] — 2026-10-05
+
+- Replaced the ambiguous fixed pixel symbol with large manoeuvre-specific
+  arrows for left, right, straight, U-turn, roundabout, and arrival.
+- Kept the text arrow as a redundant fallback next to the distance.
+
 All notable changes to OpenGlance Navigation are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 

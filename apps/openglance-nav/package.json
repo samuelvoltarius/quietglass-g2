@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/openglance-nav",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Quietglass OpenGlance — turn-by-turn navigation on OpenStreetMap data",
   "author": "Quietglass",
   "license": "MIT",

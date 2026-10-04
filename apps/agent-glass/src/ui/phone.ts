@@ -32,42 +32,42 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       <div class="brand"><span class="brand-mark">Quietglass</span> Agent Glass</div>
 
       <div class="card">
-        <label for="pair">Kopplung</label>
+        <label for="pair">Pairing</label>
         <input id="pair" type="text" inputmode="url" spellcheck="false"
                placeholder="http://100.x.x.x:3456?token=…" />
-        <button id="apply" type="button">Übernehmen</button>
+        <button id="apply" type="button">Apply</button>
         <p class="hint">
-          Die vollständige Adresse einfügen, die <code>even-terminal</code> beim
-          Start ausgibt — Adresse und Token werden daraus gelesen.
+          Paste the full address printed by <code>even-terminal</code> at
+          startup. The address and token are read from it automatically.
         </p>
       </div>
 
       <div class="card">
-        <label>Verbindung</label>
+        <label>Connection</label>
         <p class="hint" id="conn"></p>
-        <button id="refresh" type="button">Sitzungen neu laden</button>
+        <button id="refresh" type="button">Reload sessions</button>
       </div>
 
       <div class="card">
-        <label>Serverstart</label>
+        <label>Server startup</label>
         <p class="hint">
-          Die Brille spricht den Server aus einer anderen Herkunft an, deshalb
-          muss er CORS erlauben:<br />
+          The glasses reach the server from another origin, so CORS must be
+          enabled:<br />
           <code>even-terminal claude --tailscale --allow-cors</code>
         </p>
       </div>
 
       <div class="card keys">
-        <label>Bedienung</label>
+        <label>Controls</label>
         <p class="hint">
-          <strong>Hoch wischen</strong> — Werkzeug erlauben<br />
-          <strong>Runter wischen</strong> — ablehnen<br />
-          <strong>Halten</strong> — anhalten, sonst Sitzungsliste<br />
-          <strong>Doppeltippen</strong> — Agent Glass verlassen
+          <strong>Swipe up</strong> — allow tool<br />
+          <strong>Swipe down</strong> — deny<br />
+          <strong>Hold</strong> — interrupt, or open the session list<br />
+          <strong>Double tap</strong> — leave Agent Glass
         </p>
         <p class="hint">
-          Weder Erlauben noch Ablehnen liegt auf einem einfachen Tippen — eine
-          Zufallsberührung darf kein Kommando freigeben.
+          Neither allow nor deny uses a plain tap, so an accidental touch can
+          never approve a command.
         </p>
       </div>
     `;
@@ -76,13 +76,13 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const conn = root.querySelector<HTMLElement>("#conn");
     if (conn) {
       const lines = [
-        `Adresse: ${settings.baseUrl}`,
+        `Address: ${settings.baseUrl}`,
         `Token: ${maskToken(settings.token)}`,
         sessions.length > 0
-          ? `${sessions.length} Sitzungen · aktiv: ${state.session?.title ?? "keine"}`
-          : "Keine Sitzungen geladen.",
+          ? `${sessions.length} sessions · active: ${state.session?.title ?? "none"}`
+          : "No sessions loaded.",
       ];
-      if (state.error) lines.push(`Fehler: ${state.error}`);
+      if (state.error) lines.push(`Error: ${state.error}`);
       conn.textContent = lines.join(" · ");
     }
 
@@ -101,7 +101,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       // Not a pairing URL — accept a bare address, but only a valid one.
       const check = validateUrl(value);
       if (!check.valid) {
-        pair?.setCustomValidity(check.error ?? "Ungültig");
+        pair?.setCustomValidity(check.error ?? "Invalid");
         pair?.reportValidity();
         return;
       }

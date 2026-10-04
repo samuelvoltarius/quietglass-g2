@@ -17,7 +17,7 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: StatusData = await load(bridge);
-  if (DEMO) data = { ...data, sources: [{ id: "nas", name: "NAS", url: "http://demo.local/nas" }, { id: "home", name: "Home", url: "http://demo.local/home" }] };
+  if (DEMO) data = { ...data, sources: [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] };
   let statuses = new Map<string, SourceStatus>();
   const failures = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -131,9 +131,20 @@ async function boot(): Promise<void> {
 
   syncSources();
   if (DEMO) {
-    const now = Date.now(); const nas = statuses.get("nas"); const home = statuses.get("home");
-    if (nas) statuses.set("nas", applyReport(nas, { name: "NAS", metrics: [{ id: "disk", label: "Disk", value: 91, unit: "%", warn: 85, critical: 96 }, { id: "backup", label: "Backup", state: "ok" }] }, now));
-    if (home) statuses.set("home", applyReport(home, { name: "Home", metrics: [{ id: "heat", label: "Heating", state: "ok" }, { id: "battery", label: "Sensor battery", value: 12, unit: "%", warn: 20, critical: 8, lowerIsWorse: true }] }, now));
+    const now = Date.now();
+    const homeAssistant = statuses.get("ha");
+    if (homeAssistant) statuses.set("ha", applyReport(homeAssistant, {
+      name: "HA",
+      metrics: [
+        { id: "door", label: "Front door unlocked", state: "warn" },
+        { id: "battery", label: "Hall sensor battery", value: 12, unit: "%", warn: 20, critical: 8, lowerIsWorse: true },
+        { id: "heat", label: "Living room heating", state: "ok" },
+      ],
+      actions: [
+        { id: "all-lights-off", label: "All lights off", confirm: true },
+        { id: "lock-front-door", label: "Lock front door", confirm: true },
+      ],
+    }, now));
   }
   await draw();
   if (!DEMO) startPolling();

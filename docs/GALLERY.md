@@ -19,10 +19,10 @@ Every image below is captured from the Even Hub simulator at the native 576 × 2
 | [NextStop](../apps/nextstop) | ![NextStop](../apps/nextstop/docs/screenshot.png) |
 | [OpenGlance Navigation](../apps/openglance-nav) | ![OpenGlance Navigation](../apps/openglance-nav/docs/screenshot.png) |
 | [PodCaption](../apps/podcaption) | ![PodCaption](../apps/podcaption/docs/screenshot.png) |
-| [PostureLens](../apps/posture-lens) | ![PostureLens](../apps/posture-lens/docs/screenshot.png) |
+| [PostureLens — private posture reminder](../apps/posture-lens) | ![PostureLens](../apps/posture-lens/docs/screenshot.png) |
 | [PromptFlow](../apps/promptflow) | ![PromptFlow](../apps/promptflow/docs/screenshot.png) |
 | [RainLens](../apps/rain-lens) | ![RainLens](../apps/rain-lens/docs/screenshot.png) |
 | [ShiftClock](../apps/shift-clock) | ![ShiftClock](../apps/shift-clock/docs/screenshot.png) |
-| [Status Glass](../apps/status-glass) | ![Status Glass](../apps/status-glass/docs/screenshot.png) |
+| [Status Glass + Home Assistant](../apps/status-glass#home-assistant) | ![Status Glass and Home Assistant](../apps/status-glass/docs/screenshot.png) |
 
 The screenshots demonstrate simulator behavior, not physical-G2 verification. Each app README states its current hardware-validation status.

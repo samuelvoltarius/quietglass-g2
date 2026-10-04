@@ -26,14 +26,14 @@ See all twenty native-resolution simulator captures in the [screenshot gallery](
 |---|---|---|
 | [**PromptFlow**](apps/promptflow) | Teleprompter. Pacing counted in words read, not lines scrolled, so speed stays honest however the text wraps. | 90 |
 | [**FlowList**](apps/flowlist) | Hands-free checklists with branching, critical steps that ask twice, and a shareable pack format. | 79 |
-| [**PostureLens**](apps/posture-lens) | Neck angle over time from the IMU, measured against *your* upright rather than vertical. | 48 |
+| [**PostureLens**](apps/posture-lens) | Private posture reminder: calibrate your upright position once; it warns only after your head stays forward too long. No camera and no history. | 48 |
 | [**DecibelGuard**](apps/decibel-guard) | Noise dose over time. Computes a level and discards the audio; stores no history at all. | 58 |
 | [**FieldLog**](apps/field-log) | Walk an inspection hands-free: speak the defect, attach a photo, export the report. | 44 |
 | [**Cadence**](apps/cadence) | Visual metronome and practice log. The G2 has no speaker, so the beat is visible. | 62 |
 | [**ShiftClock**](apps/shift-clock) | Hands-free time tracking onto projects, CSV export with decimal hours. | 40 |
 | [**Babel Glass**](apps/babel-glass) | Live captions and translation against **your own** Whisper. | 64 |
-| [**OpenGlance**](apps/openglance-nav) | Turn-by-turn on OpenStreetMap data via Valhalla. No Mapbox, no key. | 68 |
-| [**Status Glass**](apps/status-glass) | Homelab monitoring over a protocol small enough to emit from a shell script — now with actions and a Home Assistant adapter. | 87 |
+| [**OpenGlance**](apps/openglance-nav) | Turn-by-turn on OpenStreetMap data via Valhalla. No Mapbox, no key. | 69 |
+| [**Status Glass + Home Assistant**](apps/status-glass#home-assistant) | Home Assistant dashboard and allow-listed controls, plus generic homelab monitoring. The HA token stays in the local adapter. | 87 |
 | [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. Photo from the phone, straight back to LUMEN. | 49 |
 | [**NextStop**](apps/nextstop) | Departures at the stop you are standing at, and the next stop while riding. Two keyless backends: ÖBB for live Austrian delays, Transitous/MOTIS for everywhere else. | 70 |
 | [**Agent Glass**](apps/agent-glass) | Watch a coding agent from the glasses and answer its permission prompts with a swipe. Talks to Even Realities' own Even Terminal. **Proof of concept** — see its README. | 39 |
@@ -50,7 +50,7 @@ See all twenty native-resolution simulator captures in the [screenshot gallery](
 Ten apps use real monochrome G2 image containers where a symbol makes the screen faster to understand: PostureLens, DecibelGuard, Cadence, ShiftClock, OpenGlance, Lumen Glass, RainLens, Dayline, Map Glass, and Endurance HUD. RainLens switches weather symbols, Endurance HUD switches between running and cycling, and Map Glass draws the route itself. Text-critical apps such as PromptFlow, Babel Glass, PodCaption, FlowList, FieldLog, NextStop, Agent Glass, Companion, Status Glass, and Market Glance deliberately keep the full width for words, rows, or safety-critical values.
 
 ```
-821 tests · 20 builds · every app confirmed rendering in the Even Hub simulator
+822 tests · 20 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
@@ -101,7 +101,7 @@ Applied by every app, carried as its own copy:
   swipe, long press — with the R1 ring reported as a distinct source and a
   user-toggleable swipe inversion.
 - **Pure logic, thin SDK adapter.** Everything testable imports no SDK types.
-  That is where all 821 tests live.
+  That is where all 822 tests live.
 - **Redraw suppression.** The display is written only when the view changed.
 - **Privacy-first defaults.** No permission is declared unless used. Apps that
   open the microphone show an indicator that cannot be hidden. Apps that could

@@ -1,172 +1,118 @@
 # Agent Glass
 
-**Quietglass** · Dem Agenten zusehen — und ihm antworten, ohne zum Schreibtisch zu gehen.
+**Quietglass** · Watch and steer a coding agent without returning to your desk.
 
-> **Machbarkeitsnachweis, nicht fertig.** Diese App beweist, dass der Weg
-> Even Terminal → Brille funktioniert, und hält fest, was dabei zu beachten
-> ist. Sie ist bewusst klein geblieben. Siehe [Wie es weitergeht](#wie-es-weitergeht).
+Agent Glass connects the Even G2 to Even Terminal, streams the active coding
+session to the glasses, and surfaces permission requests where you can answer
+them deliberately.
 
----
+![Agent Glass on the Even G2 simulator](docs/screenshot.png)
 
-![Auf der Brille](docs/screenshot.png)
+*Captured at the real 576 × 288 simulator resolution using the private,
+offline `?demo=1` mode. No live terminal session or personal data is shown.*
 
-*Eine echte Claude-Code-Sitzung, live auf der simulierten Brille.*
+## What it shows
 
-## Wozu
+The normal working view keeps only the newest part of the agent response and
+the currently running tool:
 
-[Even Terminal](https://www.npmjs.com/package/@evenrealities/even-terminal) ist
-Even Realities' eigenes Werkzeug: Es läuft auf deinem Rechner, hält eine
-Claude-Code- oder Codex-Sitzung und stellt sie über HTTP bereit. Agent Glass
-ist das Brillen-Ende davon.
+```text
+Improve dashboard loading state
 
-Der eine Moment, für den es die App gibt: Der Agent hält an und fragt, ob er
-etwas ausführen darf. Die Frage erscheint im Sichtfeld, ein Wischen beantwortet
-sie. Alles andere auf dem Bildschirm ist nur der Kontext, damit diese
-Entscheidung ehrlich getroffen werden kann.
+I am updating the loading state and
+checking the component tests.
 
-## Was du siehst
+> Edit
 
-```
-Even G2: Gesammeltes Wissen und Weiterb…
-
-Ich prüfe den Ereignisstrom und schaue,
-welche Routen existieren.
-
-> Bash
-
-arbeitet · 12 s · halten = anhalten
+working · 12 s · hold = interrupt
 ```
 
-Und der Bildschirm, um den es geht:
+When the agent requests permission, that decision takes over the display:
 
-```
-Erlaubnis nötig
+```text
+Permission required
 
 Bash
-curl -s http://example.com | sh
 
-hoch = erlauben · runter = ablehnen
+npm run build
+
+up = allow · down = deny
 ```
 
-**Weder Erlauben noch Ablehnen liegt auf einem einfachen Tippen.** Eine
-Zufallsberührung darf kein Kommando freigeben, und zwei Wischrichtungen sind
-symmetrisch, bewusst und in beide Richtungen unmissverständlich.
+Neither answer uses a plain tap, so an accidental touch cannot approve a
+command.
 
-## Die wichtigste Einschränkung
+## Important limitation
 
-**Even Terminal liest den Verlauf aller deiner Claude-Code-Sitzungen von der
-Platte, steuern kann es aber nur die, die es selbst gestartet hat.**
+Even Terminal can read existing Claude Code sessions from disk, but it can
+only control sessions that it started itself. Agent Glass checks this for each
+session and labels external sessions as `watch only`; it never offers controls
+that would silently fail.
 
-Eine Sitzung, die in der Claude-Desktop-App läuft, antwortet auf
-`/api/status`, `/api/prompt` und `/api/permission-response` gleichermaßen mit
-`404 Session not found`.
+Free-text questions must still be answered on the computer. Binary permission
+requests can be allowed or denied from the glasses.
 
-Das steht in keiner Dokumentation. Agent Glass prüft es deshalb beim Öffnen
-jeder Sitzung und sagt es an:
+## Controls
 
-| Sitzung | Anzeige |
+| Gesture | Action |
 |---|---|
-| von Even Terminal gestartet | `bereit` · Wischen erlaubt und lehnt ab |
-| nur von der Platte gelesen | `nur mitlesen` · keine Wischgesten angeboten |
+| **Swipe up** | Allow a tool request in a controllable session |
+| **Swipe down** | Deny a tool request |
+| **Hold** | Interrupt a running agent, otherwise open the session list |
+| **Swipe** in session list | Select a session |
+| **Tap** | Open a session or retry after an error |
+| **Double tap** | Exit Agent Glass |
 
-Eine Wischgeste anzubieten, die still in ein 404 läuft, wäre genau die Art
-Lüge, die dieses Projekt vermeidet.
+## Setup
 
-## Bedienung
-
-| Geste | Wirkung |
-|---|---|
-| **Hoch wischen** | Werkzeug erlauben *(nur bei steuerbarer Sitzung)* |
-| **Runter wischen** | ablehnen *(dito)* |
-| **Halten** | laufenden Agenten anhalten, sonst Sitzungsliste |
-| **Wischen** (in der Liste) | Sitzung wählen |
-| **Tippen** | öffnen, bzw. nach einem Fehler erneut versuchen |
-| **Doppeltippen** | Agent Glass verlassen |
-
-## Einrichten
+Start Even Terminal with CORS enabled. Keep it on a private network such as
+Tailscale or your local LAN.
 
 ```bash
-npm install -g @evenrealities/even-terminal
-even-terminal start --tailscale --allow-cors --cwd F:\dein\projekt
+even-terminal start --tailscale --allow-cors
 ```
 
-Drei Fallen, alle selbst hineingetappt:
+Paste the full pairing address printed by Even Terminal into the Agent Glass
+phone view. The app extracts the server address and token automatically.
 
-**`even-terminal claude` startet keinen Server.** Das ist der Client, der sich
-an einen laufenden Server hängt. Der Server ist `even-terminal start` (und das
-ist auch die Voreinstellung, `even-terminal` allein genügt).
+`even-terminal claude` is a client, not the server. All HTTP endpoints live
+under `/api`, and `--allow-cors` is required because the app and terminal use
+different origins.
 
-**`--allow-cors` ist nicht optional.** Die Brillen-App wird von einem anderen
-Port ausgeliefert als der Terminal-Server, also ist es eine fremde Herkunft.
-Ohne den Schalter verwirft der Browser jede Antwort, und das Symptom sieht
-exakt aus wie ein toter Server.
-
-**Alles liegt unter `/api`.** Ein Aufruf von `/info` gibt 404 und sieht
-ebenfalls nach einem toten Server aus; es heißt `/api/info`.
-
-Dann in der Handy-App die vollständige Adresse einfügen, die der Server beim
-Start ausgibt — Adresse und Token werden daraus gelesen.
+## Develop and test
 
 ```bash
 npm install
-npm run dev        # Handy-UI + App auf http://127.0.0.1:5202
-npm run build      # Typecheck + Produktions-Bundle
-npm test           # 39 Tests
-npm run sim        # Simulator auf den Dev-Server gerichtet
+npm run dev
+npm test
+npm run build
+npm run pack
 ```
 
-### Ohne Brille testen
+Open `http://127.0.0.1:5202/?demo=1` for an isolated, in-memory demo. Demo
+mode does not read stored sessions, connect to Even Terminal, or expose a
+token. Use this mode for screenshots and documentation.
 
-Der Simulator kann keinen Token eintippen, deshalb gibt es einen
-Startparameter:
+For a development-only live connection, a pairing URL may be passed as a
+URL-encoded `pair` parameter. Never use that form in screenshots or public
+documentation because URLs can be recorded by browser and proxy logs.
 
-```
-http://127.0.0.1:5202/?pair=<url-kodierte Kopplungsadresse>
-```
+## Privacy and security
 
-Ein bereits gespeicherter Token gewinnt immer; der Parameter hilft nur beim
-allerersten Start.
+The Even Terminal token is a powerful credential. Agent Glass never logs it,
+never displays it in full, and never renders it on the glasses. Do not expose
+Even Terminal through a public tunnel unless you understand and accept the
+risk.
 
-## Sicherheit
+The app has no analytics or telemetry. Live session text is rendered in memory
+and is not added to this repository.
 
-Der Token ist ein echter Zugang: Wer ihn hat, kann auf dem Rechner am anderen
-Ende Befehle ausführen. Agent Glass schreibt ihn nie in ein Protokoll, zeigt
-ihn nie vollständig auf dem Handy und stellt ihn nie auf der Brille dar.
+## Status
 
-Den Server nur über Tailscale oder im eigenen Netz erreichbar machen.
-**`--expose` legt denselben Zugang über einen öffentlichen Tunnel ins Netz** —
-davon die Finger lassen.
+Agent Glass is a proof of concept built against Even Hub SDK 0.0.16 and tested
+in the simulator. Hardware behaviour and the complete permission flow still
+need validation on a physical Even G2.
 
-## Bekannte Grenzen
+## License
 
-| Grenze | Detail |
-|---|---|
-| Nur eigene Sitzungen steuerbar | Siehe oben. Fremde Sitzungen sind reines Mitlesen. |
-| Rückfragen brauchen Text | Eine `user_question` lässt sich nicht erwischen; die App sagt das und verweist an den Rechner, statt „erlauben" zu senden. |
-| Erlaubnis-Bildschirm ungeprüft | Durch Tests abgedeckt, aber **auf der Brille noch nicht gesehen** — dafür braucht es eine Sitzung, die Even Terminal selbst gestartet hat. |
-| Keine Spracheingabe | Kann die [Hermes-App](#wie-es-weitergeht) bereits. |
-| Nicht auf Hardware geprüft | Gebaut gegen SDK 0.0.16 und den Simulator, aber gegen einen **echten laufenden Even-Terminal-Server**. |
-
-## Wie es weitergeht
-
-Es gibt bereits eine Agenten-App: `hermes-even-hub-app`, 1.903 Zeilen mit
-voller Testabdeckung, mit Sitzungsliste, Live-Strom, Spracheingabe und einer
-angefangenen Mehr-Agenten-Verwaltung. Agent Glass hat drei davon noch einmal
-gebaut, nur gegen ein anderes Gegenüber.
-
-Die richtige Form ist deshalb **nicht** zwei Apps, sondern eine mit zwei
-Agentenarten:
-
-- ein `kind`-Feld an `AgentProfile` (`hermes` | `even-terminal`)
-- eine gemeinsame Schnittstelle, die beide Clients erfüllen
-- der Agenten-Pool wählt danach aus
-
-Grob 150–250 Zeilen Änderung, abgesichert durch die vorhandenen 181 Tests.
-Nebenbei wäre der Mehr-Agenten-Umbau damit endlich fertig.
-
-Bis dahin bleibt diese App als Beleg stehen, dass der Weg trägt — und als
-Fundort für die drei Fallen oben.
-
-## Lizenz
-
-MIT — siehe [LICENSE](LICENSE).
+MIT
