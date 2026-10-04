@@ -35,7 +35,7 @@ copying, so no app can break another.
 | [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. Photo from the phone, straight back to LUMEN. | 49 |
 | [**NextStop**](apps/nextstop) | Departures at the stop you are standing at, and the next stop while riding. Two keyless backends: ÖBB for live Austrian delays, Transitous/MOTIS for everywhere else. | 70 |
 | [**Agent Glass**](apps/agent-glass) | Watch a coding agent from the glasses and answer its permission prompts with a swipe. Talks to Even Realities' own Even Terminal. **Proof of concept** — see its README. | 39 |
-| [**RainLens**](apps/rain-lens) | A 15-minute Open-Meteo rain timeline using phone location or saved coordinates. | 3 |
+| [**RainLens**](apps/rain-lens) | Full Open-Meteo weather: current conditions, wind, rain, hourly outlook, and 3-day forecast. | 3 |
 | [**Dayline**](apps/dayline) | Calendar and reminders with direct `.ics` file import; the local bridge is optional. | 3 |
 | [**PodCaption**](apps/podcaption) | Podcast captions from a local VTT/SRT/JSON/text file or Podcasting 2.0 RSS transcripts. | 3 |
 | [**Companion**](apps/companion) | Push-to-talk personal assistant with a user-configurable local endpoint and explicit microphone control. | 3 |

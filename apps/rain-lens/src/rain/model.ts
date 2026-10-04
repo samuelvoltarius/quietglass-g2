@@ -1,15 +1,61 @@
-export interface RainPoint { readonly time: string; readonly mm: number; }
-export interface RainWindow { readonly points: readonly RainPoint[]; readonly source: "live" | "demo"; }
-export function parseOpenMeteo(value: unknown): RainWindow {
-  const root = value as { minutely_15?: { time?: unknown; precipitation?: unknown } };
-  const times = root?.minutely_15?.time; const rain = root?.minutely_15?.precipitation;
-  if (!Array.isArray(times) || !Array.isArray(rain)) throw new Error("forecast has no 15-minute precipitation data");
-  const points: RainPoint[] = [];
-  for (let index = 0; index < Math.min(times.length, rain.length, 12); index += 1) { const time = times[index]; const mm = Number(rain[index]); if (typeof time === "string" && Number.isFinite(mm)) points.push({ time, mm }); }
-  if (points.length === 0) throw new Error("forecast is empty");
-  return { points, source: "live" };
+export type WeatherKind = "clear" | "cloud" | "fog" | "rain" | "snow" | "storm";
+
+export interface CurrentWeather {
+  readonly time: string; readonly temperature: number; readonly feelsLike: number; readonly humidity: number;
+  readonly precipitation: number; readonly weatherCode: number; readonly cloudCover: number; readonly windSpeed: number;
+  readonly windDirection: number; readonly windGusts: number; readonly isDay: boolean;
 }
-export function demoRain(): RainWindow { const values = [0, 0.1, 0.4, 1.2, 2.4, 1.7, 0.8, 0.2, 0, 0, 0.3, 0.7]; return { source: "demo", points: values.map((mm, index) => ({ time: new Date(Date.now() + index * 900_000).toISOString(), mm })) }; }
-export function rainBar(mm: number): string { const count = Math.min(12, Math.max(0, Math.round(mm * 4))); return `${"#".repeat(count)}${".".repeat(12 - count)}`; }
-export function rainSummary(points: readonly RainPoint[], dry = "Trocken in den naechsten 3 Stunden", rain = "Regen ab {time} · Spitze {peak} mm", locale = "de-AT"): string { const first = points.find((point) => point.mm >= 0.1); if (!first) return dry; const peak = points.reduce((best, point) => point.mm > best.mm ? point : best, points[0] ?? first); return rain.replace("{time}", clock(first.time, locale)).replace("{peak}", peak.mm.toFixed(1)); }
+export interface HourWeather { readonly time: string; readonly temperature: number; readonly precipitationProbability: number; readonly precipitation: number; readonly weatherCode: number; readonly windSpeed: number; }
+export interface DayWeather { readonly date: string; readonly minimum: number; readonly maximum: number; readonly precipitationProbability: number; readonly weatherCode: number; readonly sunrise: string; readonly sunset: string; }
+export interface WeatherForecast { readonly current: CurrentWeather; readonly hourly: readonly HourWeather[]; readonly daily: readonly DayWeather[]; readonly source: "live" | "demo"; }
+
+type NumericRecord = Record<string, unknown>;
+function finite(record: NumericRecord, key: string): number { const value = Number(record[key]); if (!Number.isFinite(value)) throw new Error(`forecast field ${key} is missing`); return value; }
+function strings(value: unknown): readonly string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
+function numbers(value: unknown): readonly number[] { return Array.isArray(value) ? value.map(Number) : []; }
+
+export function parseOpenMeteo(value: unknown): WeatherForecast {
+  const root = value as { current?: NumericRecord; hourly?: NumericRecord; daily?: NumericRecord };
+  if (!root?.current || typeof root.current.time !== "string") throw new Error("forecast has no current weather");
+  const current: CurrentWeather = {
+    time: root.current.time, temperature: finite(root.current, "temperature_2m"), feelsLike: finite(root.current, "apparent_temperature"),
+    humidity: finite(root.current, "relative_humidity_2m"), precipitation: finite(root.current, "precipitation"), weatherCode: finite(root.current, "weather_code"),
+    cloudCover: finite(root.current, "cloud_cover"), windSpeed: finite(root.current, "wind_speed_10m"), windDirection: finite(root.current, "wind_direction_10m"),
+    windGusts: finite(root.current, "wind_gusts_10m"), isDay: finite(root.current, "is_day") === 1,
+  };
+  const hourly = root.hourly ?? {}; const hourTimes = strings(hourly.time); const hourTemperature = numbers(hourly.temperature_2m);
+  const hourRainChance = numbers(hourly.precipitation_probability); const hourRain = numbers(hourly.precipitation);
+  const hourCodes = numbers(hourly.weather_code); const hourWind = numbers(hourly.wind_speed_10m); const hours: HourWeather[] = [];
+  for (let index = 0; index < hourTimes.length && hours.length < 12; index += 1) {
+    const time = hourTimes[index]; if (!time || time < current.time) continue;
+    const values = [hourTemperature[index], hourRainChance[index], hourRain[index], hourCodes[index], hourWind[index]];
+    if (!values.every(Number.isFinite)) continue;
+    hours.push({ time, temperature: values[0]!, precipitationProbability: values[1]!, precipitation: values[2]!, weatherCode: values[3]!, windSpeed: values[4]! });
+  }
+  if (hours.length === 0) throw new Error("forecast has no hourly weather");
+  const daily = root.daily ?? {}; const dayDates = strings(daily.time); const dayMin = numbers(daily.temperature_2m_min); const dayMax = numbers(daily.temperature_2m_max);
+  const dayRain = numbers(daily.precipitation_probability_max); const dayCodes = numbers(daily.weather_code); const sunrises = strings(daily.sunrise); const sunsets = strings(daily.sunset); const days: DayWeather[] = [];
+  for (let index = 0; index < Math.min(dayDates.length, 3); index += 1) {
+    const date = dayDates[index]; const sunrise = sunrises[index]; const sunset = sunsets[index]; const values = [dayMin[index], dayMax[index], dayRain[index], dayCodes[index]];
+    if (!date || !sunrise || !sunset || !values.every(Number.isFinite)) continue;
+    days.push({ date, minimum: values[0]!, maximum: values[1]!, precipitationProbability: values[2]!, weatherCode: values[3]!, sunrise, sunset });
+  }
+  if (days.length === 0) throw new Error("forecast has no daily weather");
+  return { current, hourly: hours, daily: days, source: "live" };
+}
+
+export function demoWeather(now = new Date()): WeatherForecast {
+  const hour = new Date(now); hour.setMinutes(0, 0, 0);
+  const hourly = Array.from({ length: 12 }, (_, index): HourWeather => ({ time: new Date(hour.valueOf() + index * 3_600_000).toISOString(), temperature: 14 + Math.sin(index / 3) * 3, precipitationProbability: [15, 20, 35, 60, 75, 55, 30, 20, 10, 10, 5, 5][index] ?? 0, precipitation: [0, 0, 0, 0.4, 1.2, 0.6, 0.1, 0, 0, 0, 0, 0][index] ?? 0, weatherCode: [2, 2, 3, 61, 63, 61, 3, 2, 1, 1, 0, 0][index] ?? 0, windSpeed: 12 + index }));
+  const daily = Array.from({ length: 3 }, (_, index): DayWeather => { const date = new Date(now.valueOf() + index * 86_400_000).toISOString().slice(0, 10); return { date, minimum: 8 + index, maximum: 18 + index, precipitationProbability: [75, 25, 10][index] ?? 0, weatherCode: [61, 2, 1][index] ?? 0, sunrise: `${date}T07:08`, sunset: `${date}T18:42` }; });
+  return { source: "demo", current: { time: now.toISOString(), temperature: 14.8, feelsLike: 13.6, humidity: 72, precipitation: 0, weatherCode: 2, cloudCover: 55, windSpeed: 14, windDirection: 245, windGusts: 24, isDay: true }, hourly, daily };
+}
+
+export function weatherKind(code: number): WeatherKind {
+  if (code === 0 || code === 1) return "clear"; if (code === 2 || code === 3) return "cloud"; if (code === 45 || code === 48) return "fog";
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "rain"; if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
+  if (code >= 95) return "storm"; return "cloud";
+}
+export function windCompass(degrees: number): string { const points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]; return points[Math.round(((degrees % 360) + 360) % 360 / 45) % 8] ?? "N"; }
 export function clock(iso: string, locale = "de-AT"): string { const date = new Date(iso); return Number.isNaN(date.valueOf()) ? "--:--" : date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }); }
+export function dayName(iso: string, locale = "de-AT"): string { const date = new Date(`${iso}T12:00:00`); return Number.isNaN(date.valueOf()) ? "---" : date.toLocaleDateString(locale, { weekday: "short" }); }

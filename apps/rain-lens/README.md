@@ -1,20 +1,27 @@
 # RainLens
 
-**Quietglass** · Niederschlag auf einen Blick für die Even Realities G2.
+**Quietglass** · Eine vollwertige Wetter-App für die Even Realities G2.
 
-RainLens holt die nächsten drei Stunden als 15-Minuten-Niederschlagswerte von Open-Meteo und zeigt daraus eine ruhige, lesbare Radar-Zeitleiste. Die Darstellung ist absichtlich keine winzige bunte Wetterkarte: Auf 576 × 288 monochromen Pixeln beantwortet sie die wichtigere Frage schneller – **wann beginnt der Regen, wie stark wird er, wann hört er auf?**
+RainLens zeigt nicht mehr nur Regen, sondern das komplette Wetterbild: aktuelle Temperatur und gefühlte Temperatur, Wetterlage, Luftfeuchte, Bewölkung, Wind und Böen, Niederschlag, die nächsten Stunden sowie eine Drei-Tage-Prognose. Die Informationen sind für das monochrome 576 × 288-Display priorisiert und bleiben mit wenigen Gesten erreichbar.
 
 ![RainLens im Even-Hub-Simulator](docs/screenshot.png)
 
 ## Funktionen
 
-- Standort vom Telefon, Salzburg als gekennzeichneter Fallback
-- zwölf 15-Minuten-Werte, davon sechs gleichzeitig auf der Brille
-- kein Konto und für nicht-kommerzielle Nutzung kein API-Schlüssel
-- Tap aktualisiert, Doppeltipp beendet
+- aktuelles Wetter mit Temperatur, gefühlter Temperatur und WMO-Wetterlage
+- klare monochrome Pixel-Piktogramme für Sonne, Wolken, Nebel, Regen, Schnee und Gewitter
+- Luftfeuchte, Bewölkung, Niederschlag, Windrichtung, Windstärke und Böen
+- zwölf kommende Stunden mit Temperatur und Regenwahrscheinlichkeit
+- Drei-Tage-Prognose mit Höchst-/Tiefstwerten und Sonnenauf-/untergang
+- Telefonstandort oder frei speicherbare Koordinaten; Salzburg als Fallback
+- Tap aktualisiert, Wischen wechselt die Ansicht, Doppeltipp beendet
 - Demo-Fallback bei Netzfehlern
-- automatische Spracherkennung plus Umschalter für Deutsch, Englisch, Französisch, Spanisch und Italienisch
-- alternativ zur Telefonposition frei speicherbare Koordinaten
+- Deutsch, Englisch, Französisch, Spanisch und Italienisch
+- keine Anmeldung und kein eigener API-Schlüssel erforderlich
+
+## Datenquelle
+
+RainLens lädt die Vorhersage direkt von Open-Meteo. Die App übermittelt nur die zur Prognose benötigten Koordinaten. Manuelle Koordinaten und die Sprachwahl bleiben lokal auf dem Gerät.
 
 ## Entwicklung
 
@@ -26,4 +33,4 @@ npm run dev
 npm run sim
 ```
 
-Noch nicht auf echter G2-Hardware geprüft. Open-Meteo liefert modellbasierte 15-Minuten-Niederschläge; RainLens behauptet deshalb nicht, ein meteorologisches Roh-Radarbild zu sein.
+Noch nicht auf echter G2-Hardware geprüft. Wetterdaten sind modellbasierte Prognosen und keine amtlichen Unwetterwarnungen.
