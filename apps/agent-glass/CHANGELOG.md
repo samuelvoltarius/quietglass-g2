@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] — 2026-10-05
+
+- Added opt-in spoken output through the phone's current audio route, including
+  AirPods and Bluetooth headphones on iOS and Android.
+- Added language, installed system voice, and speech-speed controls.
+- Buffers streamed tokens into completed sentences before speaking.
+- Omits code blocks, inline code, URLs, commands, and token-looking values from
+  spoken output; permission prompts use a generic alert instead of reading the
+  command aloud.
+- Added pause, resume, replay, and a one-tap activation flow required by phone
+  WebViews.
+- Documented the current provider boundary: Claude Code and Codex through Even
+  Terminal; Hermes and OpenClaw need an adapter rather than being claimed as
+  supported.
+
 ## [0.2.0] — 2026-10-05
 
 - Converted the glasses UI, phone UI, errors, tests, and documentation to English.

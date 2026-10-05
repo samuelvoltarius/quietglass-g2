@@ -6,6 +6,10 @@ Agent Glass connects the Even G2 to Even Terminal, streams the active coding
 session to the glasses, and surfaces permission requests where you can answer
 them deliberately.
 
+It can also read completed agent sentences through the phone's current audio
+route, including AirPods and Bluetooth headphones. Spoken output is opt-in and
+must be activated once from the phone after opening the app.
+
 ![Agent Glass on the Even G2 simulator](docs/screenshot.png)
 
 *Captured at the real 576 × 288 simulator resolution using the private,
@@ -60,8 +64,42 @@ requests can be allowed or denied from the glasses.
 | **Swipe down** | Deny a tool request |
 | **Hold** | Interrupt a running agent, otherwise open the session list |
 | **Swipe** in session list | Select a session |
-| **Tap** | Open a session or retry after an error |
+| **Tap** | Open a session, retry after an error, or replay the last spoken answer |
 | **Double tap** | Exit Agent Glass |
+
+## Spoken output
+
+![Agent Glass spoken-output controls](docs/phone-spoken-output.png)
+
+Enable **Spoken output** in the phone view, then choose a language, one of the
+voices installed on the phone, and a speed. Agent Glass waits for completed
+sentences instead of reading streaming tokens one by one.
+
+For privacy and clarity, it does not read code blocks, inline code, URLs,
+permission commands, or values that look like access tokens. A permission
+request is spoken only as “Permission required — check the glasses”; the
+actual command stays visual.
+
+The same implementation runs in the Even App on iOS and Android. iOS uses a
+WKWebView and Android uses Chromium. Both route speech through the phone's
+selected audio output. Reliable playback after locking or backgrounding the
+phone still requires a native audio-output API from the Even App and is not
+promised by this version.
+
+## Supported agents
+
+| Agent | Current support | Detail |
+|---|---|---|
+| **Claude Code** | Yes | Sessions, streaming text and permission decisions through Even Terminal |
+| **Codex** | Yes | Sessions, streaming text and permission decisions through Even Terminal |
+| **Hermes** | Adapter required | No compatible Even Terminal session/event endpoint has been connected yet |
+| **OpenClaw** | Adapter required | Its OpenAI-compatible chat endpoint alone does not expose terminal sessions and permission events |
+
+During the review, [cc-g2](https://github.com/wmoto-ai/cc-g2) was identified as
+the earlier agent app. It already implements hook-based Claude Code, Codex CLI
+and Copilot CLI flows. Those hooks are a useful basis for a future Agent Glass
+backend, but they do not currently make Hermes or OpenClaw drop-in Even
+Terminal providers.
 
 ## Setup
 

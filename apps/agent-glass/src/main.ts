@@ -7,6 +7,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, parsePairingUrl, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { AgentNarrator, createBrowserSpeechEngine } from "./speech/narrator";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const DEMO_SESSION: Session = {
@@ -52,6 +53,7 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let settings: Settings = await load(bridge);
+  const narrator = new AgentNarrator(createBrowserSpeechEngine(), () => settings);
 
   // A stored token always wins; the URL only helps the very first run.
   const seeded = pairingFromUrl(globalThis.location?.search ?? "");
@@ -68,6 +70,7 @@ async function boot(): Promise<void> {
     startedAt: new Date(Date.now() - 12000),
     controllable: true,
   } : EMPTY_STATE;
+  narrator.remember(state.text);
   let sessions: readonly Session[] = DEMO ? [DEMO_SESSION] : [];
   let screen: Screen = "agent";
   let selected = 0;
@@ -115,6 +118,7 @@ async function boot(): Promise<void> {
       // session, may never come at all.
       const lastAssistant = [...history].reverse().find((entry) => entry.role === "assistant");
       state = { ...state, text: lastAssistant?.text ?? "" };
+      narrator.remember(state.text);
     } catch (thrown) {
       fail(thrown);
     }
@@ -123,7 +127,12 @@ async function boot(): Promise<void> {
     stopStream = subscribe(
       client(),
       session.id,
-      (event) => { state = applyEvent(state, event); void draw(); },
+      (event) => {
+        state = applyEvent(state, event);
+        narrator.accept(event);
+        if (state.text) narrator.remember(state.text);
+        void draw();
+      },
       (message) => { state = { ...state, error: message }; void draw(); },
     );
 
@@ -208,6 +217,7 @@ async function boot(): Promise<void> {
           return;
         }
         if (state.error) { void loadSessions(); return; }
+        narrator.replay();
         return;
 
       case "longPress":
@@ -234,6 +244,7 @@ async function boot(): Promise<void> {
 
       case "doubleClick":
         stopStream?.();
+        narrator.stop();
         void bridge.shutDownPageContainer();
         return;
 
@@ -254,6 +265,7 @@ async function boot(): Promise<void> {
     setSettings: async (next) => {
       const reconnect = next.baseUrl !== settings.baseUrl || next.token !== settings.token;
       settings = next;
+      if (!next.spokenOutput) narrator.stop();
       await save(bridge, next);
       if (reconnect) {
         stopStream?.();
@@ -266,6 +278,20 @@ async function boot(): Promise<void> {
     getState: () => state,
     getSessions: () => sessions,
     refresh: () => { void loadSessions(); },
+    getSpeechStatus: () => narrator.status(),
+    getSpeechVoices: () => narrator.voices(),
+    activateSpeech: async () => {
+      settings = { ...settings, spokenOutput: true };
+      await save(bridge, settings);
+      return narrator.activate();
+    },
+    disableSpeech: async () => {
+      narrator.stop();
+      settings = { ...settings, spokenOutput: false };
+      await save(bridge, settings);
+    },
+    toggleSpeechPause: () => narrator.togglePause(),
+    replaySpeech: () => narrator.replay(),
   });
 }
 

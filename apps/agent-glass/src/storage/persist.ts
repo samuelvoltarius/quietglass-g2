@@ -14,6 +14,13 @@ export interface Settings {
   readonly token: string;
   /** Session to reopen on start; empty means "ask". */
   readonly sessionId: string;
+  /** Phone-side speech routed to the active speaker or Bluetooth headphones. */
+  readonly spokenOutput: boolean;
+  /** BCP-47 language tag, or "auto" for the phone language. */
+  readonly speechLanguage: string;
+  /** Browser-provided voice name; empty uses the best language match. */
+  readonly speechVoice: string;
+  readonly speechRate: number;
 }
 
 const KEY = "quietglass.agentglass.v1";
@@ -22,6 +29,10 @@ export const DEFAULT_SETTINGS: Settings = {
   baseUrl: "http://127.0.0.1:3456",
   token: "",
   sessionId: "",
+  spokenOutput: false,
+  speechLanguage: "auto",
+  speechVoice: "",
+  speechRate: 1,
 };
 
 export async function save(bridge: EvenAppBridge, settings: Settings): Promise<void> {
@@ -41,10 +52,20 @@ export function parseSettings(raw: string): Settings {
         ? String(value.baseUrl).trim() : DEFAULT_SETTINGS.baseUrl,
       token: typeof value.token === "string" ? value.token.trim() : "",
       sessionId: typeof value.sessionId === "string" ? value.sessionId : "",
+      spokenOutput: value.spokenOutput === true,
+      speechLanguage: typeof value.speechLanguage === "string" && value.speechLanguage
+        ? value.speechLanguage : "auto",
+      speechVoice: typeof value.speechVoice === "string" ? value.speechVoice : "",
+      speechRate: clampRate(value.speechRate),
     };
   } catch {
     return DEFAULT_SETTINGS;
   }
+}
+
+function clampRate(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(1.5, Math.max(0.7, value)) : 1;
 }
 
 export interface UrlCheck { readonly valid: boolean; readonly error?: string }

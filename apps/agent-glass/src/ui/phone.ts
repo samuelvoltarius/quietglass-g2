@@ -2,6 +2,7 @@ import type { AgentState, Session } from "../terminal/types";
 import {
   maskToken, parsePairingUrl, validateUrl, type Settings,
 } from "../storage/persist";
+import type { SpeechStatus, SpeechVoiceChoice } from "../speech/narrator";
 
 /**
  * The phone side: where Even Terminal is, and the token to reach it.
@@ -17,6 +18,27 @@ export interface PhoneUiPorts {
   getState(): AgentState;
   getSessions(): readonly Session[];
   refresh(): void;
+  getSpeechStatus(): SpeechStatus;
+  getSpeechVoices(): readonly SpeechVoiceChoice[];
+  activateSpeech(): Promise<boolean>;
+  disableSpeech(): Promise<void>;
+  toggleSpeechPause(): void;
+  replaySpeech(): void;
+}
+
+const SPEECH_STATUS: Readonly<Record<SpeechStatus, string>> = {
+  off: "Off",
+  "needs-activation": "Tap once to activate",
+  ready: "Ready for AirPods / headphones",
+  speaking: "Speaking",
+  paused: "Paused",
+  unavailable: "Not available in this phone WebView",
+};
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character] ?? character);
 }
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
@@ -27,6 +49,13 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const settings = ports.getSettings();
     const state = ports.getState();
     const sessions = ports.getSessions();
+    const speechStatus = ports.getSpeechStatus();
+    const voices = ports.getSpeechVoices();
+    const speechActive = speechStatus === "ready" || speechStatus === "speaking" || speechStatus === "paused";
+    const voiceOptions = [
+      `<option value="">System voice</option>`,
+      ...voices.map((voice) => `<option value="${escapeHtml(voice.name)}"${voice.name === settings.speechVoice ? " selected" : ""}>${escapeHtml(voice.name)} · ${escapeHtml(voice.lang)}</option>`),
+    ].join("");
 
     root.innerHTML = `
       <div class="brand"><span class="brand-mark">Quietglass</span> Agent Glass</div>
@@ -46,6 +75,52 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         <label>Connection</label>
         <p class="hint" id="conn"></p>
         <button id="refresh" type="button">Reload sessions</button>
+      </div>
+
+      <div class="card speech-card">
+        <div class="card-title-row">
+          <div>
+            <span class="eyebrow">PHONE AUDIO</span>
+            <h2>Spoken output</h2>
+          </div>
+          <span class="status-chip ${speechStatus}">${SPEECH_STATUS[speechStatus]}</span>
+        </div>
+        <p class="hint">
+          Reads completed agent sentences through the phone's current audio
+          route — including AirPods and Bluetooth headphones. Code, links,
+          commands and token-looking values are omitted.
+        </p>
+        <div class="button-row">
+          <button id="speech-enable" type="button"${speechStatus === "unavailable" ? " disabled" : ""}>
+            ${speechActive ? "Disable" : speechStatus === "needs-activation" ? "Activate audio" : "Enable spoken output"}
+          </button>
+          <button id="speech-pause" class="secondary" type="button"${speechActive ? "" : " disabled"}>
+            ${speechStatus === "paused" ? "Resume" : "Pause"}
+          </button>
+          <button id="speech-replay" class="secondary" type="button"${speechActive ? "" : " disabled"}>Replay</button>
+        </div>
+
+        <label for="speech-language">Language</label>
+        <select id="speech-language">
+          <option value="auto"${settings.speechLanguage === "auto" ? " selected" : ""}>Automatic</option>
+          <option value="en-US"${settings.speechLanguage === "en-US" ? " selected" : ""}>English (US)</option>
+          <option value="en-GB"${settings.speechLanguage === "en-GB" ? " selected" : ""}>English (UK)</option>
+          <option value="de-DE"${settings.speechLanguage === "de-DE" ? " selected" : ""}>Deutsch</option>
+          <option value="fr-FR"${settings.speechLanguage === "fr-FR" ? " selected" : ""}>Français</option>
+          <option value="es-ES"${settings.speechLanguage === "es-ES" ? " selected" : ""}>Español</option>
+          <option value="it-IT"${settings.speechLanguage === "it-IT" ? " selected" : ""}>Italiano</option>
+        </select>
+
+        <label for="speech-voice">Voice</label>
+        <select id="speech-voice">${voiceOptions}</select>
+
+        <label for="speech-rate">Speed · ${settings.speechRate.toFixed(1)}×</label>
+        <input id="speech-rate" type="range" min="0.7" max="1.5" step="0.1" value="${settings.speechRate}" />
+        <p class="hint privacy-note">
+          Uses the phone's system speech engine. Spoken output must be activated
+          once after opening the app. Background playback while the phone is
+          locked depends on the Even App and is not yet guaranteed.
+        </p>
       </div>
 
       <div class="card">
@@ -112,8 +187,66 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
     root.querySelector<HTMLButtonElement>("#refresh")
       ?.addEventListener("click", () => { ports.refresh(); render(); });
+
+    root.querySelector<HTMLButtonElement>("#speech-enable")?.addEventListener("click", () => {
+      void (speechActive ? ports.disableSpeech() : ports.activateSpeech()).then(render);
+    });
+    root.querySelector<HTMLButtonElement>("#speech-pause")?.addEventListener("click", () => {
+      ports.toggleSpeechPause();
+      render();
+    });
+    root.querySelector<HTMLButtonElement>("#speech-replay")?.addEventListener("click", () => {
+      ports.replaySpeech();
+      render();
+    });
+    root.querySelector<HTMLSelectElement>("#speech-language")?.addEventListener("change", (event) => {
+      const speechLanguage = (event.target as HTMLSelectElement).value;
+      void ports.setSettings({ ...settings, speechLanguage }).then(render);
+    });
+    root.querySelector<HTMLSelectElement>("#speech-voice")?.addEventListener("change", (event) => {
+      const speechVoice = (event.target as HTMLSelectElement).value;
+      void ports.setSettings({ ...settings, speechVoice }).then(render);
+    });
+    root.querySelector<HTMLInputElement>("#speech-rate")?.addEventListener("change", (event) => {
+      const speechRate = Number((event.target as HTMLInputElement).value);
+      void ports.setSettings({ ...settings, speechRate }).then(render);
+    });
+  };
+
+  const updateDynamicStatus = (): void => {
+    const settings = ports.getSettings();
+    const state = ports.getState();
+    const sessions = ports.getSessions();
+    const conn = root.querySelector<HTMLElement>("#conn");
+    if (conn) {
+      const lines = [
+        `Address: ${settings.baseUrl}`,
+        `Token: ${maskToken(settings.token)}`,
+        sessions.length > 0
+          ? `${sessions.length} sessions · active: ${state.session?.title ?? "none"}`
+          : "No sessions loaded.",
+      ];
+      if (state.error) lines.push(`Error: ${state.error}`);
+      conn.textContent = lines.join(" · ");
+    }
+
+    const status = ports.getSpeechStatus();
+    const active = status === "ready" || status === "speaking" || status === "paused";
+    const chip = root.querySelector<HTMLElement>(".status-chip");
+    if (chip) { chip.className = `status-chip ${status}`; chip.textContent = SPEECH_STATUS[status]; }
+    const enable = root.querySelector<HTMLButtonElement>("#speech-enable");
+    if (enable) {
+      enable.disabled = status === "unavailable";
+      enable.textContent = active ? "Disable" : status === "needs-activation" ? "Activate audio" : "Enable spoken output";
+    }
+    const pause = root.querySelector<HTMLButtonElement>("#speech-pause");
+    if (pause) { pause.disabled = !active; pause.textContent = status === "paused" ? "Resume" : "Pause"; }
+    const replay = root.querySelector<HTMLButtonElement>("#speech-replay");
+    if (replay) replay.disabled = !active;
   };
 
   render();
-  setInterval(render, 3000);
+  // Update only live labels. Replacing the whole DOM on a timer would reset
+  // form fields and can swallow a tap just as the user presses a control.
+  setInterval(updateDynamicStatus, 1000);
 }
