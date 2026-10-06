@@ -244,3 +244,73 @@ describe("stop names while riding", () => {
     expect(shown.endsWith("…")).toBe(true);
   });
 });
+
+describe("review regressions", () => {
+  it("keeps the waiting time on the row when the line name is long", () => {
+    // Regression: the destination was always given 22 characters and the row
+    // cut at 46, so a long line name pushed the time and the delay off the end.
+    const board = departureBoard(STOP, [departure({
+      line: "Railjet Xpress 563", headsign: "Wien Hauptbahnhof Bahnsteig 1-2", track: "10A",
+      inMinutes: 12, source: "realtime",
+      expected: new Date(NOW.getTime() + 15 * 60000), scheduled: new Date(NOW.getTime() + 12 * 60000),
+    })], null);
+    expect(board.body[0]!.length).toBeLessThanOrEqual(LINE_WIDTH);
+    expect(board.body[0]).toContain("· 12 min +3 10A");
+  });
+
+  it("counts the minutes down between fetches", () => {
+    // Regression: the minute count was frozen when the board was fetched, so
+    // with a 2-minute refresh the board said "4 min" for a bus 1 minute away.
+    const leavingSoon = departure({ inMinutes: 4, expected: new Date(NOW.getTime() + 90000) });
+    const board = departureBoard(STOP, [leavingSoon], null, 0, NOW);
+    expect(board.body[0]).toContain("· 1 min");
+  });
+
+  it("fits a long stop name and its distance into the header", () => {
+    // Regression: the header was never cut, so it wrapped into the body.
+    const long = { ...STOP, name: "Salzburg Hauptbahnhof (Südtiroler Platz) Bussteig F" };
+    const board = departureBoard(long, [departure()], 120);
+    expect(board.header.length).toBeLessThanOrEqual(LINE_WIDTH);
+    expect(board.header.endsWith(" · 120 m")).toBe(true);
+  });
+
+  it("fits a long headsign into the ride header", () => {
+    const ride: Ride = {
+      line: "REX 1", headsign: "Wien Hauptbahnhof über Linz, St. Pölten und Tullnerfeld",
+      stops: [0, 1].map((i) => ({
+        stop: { id: `s${i}`, name: `Halt ${i}`, lat: 47.8 + i * 0.01, lon: 13.04 },
+        scheduled: new Date(NOW.getTime() + (i + 1) * 60000),
+        expected: new Date(NOW.getTime() + (i + 1) * 60000),
+        source: "scheduled" as const, cancelled: false,
+      })),
+    };
+    const view = ridingView(trackRide(ride, NOW, null)!, NOW, ride.line, ride.headsign);
+    expect(view.header.length).toBeLessThanOrEqual(LINE_WIDTH);
+  });
+
+  it("does not count down to a next stop that is cancelled", () => {
+    // Regression: a cancelled next stop showed "3 min" like any other, so the
+    // passenger got up for a stop the vehicle would drive past.
+    const ride: Ride = {
+      line: "O-Bus 6", headsign: "Itzling West",
+      stops: [0, 1, 2].map((i) => ({
+        stop: { id: `s${i}`, name: `Halt ${i}`, lat: 47.8 + i * 0.01, lon: 13.04 },
+        scheduled: new Date(NOW.getTime() + (i * 3 + 3) * 60000),
+        expected: new Date(NOW.getTime() + (i * 3 + 3) * 60000),
+        source: "realtime" as const, cancelled: i === 0,
+      })),
+    };
+    const view = ridingView(trackRide(ride, NOW, null)!, NOW, ride.line, ride.headsign);
+    expect(view.body[0]).toContain("Halt 0");
+    expect(view.body[0]).toContain("fällt aus");
+    expect(view.body[0]).not.toContain("3 min");
+  });
+
+  it("keeps an error with a long unbroken hint inside the body", () => {
+    // Regression: a URL in the hint became one 80-character "word" that wrap()
+    // could not break, so it wrapped on the glasses anyway.
+    const view = errorView("Abfrage fehlgeschlagen", "http://" + "x".repeat(120));
+    for (const row of view.body) expect(row.length).toBeLessThanOrEqual(LINE_WIDTH);
+    expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
+  });
+});

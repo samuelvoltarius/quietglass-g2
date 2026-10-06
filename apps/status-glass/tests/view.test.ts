@@ -172,3 +172,25 @@ describe("configuration", () => {
     expect(removeSource(data, "s1").sources).toEqual([]);
   });
 });
+
+describe("review regressions", () => {
+  it("keeps every problem row on one line, whatever the source sends", () => {
+    // Regression: rows were never cut, so a long source name, metric label or
+    // error text wrapped and pushed the rest of the list off the body.
+    const long = applyReport(createSource("s1", "living-room-raspberry-pi-4-model-b"), {
+      name: "x",
+      metrics: [metric({ id: "t", label: "Temperature of the attic sensor near the chimney", value: 41, unit: "°C", warn: 30 })],
+    }, 0);
+    const down = applyError(createSource("s2", "nas"), "x".repeat(60), 0);
+    const view = buildView([long, acknowledge(down, "__source")], {}, 0);
+    for (const row of view.body) expect(row.length).toBeLessThanOrEqual(46);
+    expect(view.body.some((row) => row.endsWith("(ack)"))).toBe(true);
+  });
+
+  it("refuses a URL with credentials in it", () => {
+    // Regression: accepted, then shown in full on the sources list and refused
+    // by fetch on every poll as "unreachable".
+    expect(validateUrl("https://admin:hunter2@nas.local/status").valid).toBe(false);
+    expect(validateUrl("https://nas.local/status").valid).toBe(true);
+  });
+});

@@ -125,7 +125,7 @@ export function durationSeconds(inspection: Inspection, now: number): number {
  */
 export function toMarkdown(inspection: Inspection, withImages = false): string {
   const lines: string[] = [];
-  lines.push("# " + inspection.title);
+  lines.push("# " + oneLine(inspection.title));
   lines.push("");
   lines.push("Started: " + new Date(inspection.startedAt).toISOString());
   if (inspection.finishedAt !== null) {
@@ -141,11 +141,11 @@ export function toMarkdown(inspection: Inspection, withImages = false): string {
   for (const entry of inspection.entries) {
     if (entry.section !== section) {
       section = entry.section;
-      if (section) { lines.push("## " + section); lines.push(""); }
+      if (section) { lines.push("## " + oneLine(section)); lines.push(""); }
     }
     const mark = entry.severity === "major" ? "**MAJOR**"
       : entry.severity === "minor" ? "*minor*" : "note";
-    lines.push("- [" + timeOf(entry.at) + "] " + mark + " — " + entry.text);
+    lines.push("- [" + timeOf(entry.at) + "] " + mark + " — " + oneLine(entry.text));
     if (entry.attachment) {
       lines.push(withImages
         ? "  ![photo](" + entry.attachment.dataUri + ")"
@@ -170,8 +170,19 @@ export function toCsv(inspection: Inspection): string {
   return rows.join("\n") + "\n";
 }
 
+/**
+ * Quotes a field when it holds a separator, a quote or a line break, and
+ * defuses spreadsheet formulas: a transcript that starts with `=`, `+`, `-`
+ * or `@` would otherwise be evaluated when the export is opened.
+ */
 function csvField(value: string): string {
-  return /[",\n]/.test(value) ? '"' + value.split('"').join('""') + '"' : value;
+  const safe = /^[=+\-@\t\r]/.test(value) ? "'" + value : value;
+  return /[",\r\n]/.test(safe) ? '"' + safe.split('"').join('""') + '"' : safe;
+}
+
+/** Keeps dictated text on its own Markdown line: a line break would end the list item. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function timeOf(timestamp: number): string {

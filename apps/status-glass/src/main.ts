@@ -21,6 +21,15 @@ async function boot(): Promise<void> {
   let statuses = new Map<string, SourceStatus>();
   const failures = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Bumped whenever a source's polling is restarted or removed. A reply from
+   * an older round is dropped: otherwise every restart while a request was in
+   * flight left one more polling loop running, and a source removed mid-poll
+   * came back from the dead when its answer arrived.
+   */
+  const generations = new Map<string, number>();
+  let closed = false;
+  let tickTimer: ReturnType<typeof setInterval> | null = null;
   let cursor = 0;
   let lastView: StatusView | null = null;
   let pageReady = false;
@@ -43,6 +52,9 @@ async function boot(): Promise<void> {
     for (const [id, timer] of timers) {
       if (!next.has(id)) { clearTimeout(timer); timers.delete(id); failures.delete(id); }
     }
+    for (const id of generations.keys()) {
+      if (!next.has(id)) generations.set(id, (generations.get(id) ?? 0) + 1);
+    }
     statuses = next;
   };
 
@@ -59,10 +71,12 @@ async function boot(): Promise<void> {
   };
 
   const draw = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    if (closed) return;
     if (result.ok) {
       pageReady = true;
       lastView = view;
@@ -77,13 +91,18 @@ async function boot(): Promise<void> {
    * slowing the healthy ones — one dead host must not blind the dashboard.
    */
   const pollSource = async (id: string): Promise<void> => {
+    if (closed) return;
     const config = data.sources.find((s) => s.id === id);
-    const status = statuses.get(id);
-    if (!config || !status) return;
+    if (!config || !statuses.has(id)) return;
+    const generation = generations.get(id) ?? 0;
 
     const outcome = await fetchReport(config.url, config.name, {
       ...(config.token ? { token: config.token } : {}),
     });
+    // Restarted, removed or closed meanwhile: this answer belongs to nobody.
+    if (closed || generation !== (generations.get(id) ?? 0)) return;
+    const status = statuses.get(id);
+    if (!status) return;
     const now = Date.now();
 
     if (outcome.report) {
@@ -97,6 +116,10 @@ async function boot(): Promise<void> {
     void draw();
 
     const delay = backoffMs(failures.get(id) ?? 0, data.pollSeconds * 1000);
+    // An extra poll (after an action) must replace the scheduled one, not run
+    // beside it as a second loop.
+    const scheduled = timers.get(id);
+    if (scheduled !== undefined) clearTimeout(scheduled);
     timers.set(id, setTimeout(() => { void pollSource(id); }, delay));
   };
 
@@ -104,8 +127,20 @@ async function boot(): Promise<void> {
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
     for (const config of data.sources) {
+      generations.set(config.id, (generations.get(config.id) ?? 0) + 1);
       void pollSource(config.id);
     }
+  };
+
+  /** Stops every timer and drops anything still in flight, then leaves. */
+  const close = (): void => {
+    closed = true;
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+    if (tickTimer !== null) clearInterval(tickTimer);
+    void bridge.shutDownPageContainer().catch((thrown: unknown) => {
+      console.warn("[statusglass] shutdown failed:", thrown instanceof Error ? thrown.message : String(thrown));
+    });
   };
 
   const executeAction = async (sourceId: string, actionId: string, label: string): Promise<void> => {
@@ -120,6 +155,7 @@ async function boot(): Promise<void> {
     const outcome = await runAction(config.url, actionId, {
       ...(config.token ? { token: config.token } : {}),
     });
+    if (closed) return;
 
     actionBusy = false;
     actionResult = { label: outcome.ok ? label : (outcome.error ?? "failed"), ok: outcome.ok };
@@ -150,6 +186,7 @@ async function boot(): Promise<void> {
   if (!DEMO) startPolling();
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -186,8 +223,7 @@ async function boot(): Promise<void> {
           actionResult = null;
           break;
         case "doubleClick":
-          for (const timer of timers.values()) clearTimeout(timer);
-          void bridge.shutDownPageContainer();
+          close();
           return;
         default:
           return;
@@ -227,8 +263,7 @@ async function boot(): Promise<void> {
         }
         break;
       case "doubleClick":
-        for (const timer of timers.values()) clearTimeout(timer);
-        void bridge.shutDownPageContainer();
+        close();
         return;
       default:
         return;
@@ -237,14 +272,14 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
+    if (status?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
   });
 
   // Keeps staleness current even when no source answers at all.
-  setInterval(() => { void draw(); }, 5000);
+  tickTimer = setInterval(() => { void draw(); }, 5000);
 
   mountPhoneUi({
     getData: () => data,

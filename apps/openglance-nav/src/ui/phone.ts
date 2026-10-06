@@ -25,6 +25,9 @@ const MODE_LABELS: Readonly<Record<TravelMode, string>> = {
   driving: "Driving — minimal display",
 };
 
+/** Text inputs whose unsaved contents are carried across a redraw. */
+const DRAFT_FIELDS = ["url", "label", "coords"] as const;
+
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -32,9 +35,16 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   let notice = "";
   const render = (): void => {
     const data = ports.getData();
+    // Whatever is half typed survives a redraw caused by another control.
+    const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
     root.innerHTML = template(data, notice, ports.getPosition());
+    DRAFT_FIELDS.forEach((id, index) => {
+      const field = root.querySelector<HTMLInputElement>("#" + id);
+      const value = typed[index];
+      if (field && value !== undefined) field.value = value;
+    });
     notice = "";
-    wire(root, ports, data, (message) => { notice = message; render(); });
+    wire(root, ports, data, (message) => { notice = message; render(); }, render);
   };
   render();
 }
@@ -143,9 +153,19 @@ function wire(
   ports: PhoneUiPorts,
   data: NavData,
   notify: (message: string) => void,
+  rerender: () => void,
 ): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const commit = (next: NavData): void => { void ports.setData(next); };
+  // The page is redrawn from the stored data after every change. It used to
+  // stay as first drawn, so the handlers kept the data from that moment: a
+  // second place added replaced the first, and a new place never appeared.
+  const commit = (next: NavData): void => {
+    const saving = ports.setData(next);
+    rerender();
+    void saving.catch((thrown: unknown) => {
+      notify("Could not save: " + (thrown instanceof Error ? thrown.message : String(thrown)));
+    });
+  };
 
   byId<HTMLButtonElement>("save-url")?.addEventListener("click", () => {
     const url = byId<HTMLInputElement>("url")?.value.trim() ?? "";
@@ -174,6 +194,11 @@ function wire(
   const addWith = (at: LatLng): void => {
     const label = byId<HTMLInputElement>("label")?.value.trim() ?? "";
     if (!label) { notify("Give the place a name."); return; }
+    // Emptied before the redraw, so the next place starts from blank fields.
+    for (const id of ["label", "coords"]) {
+      const field = byId<HTMLInputElement>(id);
+      if (field) field.value = "";
+    }
     commit(addPlace(data, { id: nextPlaceId(data), label, at }));
   };
 

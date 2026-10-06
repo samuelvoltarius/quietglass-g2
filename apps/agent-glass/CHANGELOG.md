@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+Security and robustness review:
+
+- Permission swipes are only accepted for the request actually on display, after
+  a short arming delay, once per request, never while an error screen hides it,
+  and never again for a request re-delivered by a reconnecting stream. The
+  answer is sent before the redraw.
+- A `?token=` in any provider address is moved into the token field; user
+  credentials and fragments are dropped from addresses; pairing keeps a literal
+  `+` in tokens and refuses non-HTTP pairing URLs. Short tokens are no longer
+  shown with a 4-character suffix. The development `?pair=` parameter is removed
+  from the page address after use.
+- Spoken output also omits JWTs, `Authorization` headers, bearer tokens,
+  environment assignments, password fields, SSH and private keys, AWS and Google
+  keys, long base64 values, all `scheme://` links and `$ ` command lines, and no
+  longer splits a sentence inside an open code fence or a dotted token.
+- Hermes reconnects with exponential backoff, ignores events from a replaced
+  socket, stops after a rejected token and stays silent after being disposed.
+- OpenClaw: an interrupt, a newer prompt or a backend switch no longer surfaces
+  as a "Timed out" error; a real timeout is reported as such; answers sent as
+  server-sent events are parsed.
+- Opening a session or switching backend while another request is in flight no
+  longer starts a second stream or writes stale results into the new state.
+- Errors, tool names and permission titles are clipped to the 7 × 46 display;
+  the CORS hint is only shown for Even Terminal errors; a live event clears a
+  "connection interrupted" message; tap-to-retry re-subscribes.
+- After a double tap, nothing redraws the glasses or reacts to input.
+- Documented why the network whitelist cannot be narrowed.
+
 ## [0.4.0] — 2026-10-05
 
 - Added a real backend selector for Even Terminal, Hermes and OpenClaw.

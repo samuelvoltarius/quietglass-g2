@@ -14,6 +14,12 @@ import { mountPhoneUi } from "./ui/phone";
 
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
+/**
+ * How long to wait for the final transcript after the user taps stop. Servers
+ * finish the utterance once the audio ends; one that never answers must not
+ * leave the glasses on "Transcribing…" for good.
+ */
+const FINAL_WAIT_MS = 8_000;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -30,6 +36,13 @@ async function boot(): Promise<void> {
   let status: SttStatus = "idle";
   let lastView: LogView | null = null;
   let pageReady = false;
+  /** Set once the user leaves; nothing may be drawn on a closed page. */
+  let closed = false;
+  /** True while the speech server and microphone are being opened. */
+  let starting = false;
+  let finalTimer: ReturnType<typeof setTimeout> | undefined;
+  let drawing: Promise<void> | null = null;
+  let redrawQueued = false;
 
   const inspection = (): Inspection | null => activeInspection(data);
 
@@ -42,14 +55,42 @@ async function boot(): Promise<void> {
       mock: usesMockStt(data),
     });
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
     const view = currentView();
     if (sameView(lastView, view)) return;
 
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
     if (result.ok) { pageReady = true; lastView = view; return; }
     pageReady = false;
+    lastView = null;
     console.warn("[fieldlog] draw failed:", result.reason);
+  };
+
+  /**
+   * One draw at a time. The clock, gestures, the speech status and the phone
+   * all request redraws; interleaving them would race two page creations or
+   * let an older view land after a newer one. Requests made meanwhile
+   * collapse into one redraw.
+   */
+  const draw = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (drawing) { redrawQueued = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do {
+          redrawQueued = false;
+          await drawOnce();
+        } while (redrawQueued && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
+  };
+
+  /** Logs a failed background task instead of leaving an unhandled rejection. */
+  const background = (task: Promise<unknown>, what: string): void => {
+    task.catch((error: unknown) => { console.warn("[fieldlog] " + what + " failed:", error); });
   };
 
   const persist = async (next: Inspection): Promise<void> => {
@@ -57,48 +98,91 @@ async function boot(): Promise<void> {
     await save(bridge, data);
   };
 
+  const closeStt = async (): Promise<void> => {
+    clearTimeout(finalTimer);
+    const provider = stt;
+    stt = null;
+    await provider?.stop();
+  };
+
+  const stopMic = async (): Promise<void> => {
+    await bridge.audioControl(false).catch(() => undefined);
+    await closeStt();
+  };
+
   const onTranscript = (transcript: { text: string; final: boolean }): void => {
-    if (!transcript.final) return;
+    if (!transcript.final || closed) return;
+    // Only while dictating: a transcript arriving during review must not
+    // replace the text the user is about to confirm.
+    if (phase !== "recording" && phase !== "transcribing") return;
     const text = transcript.text.trim();
     if (!text) return;
     // The transcript is shown for confirmation rather than filed straight
     // away: an inspection report is a document someone acts on.
+    const wasRecording = phase === "recording";
     pending = text;
     phase = "review";
-    void stopMic();
+    background(wasRecording ? stopMic() : closeStt(), "stopping dictation");
     void draw();
   };
 
   const startMic = async (): Promise<void> => {
     const current = inspection();
-    if (!current || phase !== "idle") return;
+    // `starting` keeps a second tap during a slow connect from opening a
+    // second socket and a second microphone session.
+    if (!current || phase !== "idle" || starting || closed) return;
+    starting = true;
 
-    stt = usesMockStt(data)
-      ? createMockStt({ onTranscript, onStatus: (s) => { status = s; void draw(); } })
+    const onStatus = (s: SttStatus): void => { status = s; void draw(); };
+    const provider = usesMockStt(data)
+      ? createMockStt({ onTranscript, onStatus })
       : createWebSocketStt({
           url: data.sttUrl,
           ...(data.sttToken ? { token: data.sttToken } : {}),
           language: data.language,
           onTranscript,
-          onStatus: (s) => { status = s; void draw(); },
+          onStatus,
         });
+    stt = provider;
 
-    await stt.start();
-    const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
-    if (!ok) {
-      console.warn("[fieldlog] microphone was refused");
-      await stt.stop();
-      stt = null;
-      return;
+    try {
+      await provider.start();
+      const ok = closed ? false : await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
+      if (!ok || closed) {
+        if (!closed) console.warn("[fieldlog] microphone was refused");
+        // Left while the microphone was opening: it must not stay on.
+        if (ok) await bridge.audioControl(false).catch(() => undefined);
+        if (stt === provider) stt = null;
+        await provider.stop();
+        return;
+      }
+      phase = "recording";
+    } catch (error) {
+      console.warn("[fieldlog] speech server unavailable:", error);
+      status = "error";
+      if (stt === provider) stt = null;
+      await provider.stop().catch(() => undefined);
+    } finally {
+      starting = false;
     }
-    phase = "recording";
     await draw();
   };
 
-  const stopMic = async (): Promise<void> => {
+  /**
+   * Stop tapped: the microphone goes off at once, but the speech connection
+   * stays open until the final transcript arrives — closing it right away
+   * would throw away exactly the words just spoken.
+   */
+  const endRecording = async (): Promise<void> => {
+    phase = "transcribing";
+    clearTimeout(finalTimer);
+    finalTimer = setTimeout(() => {
+      if (phase !== "transcribing") return;
+      phase = "idle";
+      background(closeStt(), "closing the speech connection");
+      void draw();
+    }, FINAL_WAIT_MS);
     await bridge.audioControl(false).catch(() => undefined);
-    await stt?.stop();
-    stt = null;
   };
 
   const keepPending = async (): Promise<void> => {
@@ -131,7 +215,21 @@ async function boot(): Promise<void> {
 
   await draw();
 
+  let clock: ReturnType<typeof setInterval> | undefined;
+
+  /** Leaving: microphone and speech connection off first, then the page. */
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    clearInterval(clock);
+    stopMic()
+      .catch((error: unknown) => { console.warn("[fieldlog] stopping the microphone failed:", error); })
+      .then(() => bridge.shutDownPageContainer())
+      .catch((error: unknown) => { console.warn("[fieldlog] shutdown failed:", error); });
+  };
+
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
     if (phase === "recording" && pcm instanceof Uint8Array && pcm.length > 0) {
@@ -144,9 +242,9 @@ async function boot(): Promise<void> {
 
     switch (gesture.gesture) {
       case "click":
-        if (phase === "idle") { void startMic(); return; }
-        if (phase === "recording") { phase = "transcribing"; void stopMic(); break; }
-        if (phase === "review") { void keepPending(); return; }
+        if (phase === "idle") { background(startMic(), "starting dictation"); return; }
+        if (phase === "recording") { background(endRecording(), "stopping the microphone"); break; }
+        if (phase === "review") { background(keepPending(), "saving the entry"); return; }
         break;
 
       case "scrollUp":
@@ -162,16 +260,19 @@ async function boot(): Promise<void> {
           const index = SEVERITIES.indexOf(data.severity);
           const delta = gesture.gesture === "scrollDown" ? 1 : -1;
           const next = SEVERITIES[(index + delta + SEVERITIES.length) % SEVERITIES.length];
-          if (next) { data = { ...data, severity: next }; void save(bridge, data); }
+          if (next) {
+            data = { ...data, severity: next };
+            background(save(bridge, data), "saving the severity");
+          }
         }
         break;
 
       case "longPress":
-        if (phase === "review" || phase === "idle") { void attachPhoto(); return; }
+        if (phase === "review" || phase === "idle") { background(attachPhoto(), "attaching a photo"); return; }
         break;
 
       case "doubleClick":
-        void stopMic().then(() => bridge.shutDownPageContainer());
+        close();
         return;
 
       default:
@@ -180,14 +281,17 @@ async function boot(): Promise<void> {
     void draw();
   });
 
+  // The page does not survive a disconnect. The last view is forgotten too,
+  // or an unchanged view would skip the rebuild and leave the display blank.
   bridge.onDeviceStatusChanged((deviceStatus) => {
     if (deviceStatus?.connectType === "connected") {
       pageReady = false;
+      lastView = null;
       void draw();
     }
   });
 
-  setInterval(() => { void draw(); }, 10_000);
+  clock = setInterval(() => { void draw(); }, 10_000);
 
   mountPhoneUi({
     getData: () => data,

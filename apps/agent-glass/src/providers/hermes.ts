@@ -15,6 +15,9 @@ interface PendingWaiter {
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
+export const RECONNECT_BASE_MS = 500;
+export const RECONNECT_MAX_MS = 30000;
+
 /** Client for the existing hermes-evenhub-bridge wire protocol. */
 export class HermesBackend implements AgentBackend {
   readonly kind = "hermes" as const;
@@ -29,6 +32,11 @@ export class HermesBackend implements AgentBackend {
   #listeners = new Set<(event: AgentEvent) => void>();
   #errors = new Set<(message: string) => void>();
   #activeSession = "";
+  /** Session the bridge itself reports as active, from hello.ok / active. */
+  #bridgeActive = "";
+  #disposed = false;
+  #attempts = 0;
+  #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: HermesOptions) {
     this.#url = options.url;
@@ -83,8 +91,15 @@ export class HermesBackend implements AgentBackend {
   subscribe(_sessionId: string, onEvent: (event: AgentEvent) => void, onError: (message: string) => void): () => void {
     this.#listeners.add(onEvent);
     this.#errors.add(onError);
-    void this.#ensureConnected().catch((error) => onError(String(error)));
-    return () => { this.#listeners.delete(onEvent); this.#errors.delete(onError); };
+    void this.#ensureConnected().catch((error: unknown) => {
+      onError(error instanceof Error ? error.message : String(error));
+    });
+    return () => {
+      this.#listeners.delete(onEvent);
+      this.#errors.delete(onError);
+      // Nobody is listening any more: stop trying to bring the socket back.
+      if (this.#listeners.size === 0) this.#cancelReconnect();
+    };
   }
 
   async prompt(sessionId: string, text: string): Promise<void> {
@@ -114,9 +129,20 @@ export class HermesBackend implements AgentBackend {
   }
 
   dispose(): void {
-    this.#socket?.close();
+    this.#disposed = true;
+    this.#cancelReconnect();
+    const socket = this.#socket;
     this.#socket = null;
     this.#connecting = null;
+    // Detach first: a close event from a disposed backend must not reach the
+    // listeners of whatever backend replaced it.
+    if (socket) {
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      socket.close();
+    }
     for (const waiter of this.#waiters) {
       clearTimeout(waiter.timer);
       waiter.reject(new Error("Hermes bridge closed"));
@@ -145,43 +171,79 @@ export class HermesBackend implements AgentBackend {
   }
 
   #ensureConnected(): Promise<void> {
+    if (this.#disposed) return Promise.reject(new Error("Hermes bridge closed"));
     if (this.#socket?.readyState === 1) return Promise.resolve();
     if (this.#connecting) return this.#connecting;
     if (!this.#WS) return Promise.reject(new Error("WebSocket unavailable"));
-    this.#connecting = new Promise<void>((resolve, reject) => {
+    // Someone needs the socket now; a scheduled retry would only open a second one.
+    this.#cancelReconnect();
+    const connecting: Promise<void> = new Promise<void>((resolve, reject) => {
       let settled = false;
       const socket = new this.#WS(this.#url);
       this.#socket = socket;
+      // Handlers of a socket that has since been replaced must not touch the
+      // current one or deliver its events a second time.
+      const current = (): boolean => this.#socket === socket;
       const timer = setTimeout(() => {
         if (!settled) { settled = true; socket.close(); reject(new Error("Hermes bridge timed out")); }
       }, this.#timeoutMs);
       socket.onopen = () => socket.send(JSON.stringify({ t: "hello", token: this.#token, device: "g2-agent-glass" }));
       socket.onmessage = (event) => {
+        if (!current()) return;
+        let message: Record<string, unknown>;
         try {
-          const message = asRecord(JSON.parse(String(event.data)));
-          this.#receive(message);
-          if (!settled && message["t"] === "hello.ok") {
-            settled = true;
-            clearTimeout(timer);
-            resolve();
-          }
-        } catch { /* Ignore one malformed bridge frame. */ }
+          message = asRecord(JSON.parse(String(event.data)));
+        } catch { return; /* Ignore one malformed bridge frame. */ }
+        this.#receive(message);
+        if (!settled && message["t"] === "hello.ok") {
+          settled = true;
+          clearTimeout(timer);
+          this.#attempts = 0;
+          resolve();
+        }
       };
       socket.onerror = () => {
         if (!settled) { settled = true; clearTimeout(timer); reject(new Error("Hermes bridge websocket error")); }
       };
       socket.onclose = (event) => {
-        this.#socket = null;
-        this.#connecting = null;
         if (!settled) {
           settled = true;
           clearTimeout(timer);
           reject(new Error(event.code === 1008 ? "Hermes bridge token rejected" : "Hermes bridge closed"));
         }
-        for (const notify of this.#errors) notify("Hermes bridge connection interrupted");
+        if (!current()) return;
+        this.#socket = null;
+        for (const notify of [...this.#errors]) notify("Hermes bridge connection interrupted");
+        // A rejected token will be rejected again; retrying would only hammer the bridge.
+        if (event.code !== 1008) this.#scheduleReconnect();
       };
-    }).finally(() => { this.#connecting = null; });
-    return this.#connecting!;
+    }).finally(() => { if (this.#connecting === connecting) this.#connecting = null; });
+    this.#connecting = connecting;
+    return connecting;
+  }
+
+  /** Brings a dropped live stream back, with exponential backoff. */
+  #scheduleReconnect(): void {
+    if (this.#disposed || this.#reconnectTimer || this.#listeners.size === 0) return;
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.#attempts);
+    this.#attempts += 1;
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      this.#ensureConnected()
+        .then(() => {
+          // The bridge may have forgotten which session this client follows.
+          if (this.#activeSession && this.#activeSession !== this.#bridgeActive) {
+            this.#socket?.send(JSON.stringify({ t: "sessions.switch", id: this.#activeSession }));
+          }
+        })
+        // A failed attempt closes its socket, and that close schedules the next one.
+        .catch(() => undefined);
+    }, delay);
+  }
+
+  #cancelReconnect(): void {
+    if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
+    this.#reconnectTimer = null;
   }
 
   #receive(message: Record<string, unknown>): void {
@@ -192,6 +254,9 @@ export class HermesBackend implements AgentBackend {
       waiter.resolve(message);
     }
     const type = asString(message["t"]);
+    if (type === "hello.ok" || type === "active") {
+      this.#bridgeActive = asString(message["active"]) ?? asString(message["id"]) ?? this.#bridgeActive;
+    }
     if (type === "assistant.delta") this.#emit(parseEvent({ type: "text_delta", text: asString(message["text"]) ?? "" }));
     else if (type === "assistant") this.#emit(parseEvent({ type: "text", text: asString(message["text"]) ?? "" }));
     else if (type === "tool.start") this.#emit(parseEvent({ type: "tool_start", tool: asString(message["name"]) ?? "Tool", text: asString(message["label"]) ?? "" }));

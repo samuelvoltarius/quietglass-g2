@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { arrowFor, buildView, roadLabel } from "../src/glasses/view";
+import { ROAD_WIDTH, arrowFor, buildView, roadLabel } from "../src/glasses/view";
 import { pixelArrowFor } from "../src/glasses/icons";
 import { createMockProvider } from "../src/routing/provider";
 import { progressOf, startNavigation, update } from "../src/nav/navigator";
@@ -168,5 +168,24 @@ describe("configuration", () => {
 
   it("falls back cleanly on corrupt data", () => {
     expect(parseData("{nope")).toEqual(EMPTY_DATA);
+  });
+});
+
+describe("router text on the glasses", () => {
+  it("cuts a long street or instruction to one line", () => {
+    // Regression: the router's text was shown uncut, so a long instruction
+    // wrapped down the body beside the arrow — in driving mode too.
+    const progress = {
+      maneuver: {
+        type: "right" as const,
+        instruction: "Turn right onto the Bundesstraße 1 towards Salzburg Zentrum, Hauptbahnhof and Messezentrum",
+        length: 300, time: 30, shapeIndex: 0,
+      },
+      distanceToManeuver: 300, distanceRemaining: 1200, secondsRemaining: 120,
+      offRoute: false, arrived: false,
+    };
+    const view = buildView(progress, options);
+    expect(view.body[1]!.length).toBeLessThanOrEqual(ROAD_WIDTH);
+    expect(view.body[1]!.endsWith("…")).toBe(true);
   });
 });

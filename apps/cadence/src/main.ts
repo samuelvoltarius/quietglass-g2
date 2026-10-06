@@ -1,6 +1,6 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import {
-  clampBpm, createState, msToNextBeat, reset, toggle, type MetronomeState,
+  clampBpm, createState, msToNextBeat, reset, retime, toggle, type MetronomeState,
 } from "./metronome/engine";
 import { addSession, nextSessionId, type PracticeSession } from "./practice/log";
 import { gestureFromEvent } from "./input/gestures";
@@ -24,6 +24,10 @@ async function boot(): Promise<void> {
   let lastView: CadenceView | null = null;
   let pageReady = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let tick: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
+  let drawing: Promise<void> | null = null;
+  let drawAgain = false;
 
   const currentView = (): CadenceView =>
     buildView(state, data.settings, {
@@ -33,7 +37,8 @@ async function boot(): Promise<void> {
         : {}),
     });
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
@@ -48,6 +53,32 @@ async function boot(): Promise<void> {
   };
 
   /**
+   * One page write at a time. Beat timer, the 1 s tick and gestures all ask for
+   * redraws; overlapping writes interleave over BLE and can leave an older frame
+   * recorded as the last one shown. A request during a write redraws once after.
+   */
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
+  };
+
+  const persist = (next: CadenceData): Promise<void> =>
+    save(bridge, next).catch((error: unknown) => { console.warn("[cadence] save failed:", error); });
+
+  /** Applies new settings; a tempo change mid-run must not re-count the beats already played. */
+  const applySettings = (next: CadenceData): void => {
+    if (next.settings.bpm !== data.settings.bpm) state = retime(state, data.settings, Date.now());
+    data = next;
+  };
+
+  /**
    * Redraws are scheduled onto the next beat boundary rather than polled at a
    * fixed rate. Polling faster than the beat wastes BLE traffic; polling slower
    * misses beats. Each redraw re-derives its position from the clock, so a late
@@ -55,7 +86,7 @@ async function boot(): Promise<void> {
    */
   const scheduleBeat = (): void => {
     clearTimeout(timer);
-    if (!state.running) return;
+    if (!state.running || closed) return;
     const delay = Math.max(20, msToNextBeat(state, data.settings, Date.now()));
     timer = setTimeout(() => {
       void draw();
@@ -76,7 +107,7 @@ async function boot(): Promise<void> {
         endedAt: now,
       };
       data = { ...data, sessions: addSession(data.sessions, session) };
-      void save(bridge, data);
+      void persist(data);
     }
     sessionStartedAt = null;
   };
@@ -84,6 +115,7 @@ async function boot(): Promise<void> {
   await draw();
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -97,13 +129,13 @@ async function boot(): Promise<void> {
         break;
       }
       case "scrollUp":
-        data = setSettings(data, { bpm: clampBpm(data.settings.bpm + BPM_STEP) });
-        void save(bridge, data);
+        applySettings(setSettings(data, { bpm: clampBpm(data.settings.bpm + BPM_STEP) }));
+        void persist(data);
         scheduleBeat();
         break;
       case "scrollDown":
-        data = setSettings(data, { bpm: clampBpm(data.settings.bpm - BPM_STEP) });
-        void save(bridge, data);
+        applySettings(setSettings(data, { bpm: clampBpm(data.settings.bpm - BPM_STEP) }));
+        void persist(data);
         scheduleBeat();
         break;
       case "longPress":
@@ -111,8 +143,12 @@ async function boot(): Promise<void> {
         break;
       case "doubleClick":
         endSession();
+        closed = true;
         clearTimeout(timer);
-        void bridge.shutDownPageContainer();
+        clearInterval(tick);
+        bridge.shutDownPageContainer().catch((error: unknown) => {
+          console.warn("[cadence] shutdown failed:", error);
+        });
         return;
       default:
         return;
@@ -121,20 +157,20 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
+    if (status?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
   });
 
   // Keeps the session clock moving while paused; sameView drops idle ticks.
-  setInterval(() => { void draw(); }, 1000);
+  tick = setInterval(() => { void draw(); }, 1000);
 
   mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
-      data = next;
-      await save(bridge, next);
+      applySettings(next);
+      await persist(next);
       scheduleBeat();
       await draw();
     },

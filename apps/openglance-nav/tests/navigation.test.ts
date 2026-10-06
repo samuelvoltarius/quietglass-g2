@@ -260,3 +260,37 @@ describe("navigating", () => {
     expect(progress.secondsRemaining).toBe(r!.duration);
   });
 });
+
+describe("across the antimeridian", () => {
+  it("measures someone standing on a route that crosses 180° as on it", () => {
+    // Regression: raw longitudes put 179.999° and -179.999° 360° apart, so a
+    // walker on the route was 55 m "off" it and rerouted at every fix.
+    const path = [{ lat: -16.5, lon: 179.999 }, { lat: -16.5, lon: -179.999 }];
+    const projection = projectOntoPath({ lat: -16.5, lon: 180 }, path);
+    expect(projection!.distance).toBeLessThan(1);
+    expect(Math.abs(projection!.point.lon)).toBeCloseTo(180, 5);
+  });
+
+  it("still measures distance from a route on the far side correctly", () => {
+    const path = [{ lat: 0, lon: 179.999 }, { lat: 0, lon: -179.999 }];
+    const projection = projectOntoPath({ lat: 0, lon: 0 }, path);
+    expect(projection!.distance).toBeGreaterThan(19_000_000);
+  });
+
+  it("progresses normally along a crossing route", () => {
+    const route = {
+      shape: [{ lat: -16.5, lon: 179.99 }, { lat: -16.5, lon: -179.99 }],
+      maneuvers: [
+        { type: "depart" as const, instruction: "", length: 2000, time: 60, shapeIndex: 0 },
+        { type: "arrive" as const, instruction: "", length: 0, time: 0, shapeIndex: 1 },
+      ],
+      distance: 2130,
+      duration: 60,
+    };
+    let state = startNavigation(route);
+    for (let i = 0; i < 4; i++) state = update(state, { lat: -16.5, lon: 180 });
+    expect(needsReroute(state)).toBe(false);
+    expect(progressOf(state).distanceRemaining).toBeGreaterThan(900);
+    expect(progressOf(state).distanceRemaining).toBeLessThan(1200);
+  });
+});

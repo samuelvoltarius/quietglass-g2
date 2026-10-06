@@ -16,9 +16,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   if (!root) return;
 
   const render = (): void => {
-    const data = ports.getData();
-    root.innerHTML = template(data);
-    wire(root, ports, data);
+    root.innerHTML = template(ports.getData());
+    wire(root, ports, render);
   };
 
   render();
@@ -87,13 +86,19 @@ function template(data: PostureData): string {
   </footer>`;
 }
 
-function wire(root: HTMLElement, ports: PhoneUiPorts, data: PostureData): void {
+function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const commit = (next: PostureData): void => { void ports.setData(next); };
-  const patch = (change: Partial<PostureSettings>): void => commit(setSettings(data, change));
+  // Always build on the current data, never on a copy taken when the page was
+  // drawn: a tap on the glasses calibrates in the meantime, and a stale copy
+  // would write `reference: null` back and silently throw the calibration away.
+  // Re-render so the calibration status and its button stay true.
+  const commit = (change: (data: PostureData) => PostureData): void => {
+    void ports.setData(change(ports.getData())).then(rerender);
+  };
+  const patch = (change: Partial<PostureSettings>): void => commit((data) => setSettings(data, change));
 
   byId<HTMLButtonElement>("clear")?.addEventListener("click", () => {
-    commit({ ...data, reference: null });
+    commit((data) => ({ ...data, reference: null }));
   });
 
   bindRange(byId("angle"), byId("angle-out"), (v) => patch({ warnAngle: v }));
@@ -102,10 +107,12 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: PostureData): void {
   bindRange(byId("smooth"), byId("smooth-out"), (v) => patch({ smoothing: v }), (v) => v.toFixed(2));
 
   byId<HTMLInputElement>("angle-good")?.addEventListener("change", (event) => {
-    commit({ ...data, showAngleWhenGood: (event.target as HTMLInputElement).checked });
+    const checked = (event.target as HTMLInputElement).checked;
+    commit((data) => ({ ...data, showAngleWhenGood: checked }));
   });
   byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
-    commit({ ...data, invertScroll: (event.target as HTMLInputElement).checked });
+    const checked = (event.target as HTMLInputElement).checked;
+    commit((data) => ({ ...data, invertScroll: checked }));
   });
 }
 

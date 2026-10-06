@@ -37,7 +37,8 @@ export function buildView(
   const position = positionAt(state, settings, now);
 
   return {
-    header: options.item ?? "Cadence",
+    // The item is the user's own text; a long one must not wrap into the body.
+    header: truncate(options.item ?? "Cadence", HEADER_WIDTH),
     body: [
       beatRow(settings, position.beat, state.running),
       String(settings.bpm) + " bpm" + GAP + signatureLabel(settings) + GAP + "bar " + position.bar,
@@ -71,6 +72,14 @@ export function beatRow(
   }
 
   return markers.join(GAP);
+}
+
+/** Characters that fit one header line on the 576 px display. */
+const HEADER_WIDTH = 46;
+
+export function truncate(text: string, maxWidth: number): string {
+  if (text.length <= maxWidth) return text;
+  return text.slice(0, Math.max(0, maxWidth - 1)).trimEnd() + "…";
 }
 
 export function signatureLabel(settings: MetronomeSettings): string {

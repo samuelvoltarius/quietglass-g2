@@ -69,6 +69,18 @@ async function boot(): Promise<void> {
   let lastView: StopView | null = null;
   let pageReady = false;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let tickTimer: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+  /**
+   * Every request for the board or a ride takes a number; an answer that comes
+   * back after a newer request was started is dropped. Without it, holding to
+   * switch stops while the old stop's board was still loading put the old
+   * stop's departures under the new stop's name.
+   */
+  let requestSeq = 0;
+  /** The newest request that has finished; the timer refresh waits for it. */
+  let settledSeq = 0;
+  const settle = (seq: number): void => { if (seq === requestSeq) settledSeq = seq; };
 
   const backend = (): TransitBackend => settings.backend === "motis"
     ? new MotisBackend({ baseUrl: settings.motisUrl })
@@ -90,14 +102,17 @@ async function boot(): Promise<void> {
     const away = position
       ? metresBetween(position.lat, position.lon, stop.lat, stop.lon)
       : null;
-    return departureBoard(stop, departures, away, selected);
+    return departureBoard(stop, departures, away, selected, new Date());
   };
 
   const draw = async (): Promise<void> => {
+    // After the double tap the page is gone; drawing again would bring it back.
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    if (closed) return;
     if (result.ok) { pageReady = true; lastView = view; return; }
     pageReady = false;
     console.warn("[nextstop] draw failed:", result.reason);
@@ -118,29 +133,38 @@ async function boot(): Promise<void> {
     }
   };
 
-  const loadDepartures = async (): Promise<void> => {
+  const loadDepartures = async (seq = ++requestSeq): Promise<void> => {
     const stop = currentStop();
-    if (!stop) return;
+    if (!stop) { settle(seq); return; }
     try {
-      departures = await backend().departures(stop.id, 12);
+      const next = await backend().departures(stop.id, 12);
+      if (seq !== requestSeq) return;
+      departures = next;
       selected = Math.min(selected, Math.max(0, departures.length - 1));
       error = null;
     } catch (thrown) {
+      if (seq !== requestSeq) return;
       explain(thrown);
     }
+    settle(seq);
     await draw();
   };
 
   const findStops = async (): Promise<void> => {
+    const seq = ++requestSeq;
     if (!position) {
       busy = "Warte auf GPS …";
+      settle(seq);
       await draw();
       return;
     }
     busy = "Haltestelle suchen …";
     await draw();
     try {
-      stops = await backend().nearbyStops(position.lat, position.lon, 5);
+      const found = await backend().nearbyStops(position.lat, position.lon, 5);
+      if (seq !== requestSeq) return;
+      stops = found;
+      departures = [];
       stopIndex = 0;
       selected = 0;
       error = stops.length === 0 ? "Keine Haltestelle in der Nähe" : null;
@@ -148,23 +172,29 @@ async function boot(): Promise<void> {
         ? "Das gewählte Backend kennt diese Gegend nicht. In der Handy-App umschalten."
         : "";
     } catch (thrown) {
+      if (seq !== requestSeq) return;
       explain(thrown);
     }
-    await loadDepartures();
+    await loadDepartures(seq);
   };
 
   const startTracking = async (): Promise<void> => {
     const departure = departures[selected];
     if (!departure) return;
+    const seq = ++requestSeq;
     busy = "Fahrt laden …";
     await draw();
     try {
-      ride = await backend().ride(departure.tripId);
+      const loaded = await backend().ride(departure.tripId);
+      if (seq !== requestSeq) return;
+      ride = loaded;
       error = ride ? null : "Fahrtverlauf nicht verfügbar";
       hint = ride ? "" : "Diese Fahrt liefert keine Haltestellenfolge.";
     } catch (thrown) {
+      if (seq !== requestSeq) return;
       explain(thrown);
     }
+    settle(seq);
     await draw();
   };
 
@@ -181,8 +211,11 @@ async function boot(): Promise<void> {
    */
   const scheduleRefresh = (): void => {
     if (refreshTimer !== null) clearInterval(refreshTimer);
+    if (closed) return;
     refreshTimer = setInterval(() => {
-      if (!ride) void loadDepartures();
+      // A request the passenger started — a stop switch, a ride being loaded —
+      // is never pre-empted by the background refresh.
+      if (!ride && settledSeq === requestSeq) void loadDepartures();
       // The ride screen still redraws, because its countdown moves with the
       // clock even when no new data has arrived.
       void draw();
@@ -202,10 +235,14 @@ async function boot(): Promise<void> {
     // A real fix always wins over the URL parameter.
     position = { lat: firstFix.latitude, lon: firstFix.longitude };
   }
-  await findStops();
+  // Not awaited: the handlers below must be in place before the first board
+  // arrives, or a slow backend left the glasses deaf — even to the double tap
+  // that leaves — for as long as the request took.
+  void findStops();
   scheduleRefresh();
 
-  bridge.onAppLocationChanged((location: AppLocation) => {
+  const stopListening = bridge.onAppLocationChanged((location: AppLocation) => {
+    if (closed) return;
     if (typeof location?.latitude !== "number" || typeof location?.longitude !== "number") return;
     const previous = position;
     position = {
@@ -220,6 +257,7 @@ async function boot(): Promise<void> {
   });
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: false });
     if (!gesture) return;
 
@@ -248,9 +286,20 @@ async function boot(): Promise<void> {
         void draw();
         return;
       case "doubleClick":
+        // Everything that could draw again or keep GPS awake is stopped first,
+        // and a failing shutdown is caught rather than left as an unhandled
+        // rejection on the way out.
+        closed = true;
+        requestSeq++;
+        if (refreshTimer !== null) clearInterval(refreshTimer);
+        if (tickTimer !== null) clearInterval(tickTimer);
+        refreshTimer = null;
+        tickTimer = null;
+        if (typeof stopListening === "function") stopListening();
         void bridge.stopAppLocationUpdates()
           .catch(() => undefined)
-          .then(() => bridge.shutDownPageContainer());
+          .then(() => bridge.shutDownPageContainer())
+          .catch((thrown: unknown) => { console.warn("[nextstop] shutdown failed:", thrown); });
         return;
       default:
         return;
@@ -258,14 +307,14 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
+    if (status?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
   });
 
   // A second beat so the countdown stays honest between data refreshes.
-  setInterval(() => { void draw(); }, 2000);
+  tickTimer = setInterval(() => { void draw(); }, 2000);
 
   mountPhoneUi({
     getSettings: () => settings,

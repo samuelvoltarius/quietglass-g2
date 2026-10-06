@@ -25,6 +25,20 @@ export interface ViewOptions {
 
 const DEFAULT_ROWS = 5;
 
+/**
+ * Roughly the characters that fit across the 576 px display in its
+ * proportional font. Source names, metric labels and error texts all come
+ * from the sources themselves and can be any length; an uncut row wraps, and
+ * five wrapped rows push the rest of the list off the body.
+ */
+export const LINE_WIDTH = 46;
+
+/** Shortens text to `width`, marking the cut. */
+export function fit(text: string, width: number = LINE_WIDTH): string {
+  if (text.length <= width) return text;
+  return width <= 1 ? text.slice(0, Math.max(0, width)) : text.slice(0, width - 1) + "…";
+}
+
 export function buildView(
   sources: readonly SourceStatus[],
   options: ViewOptions = {},
@@ -60,8 +74,9 @@ export function buildView(
     const selected = start + index === cursor;
     const mark = problem.state === "critical" ? "!" : problem.state === "warn" ? "·" : "?";
     const ack = problem.acknowledged ? " (ack)" : "";
-    return (selected ? "> " : "  ") + mark + " " + problem.sourceName + " " +
-           formatMetric(problem.metric) + ack;
+    // The acknowledgement marker is kept; the text before it gives way.
+    const head = (selected ? "> " : "  ") + mark + " ";
+    return head + fit(problem.sourceName + " " + formatMetric(problem.metric), LINE_WIDTH - head.length - ack.length) + ack;
   });
 
   const hidden = list.length - window.length;

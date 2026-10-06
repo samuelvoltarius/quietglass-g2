@@ -12,7 +12,7 @@ export type ProviderKind = "even-terminal" | "hermes" | "openclaw";
 
 export interface Settings {
   readonly provider: ProviderKind;
-  /** e.g. http://100.95.218.17:3456 */
+  /** e.g. http://100.64.0.1:3456 — never carries the token itself. */
   readonly baseUrl: string;
   readonly token: string;
   /** Session to reopen on start; empty means "ask". */
@@ -52,12 +52,14 @@ export function parseSettings(raw: string): Settings {
   try {
     const value = JSON.parse(raw) as Partial<Settings>;
     const provider = parseProvider(value.provider);
-    const candidateUrl = String(value.baseUrl ?? "").trim();
+    // A stored address is normalised again: an older build kept whatever was
+    // typed, including a `?token=` that then showed up as the "Address".
+    const address = normalizeAddress(String(value.baseUrl ?? ""), provider);
+    const storedToken = typeof value.token === "string" ? value.token.trim() : "";
     return {
       provider,
-      baseUrl: validateProviderUrl(candidateUrl, provider).valid
-        ? candidateUrl : defaultUrlForProvider(provider),
-      token: typeof value.token === "string" ? value.token.trim() : "",
+      baseUrl: address.ok ? address.baseUrl : defaultUrlForProvider(provider),
+      token: storedToken || (address.ok ? address.token ?? "" : ""),
       sessionId: typeof value.sessionId === "string" ? value.sessionId : "",
       spokenOutput: value.spokenOutput === true,
       speechLanguage: typeof value.speechLanguage === "string" && value.speechLanguage
@@ -115,25 +117,64 @@ export function defaultUrlForProvider(provider: ProviderKind): string {
   return "http://127.0.0.1:3456";
 }
 
+export type AddressResult =
+  | { readonly ok: true; readonly baseUrl: string; readonly token?: string }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Splits what was typed into a clean server address and, if present, a token.
+ *
+ * Whatever comes back as `baseUrl` is shown on the phone and used to build
+ * request URLs, so it must never carry a credential: a `token` query value is
+ * lifted out, user:password parts and fragments are dropped. The raw query is
+ * read by hand because `URLSearchParams` turns a literal `+` (common in base64
+ * tokens) into a space.
+ */
+export function normalizeAddress(input: string, provider: ProviderKind): AddressResult {
+  const check = validateProviderUrl(input, provider);
+  if (!check.valid) return { ok: false, error: check.error ?? "Invalid address." };
+  const url = new URL(input.trim());
+  let token: string | undefined;
+  const kept: string[] = [];
+  for (const part of url.search.replace(/^\?/, "").split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    const name = safeDecode(eq < 0 ? part : part.slice(0, eq));
+    if (name === "token") {
+      const value = safeDecode(eq < 0 ? "" : part.slice(eq + 1)).trim();
+      if (value) token = value;
+      continue;
+    }
+    // Even Terminal's pairing URL carries UI hints such as defaultProvider;
+    // they mean nothing to the API. Only the WebSocket bridge keeps extras.
+    if (provider === "hermes") kept.push(part);
+  }
+  const path = url.pathname.replace(/\/+$/, "");
+  const baseUrl = `${url.protocol}//${url.host}${path}${kept.length ? `?${kept.join("&")}` : ""}`;
+  return token ? { ok: true, baseUrl, token } : { ok: true, baseUrl };
+}
+
+function safeDecode(value: string): string {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
 /**
  * Accepts the pairing URL Even Terminal prints, so the whole thing can be
  * pasted in one go instead of split by hand.
  *
- *   http://100.95.218.17:3456?token=abc…&defaultProvider=claude
+ *   http://100.64.0.1:3456?token=abc…&defaultProvider=claude
  */
 export function parsePairingUrl(input: string): { baseUrl: string; token: string } | null {
-  try {
-    const url = new URL(input.trim());
-    const token = url.searchParams.get("token");
-    if (!token) return null;
-    return { baseUrl: `${url.protocol}//${url.host}`, token };
-  } catch {
-    return null;
-  }
+  const result = normalizeAddress(input, "even-terminal");
+  if (!result.ok || !result.token) return null;
+  return { baseUrl: result.baseUrl, token: result.token };
 }
 
 /** Shows that a token exists without revealing it. */
 export function maskToken(token: string): string {
   if (!token) return "none";
+  // Four characters of a short token are most of it; only a long one can
+  // afford a recognisable suffix.
+  if (token.length < 16) return `set (${token.length} characters)`;
   return `set (${token.length} characters, ends in ${token.slice(-4)})`;
 }

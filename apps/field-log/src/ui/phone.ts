@@ -1,5 +1,5 @@
 import {
-  approximateBytes, maskSecret, nextInspectionId, removeInspection, upsertInspection,
+  activeInspection, approximateBytes, maskSecret, nextInspectionId, removeInspection, upsertInspection,
   usesMockStt, validateWsUrl, type FieldLogData,
 } from "../storage/persist";
 import {
@@ -16,6 +16,7 @@ import {
  */
 
 export interface PhoneUiPorts {
+  /** Must already reflect a `setData` call by the time that call returns its promise. */
   readonly getData: () => FieldLogData;
   readonly setData: (data: FieldLogData) => Promise<void>;
 }
@@ -23,21 +24,58 @@ export interface PhoneUiPorts {
 /** Warn before per-app storage becomes a problem. */
 const SIZE_WARN_BYTES = 4 * 1024 * 1024;
 
+/** Text fields that hold an unsaved draft and must survive a re-render. */
+const DRAFT_FIELDS = ["title", "stt", "stt-token", "lang"] as const;
+
+type Commit = (next: FieldLogData, options?: { readonly keepDraft?: boolean }) => void;
+
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   let notice = "";
-  const render = (): void => {
-    const data = ports.getData();
-    root.innerHTML = template(data);
-    if (notice) notice = "";
-    wire(root, ports, data, (message) => { notice = message; render(); });
+
+  // Re-rendered after every change. Handlers always read the current data:
+  // the glasses file entries while this page is open, and a change computed
+  // from the data of the last render would write those entries away again.
+  const render = (keepDraft = true): void => {
+    const draft = keepDraft ? readDraft(root) : null;
+    root.innerHTML = template(ports.getData(), notice);
+    notice = "";
+    if (draft) writeDraft(root, draft);
+    wire(root, ports.getData, commit, (message) => { notice = message; render(); });
   };
+
+  const commit: Commit = (next, options = {}) => {
+    const saving = ports.setData(next);
+    render(options.keepDraft ?? true);
+    saving.catch((error: unknown) => {
+      console.warn("[fieldlog] save failed:", error);
+      notice = "Could not save: " + (error instanceof Error ? error.message : String(error));
+      render();
+    });
+  };
+
   render();
 }
 
-function template(data: FieldLogData): string {
+function readDraft(root: HTMLElement): Map<string, string> {
+  const draft = new Map<string, string>();
+  for (const id of DRAFT_FIELDS) {
+    const field = root.querySelector<HTMLInputElement>("#" + id);
+    if (field) draft.set(id, field.value);
+  }
+  return draft;
+}
+
+function writeDraft(root: HTMLElement, draft: Map<string, string>): void {
+  for (const [id, value] of draft) {
+    const field = root.querySelector<HTMLInputElement>("#" + id);
+    if (field) field.value = value;
+  }
+}
+
+function template(data: FieldLogData, notice: string): string {
   const active = data.activeId ? data.inspections.find((i) => i.id === data.activeId) : null;
   const bytes = approximateBytes(data);
 
@@ -46,6 +84,8 @@ function template(data: FieldLogData): string {
     <span class="brand-mark">Quietglass</span>
     <h1>FieldLog</h1>
   </header>
+
+  ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
   ${usesMockStt(data) ? `
   <section class="card">
@@ -160,70 +200,78 @@ function severityBadge(severity: Severity): string {
 
 function wire(
   root: HTMLElement,
-  ports: PhoneUiPorts,
-  data: FieldLogData,
+  current: () => FieldLogData,
+  commit: Commit,
   notify: (message: string) => void,
 ): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const commit = (next: FieldLogData): void => { void ports.setData(next); };
-  const active = data.activeId ? data.inspections.find((i) => i.id === data.activeId) : null;
+  /** The open inspection as it is now, not as it was when the page was drawn. */
+  const active = (): ReturnType<typeof activeInspection> => activeInspection(current());
 
   byId<HTMLButtonElement>("start")?.addEventListener("click", () => {
     const title = byId<HTMLInputElement>("title")?.value.trim() ?? "";
     if (!title) { notify("Give the inspection a title."); return; }
+    const data = current();
     const id = nextInspectionId(data);
-    commit({ ...upsertInspection(data, startInspection(id, title, Date.now())), activeId: id });
+    commit({ ...upsertInspection(data, startInspection(id, title, Date.now())), activeId: id }, { keepDraft: false });
   });
 
   byId<HTMLButtonElement>("finish")?.addEventListener("click", () => {
-    if (!active) return;
-    commit({ ...upsertInspection(data, finish(active, Date.now())), activeId: null });
+    const open = active();
+    if (!open) return;
+    commit({ ...upsertInspection(current(), finish(open, Date.now())), activeId: null });
   });
 
   byId<HTMLInputElement>("section")?.addEventListener("change", (event) => {
-    if (!active) return;
-    commit(upsertInspection(data, setSection(active, (event.target as HTMLInputElement).value)));
+    const open = active();
+    if (!open) return;
+    commit(upsertInspection(current(), setSection(open, (event.target as HTMLInputElement).value)));
   });
 
   root.querySelectorAll<HTMLSelectElement>(".sev").forEach((select) => {
     select.addEventListener("change", () => {
       const id = select.dataset["id"];
-      if (active && id) commit(upsertInspection(data, setSeverity(active, id, select.value as Severity)));
+      const open = active();
+      if (open && id) commit(upsertInspection(current(), setSeverity(open, id, select.value as Severity)));
     });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".drop").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (active && id) commit(upsertInspection(data, removeEntry(active, id)));
+      const open = active();
+      if (open && id) commit(upsertInspection(current(), removeEntry(open, id)));
     });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".open").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (id) commit({ ...data, activeId: id });
+      if (id) commit({ ...current(), activeId: id });
     });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (id) commit(removeInspection(data, id));
+      if (id) commit(removeInspection(current(), id));
     });
   });
 
   const fileName = (extension: string): string =>
-    (active?.title ?? "inspection").replace(/[^a-z0-9]+/gi, "-").toLowerCase() + "." + extension;
+    (active()?.title ?? "inspection").replace(/[^a-z0-9]+/gi, "-").toLowerCase() + "." + extension;
 
   byId<HTMLButtonElement>("md")?.addEventListener("click", () => {
-    if (active) download(fileName("md"), toMarkdown(active), "text/markdown");
+    const open = active();
+    if (open) download(fileName("md"), toMarkdown(open), "text/markdown");
   });
   byId<HTMLButtonElement>("md-img")?.addEventListener("click", () => {
-    if (active) download(fileName("full.md"), toMarkdown(active, true), "text/markdown");
+    const open = active();
+    if (open) download(fileName("full.md"), toMarkdown(open, true), "text/markdown");
   });
   byId<HTMLButtonElement>("csv")?.addEventListener("click", () => {
-    if (active) download(fileName("csv"), toCsv(active), "text/csv");
+    const open = active();
+    if (open) download(fileName("csv"), toCsv(open), "text/csv");
   });
 
   byId<HTMLButtonElement>("save-stt")?.addEventListener("click", () => {
@@ -231,13 +279,14 @@ function wire(
     const check = validateWsUrl(sttUrl);
     if (!check.valid) { notify(check.errors.join(" ")); return; }
     const token = byId<HTMLInputElement>("stt-token")?.value ?? "";
+    const data = current();
     commit({
       ...data,
       sttUrl,
       ...(token ? { sttToken: token } : data.sttToken ? { sttToken: data.sttToken } : {}),
       language: byId<HTMLInputElement>("lang")?.value.trim() || "auto",
       invertScroll: byId<HTMLInputElement>("invert")?.checked ?? false,
-    });
+    }, { keepDraft: false });
   });
 }
 

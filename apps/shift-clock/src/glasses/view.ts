@@ -1,5 +1,5 @@
 import {
-  entriesOnDay, formatClock, isRunning, openSeconds, startOfDay, totalSeconds,
+  formatClock, isRunning, openSeconds, openSecondsOnDay, secondsOnDay, startOfDay,
   type ClockState, type TimeEntry,
 } from "../tracking/clock";
 
@@ -16,6 +16,13 @@ export interface ClockView {
   readonly body: readonly string[];
   readonly footer: string;
 }
+
+/** Rows the body container holds; more are pushed off the display. */
+export const MAX_BODY_ROWS = 7;
+/** Characters the header holds on one line in the G2's proportional font. */
+export const HEADER_WIDTH = 46;
+/** The body sits beside the pixel icon, so its lines are shorter. */
+export const BODY_WIDTH = 38;
 
 export interface ViewOptions {
   /** Highlighted project in the picker, when the user is choosing. */
@@ -44,12 +51,13 @@ export function buildView(
   if (options.selecting != null && !isRunning(state)) {
     return {
       header: "Start which project?",
-      body: projects.map((p) => (p === options.selecting ? "> " + p : "  " + p)),
+      body: pickerRows(projects, options.selecting),
       footer: "swipe = choose  ·  tap = start",
     };
   }
 
-  const todaySeconds = totalSeconds(entriesOnDay(entries, startOfDay(now)));
+  const today = startOfDay(now);
+  const todaySeconds = secondsOnDay(entries, today);
 
   if (!isRunning(state)) {
     return {
@@ -61,10 +69,26 @@ export function buildView(
 
   const running = openSeconds(state, now);
   return {
-    header: state.project ?? "",
+    header: truncate(state.project ?? "", HEADER_WIDTH),
     body: [formatClock(running)],
     // The day total includes the entry still running, so the number on screen
     // is what the day actually stands at — not what it stood at an hour ago.
-    footer: "today " + formatClock(todaySeconds + running) + "  ·  tap = stop",
+    // Only today's part counts: a shift begun last night is split at midnight.
+    footer: "today " + formatClock(todaySeconds + openSecondsOnDay(state, today, now)) + "  ·  tap = stop",
   };
+}
+
+/** The project picker: a window of at most seven rows that keeps the choice in view. */
+function pickerRows(projects: readonly string[], selecting: string): string[] {
+  const rows = projects.map((p) =>
+    truncate((p === selecting ? "> " : "  ") + p, BODY_WIDTH));
+  if (rows.length <= MAX_BODY_ROWS) return rows;
+  const index = Math.max(0, projects.indexOf(selecting));
+  const start = Math.min(Math.max(0, index - Math.floor(MAX_BODY_ROWS / 2)), rows.length - MAX_BODY_ROWS);
+  return rows.slice(start, start + MAX_BODY_ROWS);
+}
+
+export function truncate(text: string, maxWidth: number): string {
+  if (text.length <= maxWidth) return text;
+  return text.slice(0, Math.max(0, maxWidth - 1)).trimEnd() + "…";
 }

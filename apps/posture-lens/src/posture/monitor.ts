@@ -1,4 +1,4 @@
-import { angleBetween, smooth, type Vec3 } from "../imu/vector";
+import { angleBetween, normalise, smooth, type Vec3 } from "../imu/vector";
 
 /**
  * Posture state over time.
@@ -62,8 +62,20 @@ export function createMonitor(): PostureMonitor {
   };
 }
 
-/** Takes the current smoothed direction as the upright reference. */
+/**
+ * Longest gap between two IMU samples that still counts as tracked time. The
+ * glasses report every 500 ms; a longer silence means they were off, asleep or
+ * disconnected, and that time is neither upright nor leaning.
+ */
+export const MAX_SAMPLE_GAP_SECONDS = 30;
+
+/**
+ * Takes the current pose as the upright reference. A zero vector carries no
+ * direction — every later angle would be undefined and the monitor would sit
+ * silently at "good" — so it is refused and the monitor is left as it was.
+ */
 export function calibrate(monitor: PostureMonitor, sample: Vec3, now: number): PostureMonitor {
+  if (!normalise(sample)) return monitor;
   const current = smooth(monitor.current, sample, 1);
   return {
     ...monitor,
@@ -99,16 +111,20 @@ export function addSample(
   }
 
   const angle = angleBetween(current, monitor.reference);
-  const elapsed = monitor.lastSampleAt === null
+  const gap = monitor.lastSampleAt === null
     ? 0
     : Math.max(0, (now - monitor.lastSampleAt) / 1000);
+  // After a long silence the time in between was not observed, and a lean
+  // from before it is not one the user has been holding since.
+  const resumed = gap > MAX_SAMPLE_GAP_SECONDS;
+  const elapsed = resumed ? 0 : gap;
 
   if (angle === null) {
     return { ...monitor, current, lastSampleAt: now };
   }
 
   const leaning = angle >= settings.warnAngle;
-  const leaningSince = leaning ? (monitor.leaningSince ?? now) : null;
+  const leaningSince = leaning ? ((resumed ? null : monitor.leaningSince) ?? now) : null;
 
   let state: PostureState = leaning ? "leaning" : "good";
   let lastWarnAt = monitor.lastWarnAt;

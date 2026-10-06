@@ -25,22 +25,50 @@ async function boot(): Promise<void> {
   let selecting: string | null = null;
   let lastView: ClockView | null = null;
   let pageReady = false;
+  /** Set once the user leaves; nothing may be drawn on a closed page. */
+  let closed = false;
+  let drawing: Promise<void> | null = null;
+  let redrawQueued = false;
 
   const currentView = (): ClockView =>
     buildView(clock, data.entries, { selecting, projects: data.projects });
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
     const view = currentView();
     if (sameView(lastView, view)) return;
 
-    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
+    // The icon never changes, so it is sent with the page only. Re-encoding
+    // and resending it on every clock tick cost a BLE image transfer a second.
+    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, PIXEL_ICON);
     if (result.ok) {
       pageReady = true;
       lastView = view;
       return;
     }
     pageReady = false;
+    lastView = null;
     console.warn("[shiftclock] draw failed:", result.reason);
+  };
+
+  /**
+   * One draw at a time. The clock tick, gestures and the phone all request
+   * redraws; interleaving them would race two page creations or let an older
+   * view land after a newer one. Requests made meanwhile collapse into one.
+   */
+  const draw = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (drawing) { redrawQueued = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do {
+          redrawQueued = false;
+          await drawOnce();
+        } while (redrawQueued && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
   };
 
   /** Persists immediately: tracked time must survive a crash or disconnect. */
@@ -49,9 +77,30 @@ async function boot(): Promise<void> {
     await save(bridge, data);
   };
 
+  const persistInBackground = (): void => {
+    persist().catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); });
+  };
+
   await draw();
 
+  let ticker: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * Leaving does not stop the clock: the open entry is persisted and resumes
+   * next time. The page is shut only once that save has landed.
+   */
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    clearInterval(ticker);
+    persist()
+      .catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); })
+      .then(() => bridge.shutDownPageContainer())
+      .catch((error: unknown) => { console.warn("[shiftclock] shutdown failed:", error); });
+  };
+
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -75,7 +124,7 @@ async function boot(): Promise<void> {
           selecting = mostRecentProject(data) ?? data.projects[0] ?? null;
           if (selecting === null) break;
         }
-        void persist();
+        persistInBackground();
         break;
       }
 
@@ -89,10 +138,7 @@ async function boot(): Promise<void> {
       }
 
       case "doubleClick":
-        // Leaving does not stop the clock: the open entry is persisted and
-        // resumes next time. Ending a shift is an explicit tap, not an exit.
-        void persist();
-        void bridge.shutDownPageContainer();
+        close();
         return;
 
       default:
@@ -101,14 +147,17 @@ async function boot(): Promise<void> {
     void draw();
   });
 
+  // The page does not survive a disconnect. The last view is forgotten too,
+  // or an unchanged view would skip the rebuild and leave the display blank.
   bridge.onDeviceStatusChanged((status) => {
     if (status?.connectType === "connected") {
       pageReady = false;
+      lastView = null;
       void draw();
     }
   });
 
-  setInterval(() => { void draw(); }, 1000);
+  ticker = setInterval(() => { void draw(); }, 1000);
 
   mountPhoneUi({
     getData: () => data,

@@ -77,15 +77,48 @@ export function totalSeconds(entries: readonly TimeEntry[]): number {
   return entries.reduce((sum, e) => sum + entrySeconds(e), 0);
 }
 
+/**
+ * Entries that touch a calendar day, including one that started the evening
+ * before and ran past midnight.
+ */
 export function entriesOnDay(entries: readonly TimeEntry[], dayStart: number): TimeEntry[] {
-  const dayEnd = dayStart + 86_400_000;
+  const dayEnd = nextDayStart(dayStart);
   return entries
-    .filter((e) => e.startedAt >= dayStart && e.startedAt < dayEnd)
+    .filter((e) => e.startedAt < dayEnd && e.endedAt > dayStart)
     .sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/**
+ * Seconds recorded within one calendar day. A shift across midnight counts
+ * each part on its own day, so "today" never includes yesterday's hours.
+ */
+export function secondsOnDay(entries: readonly TimeEntry[], dayStart: number): number {
+  const dayEnd = nextDayStart(dayStart);
+  let total = 0;
+  for (const e of entries) total += overlapSeconds(e.startedAt, e.endedAt, dayStart, dayEnd);
+  return total;
+}
+
+/** Seconds the open entry has run within the day containing `now`. */
+export function openSecondsOnDay(state: ClockState, dayStart: number, now: number): number {
+  if (state.startedAt === null) return 0;
+  return overlapSeconds(state.startedAt, now, dayStart, nextDayStart(dayStart));
+}
+
+function overlapSeconds(start: number, end: number, from: number, to: number): number {
+  return Math.max(0, Math.round((Math.min(end, to) - Math.max(start, from)) / 1000));
 }
 
 export function startOfDay(timestamp: number): number {
   const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+/** The following local midnight. A day is 23 or 25 hours when the clocks change. */
+export function nextDayStart(dayStart: number): number {
+  const date = new Date(dayStart);
+  date.setDate(date.getDate() + 1);
   date.setHours(0, 0, 0, 0);
   return date.getTime();
 }
@@ -141,7 +174,8 @@ export function toCsv(entries: readonly TimeEntry[]): string {
   for (const entry of entries) {
     const start = new Date(entry.startedAt);
     rows.push([
-      start.toISOString().slice(0, 10),
+      // The day the work belongs to is the local one; the ISO times stay UTC.
+      localDate(start),
       csvField(entry.project),
       start.toISOString(),
       new Date(entry.endedAt).toISOString(),
@@ -152,6 +186,17 @@ export function toCsv(entries: readonly TimeEntry[]): string {
   return rows.join("\n") + "\n";
 }
 
+/**
+ * Quotes a field when it holds a separator, a quote or a line break, and
+ * defuses spreadsheet formulas: a project name starting with `=`, `+`, `-` or
+ * `@` would otherwise be evaluated when the export is opened.
+ */
 function csvField(value: string): string {
-  return /[",\n]/.test(value) ? '"' + value.split('"').join('""') + '"' : value;
+  const safe = /^[=+\-@\t\r]/.test(value) ? "'" + value : value;
+  return /[",\r\n]/.test(safe) ? '"' + safe.split('"').join('""') + '"' : safe;
+}
+
+function localDate(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
 }

@@ -82,6 +82,11 @@ export function validateUrl(url: string): UrlCheck {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       errors.push("URL must start with http:// or https://.");
     }
+    // A password in the URL is shown in full on the sources list and refused
+    // by fetch outright ("unreachable"); it belongs in the token field.
+    if (parsed.username || parsed.password) {
+      errors.push("Put credentials in the token field, not in the URL.");
+    }
   } catch {
     errors.push("URL is not valid.");
   }

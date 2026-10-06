@@ -210,3 +210,59 @@ describe("text helpers", () => {
     expect(severityLabel("note")).toBe("note");
   });
 });
+
+describe("export escaping", () => {
+  const said = (text: string, section = "") =>
+    addEntry({ ...started(), section }, text, "major", 1_060_000);
+
+  it("regression: a dictated formula cannot run in a spreadsheet", () => {
+    for (const text of ["=HYPERLINK(\"http://x\",\"y\")", "+1 call", "-2 dents", "@SUM(A1)"]) {
+      const row = toCsv(said(text)).trim().split("\n")[1] ?? "";
+      const field = row.split(",").slice(3).join(",");
+      expect(field.replace(/^"/, "").startsWith("'")).toBe(true);
+    }
+  });
+
+  it("regression: a formula in the section name is neutralised too", () => {
+    const row = toCsv(said("ok", "=cmd|' /C calc'!A0")).trim().split("\n")[1] ?? "";
+    expect(row).toContain("'=cmd");
+  });
+
+  it("regression: a carriage return in a transcript is quoted, not a row break", () => {
+    const csv = toCsv(said("first\rsecond"));
+    expect(csv).toContain('"first\rsecond"');
+  });
+
+  it("regression: a line break in a transcript stays inside its Markdown list item", () => {
+    const md = toMarkdown(said("first line\n# not a heading"));
+    expect(md).not.toMatch(/^# not a heading/m);
+    expect(md).toContain("first line # not a heading");
+  });
+
+  it("regression: a line break in the title cannot start a second heading", () => {
+    const md = toMarkdown({ ...started(), title: "Flat 3\n## Injected" });
+    expect(md).not.toMatch(/^## Injected/m);
+  });
+});
+
+describe("display budget", () => {
+  const long = "word ".repeat(120).trim();
+
+  it("regression: a long transcript under review fits the seven body rows", () => {
+    const view = buildView(started(), { phase: "review", severity: "major", pending: long, status: "ready", mock: false }, 0);
+    expect(view.body.length).toBeLessThanOrEqual(7);
+    expect(view.body[view.body.length - 1]).toBe("MAJOR");
+    expect(view.body.some((row) => row.endsWith("…"))).toBe(true);
+  });
+
+  it("regression: an unbroken token is split instead of overflowing the line", () => {
+    for (const row of wrap("https://example.com/" + "x".repeat(90), 44)) {
+      expect(row.length).toBeLessThanOrEqual(44);
+    }
+  });
+
+  it("regression: a long section name is cut to one header line", () => {
+    const view = buildView({ ...started(), section: long }, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false }, 0);
+    expect(view.header.length).toBeLessThanOrEqual(46);
+  });
+});

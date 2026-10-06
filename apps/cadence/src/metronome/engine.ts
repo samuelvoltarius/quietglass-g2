@@ -89,6 +89,22 @@ export function reset(): MetronomeState {
   return createState();
 }
 
+/**
+ * Folds the beats already played at the old tempo into `beatsBefore`, so a
+ * tempo change only affects beats from now on. Without this the whole run is
+ * re-counted at the new tempo and the bar number jumps. The run is restarted
+ * on the last beat boundary, which keeps the phase within the current beat.
+ */
+export function retime(state: MetronomeState, oldSettings: MetronomeSettings, now: number): MetronomeState {
+  if (!state.running || state.startedAt === null) return state;
+  const beats = elapsedBeats(state, oldSettings, now);
+  return {
+    running: true,
+    startedAt: state.startedAt + beats * msPerBeat(oldSettings.bpm),
+    beatsBefore: state.beatsBefore + beats,
+  };
+}
+
 /** Whole beats elapsed in the current run. */
 function elapsedBeats(state: MetronomeState, settings: MetronomeSettings, now: number): number {
   if (state.startedAt === null) return 0;

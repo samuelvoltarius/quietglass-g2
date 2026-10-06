@@ -51,10 +51,14 @@ export class OpenClawBackend implements AgentBackend {
   }
 
   async prompt(_sessionId: string, text: string): Promise<void> {
-    this.#controller?.abort();
+    // Why a request ended early decides what the user is told: their own
+    // interrupt is not an error, a newer prompt silently replaces this one,
+    // and only the timer is reported as a timeout.
+    this.#controller?.abort("superseded");
     const controller = new AbortController();
     this.#controller = controller;
-    const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort("timeout"); }, this.#timeoutMs);
     this.#history.push({ role: "user", text });
     this.#emit(parseEvent({ type: "user_prompt", text }));
     try {
@@ -69,30 +73,77 @@ export class OpenClawBackend implements AgentBackend {
       });
       if (response.status === 401 || response.status === 403) throw new Error("OpenClaw token rejected");
       if (!response.ok) throw new Error(`OpenClaw HTTP ${response.status}`);
-      const payload = asRecord(await response.json());
-      const choices = Array.isArray(payload["choices"]) ? payload["choices"] : [];
-      const first = asRecord(choices[0]);
-      const content = asString(asRecord(first["message"])["content"]);
+      const content = parseCompletionBody(await response.text());
       if (!content) throw new Error("OpenClaw returned an empty answer");
+      if (this.#controller !== controller) return;
       this.#history.push({ role: "assistant", text: content });
       this.#emit(parseEvent({ type: "text", text: content }));
       this.#emit(parseEvent({ type: "result" }));
     } catch (error) {
-      if (controller.signal.aborted) this.#emit(parseEvent({ type: "result" }));
-      else this.#emit(parseEvent({ type: "error", message: error instanceof Error ? error.message : String(error) }));
-      throw error;
+      if (controller.signal.aborted && !timedOut) {
+        // Interrupted by the user, replaced by a newer prompt, or the backend
+        // was disposed: nothing went wrong. Only the request that is still
+        // current reports the end of its turn.
+        if (this.#controller === controller) this.#emit(parseEvent({ type: "result" }));
+        return;
+      }
+      const failure = timedOut ? new Error("OpenClaw timed out") : error;
+      this.#emit(parseEvent({ type: "error", message: failure instanceof Error ? failure.message : String(failure) }));
+      throw failure;
     } finally {
       clearTimeout(timer);
       if (this.#controller === controller) this.#controller = null;
     }
   }
 
-  async interrupt(): Promise<void> { this.#controller?.abort(); }
+  async interrupt(): Promise<void> { this.#controller?.abort("interrupt"); }
   async decide(): Promise<void> { throw new Error("OpenClaw does not expose permission decisions"); }
-  dispose(): void { this.#controller?.abort(); this.#listeners.clear(); }
+  dispose(): void {
+    this.#listeners.clear();
+    this.#controller?.abort("disposed");
+    this.#controller = null;
+  }
 
   #headers(): Record<string, string> {
     return { Authorization: `Bearer ${this.#token}`, "Content-Type": "application/json" };
   }
   #emit(event: AgentEvent): void { for (const listener of this.#listeners) listener(event); }
+}
+
+/**
+ * Reads the answer out of a chat-completions body.
+ *
+ * The request does not ask for streaming, but a gateway or proxy may still
+ * answer as server-sent events. Both shapes are accepted: a JSON object, or
+ * `data:` lines whose deltas are joined, stopping at `[DONE]` and skipping
+ * comments, blank lines and lines that are not valid JSON.
+ */
+export function parseCompletionBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return "";
+  if (!/^(?:data|event|id|retry)\s*:|^:/.test(trimmed)) {
+    try { return messageContent(asRecord(JSON.parse(trimmed))); } catch { return ""; }
+  }
+  let answer = "";
+  for (const rawLine of trimmed.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data) continue;
+    if (data === "[DONE]") break;
+    try {
+      const choice = asRecord(firstChoice(asRecord(JSON.parse(data))));
+      answer += asString(asRecord(choice["delta"])["content"])
+        ?? asString(asRecord(choice["message"])["content"]) ?? "";
+    } catch { /* One malformed line must not lose the rest of the answer. */ }
+  }
+  return answer;
+}
+
+function firstChoice(payload: Record<string, unknown>): unknown {
+  return Array.isArray(payload["choices"]) ? payload["choices"][0] : undefined;
+}
+
+function messageContent(payload: Record<string, unknown>): string {
+  return asString(asRecord(asRecord(firstChoice(payload))["message"])["content"]) ?? "";
 }

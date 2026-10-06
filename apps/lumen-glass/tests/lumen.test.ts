@@ -262,6 +262,35 @@ describe("the display", () => {
     expect(windowLabel("golden_frueh", 135)).toBe("golden in 2h 15m");
   });
 
+  it("does not round a window just under the hour into \"1h 60m\"", () => {
+    // Regression: hours were floored and the remainder rounded on its own.
+    expect(windowLabel("golden", 119.7)).toBe("golden in 2h 0m");
+    expect(windowLabel("golden", 59.6)).toBe("golden in 1h 0m");
+    expect(windowLabel("blau", 0.3)).toBe("blue now");
+    expect(windowLabel("golden", Number.NaN)).toBe("golden now");
+  });
+
+  it("keeps the body within the seven rows the display shows", () => {
+    // Regression: a bright moth (4 rows), its line, a spacer, a three-line task and the
+    // meta line made 10 rows; even the demo's awake moth ran its meta line into the footer.
+    const bright = parseStatus({
+      ...statusPayload,
+      kreatur: { ...statusPayload.kreatur, licht: 95, zustand: "leuchtet", geste: "kreist unermüdlich und strahlend im allerletzten Abendlicht über dem See" },
+      quest: { ...statusPayload.quest, aufgabe: "Finde ein wiederkehrendes Muster von oben, zum Beispiel einen Acker, einen Parkplatz oder ein Dach, und fotografiere es so, dass es das Bild füllt." },
+    });
+    const view = buildView(bright, idle);
+    expect(view.body.length).toBeLessThanOrEqual(7);
+    expect(view.body.every((line) => line.length <= 46)).toBe(true);
+    expect(view.body.at(-1)).toContain("FOTO");
+    expect(view.body.join(" ")).toContain("…");
+
+    const demo = parseStatus({ kreatur: { licht: 72, zustand: "wach", geste: "circling in the light", streak: 6 }, quest: { id: 1, titel: "Reflected Light", aufgabe: "Photograph a reflection that changes the scene.", medium: "foto", dauer_min: 15 } });
+    expect(buildView(demo, idle).body.length).toBeLessThanOrEqual(7);
+
+    const result = buildView(bright, { ...idle, phase: "result", result: { ok: false, text: "x ".repeat(120) } });
+    expect(result.body.length).toBeLessThanOrEqual(7);
+  });
+
   it("wraps long quest text", () => {
     expect(wrap("aaa bbb ccc", 7)).toEqual(["aaa bbb", "ccc"]);
   });

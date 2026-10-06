@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildView, formatDuration, truncate, wrap } from "../src/glasses/view";
+import { buildView, formatDuration, HEADER_WIDTH, MAX_BODY_ROWS, truncate, wrap } from "../src/glasses/view";
 import { complete, moveChoice, skip, startRun } from "../src/checklist/run";
 import type { Checklist, Step } from "../src/checklist/model";
 
@@ -136,5 +136,50 @@ describe("text helpers", () => {
     expect(formatDuration(0)).toBe("0:00");
     expect(formatDuration(65)).toBe("1:05");
     expect(formatDuration(-5)).toBe("0:00");
+  });
+});
+
+describe("display budget", () => {
+  const long = "word ".repeat(80).trim();
+  const fits = (body: readonly string[], width = 46): void => {
+    expect(body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
+    for (const row of body) expect(row.length).toBeLessThanOrEqual(width);
+  };
+
+  it("regression: a long step with its detail stays within seven rows", () => {
+    const list: Checklist = { id: "x", title: "T", steps: [{ id: "a", text: long, kind: "critical", detail: long }] };
+    const run = { ...startRun(list, 0), awaitingConfirm: true };
+    const view = buildView(list, run, { showDetail: true }, 0);
+    fits(view.body);
+    expect(view.body[0]).toBe("CONFIRM:");
+    expect(view.body.some((row) => row.endsWith("…"))).toBe(true);
+  });
+
+  it("regression: a long branch keeps the highlighted option in view", () => {
+    const choices = Array.from({ length: 10 }, (_, i) => ({ label: "Option " + i }));
+    const list: Checklist = { id: "x", title: "T", steps: [{ id: "a", text: long, kind: "choice", choices }] };
+    const run = { ...startRun(list, 0), choiceIndex: 8 };
+    const view = buildView(list, run, {}, 0);
+    fits(view.body);
+    expect(view.body).toContain("> Option 8");
+  });
+
+  it("regression: the next-step preview fits the line including its label", () => {
+    const list: Checklist = { id: "x", title: "T", steps: [
+      { id: "a", text: "Now", kind: "normal" },
+      { id: "b", text: long, kind: "normal" },
+    ] };
+    fits(buildView(list, startRun(list, 0), { showNext: true }, 0).body);
+  });
+
+  it("regression: a long section name is cut to one header line", () => {
+    const list: Checklist = { id: "x", title: "T", steps: [{ id: "a", text: "Go", kind: "normal", section: long }] };
+    expect(buildView(list, startRun(list, 0), {}, 0).header.length).toBeLessThanOrEqual(HEADER_WIDTH);
+  });
+
+  it("regression: a pasted URL is split instead of running off the display", () => {
+    const rows = wrap("see https://example.com/" + "x".repeat(80), 46);
+    for (const row of rows) expect(row.length).toBeLessThanOrEqual(46);
+    expect(rows.join("")).toContain("x".repeat(80));
   });
 });

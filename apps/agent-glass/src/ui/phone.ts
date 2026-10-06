@@ -1,6 +1,6 @@
 import type { AgentState, Session } from "../terminal/types";
 import {
-  defaultUrlForProvider, maskToken, parsePairingUrl, validateUrl, type ProviderKind, type Settings,
+  defaultUrlForProvider, maskToken, normalizeAddress, type ProviderKind, type Settings,
 } from "../storage/persist";
 import type { SpeechStatus, SpeechVoiceChoice } from "../speech/narrator";
 import type { BackendCapabilities } from "../providers/backend";
@@ -219,33 +219,17 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       const value = address?.value.trim() ?? "";
       if (!value) return;
 
-      const paired = provider === "even-terminal" ? parsePairingUrl(value) : null;
-      if (paired) {
-        void ports.setSettings({ ...settings, provider, ...paired }).then(render);
-        return;
-      }
-
-      // Not a pairing URL — accept a bare address, but only a valid one.
-      const check = validateUrl(value);
-      if (!check.valid) {
-        address?.setCustomValidity(check.error ?? "Invalid");
-        address?.reportValidity();
-        return;
-      }
-      const protocol = new URL(value).protocol;
-      const protocolOk = provider === "hermes"
-        ? protocol === "ws:" || protocol === "wss:"
-        : protocol === "http:" || protocol === "https:";
-      if (!protocolOk) {
-        address?.setCustomValidity(provider === "hermes"
-          ? "Hermes bridge addresses must start with ws:// or wss://."
-          : "This provider address must start with http:// or https://.");
+      // One path for every provider: a pasted `?token=` is lifted into the
+      // token field instead of being kept (and shown) as part of the address.
+      const result = normalizeAddress(value, provider);
+      if (!result.ok) {
+        address?.setCustomValidity(result.error);
         address?.reportValidity();
         return;
       }
       address?.setCustomValidity("");
-      const token = tokenField?.value.trim() || settings.token;
-      void ports.setSettings({ ...settings, provider, baseUrl: value, token }).then(render);
+      const token = result.token || tokenField?.value.trim() || settings.token;
+      void ports.setSettings({ ...settings, provider, baseUrl: result.baseUrl, token }).then(render);
     });
 
     root.querySelector<HTMLSelectElement>("#provider")?.addEventListener("change", (event) => {

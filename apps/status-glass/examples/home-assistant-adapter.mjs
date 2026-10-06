@@ -21,6 +21,7 @@
  *
  * Dependency-free: Node 18+ only.
  */
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
 const HA_URL = (process.env["HA_URL"] ?? "http://homeassistant.local:8123").replace(/\/+$/, "");
@@ -29,6 +30,12 @@ const PORT = Number(process.env["PORT"] ?? 8100);
 const HOST = process.env["HOST"] ?? "127.0.0.1";
 const TOKEN = process.env["TOKEN"] ?? "";           // protects THIS adapter
 const NAME = process.env["NAME"] ?? "home";
+/**
+ * How long Home Assistant gets to answer. Without a limit a hung Home
+ * Assistant held every /status request open, and the glasses showed the
+ * app's own "timed out" instead of the adapter's clear 502.
+ */
+const HA_TIMEOUT_MS = Number(process.env["HA_TIMEOUT_MS"] ?? 8000);
 
 if (!HA_TOKEN) {
   console.error("HA_TOKEN is required. Create a long-lived access token in");
@@ -108,6 +115,7 @@ const ACTIONS = [
 async function haFetch(path, init = {}) {
   const response = await fetch(HA_URL + path, {
     ...init,
+    signal: AbortSignal.timeout(HA_TIMEOUT_MS),
     headers: {
       Authorization: "Bearer " + HA_TOKEN,
       "Content-Type": "application/json",
@@ -138,7 +146,8 @@ async function collect() {
       metrics.push({
         id: spec.entity,
         label: spec.label,
-        state: spec.states[entity.state] ?? "unknown",
+        // Own keys only: a state named "constructor" must not resolve to a function.
+        state: Object.hasOwn(spec.states, entity.state) ? spec.states[entity.state] : "unknown",
       });
       continue;
     }
@@ -164,7 +173,8 @@ async function collect() {
     name: NAME,
     timestamp: Date.now(),
     metrics,
-    actions: ACTIONS.map((a) => ({
+    // Without a TOKEN the glasses are not offered actions at all (see /action).
+    actions: (TOKEN ? ACTIONS : []).map((a) => ({
       id: a.id,
       label: a.label,
       ...(a.confirm ? { confirm: true } : {}),
@@ -188,9 +198,12 @@ async function runAction(id) {
   return { ok: true, status: 200 };
 }
 
+const digest = (text) => createHash("sha256").update(text).digest();
+
+/** Constant-time check, so response timing does not leak the TOKEN. */
 function authorised(request) {
   if (!TOKEN) return true;
-  return (request.headers["authorization"] ?? "") === "Bearer " + TOKEN;
+  return timingSafeEqual(digest(request.headers["authorization"] ?? ""), digest("Bearer " + TOKEN));
 }
 
 function send(response, status, body) {
@@ -216,7 +229,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.url?.startsWith("/action") && request.method === "POST") {
+      // Actions change the house, and CORS is open to every origin. Without a
+      // TOKEN any web page the phone's or this machine's browser opens could
+      // POST here — so control is refused outright until a TOKEN is set.
+      if (!TOKEN) { send(response, 403, { error: "actions need TOKEN" }); return; }
       const body = await readBody(request);
+      if (body === TOO_LARGE) { send(response, 413, { error: "request too large" }); return; }
       const result = await runAction(body?.id);
       send(response, result.status, result.ok ? { ok: true } : { error: result.error });
       return;
@@ -230,17 +248,27 @@ const server = createServer(async (request, response) => {
   }
 });
 
+const TOO_LARGE = Symbol("too large");
+
+/** Parses a small JSON body. Oversized bodies resolve TOO_LARGE instead of hanging. */
 function readBody(request) {
   return new Promise((resolve) => {
     let raw = "";
+    let done = false;
+    const finish = (value) => { if (!done) { done = true; resolve(value); } };
     request.on("data", (chunk) => {
+      if (done) return;
       raw += chunk;
-      if (raw.length > 4096) request.destroy();   // nothing legitimate is this big
+      if (raw.length > 4096) {                     // nothing legitimate is this big
+        finish(TOO_LARGE);
+        request.removeAllListeners("data");
+        request.resume();                          // drain the rest, then answer 413
+      }
     });
     request.on("end", () => {
-      try { resolve(JSON.parse(raw)); } catch { resolve(null); }
+      try { finish(JSON.parse(raw)); } catch { finish(null); }
     });
-    request.on("error", () => resolve(null));
+    request.on("error", () => finish(null));
   });
 }
 
@@ -248,6 +276,6 @@ server.listen(PORT, HOST, () => {
   console.log("Home Assistant adapter on http://" + HOST + ":" + PORT + "/status");
   console.log("  Home Assistant: " + HA_URL);
   console.log("  metrics: " + METRICS.length + ", actions: " + ACTIONS.length);
-  if (!TOKEN) console.log("  No TOKEN set: this adapter is unauthenticated.");
+  if (!TOKEN) console.log("  No TOKEN set: read-only. Readings are open to anyone who can reach this port; actions are disabled.");
   if (HOST === "0.0.0.0") console.log("  Bound to all interfaces. Set a TOKEN and prefer TLS.");
 });

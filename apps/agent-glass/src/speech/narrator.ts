@@ -75,22 +75,50 @@ export function createBrowserSpeechEngine(): SpeechEngine {
 /**
  * Removes content that is noisy or risky to read aloud.
  *
- * Agent prose stays intact. Code, URLs and token-looking values are replaced
- * with short labels so headphones do not leak commands or credentials.
+ * Agent prose stays intact. Code, URLs, commands and credential-looking values
+ * are replaced with short labels so headphones do not leak commands or
+ * credentials. Private keys and code fences are handled before everything
+ * else so a key inside a fence, or a fence still being streamed, is dropped
+ * whole rather than read line by line.
  */
 export function sanitizeForSpeech(input: string): string {
   return input
+    .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
+      " private key omitted ")
     .replace(/```[\s\S]*?```/g, " Code block omitted. ")
+    // An opening fence whose end has not arrived yet: everything after it is code.
+    .replace(/```[\s\S]*$/g, " Code block omitted. ")
     .replace(/`[^`\n]+`/g, " code omitted ")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/https?:\/\/\S+/gi, " link omitted ")
-    .replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/gi, " sensitive value omitted ")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, " link omitted ")
+    .replace(/^\s*\$\s+\S.*$/gm, " command omitted ")
+    .replace(/\b(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp\d+)\s+AAAA[A-Za-z0-9+/=]+/g, " sensitive value omitted ")
+    .replace(/\b(?:Proxy-)?Authorization\s*:\s*(?:\w+\s+)?\S+/gi, " sensitive value omitted ")
+    .replace(/\b(?:Bearer|Basic)\s+([A-Za-z0-9._~+/=-]{8,})/g,
+      (whole, value: string) => (/\d/.test(value) ? " sensitive value omitted " : whole))
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?/g, " sensitive value omitted ")
+    // Environment assignments: `API_KEY=…`, `export TOKEN="…"`, `password: …`.
+    .replace(/\b(?:export\s+)?[A-Z][A-Z0-9_]{1,}=\S+/g, " setting omitted ")
+    .replace(/\b[\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credentials?)\s*[=:]\s*\S+/gi,
+      " sensitive value omitted ")
+    .replace(/\b(?:sk|ghp|gho|ghs|ghu|github_pat|glpat|npm|hf|xox[abeoprs]|xapp)[-_][A-Za-z0-9_-]{12,}\b/gi,
+      " sensitive value omitted ")
+    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, " sensitive value omitted ")
+    .replace(/\bAIza[0-9A-Za-z_-]{30,}/g, " sensitive value omitted ")
     .replace(/\b[A-Fa-f0-9]{32,}\b/g, " sensitive value omitted ")
+    // Long base64 / base64url runs with both letters and digits. Plain words
+    // and paths without digits are left alone.
+    .replace(/(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{32,}={0,2}/g,
+      (run) => (/[0-9]/.test(run) && /[A-Za-z]/.test(run) ? " sensitive value omitted " : run))
     .replace(/^\s{0,3}[#>*+-]+\s*/gm, "")
     .replace(/[*_~]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function fenceCount(text: string): number {
+  return text.match(/```/g)?.length ?? 0;
 }
 
 /** Tracks a streamed response and emits only newly completed sentences. */
@@ -117,14 +145,23 @@ export class SentenceBuffer {
 
   #drain(flushAll: boolean): readonly string[] {
     const output: string[] = [];
-    const boundary = /[.!?](?:["')\]]*)?(?:\s+|$)|\n{2,}/;
-    let match = boundary.exec(this.#pending);
-    while (match) {
+    // A full stop only ends a sentence once whitespace follows it. A delta
+    // that happens to end on "." may be the middle of a version number, a
+    // file name or a dotted token such as a JWT; `finish` flushes the rest.
+    const boundary = /[.!?](?:["')\]]*)?\s+|\n{2,}/g;
+    let from = 0;
+    for (;;) {
+      boundary.lastIndex = from;
+      const match = boundary.exec(this.#pending);
+      if (!match) break;
       const end = match.index + match[0].length;
+      // Never cut inside an open code fence: the first half would no longer
+      // look like code and its contents would be read aloud.
+      if (fenceCount(this.#pending.slice(0, end)) % 2 === 1) { from = end; continue; }
       const clean = sanitizeForSpeech(this.#pending.slice(0, end));
       if (clean) output.push(clean);
       this.#pending = this.#pending.slice(end);
-      match = boundary.exec(this.#pending);
+      from = 0;
     }
     if (flushAll) {
       const clean = sanitizeForSpeech(this.#pending);

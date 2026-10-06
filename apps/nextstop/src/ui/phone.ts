@@ -25,10 +25,27 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const render = (): void => {
-    const settings = ports.getSettings();
+  const statusText = (): string => {
     const position = ports.getPosition();
     const stops = ports.getStops();
+    const where = position
+      ? `Position: ${position.lat.toFixed(4)}, ${position.lon.toFixed(4)}`
+        + (ports.isSeeded() ? " (aus ?at=, nicht gemessen)" : "")
+      : "Noch keine Position — GPS braucht draußen einen Moment.";
+    const found = stops.length === 0
+      ? "Keine Haltestelle gefunden."
+      : `${stops.length} Haltestellen in der Nähe, nächste: ${stops[0]?.name ?? "?"}`;
+    return `${where} · ${found}`;
+  };
+
+  /** Only the status line is live; it is updated in place. */
+  const updateStatus = (): void => {
+    const status = root.querySelector<HTMLElement>("#status");
+    if (status) status.textContent = statusText();
+  };
+
+  const render = (): void => {
+    const settings = ports.getSettings();
 
     root.innerHTML = `
       <div class="brand"><span class="brand-mark">Quietglass</span> NextStop</div>
@@ -117,21 +134,17 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           + "werden — in Österreich derzeit fast nirgends.";
     }
 
-    if (status) {
-      const where = position
-        ? `Position: ${position.lat.toFixed(4)}, ${position.lon.toFixed(4)}`
-          + (ports.isSeeded() ? " (aus ?at=, nicht gemessen)" : "")
-        : "Noch keine Position — GPS braucht draußen einen Moment.";
-      const found = stops.length === 0
-        ? "Keine Haltestelle gefunden."
-        : `${stops.length} Haltestellen in der Nähe, nächste: ${stops[0]?.name ?? "?"}`;
-      status.textContent = `${where} · ${found}`;
-    }
+    if (status) status.textContent = statusText();
 
-    const commit = (next: Settings): void => { void ports.setSettings(next); };
+    // Each edit starts from the settings as they are now, not as they were when
+    // the page was built: otherwise saving the refresh interval after changing
+    // the address put the old address back.
+    const commit = (change: Partial<Settings>): void => {
+      void ports.setSettings({ ...ports.getSettings(), ...change });
+    };
 
     backend.addEventListener("change", () => {
-      commit({ ...settings, backend: backend.value === "motis" ? "motis" : "oebb" });
+      commit({ backend: backend.value === "motis" ? "motis" : "oebb" });
       render();
     });
 
@@ -143,11 +156,11 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           field.reportValidity();
           // Refuse the edit rather than silently storing an address that can
           // never answer; the old one at least worked.
-          field.value = settings[key];
+          field.value = ports.getSettings()[key];
           return;
         }
         field.setCustomValidity("");
-        commit({ ...settings, [key]: field.value.trim() });
+        commit({ [key]: field.value.trim() });
       });
     }
 
@@ -155,7 +168,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       if (refreshValue) refreshValue.textContent = refresh.value;
     });
     refresh.addEventListener("change", () => {
-      commit({ ...settings, refreshSeconds: Number(refresh.value) || DEFAULT_SETTINGS.refreshSeconds });
+      commit({ refreshSeconds: Number(refresh.value) || DEFAULT_SETTINGS.refreshSeconds });
     });
 
     root.querySelector<HTMLButtonElement>("#refresh-now")
@@ -163,6 +176,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   };
 
   render();
-  // The status line is the only live part, so a slow beat is enough.
-  setInterval(render, 5000);
+  // The status line is the only live part, so a slow beat is enough. It must
+  // not rebuild the page: that wiped a proxy address half typed into its field
+  // every five seconds, and took the open backend menu with it.
+  setInterval(updateStatus, 5000);
 }

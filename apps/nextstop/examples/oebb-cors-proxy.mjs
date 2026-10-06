@@ -24,7 +24,13 @@
  */
 import { createServer } from "node:http";
 
-const UPSTREAM = "https://fahrplan.oebb.at/bin/mgate.exe";
+const UPSTREAM = process.env["UPSTREAM"] ?? "https://fahrplan.oebb.at/bin/mgate.exe";
+/**
+ * How long ÖBB gets to answer. Without a limit a stalled upstream held every
+ * request open until the app's own 12 s timeout gave up, with no 502 to say
+ * which side failed.
+ */
+const UPSTREAM_TIMEOUT_MS = Number(process.env["UPSTREAM_TIMEOUT_MS"] ?? 10000);
 const PORT = Number(process.env["PORT"] ?? 8079);
 const HOST = process.env["HOST"] ?? "127.0.0.1";
 
@@ -86,6 +92,7 @@ const server = createServer(async (request, response) => {
         "Accept": "application/json",
       },
       body: Buffer.concat(chunks),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
     const body = Buffer.from(await upstream.arrayBuffer());

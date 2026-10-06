@@ -11,30 +11,72 @@ import { MODE_PRESETS, type PrompterMode } from "../prompter/engine";
  */
 
 export interface PhoneUiPorts {
+  /** Must already reflect a `setData` call by the time that call returns its promise. */
   readonly getData: () => PromptFlowData;
   readonly setData: (data: PromptFlowData) => Promise<void>;
 }
+
+/** Text fields that hold an unsaved draft and must survive a re-render. */
+const DRAFT_FIELDS = ["title", "source"] as const;
+
+type Commit = (next: PromptFlowData, options?: { readonly keepDraft?: boolean }) => void;
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const render = (): void => {
-    const data = ports.getData();
-    root.innerHTML = template(data);
-    wire(root, ports, data);
+  let notice = "";
+
+  // Re-rendered after every change, so the lists show what is stored. Handlers
+  // always read the current data: a closure over the data of the first render
+  // would compute the next change from a stale state and silently undo the
+  // previous one.
+  const render = (keepDraft = true): void => {
+    const draft = keepDraft ? readDraft(root) : null;
+    root.innerHTML = template(ports.getData(), notice);
+    notice = "";
+    if (draft) writeDraft(root, draft);
+    wire(root, ports.getData, commit);
+  };
+
+  const commit: Commit = (next, options = {}) => {
+    const saving = ports.setData(next);
+    render(options.keepDraft ?? true);
+    saving.catch((error: unknown) => {
+      console.warn("[promptflow] save failed:", error);
+      notice = "Could not save: " + (error instanceof Error ? error.message : String(error));
+      render();
+    });
   };
 
   render();
 }
 
-function template(data: PromptFlowData): string {
+function readDraft(root: HTMLElement): Map<string, string> {
+  const draft = new Map<string, string>();
+  for (const id of DRAFT_FIELDS) {
+    const field = root.querySelector<HTMLInputElement | HTMLTextAreaElement>("#" + id);
+    if (field) draft.set(id, field.value);
+  }
+  return draft;
+}
+
+function writeDraft(root: HTMLElement, draft: Map<string, string>): void {
+  for (const [id, value] of draft) {
+    const field = root.querySelector<HTMLInputElement | HTMLTextAreaElement>("#" + id);
+    if (field) field.value = value;
+  }
+}
+
+function template(data: PromptFlowData, notice: string): string {
   const s = data.settings;
   return `
   <header class="brand">
     <span class="brand-mark">Quietglass</span>
     <h1>PromptFlow</h1>
   </header>
+
+  ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
   <section class="card">
     <h2>Script</h2>
@@ -74,7 +116,7 @@ function template(data: PromptFlowData): string {
     <input id="wpm" type="range" min="60" max="260" step="10" value="${s.wpm}" />
 
     <label for="lines">Lines on screen — <output id="lines-out">${s.visibleLines}</output></label>
-    <input id="lines" type="range" min="1" max="8" step="1" value="${s.visibleLines}" />
+    <input id="lines" type="range" min="1" max="7" step="1" value="${s.visibleLines}" />
 
     <label for="width">Characters per line — <output id="width-out">${s.lineWidth}</output></label>
     <input id="width" type="range" min="20" max="80" step="2" value="${s.lineWidth}" />
@@ -100,37 +142,36 @@ function template(data: PromptFlowData): string {
   </footer>`;
 }
 
-function wire(root: HTMLElement, ports: PhoneUiPorts, data: PromptFlowData): void {
+function wire(root: HTMLElement, current: () => PromptFlowData, commit: Commit): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>(`#${id}`);
-
-  const commit = (next: PromptFlowData): void => { void ports.setData(next); };
 
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
     const source = byId<HTMLTextAreaElement>("source")?.value ?? "";
     if (!source.trim()) return;
     const title = byId<HTMLInputElement>("title")?.value.trim() ?? "";
+    const data = current();
     commit(upsertScript(data, {
       id: nextScriptId(data),
       title: title || firstHeading(source) || "Untitled",
       source,
       updatedAt: Date.now(),
-    }));
+    }), { keepDraft: false });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (id) commit(removeScript(data, id));
+      if (id) commit(removeScript(current(), id));
     });
   });
 
   root.querySelectorAll<HTMLInputElement>('input[name="active"]').forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (radio.checked) commit({ ...data, activeId: radio.value });
+      if (radio.checked) commit({ ...current(), activeId: radio.value });
     });
   });
 
-  const patch = (change: Partial<PromptFlowSettings>): void => commit(setSettings(data, change));
+  const patch = (change: Partial<PromptFlowSettings>): void => commit(setSettings(current(), change));
 
   byId<HTMLSelectElement>("mode")?.addEventListener("change", (event) => {
     const mode = (event.target as HTMLSelectElement).value as PrompterMode;

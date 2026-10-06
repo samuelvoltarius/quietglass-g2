@@ -80,7 +80,24 @@ function collect() {
   };
 }
 
+const CORS = {
+  // Status Glass runs in a WebView; allow it to read this.
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Authorization",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+};
+
 const server = createServer((request, response) => {
+  // The browser's preflight never carries the Authorization header, so it is
+  // answered before the token check. Checking it first answered 401 without
+  // CORS headers, and the WebView then refused every request — a TOKEN made
+  // the server unusable from Status Glass.
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, CORS);
+    response.end();
+    return;
+  }
+
   if (!request.url?.startsWith("/status")) {
     response.writeHead(404, { "Content-Type": "text/plain" });
     response.end("not found\n");
@@ -91,7 +108,7 @@ const server = createServer((request, response) => {
   if (TOKEN) {
     const header = request.headers["authorization"] ?? "";
     if (header !== "Bearer " + TOKEN) {
-      response.writeHead(401, { "Content-Type": "application/json" });
+      response.writeHead(401, { ...CORS, "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "unauthorized" }));
       return;
     }
@@ -101,9 +118,7 @@ const server = createServer((request, response) => {
   response.writeHead(200, {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
-    // Status Glass runs in a WebView; allow it to read this.
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Authorization",
+    ...CORS,
   });
   response.end(body);
 });

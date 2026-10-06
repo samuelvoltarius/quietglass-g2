@@ -177,6 +177,15 @@ describe("beat display", () => {
     expect(view.header).toBe("Scales");
   });
 
+  it("keeps a long item name on the one header line", () => {
+    // Regression: the user's item went to the header unshortened and wrapped off the 32 px header.
+    const item = "Bach Partita No. 2 in D minor, Chaconne, bars 1 to 132 slowly";
+    const view = buildView(createState(), settings, { item }, 0);
+    expect(view.header.length).toBeLessThanOrEqual(46);
+    expect(view.header.endsWith("…")).toBe(true);
+    expect(view.header.startsWith("Bach Partita")).toBe(true);
+  });
+
   it("states the transport in the footer", () => {
     expect(buildView(createState(), settings, {}, 0).footer).toContain("tap = start");
     expect(buildView(start(createState(), 0), settings, {}, 0).footer).toContain("tap = pause");

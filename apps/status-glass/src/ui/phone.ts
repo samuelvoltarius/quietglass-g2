@@ -16,6 +16,9 @@ export interface PhoneUiPorts {
   readonly setData: (data: StatusData) => Promise<void>;
 }
 
+/** Text inputs whose unsaved contents are carried across a redraw. */
+const DRAFT_FIELDS = ["name", "url", "token"] as const;
+
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -24,9 +27,16 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
   const render = (): void => {
     const data = ports.getData();
+    // Whatever is half typed survives a redraw caused by another control.
+    const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
     root.innerHTML = template(data, notice);
+    DRAFT_FIELDS.forEach((id, index) => {
+      const field = root.querySelector<HTMLInputElement>("#" + id);
+      const value = typed[index];
+      if (field && value !== undefined) field.value = value;
+    });
     notice = "";
-    wire(root, ports, data, (message) => { notice = message; render(); });
+    wire(root, ports, data, (message) => { notice = message; render(); }, render);
   };
 
   render();
@@ -89,7 +99,7 @@ function template(data: StatusData, notice: string): string {
     <table class="keys">
       <tr><td>Tap</td><td>Acknowledge the highlighted problem</td></tr>
       <tr><td>Swipe</td><td>Move through the problem list</td></tr>
-      <tr><td>Hold</td><td>Refresh every source now</td></tr>
+      <tr><td>Hold</td><td>Open the actions, or refresh every source when none are offered</td></tr>
       <tr><td>Double tap</td><td>Leave Status Glass</td></tr>
     </table>
     <p class="hint">
@@ -124,9 +134,19 @@ function wire(
   ports: PhoneUiPorts,
   data: StatusData,
   notify: (message: string) => void,
+  rerender: () => void,
 ): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const commit = (next: StatusData): void => { void ports.setData(next); };
+  // The page is redrawn from the stored data after every change. It used to
+  // stay as first drawn, so the handlers kept the data from that moment: the
+  // second source added got the first one's id and replaced it.
+  const commit = (next: StatusData): void => {
+    const saving = ports.setData(next);
+    rerender();
+    void saving.catch((thrown: unknown) => {
+      notify("Could not save: " + (thrown instanceof Error ? thrown.message : String(thrown)));
+    });
+  };
 
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
     const url = byId<HTMLInputElement>("url")?.value.trim() ?? "";
@@ -135,6 +155,11 @@ function wire(
 
     const name = byId<HTMLInputElement>("name")?.value.trim() ?? "";
     const token = byId<HTMLInputElement>("token")?.value ?? "";
+    // Emptied before the redraw; the token in particular should not linger.
+    for (const id of DRAFT_FIELDS) {
+      const field = byId<HTMLInputElement>(id);
+      if (field) field.value = "";
+    }
 
     commit(upsertSource(data, {
       id: nextSourceId(data),

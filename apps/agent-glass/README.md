@@ -180,9 +180,31 @@ documentation because URLs can be recorded by browser and proxy logs.
 ## Privacy and security
 
 The Even Terminal token is a powerful credential. Agent Glass never logs it,
-never displays it in full, and never renders it on the glasses. Do not expose
-Even Terminal through a public tunnel unless you understand and accept the
-risk.
+never displays it in full, and never renders it on the glasses. A `?token=`
+pasted as part of any address is moved into the token field instead of being
+kept in the address. Do not expose Even Terminal through a public tunnel
+unless you understand and accept the risk.
+
+One exception is unavoidable: the browser's `EventSource` cannot send an
+`Authorization` header, so the Even Terminal live stream carries the token in
+its query string. That URL is built inside the WebView and is never logged or
+shown, but a proxy in front of Even Terminal may log it.
+
+A swipe only answers the permission request that is on the display: it is
+ignored for the first moment after a request appears, while an answer is still
+being sent, while an error screen covers the request, and for a request that a
+reconnecting stream delivers again after it was answered.
+
+### Network whitelist
+
+`app.json` allows `http://*`, `https://*`, `ws://*` and `wss://*`. This is
+deliberately broad: the Even Hub whitelist is a fixed list of URL patterns
+packed into the app, while the gateway address is entered by the user at run
+time and differs per setup (a Tailscale name such as `example.ts.net`, a LAN
+address, `127.0.0.1`). A narrow list would make every other setup fail. The
+app itself only ever connects to the one address configured in the phone view.
+If you build Agent Glass for a single known gateway, replace the patterns with
+that host before packing.
 
 The app has no analytics or telemetry. Live session text is rendered in memory
 and is not added to this repository.

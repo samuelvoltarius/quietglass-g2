@@ -163,8 +163,12 @@ export class TerminalClient {
  * `EventSource` cannot carry an Authorization header, so the token goes in the
  * query string here. That is normally something to avoid — but the alternative
  * is hand-rolling a streaming fetch parser, and this URL never leaves the
- * device: it is built in the WebView and passed straight to the browser.
+ * device: it is built in the WebView and passed straight to the browser. It
+ * is never logged, never shown, and no error message built here contains it.
  */
+export const STREAM_INTERRUPTED = "Connection interrupted";
+export const STREAM_CLOSED = "Even Terminal stream closed";
+
 export function subscribe(
   client: TerminalClient,
   sessionId: string,
@@ -189,13 +193,22 @@ export function subscribe(
     }
   };
 
+  let closed = false;
   source.onerror = (): void => {
-    // EventSource reconnects by itself; this only surfaces the gap so the
-    // display can stop pretending it is current.
-    onError("Connection interrupted");
+    if (closed) return;
+    // EventSource reconnects by itself after a network gap; this only
+    // surfaces the gap so the display can stop pretending it is current. After
+    // an HTTP error (a rejected token, a 404) it gives up for good, and the
+    // user has to know that waiting will not help.
+    onError(source.readyState === 2 ? STREAM_CLOSED : STREAM_INTERRUPTED);
   };
 
-  return () => source.close();
+  return () => {
+    closed = true;
+    source.onmessage = null;
+    source.onerror = null;
+    source.close();
+  };
 }
 
 export function describeError(error: unknown): string {

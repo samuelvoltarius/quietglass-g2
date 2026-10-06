@@ -64,6 +64,20 @@ export function elapsed(since: Date | null, now: Date): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/** First rows of a list, with the last kept row marked as cut when needed. */
+export function head(lines: readonly string[], rows: number): readonly string[] {
+  if (lines.length <= rows) return lines;
+  const kept = lines.slice(0, rows);
+  kept[rows - 1] = clip(`${kept[rows - 1] ?? ""}…`);
+  return kept;
+}
+
+/** Hard limit for a single row that does not go through `wrap`. */
+export function clip(text: string, width: number = LINE_WIDTH): string {
+  const flat = text.replace(/\s+/g, " ");
+  return flat.length <= width ? flat : flat.slice(0, width - 1) + "…";
+}
+
 /** Shortens a session title to something readable in one glance. */
 export function shortTitle(title: string, width = 40): string {
   return title.length <= width ? title : title.slice(0, width - 1) + "…";
@@ -71,10 +85,16 @@ export function shortTitle(title: string, width = 40): string {
 
 export function buildView(state: AgentState, now: Date): AgentView {
   if (state.error) {
+    // The CORS hint only helps against Even Terminal; under Hermes or OpenClaw
+    // it would send the user looking in the wrong place. The error text comes
+    // from the backend and can be arbitrarily long, so it is clipped to the
+    // rows that are left.
+    const hint = /Even Terminal/.test(state.error)
+      ? ["", "Is Even Terminal running with", "--allow-cors enabled?"] : [];
+    const room = BODY_ROWS - 1 - hint.length;
     return {
       header: "Agent Glass",
-      body: ["", ...wrap(state.error), "", "Is Even Terminal running with",
-        "--allow-cors enabled?"],
+      body: ["", ...head(wrap(state.error), room), ...hint],
       footer: "tap = retry",
     };
   }
@@ -95,7 +115,7 @@ export function buildView(state: AgentState, now: Date): AgentView {
     return {
       header: state.pending.kind === "permission" ? "Permission required" : "Question",
       body: [
-        state.pending.title,
+        clip(state.pending.title),
         "",
         ...tail(detail, BODY_ROWS - 2),
       ],
@@ -117,7 +137,7 @@ export function buildView(state: AgentState, now: Date): AgentView {
 
   if (state.tool) {
     body.push("");
-    body.push(`> ${state.tool}`);
+    body.push(clip(`> ${state.tool}`));
   }
 
   const status = state.busy

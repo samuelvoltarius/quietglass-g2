@@ -31,6 +31,10 @@ async function boot(): Promise<void> {
   let lastSample: Vec3 | null = null;
   let lastView: PostureView | null = null;
   let pageReady = false;
+  let closed = false;
+  let tick: ReturnType<typeof setInterval> | undefined;
+  let drawing: Promise<void> | null = null;
+  let drawAgain = false;
 
   // A stored calibration makes the app usable immediately after a restart.
   if (data.reference) {
@@ -40,7 +44,8 @@ async function boot(): Promise<void> {
   const currentView = (): PostureView =>
     buildView(monitor, data.settings, { showAngleWhenGood: data.showAngleWhenGood });
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
@@ -54,6 +59,22 @@ async function boot(): Promise<void> {
     console.warn("[posturelens] draw failed:", result.reason);
   };
 
+  /** One page write at a time; a request during a write redraws once after it. */
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
+  };
+
+  const persist = (next: PostureData): Promise<void> =>
+    save(bridge, next).catch((error: unknown) => { console.warn("[posturelens] save failed:", error); });
+
   await draw();
 
   // audioControl and imuControl both require a page to exist first.
@@ -63,6 +84,7 @@ async function boot(): Promise<void> {
   }
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const sys = (event as { sysEvent?: { eventType?: number; imuData?: unknown } }).sysEvent;
 
     if (sys?.eventType === OsEventTypeList.IMU_DATA_REPORT) {
@@ -84,7 +106,7 @@ async function boot(): Promise<void> {
         if (lastSample) {
           monitor = calibrate(monitor, lastSample, Date.now());
           data = { ...data, reference: monitor.reference };
-          void save(bridge, data);
+          void persist(data);
         }
         break;
       case "scrollUp":
@@ -92,8 +114,12 @@ async function boot(): Promise<void> {
         monitor = reset(monitor);
         break;
       case "doubleClick":
+        closed = true;
+        clearInterval(tick);
         void bridge.imuControl(false).catch(() => undefined);
-        void bridge.shutDownPageContainer();
+        bridge.shutDownPageContainer().catch((error: unknown) => {
+          console.warn("[posturelens] shutdown failed:", error);
+        });
         return;
       default:
         return;
@@ -102,7 +128,7 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
+    if (status?.connectType === "connected" && !closed) {
       pageReady = false;
       // IMU reporting does not survive a reconnect.
       void bridge.imuControl(true, IMU_PACE).catch(() => undefined);
@@ -110,13 +136,13 @@ async function boot(): Promise<void> {
     }
   });
 
-  setInterval(() => { void draw(); }, TICK_MS);
+  tick = setInterval(() => { void draw(); }, TICK_MS);
 
   mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
       data = next;
-      await save(bridge, next);
+      await persist(next);
       if (!next.reference) monitor = createMonitor();
       await draw();
     },

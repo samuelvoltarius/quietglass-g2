@@ -228,8 +228,8 @@ describe("text handling", () => {
 describe("pairing and the token", () => {
   it("reads the whole URL the CLI prints", () => {
     const paired = parsePairingUrl(
-      "http://100.95.218.17:3456?token=abc123&defaultProvider=claude");
-    expect(paired).toEqual({ baseUrl: "http://100.95.218.17:3456", token: "abc123" });
+      "http://100.64.0.1:3456?token=abc123&defaultProvider=claude");
+    expect(paired).toEqual({ baseUrl: "http://100.64.0.1:3456", token: "abc123" });
   });
 
   it("refuses a URL without a token rather than storing a useless address", () => {

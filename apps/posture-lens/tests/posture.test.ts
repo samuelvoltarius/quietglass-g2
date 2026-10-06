@@ -92,6 +92,17 @@ describe("calibration", () => {
     expect(monitor.angle).toBe(0);
   });
 
+  it("refuses a zero vector, which has no direction to measure from", () => {
+    // Regression: a sample with every axis omitted (proto3 zeroes) became the reference,
+    // every angle was then null and the monitor sat at "good" forever.
+    const monitor = calibrate(createMonitor(), { x: 0, y: 0, z: 0 }, 1000);
+    expect(monitor.reference).toBeNull();
+    expect(monitor.state).toBe("uncalibrated");
+
+    const calibrated = calibrate(createMonitor(), UPRIGHT, 0);
+    expect(calibrate(calibrated, { x: 0, y: 0, z: 0 }, 1000).reference).toEqual(UPRIGHT);
+  });
+
   it("measures later samples against the calibrated pose, not against gravity", () => {
     // Calibrated while already tilted: that pose is now "upright" for this user.
     let monitor = calibrate(createMonitor(), TILTED_45, 1000);
@@ -162,6 +173,18 @@ describe("time accounting", () => {
     expect(m.goodSeconds).toBeCloseTo(10, 3);
     expect(m.leaningSeconds).toBeCloseTo(4, 3);
     expect(uprightShare(m)).toBeCloseTo(10 / 14, 3);
+  });
+
+  it("does not count a gap in the IMU stream as time spent leaning", () => {
+    // Regression: after an hour with the glasses off, the first leaning sample booked the
+    // whole hour as leaning (0.3% upright) and warned at once from a lean begun before the gap.
+    let m = calibrate(createMonitor(), UPRIGHT, 0);
+    m = addSample(m, UPRIGHT, fast, 10_000);
+    m = addSample(m, TILTED_45, fast, 15_000);      // lean begins
+    m = addSample(m, TILTED_45, fast, 3_615_000);   // an hour later
+    expect(m.leaningSeconds).toBeCloseTo(5, 3);
+    expect(m.leaningSince).toBe(3_615_000);
+    expect(m.state).toBe("leaning");
   });
 
   it("reports no share before any time is tracked", () => {

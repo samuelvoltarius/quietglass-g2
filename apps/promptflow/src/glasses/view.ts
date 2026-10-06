@@ -17,6 +17,25 @@ export interface PrompterView {
   readonly footer: string;
 }
 
+/**
+ * The body container holds seven rows of text; an eighth is pushed off the
+ * bottom of the display rather than shrunk to fit.
+ */
+export const MAX_BODY_ROWS = 7;
+/** Characters the header holds on one line in the G2's proportional font. */
+export const HEADER_WIDTH = 46;
+/** Width of the current-line marker (`> ` / two spaces). */
+export const CURSOR_WIDTH = 2;
+
+/**
+ * Width to wrap the script at. The marker is drawn in front of every line, so
+ * it has to come out of the budget, or each full line overflows and the
+ * firmware wraps it a second time.
+ */
+export function textWidth(lineWidth: number, showCursor: boolean): number {
+  return Math.max(1, lineWidth - (showCursor ? CURSOR_WIDTH : 0));
+}
+
 export interface ViewOptions {
   /** Overrides the mode preset when the user picked a size on the phone. */
   readonly visibleLines?: number;
@@ -32,12 +51,12 @@ export function buildView(
   options: ViewOptions = {},
 ): PrompterView {
   const preset = MODE_PRESETS[state.mode];
-  const visible = Math.max(1, options.visibleLines ?? preset.visibleLines);
+  const visible = Math.min(MAX_BODY_ROWS, Math.max(1, options.visibleLines ?? preset.visibleLines));
   const lead = Math.max(0, options.leadLines ?? preset.leadLines);
 
   if (lines.length === 0) {
     return {
-      header: script.title || "PromptFlow",
+      header: truncate(script.title || "PromptFlow", HEADER_WIDTH),
       body: ["No script loaded.", "Paste one in the phone app."],
       footer: "",
     };
@@ -54,7 +73,7 @@ export function buildView(
   });
 
   return {
-    header: headerText(script, lines, current),
+    header: truncate(headerText(script, lines, current), HEADER_WIDTH),
     body,
     footer: footerText(state, lines),
   };
@@ -91,6 +110,11 @@ export function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+export function truncate(text: string, maxWidth: number): string {
+  if (text.length <= maxWidth) return text;
+  return text.slice(0, Math.max(0, maxWidth - 1)).trimEnd() + "…";
 }
 
 function clamp(value: number, min: number, max: number): number {

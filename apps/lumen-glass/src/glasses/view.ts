@@ -26,6 +26,9 @@ export interface ViewOptions {
 
 const DEFAULT_WIDTH = 46;
 
+/** Lines the body container shows before the text runs into the footer. */
+export const MAX_BODY_ROWS = 7;
+
 export function buildView(
   status: LumenStatus | null,
   options: ViewOptions,
@@ -60,24 +63,18 @@ export function buildView(
   if (options.phase === "result" && options.result) {
     return {
       header: options.result.ok ? "Accepted" : "Not accepted",
-      body: [...moth, "", ...wrap(options.result.text, width)],
+      body: fitBody([...moth], wrap(options.result.text, width), [], width),
       footer: "tap = carry on",
     };
   }
 
-  const body: string[] = [...moth];
-  body.push(mothLine(status.moth.state, status.moth.gesture));
+  // LUMEN's own wording, which can be any length: one line, never a wrap.
+  const head = [...moth, truncate(mothLine(status.moth.state, status.moth.gesture), width)];
 
-  if (status.quest) {
-    body.push("");
+  const body = status.quest
     // The instruction is what you act on; the short name is the heading.
-    body.push(...wrap(status.quest.task ?? status.quest.title, width));
-    const meta = questMeta(status.quest);
-    if (meta) body.push(meta);
-  } else {
-    body.push("");
-    body.push("No quest. Hold for a new one.");
-  }
+    ? fitBody(head, wrap(status.quest.task ?? status.quest.title, width), [questMeta(status.quest)].filter(Boolean), width)
+    : fitBody(head, ["No quest. Hold for a new one."], [], width);
 
   return {
     header: "",
@@ -117,10 +114,36 @@ function footerText(status: LumenStatus, hasQuest: boolean): string {
 
 export function windowLabel(kind: string, minutes: number): string {
   const name = kind.startsWith("golden") ? "golden" : kind.startsWith("blau") ? "blue" : kind;
-  if (minutes <= 0) return name + " now";
-  if (minutes < 60) return name + " in " + Math.round(minutes) + "m";
-  const hours = Math.floor(minutes / 60);
-  return name + " in " + hours + "h " + Math.round(minutes % 60) + "m";
+  // Round once, up front: rounding the remainder alone turned 119.7 into "1h 60m".
+  const total = Math.round(minutes);
+  if (!(total > 0)) return name + " now";
+  if (total < 60) return name + " in " + total + "m";
+  return name + " in " + Math.floor(total / 60) + "h " + (total % 60) + "m";
+}
+
+/**
+ * Fits moth, text and meta line into MAX_BODY_ROWS. The moth and the meta line
+ * (medium, duration) stay; the spacer goes first, then the text is cut to the
+ * rows left with an ellipsis, so nothing slides under the footer.
+ */
+export function fitBody(
+  head: readonly string[],
+  text: readonly string[],
+  tail: readonly string[],
+  width = DEFAULT_WIDTH,
+): string[] {
+  const room = Math.max(1, MAX_BODY_ROWS - head.length - tail.length);
+  const spacer = text.length + 1 <= room ? [""] : [];
+  const rows = room - spacer.length;
+  const shown = text.length <= rows
+    ? [...text]
+    : [...text.slice(0, rows - 1), truncate((text[rows - 1] ?? "") + " …", width)];
+  return [...head, ...spacer, ...shown, ...tail].slice(0, MAX_BODY_ROWS);
+}
+
+export function truncate(text: string, maxWidth: number): string {
+  if (text.length <= maxWidth) return text;
+  return text.slice(0, Math.max(0, maxWidth - 1)).trimEnd() + "…";
 }
 
 export function wrap(text: string, maxWidth: number): string[] {

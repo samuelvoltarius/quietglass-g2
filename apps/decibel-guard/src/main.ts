@@ -22,6 +22,12 @@ async function boot(): Promise<void> {
   let lastBlockAt: number | null = null;
   let lastView: NoiseView | null = null;
   let pageReady = false;
+  let closed = false;
+  let tick: ReturnType<typeof setInterval> | undefined;
+  /** Set while the microphone is being opened, so a stop or close can wait for it. */
+  let opening: Promise<void> | null = null;
+  let drawing: Promise<void> | null = null;
+  let drawAgain = false;
 
   const displayLevel = (): number | null =>
     smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, data.calibrationOffset);
@@ -33,7 +39,8 @@ async function boot(): Promise<void> {
       calibrated: isCalibrated(data),
     });
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
@@ -48,22 +55,52 @@ async function boot(): Promise<void> {
   };
 
   /**
+   * One page write at a time. Audio blocks arrive many times a second, each
+   * asking for a redraw; overlapping writes interleave over BLE and pile up.
+   * A request during a write redraws once after it, with the newest level.
+   */
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
+  };
+
+  /**
    * Measurement never starts on its own. The microphone opens only in response
    * to an explicit tap, and the display says MIC for as long as it is open.
    */
   const startListening = async (): Promise<void> => {
-    if (listening) return;
-    const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
-    if (!ok) {
-      console.warn("[decibelguard] microphone was refused");
-      return;
+    if (listening || opening || closed) return;
+    opening = (async () => {
+      const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
+      if (!ok) {
+        console.warn("[decibelguard] microphone was refused");
+        return;
+      }
+      // Closed while the microphone was opening: it must not stay open.
+      if (closed) {
+        await bridge.audioControl(false).catch(() => undefined);
+        return;
+      }
+      listening = true;
+      lastBlockAt = null;
+    })();
+    try {
+      await opening;
+    } finally {
+      opening = null;
     }
-    listening = true;
-    lastBlockAt = null;
     await draw();
   };
 
   const stopListening = async (): Promise<void> => {
+    if (opening) await opening;
     if (!listening) return;
     await bridge.audioControl(false).catch(() => undefined);
     listening = false;
@@ -75,6 +112,7 @@ async function boot(): Promise<void> {
   await draw();
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
 
@@ -107,7 +145,11 @@ async function boot(): Promise<void> {
         dose = resetDose();
         break;
       case "doubleClick":
-        void stopListening().then(() => bridge.shutDownPageContainer());
+        closed = true;
+        clearInterval(tick);
+        void stopListening()
+          .then(() => bridge.shutDownPageContainer())
+          .catch((error: unknown) => { console.warn("[decibelguard] shutdown failed:", error); });
         return;
       default:
         return;
@@ -116,19 +158,21 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
+    if (status?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
   });
 
-  setInterval(() => { void draw(); }, 1000);
+  tick = setInterval(() => { void draw(); }, 1000);
 
   mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
       data = next;
-      await save(bridge, next);
+      await save(bridge, next).catch((error: unknown) => {
+        console.warn("[decibelguard] save failed:", error);
+      });
       await draw();
     },
     getLevel: () => ({ dbfs: smoothedDbfs, listening }),

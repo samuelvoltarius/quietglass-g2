@@ -26,6 +26,13 @@ async function boot(): Promise<void> {
   let lastView: LumenView | null = null;
   let pageReady = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  let drawing: Promise<void> | null = null;
+  let drawAgain = false;
+  /** The status request in flight, shared by everyone who asks meanwhile. */
+  let refreshing: Promise<void> | null = null;
+  /** Bumped per request, so a slow reply never overwrites a newer one. */
+  let refreshSeq = 0;
 
   const options = (): ClientOptions => ({
     baseUrl: data.baseUrl,
@@ -34,7 +41,8 @@ async function boot(): Promise<void> {
 
   const currentView = (): LumenView => buildView(status, { phase, result, error });
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
@@ -44,9 +52,24 @@ async function boot(): Promise<void> {
     console.warn("[lumen] draw failed:", outcome.reason);
   };
 
-  const refresh = async (): Promise<void> => {
+  /** One page write at a time; a request during a write redraws once after it. */
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
+  };
+
+  const fetchAndShow = async (seq: number): Promise<void> => {
     if (!data.baseUrl) { error = "No Lumen address set."; await draw(); return; }
     const outcome = await fetchStatus(options());
+    // A newer request (e.g. after the address changed) owns the display now.
+    if (seq !== refreshSeq || closed) return;
     if (outcome.error !== null) {
       error = outcome.error;
     } else {
@@ -56,9 +79,26 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  /**
+   * Swipes, taps, the poll and the phone all ask for a refresh. While one is in
+   * flight they share it instead of stacking requests; `force` starts a fresh
+   * one, for when the address or token just changed.
+   */
+  const refresh = (force = false): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (refreshing && !force) return refreshing;
+    const seq = ++refreshSeq;
+    const current = fetchAndShow(seq).finally(() => {
+      if (refreshing === current) refreshing = null;
+    });
+    refreshing = current;
+    return current;
+  };
+
   const schedule = (): void => {
     clearTimeout(timer);
-    timer = setTimeout(() => { void refresh().then(schedule); }, POLL_MS);
+    if (closed) return;
+    timer = setTimeout(() => { void refresh().then(schedule, schedule); }, POLL_MS);
   };
 
   /**
@@ -97,20 +137,21 @@ async function boot(): Promise<void> {
     await draw();
 
     // Refresh so the moth reflects what just happened.
-    if (outcome.error === null) await refresh();
+    if (outcome.error === null) await refresh(true);
   };
 
   const askForQuest = async (): Promise<void> => {
     if (phase !== "idle") return;
     const outcome = await newQuest(options());
     if (outcome.error !== null) { error = outcome.error; await draw(); return; }
-    await refresh();
+    await refresh(true);
   };
 
   await draw();
   if (!DEMO) { await refresh(); schedule(); }
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -128,8 +169,11 @@ async function boot(): Promise<void> {
         void refresh();
         return;
       case "doubleClick":
+        closed = true;
         clearTimeout(timer);
-        void bridge.shutDownPageContainer();
+        bridge.shutDownPageContainer().catch((shutdownError: unknown) => {
+          console.warn("[lumen] shutdown failed:", shutdownError);
+        });
         return;
       default:
         return;
@@ -138,7 +182,7 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((deviceStatus) => {
-    if (deviceStatus?.connectType === "connected") {
+    if (deviceStatus?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
@@ -148,8 +192,10 @@ async function boot(): Promise<void> {
     getData: () => data,
     setData: async (next) => {
       data = next;
-      await save(bridge, next);
-      await refresh();
+      await save(bridge, next).catch((saveError: unknown) => {
+        console.warn("[lumen] save failed:", saveError);
+      });
+      await refresh(true);
     },
     shoot: () => { void shootAndSubmit(); },
     getStatus: () => status,

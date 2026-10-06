@@ -115,7 +115,12 @@ export function projectOntoPath(point: LatLng, path: readonly LatLng[]): Project
   // Metres per degree at this latitude, so x and y are comparable.
   const mPerLat = 111_320;
   const mPerLon = 111_320 * Math.cos(toRadians(point.lat));
-  const px = point.lon * mPerLon;
+  // Longitudes are taken relative to the query point and wrapped into
+  // -180…180. Raw longitudes put 179.999° and -179.999° 360° apart, so on a
+  // route across the antimeridian someone standing on it was measured as off
+  // it, and rerouted, at every fix.
+  const wrap = (degrees: number): number => ((degrees + 540) % 360) - 180;
+  const px = 0;
   const py = point.lat * mPerLat;
 
   let best: Projection | null = null;
@@ -125,8 +130,10 @@ export function projectOntoPath(point: LatLng, path: readonly LatLng[]): Project
     const b = path[i + 1];
     if (!a || !b) continue;
 
-    const ax = a.lon * mPerLon, ay = a.lat * mPerLat;
-    const bx = b.lon * mPerLon, by = b.lat * mPerLat;
+    // Each segment is also taken the short way round, from its own start.
+    const aLon = wrap(a.lon - point.lon);
+    const ax = aLon * mPerLon, ay = a.lat * mPerLat;
+    const bx = (aLon + wrap(b.lon - a.lon)) * mPerLon, by = b.lat * mPerLat;
     const dx = bx - ax, dy = by - ay;
     const lengthSquared = dx * dx + dy * dy;
 
@@ -136,7 +143,7 @@ export function projectOntoPath(point: LatLng, path: readonly LatLng[]): Project
 
     const projected: LatLng = {
       lat: (ay + t * dy) / mPerLat,
-      lon: (ax + t * dx) / mPerLon,
+      lon: wrap(point.lon + (ax + t * dx) / mPerLon),
     };
     const distance = distanceMeters(point, projected);
 

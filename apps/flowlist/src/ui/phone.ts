@@ -11,9 +11,18 @@ import {
  */
 
 export interface PhoneUiPorts {
+  /** Must already reflect a `setData` call by the time that call returns its promise. */
   readonly getData: () => FlowListData;
   readonly setData: (data: FlowListData) => Promise<void>;
 }
+
+/** Text fields that hold an unsaved draft and must survive a re-render. */
+const DRAFT_FIELDS = ["source"] as const;
+
+type Commit = (
+  next: FlowListData,
+  options?: { readonly keepDraft?: boolean; readonly notice?: string },
+) => void;
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
@@ -21,14 +30,45 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
   let notice = "";
 
-  const render = (): void => {
-    const data = ports.getData();
-    root.innerHTML = template(data, notice);
+  // Re-rendered after every change, so the lists show what is stored. Handlers
+  // always read the current data: a closure over the data of the first render
+  // would compute the next change from a stale state and undo the previous one.
+  const render = (keepDraft = true): void => {
+    const draft = keepDraft ? readDraft(root) : null;
+    root.innerHTML = template(ports.getData(), notice);
     notice = "";
-    wire(root, ports, data, (message) => { notice = message; render(); });
+    if (draft) writeDraft(root, draft);
+    wire(root, ports.getData, commit, (message) => { notice = message; render(); });
+  };
+
+  const commit: Commit = (next, options = {}) => {
+    const saving = ports.setData(next);
+    notice = options.notice ?? "";
+    render(options.keepDraft ?? true);
+    saving.catch((error: unknown) => {
+      console.warn("[flowlist] save failed:", error);
+      notice = "Could not save: " + (error instanceof Error ? error.message : String(error));
+      render();
+    });
   };
 
   render();
+}
+
+function readDraft(root: HTMLElement): Map<string, string> {
+  const draft = new Map<string, string>();
+  for (const id of DRAFT_FIELDS) {
+    const field = root.querySelector<HTMLInputElement | HTMLTextAreaElement>("#" + id);
+    if (field) draft.set(id, field.value);
+  }
+  return draft;
+}
+
+function writeDraft(root: HTMLElement, draft: Map<string, string>): void {
+  for (const [id, value] of draft) {
+    const field = root.querySelector<HTMLInputElement | HTMLTextAreaElement>("#" + id);
+    if (field) field.value = value;
+  }
 }
 
 function template(data: FlowListData, notice: string): string {
@@ -101,16 +141,16 @@ function template(data: FlowListData, notice: string): string {
 
 function wire(
   root: HTMLElement,
-  ports: PhoneUiPorts,
-  data: FlowListData,
+  current: () => FlowListData,
+  commit: Commit,
   notify: (message: string) => void,
 ): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const commit = (next: FlowListData): void => { void ports.setData(next); };
 
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
     const source = byId<HTMLTextAreaElement>("source")?.value ?? "";
     if (!source.trim()) return;
+    const data = current();
 
     const id = nextListId(data);
     // A pack is JSON; anything else is treated as Markdown.
@@ -122,20 +162,22 @@ function wire(
       return;
     }
 
-    commit(upsertList(data, { ...result.checklist, id }));
-    if (result.warnings.length > 0) notify(result.warnings.join(" "));
+    commit(upsertList(data, { ...result.checklist, id }), {
+      keepDraft: false,
+      notice: result.warnings.join(" "),
+    });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (id) commit(removeList(data, id));
+      if (id) commit(removeList(current(), id));
     });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".export").forEach((button) => {
     button.addEventListener("click", () => {
-      const list = data.lists.find((l) => l.id === button.dataset["id"]);
+      const list = current().lists.find((l) => l.id === button.dataset["id"]);
       if (!list) return;
       download(list.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + ".flowlist.json", toPack(list));
     });
@@ -143,11 +185,11 @@ function wire(
 
   root.querySelectorAll<HTMLInputElement>('input[name="active"]').forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (radio.checked) commit({ ...data, activeId: radio.value });
+      if (radio.checked) commit({ ...current(), activeId: radio.value });
     });
   });
 
-  const patch = (change: Partial<FlowListSettings>): void => commit(setSettings(data, change));
+  const patch = (change: Partial<FlowListSettings>): void => commit(setSettings(current(), change));
 
   byId<HTMLInputElement>("next")?.addEventListener("change", (event) => {
     patch({ showNext: (event.target as HTMLInputElement).checked });

@@ -34,6 +34,13 @@ const ARROWS: Readonly<Record<ManeuverType, string>> = {
   exit: "↗",
 };
 
+/**
+ * Characters that fit on one body line beside the 96 px pixel arrow (472 px of
+ * proportional font). Router text is cut to this: a long instruction would
+ * otherwise wrap down the body in the one mode where nobody should be reading.
+ */
+export const ROAD_WIDTH = 36;
+
 export interface ViewOptions {
   readonly mode: TravelMode;
   readonly navigating: boolean;
@@ -91,7 +98,7 @@ export function buildView(
   body.push(arrow + "  " + distance);
 
   const road = roadLabel(maneuver?.street, maneuver?.instruction);
-  if (road) body.push(road);
+  if (road) body.push(road.length > ROAD_WIDTH ? road.slice(0, ROAD_WIDTH - 1) + "…" : road);
 
   if (maneuver?.type === "roundabout" && maneuver.exitNumber) {
     body.push("exit " + maneuver.exitNumber);

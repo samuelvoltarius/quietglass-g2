@@ -30,6 +30,11 @@ export interface ViewOptions {
 
 const DEFAULT_WIDTH = 44;
 
+/** Rows the body container holds; more are pushed off the display. */
+export const MAX_BODY_ROWS = 7;
+/** Characters the header holds on one line in the G2's proportional font. */
+export const HEADER_WIDTH = 46;
+
 export function buildView(
   inspection: Inspection | null,
   options: ViewOptions,
@@ -68,8 +73,10 @@ export function buildView(
     case "review":
       return {
         header: "Keep this?",
+        // The severity row always stays visible; a long transcript is cut
+        // with "…" — the full text is in the log on the phone.
         body: [
-          ...wrap(options.pending ?? "", width),
+          ...clampRows(wrap(options.pending ?? "", width), MAX_BODY_ROWS - 1, width),
           severityLabel(options.severity),
         ],
         footer: "tap = keep  ·  swipe = discard  ·  hold = photo",
@@ -89,7 +96,7 @@ export function buildView(
 }
 
 function sectionLabel(inspection: Inspection): string {
-  return inspection.section || inspection.title;
+  return truncate(inspection.section || inspection.title, HEADER_WIDTH);
 }
 
 function lastEntryLine(inspection: Inspection, width: number): string {
@@ -117,6 +124,7 @@ export function statusLabel(status: SttStatus): string {
   }
 }
 
+/** Greedy word wrap; a word longer than the line is split rather than overflowing. */
 export function wrap(text: string, maxWidth: number): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
@@ -126,11 +134,25 @@ export function wrap(text: string, maxWidth: number): string[] {
   let current = "";
   for (const word of words) {
     const candidate = current === "" ? word : current + " " + word;
-    if (candidate.length <= maxWidth) current = candidate;
-    else { if (current !== "") lines.push(current); current = word; }
+    if (candidate.length <= maxWidth) { current = candidate; continue; }
+    if (current !== "") lines.push(current);
+    current = word;
+    while (current.length > maxWidth) {
+      lines.push(current.slice(0, maxWidth));
+      current = current.slice(maxWidth);
+    }
   }
   if (current !== "") lines.push(current);
   return lines;
+}
+
+/** At most `max` rows; a cut is marked with an ellipsis on the last row kept. */
+function clampRows(lines: readonly string[], max: number, width: number): string[] {
+  if (lines.length <= max) return [...lines];
+  const kept = lines.slice(0, Math.max(0, max));
+  // Appending first forces truncate() to cut, so the row always ends in "…".
+  if (kept.length > 0) kept[kept.length - 1] = truncate((kept[kept.length - 1] ?? "") + " …", width);
+  return kept;
 }
 
 export function truncate(text: string, maxWidth: number): string {

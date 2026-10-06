@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   addEntry, entriesOnDay, entrySeconds, formatClock, formatHours, isRunning,
   MIN_ENTRY_SECONDS, nextEntryId, openSeconds, startOfDay, startProject, stop,
-  STOPPED, toCsv, totalSeconds, totalsByProject, type TimeEntry,
+  secondsOnDay, STOPPED, toCsv, totalSeconds, totalsByProject, type TimeEntry,
 } from "../src/tracking/clock";
 import { parseData, EMPTY_DATA, addProject, removeProject } from "../src/storage/persist";
 import { buildView } from "../src/glasses/view";
@@ -200,5 +200,67 @@ describe("display", () => {
     const view = buildView(STOPPED, [], { projects }, 0);
     expect(view.body).toContain("stopped");
     expect(view.footer).toContain("tap = choose project");
+  });
+});
+
+describe("days and midnight", () => {
+  const at = (y: number, m: number, d: number, h: number, min = 0): number => new Date(y, m - 1, d, h, min).getTime();
+
+  it("regression: a shift across midnight counts each part on its own day", () => {
+    const night = entry({ startedAt: at(2026, 3, 9, 22), endedAt: at(2026, 3, 10, 2) });
+    expect(secondsOnDay([night], startOfDay(at(2026, 3, 9, 12)))).toBe(2 * 3600);
+    expect(secondsOnDay([night], startOfDay(at(2026, 3, 10, 12)))).toBe(2 * 3600);
+    expect(entriesOnDay([night], startOfDay(at(2026, 3, 10, 12)))).toHaveLength(1);
+  });
+
+  it("regression: after midnight, today's total counts only today's part of the running entry", () => {
+    const started = startProject(STOPPED, "Client A", at(2026, 3, 9, 23), ids()).state;
+    const view = buildView(started, [], { projects: ["Client A"] }, at(2026, 3, 10, 1));
+    expect(view.body[0]).toBe("2:00:00");
+    expect(view.footer).toContain("today 1:00:00");
+  });
+
+  it("regression: a day is a calendar day, not 24 hours, across a DST change", () => {
+    // Whatever the zone, the day after a day start is the next local midnight.
+    for (const day of [at(2026, 3, 29, 12), at(2026, 10, 25, 12)]) {
+      const start = startOfDay(day);
+      const late = entry({ startedAt: start + 23.5 * 3_600_000 - 1, endedAt: start + 23.5 * 3_600_000 });
+      const endsToday = new Date(late.startedAt).getDate() === new Date(day).getDate();
+      expect(entriesOnDay([late], start).length).toBe(endsToday ? 1 : 0);
+    }
+  });
+
+  it("regression: the CSV date is the local calendar date of the start", () => {
+    const early = entry({ startedAt: at(2026, 3, 10, 0, 30), endedAt: at(2026, 3, 10, 1, 30) });
+    const row = toCsv([early]).trim().split("\n")[1] ?? "";
+    expect(row.startsWith("2026-03-10,")).toBe(true);
+  });
+
+  it("regression: a project name cannot smuggle a formula into the CSV", () => {
+    for (const name of ["=HYPERLINK(\"http://x\")", "+cmd", "-1", "@SUM(A1)"]) {
+      const row = toCsv([entry({ project: name })]).trim().split("\n")[1] ?? "";
+      expect(row.split(",")[1]?.replace(/^"/, "").startsWith("'")).toBe(true);
+    }
+  });
+
+  it("regression: a carriage return in a project name is quoted", () => {
+    expect(toCsv([entry({ project: "A\rB" })])).toContain('"A\rB"');
+  });
+});
+
+describe("display budget", () => {
+  it("regression: a long project list keeps the picker within seven rows and the choice visible", () => {
+    const many = Array.from({ length: 12 }, (_, i) => "Project " + i);
+    const view = buildView(STOPPED, [], { projects: many, selecting: "Project 10" }, 0);
+    expect(view.body.length).toBeLessThanOrEqual(7);
+    expect(view.body).toContain("> Project 10");
+  });
+
+  it("regression: a long project name is cut to the line", () => {
+    const name = "Very long client name with a job number and a task ".repeat(2);
+    const picker = buildView(STOPPED, [], { projects: [name], selecting: name }, 0);
+    for (const row of picker.body) expect(row.length).toBeLessThanOrEqual(38);
+    const running = buildView(startProject(STOPPED, name, 0, ids()).state, [], { projects: [name] }, 1000);
+    expect(running.header.length).toBeLessThanOrEqual(46);
   });
 });

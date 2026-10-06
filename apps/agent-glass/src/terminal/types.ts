@@ -80,6 +80,12 @@ export interface PendingDecision {
   readonly title: string;
   /** The command or the question itself. */
   readonly detail: string;
+  /**
+   * The server's id for this request, when the event carries one. Used only
+   * locally, to recognise a request that was already answered when a
+   * reconnecting stream delivers it a second time.
+   */
+  readonly id?: string;
 }
 
 export const EMPTY_STATE: AgentState = {
@@ -157,7 +163,8 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
     case "tool_end":
       return { ...state, tool: null };
 
-    case "permission_request":
+    case "permission_request": {
+      const id = requestId(event.raw);
       return {
         ...state,
         busy: false,
@@ -165,8 +172,10 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
           kind: "permission",
           title: event.tool ?? "Tool",
           detail: event.text || describeInput(event.raw),
+          ...(id ? { id } : {}),
         },
       };
+    }
 
     case "user_question":
       return {
@@ -190,6 +199,20 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
     default:
       return state;
   }
+}
+
+/**
+ * Reads a request id defensively; the key name is not part of a stable
+ * contract. A bare `id` is deliberately not used: if it named the session or
+ * the stream, every later request would look "already answered".
+ */
+export function requestId(raw: Record<string, unknown>): string | undefined {
+  for (const key of ["requestId", "request_id", "permissionId", "toolUseId", "tool_use_id"]) {
+    const value = raw[key];
+    if (typeof value === "string" && value) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
 }
 
 /**

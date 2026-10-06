@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildView, formatDuration } from "../src/glasses/view";
+import { buildView, formatDuration, HEADER_WIDTH, MAX_BODY_ROWS, textWidth } from "../src/glasses/view";
 import { parseScript } from "../src/script/parse";
 import { layoutScript } from "../src/prompter/layout";
 import { initialPrompterState, jumpToLine, setMode } from "../src/prompter/engine";
@@ -106,5 +106,25 @@ describe("formatDuration", () => {
 
   it("never renders a negative time", () => {
     expect(formatDuration(-10)).toBe("0:00");
+  });
+});
+
+describe("display budget", () => {
+  it("regression: a long section title is cut to one header line", () => {
+    const long = parseScript("# " + "Very long title ".repeat(8) + "\n\nWords.");
+    const view = buildView(long, layoutScript(long, { maxWidth: 40 }), initialPrompterState("speech"));
+    expect(view.header.length).toBeLessThanOrEqual(HEADER_WIDTH);
+    expect(view.header.endsWith("…")).toBe(true);
+  });
+
+  it("regression: an eight-line setting is capped at the seven rows the body holds", () => {
+    const many = parseScript(Array.from({ length: 20 }, (_, i) => "Line " + i).join(BREAK));
+    const view = buildView(many, layoutScript(many, { maxWidth: 40 }), initialPrompterState("speech"), { visibleLines: 8 });
+    expect(view.body).toHaveLength(MAX_BODY_ROWS);
+  });
+
+  it("takes the marker out of the wrapping width", () => {
+    expect(textWidth(46, true)).toBe(44);
+    expect(textWidth(46, false)).toBe(46);
   });
 });

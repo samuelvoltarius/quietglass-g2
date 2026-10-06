@@ -120,6 +120,17 @@ adapter, on a machine you control. The glasses only ever see the handful of
 readings and actions you configured — they cannot browse your house, and a lost
 phone does not hand anyone control of it.
 
+**Actions need a `TOKEN`.** The adapter answers browsers from any origin, so
+without a token any web page opened on the phone or this machine could post to
+`/action`. With no `TOKEN` set the adapter is read-only: it offers the glasses
+no actions and refuses `/action` with a 403.
+
+```bash
+TOKEN=<random secret> HA_URL=… HA_TOKEN=… node examples/home-assistant-adapter.mjs
+```
+
+Enter the same `TOKEN` for this source in the phone app.
+
 `ACTIONS` is an **allow-list**: anything not named there is refused with a 404,
 and a client cannot smuggle its own service call into the request. Verified
 against a stand-in Home Assistant, including both refusal paths.

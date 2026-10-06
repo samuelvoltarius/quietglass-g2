@@ -19,9 +19,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   if (!root) return;
 
   const render = (): void => {
-    const data = ports.getData();
-    root.innerHTML = template(data);
-    wire(root, ports, data);
+    root.innerHTML = template(ports.getData());
+    wire(root, ports, render);
   };
 
   render();
@@ -122,10 +121,15 @@ function template(data: CadenceData): string {
   </footer>`;
 }
 
-function wire(root: HTMLElement, ports: PhoneUiPorts, data: CadenceData): void {
+function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const commit = (next: CadenceData): void => { void ports.setData(next); };
-  const patch = (change: Partial<MetronomeSettings>): void => commit(setSettings(data, change));
+  // Always build on the current data, never on a copy taken when the page was
+  // drawn: the glasses change the tempo and log sessions in the meantime, and a
+  // stale copy would silently undo them. Re-render so new items and the log show.
+  const commit = (change: (data: CadenceData) => CadenceData): void => {
+    void ports.setData(change(ports.getData())).then(rerender);
+  };
+  const patch = (change: Partial<MetronomeSettings>): void => commit((data) => setSettings(data, change));
 
   const bpm = byId<HTMLInputElement>("bpm");
   const bpmOut = byId("bpm-out");
@@ -144,28 +148,29 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: CadenceData): void {
 
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
     const input = byId<HTMLInputElement>("item");
-    if (input?.value.trim()) commit(addItem(data, input.value));
+    const value = input?.value ?? "";
+    if (value.trim()) commit((data) => addItem(data, value));
   });
 
   root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
     button.addEventListener("click", () => {
       const item = button.dataset["item"];
-      if (item) commit(removeItem(data, item));
+      if (item) commit((data) => removeItem(data, item));
     });
   });
 
   root.querySelectorAll<HTMLInputElement>('input[name="active"]').forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (radio.checked) commit({ ...data, activeItem: radio.value });
+      if (radio.checked) commit((data) => ({ ...data, activeItem: radio.value }));
     });
   });
 
   byId<HTMLButtonElement>("export")?.addEventListener("click", () => {
-    download("cadence-practice.csv", toCsv(data.sessions), "text/csv");
+    download("cadence-practice.csv", toCsv(ports.getData().sessions), "text/csv");
   });
 
   byId<HTMLButtonElement>("clear")?.addEventListener("click", () => {
-    commit({ ...data, sessions: [] });
+    commit((data) => ({ ...data, sessions: [] }));
   });
 }
 

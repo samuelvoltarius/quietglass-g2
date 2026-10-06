@@ -87,3 +87,4 @@ code {
   border-radius: 5px; padding: 1px 5px; font-size: 13px;
 }
 footer.hint { text-align: center; padding: 8px 0 24px; }
+.notice { margin: 0 0 16px; padding: 10px 14px; background: var(--card); border: 1px solid var(--accent); border-radius: 10px; font-size: 14px; }

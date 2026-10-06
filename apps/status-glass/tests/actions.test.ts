@@ -186,3 +186,20 @@ describe("actions screen", () => {
       .toBe(true);
   });
 });
+
+describe("fitting the display", () => {
+  it("cuts long action rows and keeps the way back in a failure footer", () => {
+    // Regression: labels and the source's error text were never cut.
+    const source = sourceWith([{ id: "a", label: "Switch every light in the whole house off", confirm: true }]);
+    const actions = availableActions([source]);
+    const confirming = buildActionsView(actions, { cursor: 0, pendingId: "a", result: null, busy: false });
+    expect(confirming.body[0]!.length).toBeLessThanOrEqual(46);
+    expect(confirming.body[0]).toContain("CONFIRM: ");
+
+    const failed = buildActionsView(actions, {
+      cursor: 0, pendingId: null, result: { label: "y".repeat(60), ok: false }, busy: false,
+    });
+    expect(failed.footer.length).toBeLessThanOrEqual(46);
+    expect(failed.footer.endsWith("hold = back")).toBe(true);
+  });
+});

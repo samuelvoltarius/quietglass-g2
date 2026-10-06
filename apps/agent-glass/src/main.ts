@@ -8,6 +8,8 @@ import { load, parsePairingUrl, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { AgentNarrator, createBrowserSpeechEngine } from "./speech/narrator";
 import { createBackend, describeBackendError, type AgentBackend } from "./providers/backend";
+import { DecisionGate } from "./input/decision";
+import { decisionOnScreen, routeGesture } from "./input/route";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const DEMO_SESSION: Session = {
@@ -47,6 +49,18 @@ export function pairingFromUrl(search: string): Partial<Settings> | null {
   return paired ? { baseUrl: paired.baseUrl, token: paired.token } : null;
 }
 
+/**
+ * The same query string without `pair`, so the token does not linger in the
+ * WebView's address (and anything that records it) once it has been stored.
+ */
+export function stripPairing(search: string): string {
+  const params = new URLSearchParams(search);
+  if (!params.has("pair")) return search;
+  params.delete("pair");
+  const rest = params.toString();
+  return rest ? `?${rest}` : "";
+}
+
 type Screen = "agent" | "sessions";
 
 async function boot(): Promise<void> {
@@ -60,6 +74,10 @@ async function boot(): Promise<void> {
   if (!DEMO && seeded && !settings.token) {
     settings = { ...settings, ...seeded };
     await save(bridge, settings);
+  }
+  if (seeded && globalThis.location && globalThis.history?.replaceState) {
+    const { pathname, search, hash } = globalThis.location;
+    globalThis.history.replaceState(null, "", pathname + stripPairing(search) + hash);
   }
   let state: AgentState = DEMO ? {
     ...EMPTY_STATE,
@@ -76,6 +94,13 @@ async function boot(): Promise<void> {
   let selected = 0;
   let stopStream: (() => void) | null = null;
   let activeBackend: AgentBackend = createBackend(settings);
+  /** Bumped by every open and backend switch; older async work then stands down. */
+  let generation = 0;
+  /** The stream-gap message currently shown, cleared by the next live event. */
+  let streamGap: string | null = null;
+  /** Set by a double tap: nothing may draw on, or listen for, the glasses again. */
+  let closed = false;
+  const gate = new DecisionGate();
 
   let lastView: AgentView | null = null;
   let pageReady = false;
@@ -86,11 +111,16 @@ async function boot(): Promise<void> {
     screen === "sessions" ? sessionList(sessions, selected) : buildView(state, new Date());
 
   const draw = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
-    if (sameView(lastView, view)) return;
+    // Only what was actually drawn may be answered by a swipe.
+    const shown = decisionOnScreen(screen, state) ? state.pending : null;
+    if (sameView(lastView, view)) { gate.displayed(shown, Date.now()); return; }
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
-    if (result.ok) { pageReady = true; lastView = view; return; }
+    if (closed) return;
+    if (result.ok) { pageReady = true; lastView = view; gate.displayed(shown, Date.now()); return; }
     pageReady = false;
+    gate.displayed(null, Date.now());
     console.warn("[agent-glass] draw failed:", result.reason);
   };
 
@@ -100,8 +130,15 @@ async function boot(): Promise<void> {
 
   /** Opens a session: stops any old stream, loads the backlog, starts the new one. */
   const open = async (session: Session): Promise<void> => {
+    // Two quick opens, or a backend switch half-way through, must not leave
+    // two streams running into the same state: that doubles every delta.
+    const mine = ++generation;
+    const owner = activeBackend;
+    const current = (): boolean => !closed && mine === generation && owner === activeBackend;
+
     stopStream?.();
     stopStream = null;
+    streamGap = null;
 
     state = { ...EMPTY_STATE, session };
     screen = "agent";
@@ -109,10 +146,18 @@ async function boot(): Promise<void> {
 
     // Ask before promising anything: a session Even Terminal only read off
     // disk cannot be prompted or answered, and the display must say so.
-    state = { ...state, controllable: await backend().controllable(session.id) };
+    let controllable = false;
+    try {
+      controllable = await owner.controllable(session.id);
+    } catch {
+      controllable = false;
+    }
+    if (!current()) return;
+    state = { ...state, controllable };
 
     try {
-      const history = await backend().history(session.id);
+      const history = await owner.history(session.id);
+      if (!current()) return;
       // Start from the last thing the agent said, so the display is never
       // blank while waiting for the first live event — which, on an idle
       // session, may never come at all.
@@ -120,19 +165,33 @@ async function boot(): Promise<void> {
       state = { ...state, text: lastAssistant?.text ?? "" };
       narrator.remember(state.text);
     } catch (thrown) {
+      if (!current()) return;
       fail(thrown);
     }
     await draw();
+    if (!current()) return;
 
-    stopStream = backend().subscribe(
+    stopStream = owner.subscribe(
       session.id,
       (event) => {
+        if (!current()) return;
+        // A live event proves the connection is back.
+        if (streamGap && state.error === streamGap) state = { ...state, error: null };
+        streamGap = null;
         state = applyEvent(state, event);
+        // A reconnecting stream may deliver a request that was already
+        // answered from here; it must not come back as a fresh prompt.
+        if (gate.answered(state.pending)) state = { ...state, pending: null };
         narrator.accept(event);
         if (state.text) narrator.remember(state.text);
         void draw();
       },
-      (message) => { state = { ...state, error: message }; void draw(); },
+      (message) => {
+        if (!current()) return;
+        streamGap = message;
+        state = { ...state, error: message };
+        void draw();
+      },
     );
 
     settings = { ...settings, sessionId: session.id };
@@ -146,10 +205,15 @@ async function boot(): Promise<void> {
       await draw();
       return;
     }
+    const owner = activeBackend;
     try {
-      sessions = await backend().sessions();
+      const loaded = await owner.sessions();
+      if (owner !== activeBackend) return;
+      sessions = loaded;
+      selected = Math.min(selected, Math.max(0, sessions.length - 1));
       state = { ...state, error: null };
     } catch (thrown) {
+      if (owner !== activeBackend) return;
       fail(thrown);
     }
     await draw();
@@ -157,7 +221,8 @@ async function boot(): Promise<void> {
 
   const decide = async (decision: "allow" | "deny"): Promise<void> => {
     const session = state.session;
-    if (!session || !state.pending) return;
+    const pending = state.pending;
+    if (!session || !pending) return;
 
     if (!state.controllable) {
       state = { ...state, error: "This session is not running under Even Terminal — watch only." };
@@ -165,7 +230,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    if (state.pending.kind === "question") {
+    if (pending.kind === "question") {
       // A free-text question cannot be answered by a swipe. Saying so beats
       // silently sending "allow", which the agent would read as an answer.
       state = { ...state, error: "This question needs text — answer it on the computer." };
@@ -173,16 +238,28 @@ async function boot(): Promise<void> {
       return;
     }
 
+    // Not yet shown long enough, replaced, already answered, or an answer is
+    // still on its way: the swipe is dropped rather than guessed at.
+    if (!gate.begin(pending, Date.now())) return;
+
+    const owner = activeBackend;
     // Clear it locally at once. The server confirms with permission_result,
     // but leaving the prompt up until then invites a second swipe.
     state = { ...state, pending: null, busy: decision === "allow" };
-    await draw();
-
     try {
-      await backend().decide(session.id, decision);
+      // Sent before the redraw: the server matches the answer to whatever
+      // request is pending *when it arrives*, so waiting on a slow BLE write
+      // first would widen the window for a newer request to take its place.
+      const sent = owner.decide(session.id, decision);
+      void draw();
+      await sent;
     } catch (thrown) {
-      fail(thrown);
-      await draw();
+      if (owner === activeBackend) {
+        fail(thrown);
+        await draw();
+      }
+    } finally {
+      gate.end();
     }
   };
 
@@ -203,53 +280,70 @@ async function boot(): Promise<void> {
     }
   }
 
+  // The elapsed counter moves with the clock even when no event arrives.
+  const ticker = setInterval(() => { void draw(); }, 1000);
+
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: false });
     if (!gesture) return;
-    if (DEMO && gesture.gesture !== "doubleClick") return;
 
-    // While a decision is pending it outranks every other binding: the swipes
-    // mean allow and deny and nothing else, so no other screen can steal them.
-    if (state.pending && screen === "agent" && state.controllable && backend().capabilities.decisions) {
-      if (gesture.gesture === "scrollUp") { void decide("allow"); return; }
-      if (gesture.gesture === "scrollDown") { void decide("deny"); return; }
-    }
+    const action = routeGesture(gesture.gesture, {
+      screen, state, selected, sessionCount: sessions.length,
+      decisions: backend().capabilities.decisions, demo: DEMO,
+    });
 
-    switch (gesture.gesture) {
-      case "click":
-        if (screen === "sessions") {
-          const chosen = sessions[selected];
-          if (chosen) void open(chosen);
-          return;
-        }
-        if (state.error) { void loadSessions(); return; }
+    switch (action.kind) {
+      case "decide":
+        void decide(action.decision);
+        return;
+
+      case "open": {
+        const chosen = sessions[selected];
+        if (chosen) void open(chosen);
+        return;
+      }
+
+      case "back":
+        screen = "agent";
+        void draw();
+        return;
+
+      case "retry":
+        // A dead stream does not come back by reloading the list; reopening
+        // the session subscribes again.
+        if (state.session) void open(state.session);
+        else void loadSessions();
+        return;
+
+      case "replay":
         narrator.replay();
         return;
 
-      case "longPress":
-        if (screen === "agent" && state.busy && state.controllable && state.session) {
-          void backend().interrupt(state.session.id).catch(fail);
-          return;
-        }
+      case "interrupt": {
+        const session = state.session;
+        if (!session) return;
+        void backend().interrupt(session.id).catch((thrown: unknown) => { fail(thrown); void draw(); });
+        return;
+      }
+
+      case "sessions":
         screen = "sessions";
         selected = 0;
         void loadSessions();
         return;
 
-      case "scrollUp":
-        if (screen !== "sessions") return;
-        selected = Math.max(0, selected - 1);
+      case "select":
+        selected = action.index;
         void draw();
         return;
 
-      case "scrollDown":
-        if (screen !== "sessions") return;
-        selected = Math.min(sessions.length - 1, selected + 1);
-        void draw();
-        return;
-
-      case "doubleClick":
+      case "exit":
+        closed = true;
+        generation += 1;
+        clearInterval(ticker);
         stopStream?.();
+        stopStream = null;
         activeBackend.dispose();
         narrator.stop();
         void bridge.shutDownPageContainer();
@@ -261,11 +355,9 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
+    if (closed) return;
     if (status?.connectType === "connected") { pageReady = false; void draw(); }
   });
-
-  // The elapsed counter moves with the clock even when no event arrives.
-  setInterval(() => { void draw(); }, 1000);
 
   mountPhoneUi({
     getSettings: () => settings,
@@ -276,12 +368,16 @@ async function boot(): Promise<void> {
       if (!next.spokenOutput) narrator.stop();
       await save(bridge, next);
       if (reconnect) {
+        generation += 1;
         stopStream?.();
         stopStream = null;
+        streamGap = null;
         activeBackend.dispose();
         activeBackend = createBackend(next);
         if (!DEMO) {
           state = EMPTY_STATE;
+          sessions = [];
+          selected = 0;
           await loadSessions();
         }
       }
@@ -293,21 +389,32 @@ async function boot(): Promise<void> {
     sendPrompt: async (text) => {
       const session = state.session;
       if (!session || !text.trim()) return;
+      const owner = activeBackend;
       state = { ...state, busy: true, error: null, startedAt: new Date() };
       await draw();
       try {
-        await backend().prompt(session.id, text.trim());
+        await owner.prompt(session.id, text.trim());
       } catch (thrown) {
+        // A request cut off by switching backend is not an error of the new one.
+        if (owner !== activeBackend) return;
         fail(thrown);
         await draw();
       }
     },
     createSession: async () => {
-      const create = backend().createSession;
+      const owner = activeBackend;
+      const create = owner.createSession;
       if (!create) return;
-      const session = await create.call(backend(), "Agent Glass");
-      sessions = [...sessions.filter((item) => item.id !== session.id), session];
-      await open(session);
+      try {
+        const session = await create.call(owner, "Agent Glass");
+        if (owner !== activeBackend) return;
+        sessions = [...sessions.filter((item) => item.id !== session.id), session];
+        await open(session);
+      } catch (thrown) {
+        if (owner !== activeBackend) return;
+        fail(thrown);
+        await draw();
+      }
     },
     getCapabilities: () => backend().capabilities,
     getSpeechStatus: () => narrator.status(),
@@ -329,6 +436,6 @@ async function boot(): Promise<void> {
 
 if (typeof window !== "undefined") {
   void boot().catch((error: unknown) => {
-    console.error("[agent-glass] failed to start:", error);
+    console.error("[agent-glass] failed to start:", error instanceof Error ? error.message : "unknown error");
   });
 }

@@ -62,6 +62,25 @@ export function parseHafasTime(raw: string | undefined, onDate: Date): Date | nu
   return out;
 }
 
+/**
+ * The operating day a journey's times are counted from.
+ *
+ * HAFAS writes every time of a journey relative to the day that journey
+ * started (`date`, YYYYMMDD), not the day it was asked about. A night bus that
+ * left at 23:40 yesterday reaches a stop at "01000500" — five past midnight
+ * *today*. Counting that offset from today instead put it a full day into the
+ * future, so just after midnight the bus about to arrive vanished to the
+ * bottom of the board as "23h59", and a ride across midnight was tracked a
+ * day late.
+ */
+export function hafasDay(raw: unknown, fallback: Date): Date {
+  const text = typeof raw === "string" ? raw : "";
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(text);
+  if (!match) return fallback;
+  const day = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(day.getTime()) ? fallback : day;
+}
+
 /** HAFAS carries coordinates as integer millionths, latitude in `y`. */
 function coord(crd: { x?: number; y?: number } | undefined): { lat: number; lon: number } {
   return { lat: (crd?.y ?? 0) / 1e6, lon: (crd?.x ?? 0) / 1e6 };
@@ -234,9 +253,10 @@ export class HafasBackend implements TransitBackend {
       const productIndex = typeof journey["prodX"] === "number" ? journey["prodX"] : -1;
       const line = asString(asRecord(products[productIndex])["name"])?.trim() ?? "?";
 
-      const scheduled = parseHafasTime(asString(board["dTimeS"]), now);
+      const day = hafasDay(journey["date"], now);
+      const scheduled = parseHafasTime(asString(board["dTimeS"]), day);
       if (!scheduled) return [];
-      const live = parseHafasTime(asString(board["dTimeR"]), now);
+      const live = parseHafasTime(asString(board["dTimeR"]), day);
 
       return [{
         line,
@@ -265,6 +285,7 @@ export class HafasBackend implements TransitBackend {
     const common = asRecord(res["common"]);
     const locations = asArray(common["locL"]);
     const journey = asRecord(res["journey"]);
+    const day = hafasDay(journey["date"], now);
 
     const stops = asArray(journey["stopL"]).flatMap((raw): RideStop[] => {
       const entry = asRecord(raw);
@@ -276,10 +297,10 @@ export class HafasBackend implements TransitBackend {
       // A stop has an arrival, a departure, or both — the first stop of a ride
       // has only a departure and the last one only an arrival.
       const scheduled = parseHafasTime(
-        asString(entry["aTimeS"]) ?? asString(entry["dTimeS"]), now,
+        asString(entry["aTimeS"]) ?? asString(entry["dTimeS"]), day,
       );
       if (!scheduled) return [];
-      const live = parseHafasTime(asString(entry["aTimeR"]) ?? asString(entry["dTimeR"]), now);
+      const live = parseHafasTime(asString(entry["aTimeR"]) ?? asString(entry["dTimeR"]), day);
 
       return [{
         stop: {

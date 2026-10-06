@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   bpmFromTaps, clampBpm, createState, DEFAULT_SETTINGS, MAX_BPM, MIN_BPM,
-  msPerBeat, msToNextBeat, positionAt, reset, start, stop, toggle, totalBeats,
+  msPerBeat, msToNextBeat, positionAt, reset, retime, start, stop, toggle, totalBeats,
   type MetronomeSettings,
 } from "../src/metronome/engine";
 
@@ -119,6 +119,24 @@ describe("scheduling", () => {
 
   it("falls back to a whole period while stopped", () => {
     expect(msToNextBeat(createState(), fourFour, 999)).toBe(500);
+  });
+});
+
+describe("tempo change while running", () => {
+  it("keeps the beats already played and the phase in the current beat", () => {
+    const state = start(createState(), 0);
+    // 10 s at 120 bpm = 20 beats, 250 ms into the 21st.
+    const retimed = retime(state, fourFour, 10_250);
+    const faster: MetronomeSettings = { ...fourFour, bpm: 150 };
+    expect(totalBeats(retimed, faster, 10_250)).toBe(20);
+    expect(positionAt(retimed, faster, 10_250).bar).toBe(positionAt(state, fourFour, 10_250).bar);
+    // The next beat now comes at the new period, counted from the last boundary.
+    expect(msToNextBeat(retimed, faster, 10_250)).toBe(150);
+  });
+
+  it("leaves a stopped metronome alone", () => {
+    const state = stop(start(createState(), 0), fourFour, 1000);
+    expect(retime(state, fourFour, 5000)).toBe(state);
   });
 });
 

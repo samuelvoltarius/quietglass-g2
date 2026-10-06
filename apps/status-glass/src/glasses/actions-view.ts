@@ -1,6 +1,6 @@
 import type { Action } from "../protocol/schema";
 import type { SourceStatus } from "../monitor/dashboard";
-import type { StatusView } from "./view";
+import { LINE_WIDTH, fit, type StatusView } from "./view";
 
 /**
  * The actions screen.
@@ -63,7 +63,8 @@ export function buildActionsView(
     const prefix = selected ? "> " : "  ";
     const mark = entry.action.confirm ? "! " : "  ";
     const label = entry.sourceName + " " + entry.action.label;
-    return prefix + mark + (confirming ? "CONFIRM: " + label : label);
+    const head = prefix + mark + (confirming ? "CONFIRM: " : "");
+    return head + fit(label, LINE_WIDTH - head.length);
   });
 
   return {
@@ -85,7 +86,11 @@ function footerFor(
   options: ActionsViewOptions,
 ): string {
   if (options.busy) return "";
-  if (options.result) return options.result.label + "  ·  hold = back";
+  if (options.result) {
+    // The label can be an error from the source; the way back must stay visible.
+    const back = "  ·  hold = back";
+    return fit(options.result.label, LINE_WIDTH - back.length) + back;
+  }
 
   const current = actions[cursor];
   if (options.pendingId && current?.action.id === options.pendingId) {

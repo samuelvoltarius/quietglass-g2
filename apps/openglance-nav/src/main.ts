@@ -31,6 +31,15 @@ async function boot(): Promise<void> {
   let error: string | null = null;
   let lastView: NavView | null = null;
   let pageReady = false;
+  let closed = false;
+  let tickTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Every route request takes a number, and an answer that arrives after a
+   * newer request — or after navigation was stopped — is dropped. Without it a
+   * slow reroute for the old destination could land after the route to the
+   * new one, or switch navigation back on after a hold had stopped it.
+   */
+  let routeSeq = 0;
 
   const router = (): RoutingProvider =>
     usesMockRouter(data)
@@ -48,6 +57,7 @@ async function boot(): Promise<void> {
     });
 
   const draw = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
@@ -55,12 +65,14 @@ async function boot(): Promise<void> {
     const icon = pixelArrowFor(maneuver?.type);
 
     const result = pageReady ? await updatePage(bridge, view, icon) : await createPage(bridge, view, icon);
+    if (closed) return;
     if (result.ok) { pageReady = true; lastView = view; return; }
     pageReady = false;
     console.warn("[openglance] draw failed:", result.reason);
   };
 
   const computeRoute = async (from: LatLng): Promise<void> => {
+    const seq = ++routeSeq;
     const destination = destinationOf(data);
     if (!destination) { error = "No destination set."; await draw(); return; }
 
@@ -69,6 +81,7 @@ async function boot(): Promise<void> {
     await draw();
 
     const outcome = await router().route({ from, to: destination.at, mode: data.mode });
+    if (seq !== routeSeq) return;
     rerouting = false;
 
     if (!outcome.route) {
@@ -85,15 +98,25 @@ async function boot(): Promise<void> {
   const startNavigating = async (): Promise<void> => {
     // A route needs a starting point; ask for one fix before routing rather
     // than routing from a stale or invented position.
+    const seq = ++routeSeq;
+    // A hold stops location updates to save battery; navigating again needs
+    // them back, or the arrow froze on the first fix for the whole trip.
+    await bridge.startAppLocationUpdates({
+      accuracy: AppLocationAccuracy.High,
+      distanceFilter: 5,
+    }).catch(() => false);
     const fix = await bridge.getAppLocation({ accuracy: AppLocationAccuracy.High }).catch(() => null);
+    if (seq !== routeSeq) return;
     if (fix) position = { lat: fix.latitude, lon: fix.longitude };
     if (!position) { error = "No position available."; await draw(); return; }
     await computeRoute(position);
   };
 
   const stopNavigating = async (): Promise<void> => {
+    routeSeq++;
     nav = null;
     error = null;
+    rerouting = false;
     await bridge.stopAppLocationUpdates().catch(() => undefined);
     await draw();
   };
@@ -107,7 +130,8 @@ async function boot(): Promise<void> {
     distanceFilter: 5,
   }).catch(() => false);
 
-  bridge.onAppLocationChanged((location: AppLocation) => {
+  const stopListening = bridge.onAppLocationChanged((location: AppLocation) => {
+    if (closed) return;
     if (typeof location?.latitude !== "number" || typeof location?.longitude !== "number") return;
     position = { lat: location.latitude, lon: location.longitude };
 
@@ -120,6 +144,7 @@ async function boot(): Promise<void> {
   });
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -130,7 +155,17 @@ async function boot(): Promise<void> {
         if (progressOf(nav).offRoute && position) { void computeRoute(position); return; }
         return;
       case "doubleClick":
-        void stopNavigating().then(() => bridge.shutDownPageContainer());
+        // Stop everything that could draw again first, and never leave a
+        // failing shutdown as an unhandled rejection.
+        closed = true;
+        routeSeq++;
+        nav = null;
+        if (tickTimer !== null) clearInterval(tickTimer);
+        if (typeof stopListening === "function") stopListening();
+        void bridge.stopAppLocationUpdates()
+          .catch(() => undefined)
+          .then(() => bridge.shutDownPageContainer())
+          .catch((thrown: unknown) => { console.warn("[openglance] shutdown failed:", thrown); });
         return;
       case "longPress":
         void stopNavigating();
@@ -141,13 +176,13 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
+    if (status?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
   });
 
-  setInterval(() => { void draw(); }, 2000);
+  tickTimer = setInterval(() => { void draw(); }, 2000);
 
   mountPhoneUi({
     getData: () => data,
