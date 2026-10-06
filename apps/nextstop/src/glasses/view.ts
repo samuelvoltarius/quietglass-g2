@@ -249,6 +249,10 @@ export function errorView(message: string, hint: string): StopView {
 }
 
 /** Shown while the first request is in flight, so the screen is never blank. */
-export function loadingView(what: string): StopView {
-  return { header: "NextStop", body: ["", what], footer: "" };
+export function loadingView(what: string, hint = ""): StopView {
+  return {
+    header: "NextStop",
+    body: ["", ...wrap(what), ...(hint ? ["", ...wrap(hint)] : [])].slice(0, BODY_ROWS),
+    footer: "doppeltippen = beenden",
+  };
 }

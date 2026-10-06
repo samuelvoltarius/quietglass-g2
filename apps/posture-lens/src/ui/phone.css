@@ -92,3 +92,11 @@ button.secondary {
   background: transparent; color: var(--text);
   border: 1px solid var(--line);
 }
+
+/* First-run callout: the one next step, in a sentence. */
+.card.next { border-color: var(--accent); }
+.card.next p { margin: 0; font-size: 17px; line-height: 1.45; }
+.card.compact label { margin-top: 0; }
+.warn { color: #e5484d; }
+details { margin-top: 14px; }
+summary { cursor: pointer; font-size: 14px; color: var(--muted); }

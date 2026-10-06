@@ -106,3 +106,7 @@ code {
   border-radius: 5px; padding: 1px 5px; font-size: 13px;
 }
 footer.hint { text-align: center; padding: 8px 0 24px; }
+
+/* Beginner pass: the next-step sentence and the advanced drawer. */
+.next { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: var(--soft); border-left: 3px solid var(--accent); font-weight: 600; }
+details.advanced summary { cursor: pointer; color: var(--muted); font-weight: 600; }

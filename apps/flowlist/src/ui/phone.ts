@@ -1,6 +1,8 @@
 import { parseMarkdown, parsePack, toPack } from "../checklist/parse";
+import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
+import { t } from "../messages";
 import {
-  nextListId, removeList, setSettings, upsertList,
+  activeList, addSamples, nextListId, removeList, samplesMissing, setSettings, upsertList,
   type FlowListData, type FlowListSettings,
 } from "../storage/persist";
 
@@ -14,6 +16,10 @@ export interface PhoneUiPorts {
   /** Must already reflect a `setData` call by the time that call returns its promise. */
   readonly getData: () => FlowListData;
   readonly setData: (data: FlowListData) => Promise<void>;
+  /** Language shown; defaults to the device language. */
+  readonly locale?: () => Locale;
+  /** Called after the user picked another language, so the glasses follow. */
+  readonly onLocaleChange?: (locale: Locale) => void;
 }
 
 /** Text fields that hold an unsaved draft and must survive a re-render. */
@@ -29,16 +35,25 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   if (!root) return;
 
   let notice = "";
+  let locale: Locale = ports.locale?.() ?? getLocale();
 
   // Re-rendered after every change, so the lists show what is stored. Handlers
   // always read the current data: a closure over the data of the first render
   // would compute the next change from a stale state and undo the previous one.
   const render = (keepDraft = true): void => {
     const draft = keepDraft ? readDraft(root) : null;
-    root.innerHTML = template(ports.getData(), notice);
+    root.innerHTML = template(ports.getData(), notice, locale);
     notice = "";
     if (draft) writeDraft(root, draft);
-    wire(root, ports.getData, commit, (message) => { notice = message; render(); });
+    wire(root, ports.getData, commit, (message) => { notice = message; render(); }, locale);
+    root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
+      const value = (event.target as HTMLSelectElement).value;
+      if (value !== "de" && value !== "en") return;
+      locale = value;
+      setLocale(locale);
+      ports.onLocaleChange?.(locale);
+      render();
+    });
   };
 
   const commit: Commit = (next, options = {}) => {
@@ -47,7 +62,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     render(options.keepDraft ?? true);
     saving.catch((error: unknown) => {
       console.warn("[flowlist] save failed:", error);
-      notice = "Could not save: " + (error instanceof Error ? error.message : String(error));
+      notice = t(locale, "p.saveFailed", { error: error instanceof Error ? error.message : String(error) });
       render();
     });
   };
@@ -71,72 +86,74 @@ function writeDraft(root: HTMLElement, draft: Map<string, string>): void {
   }
 }
 
-function template(data: FlowListData, notice: string): string {
+function template(data: FlowListData, notice: string, locale: Locale): string {
   const s = data.settings;
+  const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const active = activeList(data);
   return `
   <header class="brand">
     <span class="brand-mark">Quietglass</span>
     <h1>FlowList</h1>
+    <p class="hint">${L("p.lede")}</p>
   </header>
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
   <section class="card">
-    <h2>Add a checklist</h2>
-    <label for="source">Paste Markdown or a FlowList pack (JSON)</label>
-    <textarea id="source" rows="10" placeholder="# Pre-flight&#10;&#10;## Camera&#10;- [ ] Check battery (!)&#10;- [ ] Format card&#10;    Two cards for long days&#10;- [ ] Fit ND filter (optional)"></textarea>
-    <p class="hint">
-      <code>#</code> titles the list, <code>##</code> opens a section.
-      <code>(!)</code> marks a critical step that asks before it is accepted,
-      <code>(optional)</code> makes a step skippable. An indented line becomes
-      that step's detail.
-    </p>
-    <button id="add" type="button">Add checklist</button>
+    <h2>${L("p.start")}</h2>
+    ${active
+      ? `<p>${L("p.now", { title: escapeHtml(active.title) })} ${L("p.nextStep")}</p>`
+      : `<p>${L("p.noneYet")}</p>`}
+    ${languageSelect(locale)}
   </section>
 
   <section class="card">
-    <h2>Your checklists</h2>
-    ${data.lists.length === 0 ? '<p class="hint">Nothing yet.</p>' : ""}
+    <h2>${L("p.lists")}</h2>
+    <p class="hint">${data.lists.length === 0 ? L("p.listsEmpty") : L("p.pickHint")}</p>
     <ul class="scripts">
       ${data.lists.map((list) => `
         <li>
           <label>
             <input type="radio" name="active" value="${escapeHtml(list.id)}"
-              ${list.id === data.activeId ? "checked" : ""} />
-            <span>${escapeHtml(list.title)} <em>(${list.steps.length})</em></span>
+              ${list.id === active?.id ? "checked" : ""} />
+            <span>${escapeHtml(list.title)} <em>(${L("p.steps", { n: list.steps.length })})</em></span>
           </label>
           <span class="row-actions">
-            <button type="button" class="export" data-id="${escapeHtml(list.id)}">Export</button>
-            <button type="button" class="remove" data-id="${escapeHtml(list.id)}">Remove</button>
+            <button type="button" class="export" data-id="${escapeHtml(list.id)}">${L("p.export")}</button>
+            <button type="button" class="remove" data-id="${escapeHtml(list.id)}">${L("p.remove")}</button>
           </span>
         </li>`).join("")}
     </ul>
+    ${samplesMissing(data) ? `<button id="samples" type="button">${L("p.addExamples")}</button>` : ""}
   </section>
 
   <section class="card">
-    <h2>Display</h2>
-    <label class="check"><input id="next" type="checkbox" ${s.showNext ? "checked" : ""} /> Show the next step below the current one</label>
-    <label for="width">Characters per line — <output id="width-out">${s.lineWidth}</output></label>
+    <h2>${L("p.add")}</h2>
+    <label for="source">${L("p.sourceLabel")}</label>
+    <textarea id="source" rows="10" placeholder="${L("p.placeholder")}"></textarea>
+    <p class="hint">${L("p.syntax")}</p>
+    <button id="add" type="button">${L("p.addButton")}</button>
+  </section>
+
+  <section class="card">
+    <h2>${L("p.display")}</h2>
+    <label class="check"><input id="next" type="checkbox" ${s.showNext ? "checked" : ""} /> ${L("p.showNext")}</label>
+    <label for="width">${L("p.width")} — <output id="width-out">${s.lineWidth}</output></label>
     <input id="width" type="range" min="20" max="80" step="2" value="${s.lineWidth}" />
-    <label class="check"><input id="invert" type="checkbox" ${s.invertScroll ? "checked" : ""} /> Invert swipe direction</label>
-    <p class="hint">Turn inversion on if swiping moves the wrong way on your glasses.</p>
+    <label class="check"><input id="invert" type="checkbox" ${s.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+    <p class="hint">${L("p.invertHint")}</p>
   </section>
 
   <section class="card">
-    <h2>Controls on the glasses</h2>
+    <h2>${L("p.controls")}</h2>
     <table class="keys">
-      <tr><td>Tap</td><td>Step done — or confirm a critical step, or take the highlighted branch</td></tr>
-      <tr><td>Swipe up</td><td>Back one step</td></tr>
-      <tr><td>Swipe down</td><td>Skip (optional steps only)</td></tr>
-      <tr><td>Hold</td><td>Show the step's detail while held</td></tr>
-      <tr><td>Double tap</td><td>Leave FlowList</td></tr>
+      ${(["tap", "up", "down", "hold", "end", "double"] as const)
+        .map((key) => `<tr><td>${L("p.key." + key)}</td><td>${L("p.key." + key + "Do")}</td></tr>`).join("")}
     </table>
-    <p class="hint">On a branching step both swipes move between the options. The R1 ring works the same as the temple pads.</p>
+    <p class="hint">${L("p.controlsHint")}</p>
   </section>
 
-  <footer class="hint">
-    FlowList keeps everything on this phone. It has no network access; sharing happens by exporting a pack.
-  </footer>`;
+  <footer class="hint">${L("p.privacy")}</footer>`;
 }
 
 function wire(
@@ -144,28 +161,36 @@ function wire(
   current: () => FlowListData,
   commit: Commit,
   notify: (message: string) => void,
+  locale: Locale,
 ): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
 
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
     const source = byId<HTMLTextAreaElement>("source")?.value ?? "";
-    if (!source.trim()) return;
+    if (!source.trim()) {
+      notify(t(locale, "p.emptySource"));
+      return;
+    }
     const data = current();
 
     const id = nextListId(data);
     // A pack is JSON; anything else is treated as Markdown.
     const looksLikeJson = source.trim().startsWith("{");
-    const result = looksLikeJson ? parsePack(source) : parseMarkdown(source, id);
+    const result = looksLikeJson ? parsePack(source, locale) : parseMarkdown(source, id, locale);
 
     if (result.checklist.steps.length === 0) {
-      notify(result.warnings.join(" ") || "Could not read that.");
+      notify([...result.warnings, t(locale, "p.unreadable")].join(" "));
       return;
     }
 
     commit(upsertList(data, { ...result.checklist, id }), {
       keepDraft: false,
-      notice: result.warnings.join(" "),
+      notice: [t(locale, "p.added", { title: result.checklist.title }), ...result.warnings].join(" "),
     });
+  });
+
+  byId<HTMLButtonElement>("samples")?.addEventListener("click", () => {
+    commit(addSamples(current(), locale), { notice: t(locale, "p.examplesAdded") });
   });
 
   root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
@@ -179,7 +204,7 @@ function wire(
     button.addEventListener("click", () => {
       const list = current().lists.find((l) => l.id === button.dataset["id"]);
       if (!list) return;
-      download(list.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + ".flowlist.json", toPack(list));
+      download(fileName(list.title) + ".flowlist.json", toPack(list));
     });
   });
 
@@ -202,6 +227,14 @@ function wire(
   const widthOut = byId("width-out");
   width?.addEventListener("input", () => { if (widthOut) widthOut.textContent = width.value; });
   width?.addEventListener("change", () => patch({ lineWidth: Number(width.value) }));
+}
+
+/** A safe file name that keeps German titles readable ("ä" → "ae", "ß" → "ss"). */
+export function fileName(title: string): string {
+  const plain = title.toLowerCase()
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return plain.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "checklist";
 }
 
 /** Hands the pack to the phone's own share/save sheet. Nothing is uploaded. */

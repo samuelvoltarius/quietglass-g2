@@ -2,6 +2,15 @@
 
 **Quietglass** · Abfahrten und der nächste Halt — ohne das Handy aus der Tasche zu nehmen.
 
+> **Kurz gesagt:** NextStop zeigt auf der Brille, was an der Haltestelle neben dir abfährt – und während der Fahrt, welcher Halt als Nächstes kommt. Kein Konto, kein Schlüssel, kein eigener Server.
+>
+> **So startest du:**
+> 1. NextStop in der Even-App installieren und öffnen.
+> 2. Den Standort erlauben, wenn die Even-App fragt. Die Brille zeigt dann die Abfahrten der nächsten Haltestelle.
+> 3. **Wischen** wählt eine Abfahrt, **Tippen** fährt mit (nächster Halt), **Halten** springt zur nächsten Haltestelle, **Doppeltippen** beendet.
+>
+> **Optional:** ÖBB-Echtzeit in Österreich (Verspätungen bis zum Stadtbus). Dafür läuft ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe [ÖBB-Echtzeit](#öbb-echtzeit-optional). Ohne es funktioniert alles mit Fahrplanzeiten.
+
 Am Bahnsteig: was fährt hier weg, und ist es pünktlich.
 Im Bus: welcher Halt kommt als Nächstes, und wann bin ich da.
 
@@ -21,10 +30,10 @@ NextStop kann überall etwas anzeigen, weil es zwei Quellen hat statt einer.
 
 ## Die zwei Datenquellen
 
-| | Gebiet | Echtzeit | Schlüssel |
-|---|---|---|---|
-| **ÖBB** | Österreich | ja, bis zum Stadtbus | keiner |
-| **Transitous** | viele Länder | je nach Region | keiner |
+| | Gebiet | Echtzeit | Schlüssel | direkt aus der App |
+|---|---|---|---|---|
+| **Transitous** (Standard, „Überall“) | viele Länder | je nach Region | keiner | ja |
+| **ÖBB** (optional) | Österreich | ja, bis zum Stadtbus | keiner | nein, nur mit Zusatzprogramm |
 
 Warum beides? Weil keine der beiden allein reicht.
 
@@ -36,8 +45,24 @@ Gemessen am Mirabellplatz: **0 von 8 Abfahrten** mit Verspätungsangabe.
 **Die ÖBB** liefert sie sehr wohl, bis hinunter zum Salzburger O-Bus. Gemessen
 an derselben Haltestelle zur selben Minute: **8 von 10**.
 
-Umschalten in der Handy-App. Wer MOTIS selbst betreibt, trägt dort die eigene
-Adresse ein — dann verlässt keine Anfrage das Haus.
+Umschalten in der Handy-App. Transitous ist voreingestellt, weil es als
+einzige der beiden Quellen ohne Hilfe aus der Even-App erreichbar ist. Wer
+MOTIS selbst betreibt, trägt unter „Erweitert“ die eigene Adresse ein — dann
+verlässt keine Anfrage das Haus.
+
+**Geprüft am 6. Oktober 2026** (curl mit Browser-`Origin`):
+
+- `api.transitous.org` antwortet auf `/api/v1/map/stops` und
+  `/api/v1/stoptimes` mit `Access-Control-Allow-Origin: *` und
+  `Access-Control-Allow-Headers: *`; auch die Vorab-Anfrage (`OPTIONS`) wird
+  so beantwortet. Ohne `User-Agent` kommt 403 — im Browser schickt die
+  WebView ihren eigenen mit. Laut [Nutzungsregeln](https://transitous.org/api/)
+  ist die API für quelloffene, nicht-kommerzielle und sparsame Clients frei,
+  mit sichtbarem Link auf [transitous.org/sources](https://transitous.org/sources/)
+  (steht unten in der Handy-App).
+- `fahrplan.oebb.at/bin/mgate.exe` beantwortet dieselbe Anfrage mit `200`,
+  aber **ohne** jeden `Access-Control-*`-Header, auch nicht auf `OPTIONS`.
+  Aus einer WebView heraus geht es deshalb nur über den Proxy.
 
 ## Was du siehst
 
@@ -99,7 +124,14 @@ optimistisch sein. Das steht dann auch da.
 
 ## Einrichten
 
-Bei Transitous: nichts. Bei der ÖBB braucht es einen kleinen Proxy.
+Bei Transitous: nichts — das ist die Voreinstellung.
+
+### ÖBB-Echtzeit (optional)
+
+Für Verspätungen in Österreich braucht es einen kleinen Proxy, der auf einem
+Computer im selben Netz läuft. In der Handy-App dann „ÖBB – Echtzeit in
+Österreich“ wählen und unter „Erweitert“ die Adresse des Proxys eintragen
+(z. B. `http://192.168.1.20:8079/oebb`, mit `HOST=0.0.0.0` gestartet).
 
 ```bash
 node examples/oebb-cors-proxy.mjs     # 127.0.0.1:8079
@@ -115,13 +147,13 @@ verworfen.
 npm install
 npm run dev        # Handy-UI + App auf http://127.0.0.1:5201
 npm run build      # Typecheck + Produktions-Bundle
-npm test           # 70 Tests
+npm test           # 103 Tests
 npm run sim        # Simulator auf den Dev-Server gerichtet
 ```
 
 ### Ohne Brille testen
 
-Der Simulator hat kein GPS, die App käme also nie über „Warte auf GPS" hinaus.
+Der Simulator hat kein GPS, die App käme also nie über „Warte auf deinen Standort" hinaus.
 Dafür gibt es einen Startparameter:
 
 ```
@@ -146,7 +178,8 @@ eigenen Netz halten.
 
 | Grenze | Detail |
 |---|---|
-| ÖBB braucht den Proxy | CORS. Einmal starten, siehe oben. |
+| ÖBB braucht den Proxy | CORS. Einmal starten, siehe oben. Ohne Proxy bleibt Transitous mit Fahrplanzeiten. |
+| Nur Deutsch | Brille und Handy-App sprechen derzeit nur Deutsch. |
 | ÖBB ist keine Open-Data-API | Es ist der Endpunkt der ÖBB-eigenen App. Kein Schlüssel nötig, aber niemand garantiert, dass er so bleibt. Jedes Feld wird als optional gelesen: ändert sich etwas, fällt die App auf Fahrplanzeiten zurück statt abzustürzen. |
 | Transitous-Abdeckung schwankt | Ganze Regionen können fehlen. Die App sagt das, statt eine leere Liste zu zeigen. |
 | Keine Umstiege | Diese App beantwortet „was fährt jetzt" und „wo muss ich raus", nicht „wie komme ich hin". Eine Verbindungsauskunft ist ein Bildschirm fürs Handy. |

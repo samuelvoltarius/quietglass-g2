@@ -1,5 +1,7 @@
 import { countBySeverity, durationSeconds, type Inspection, type Severity } from "../log/entries";
 import type { SttStatus } from "../stt/provider";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * What the glasses show.
@@ -16,7 +18,12 @@ export interface LogView {
 
 const MIC_ON = "● MIC";
 
-export type Phase = "idle" | "recording" | "transcribing" | "review";
+/**
+ * - `idle`: between entries
+ * - `pick`: choosing a quick note (no speech server needed)
+ * - `recording` / `transcribing` / `review`: dictation through a speech server
+ */
+export type Phase = "idle" | "pick" | "recording" | "transcribing" | "review";
 
 export interface ViewOptions {
   readonly phase: Phase;
@@ -26,6 +33,13 @@ export interface ViewOptions {
   readonly status: SttStatus;
   readonly mock: boolean;
   readonly lineWidth?: number;
+  readonly locale?: Locale;
+  /** True when a speech server is set up: tap dictates instead of picking. */
+  readonly voice?: boolean;
+  /** Quick notes offered in the `pick` phase; "Cancel" is appended. */
+  readonly quickNotes?: readonly string[];
+  /** Highlighted row in the `pick` phase, the cancel row included. */
+  readonly pickIndex?: number;
 }
 
 const DEFAULT_WIDTH = 44;
@@ -34,37 +48,54 @@ const DEFAULT_WIDTH = 44;
 export const MAX_BODY_ROWS = 7;
 /** Characters the header holds on one line in the G2's proportional font. */
 export const HEADER_WIDTH = 46;
+/** The footer is a single line too. */
+export const FOOTER_WIDTH = 46;
 
 export function buildView(
   inspection: Inspection | null,
   options: ViewOptions,
   now = Date.now(),
 ): LogView {
+  const locale = options.locale ?? "en";
+  const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const width = options.lineWidth ?? DEFAULT_WIDTH;
+
+  // Never a dead end: a tap starts an inspection right here.
   if (!inspection) {
     return {
       header: "FieldLog",
-      body: ["No inspection running.", "Start one in the phone app."],
-      footer: "",
+      body: [L("g.none.1"), L("g.none.2")],
+      footer: L("g.none.footer"),
     };
   }
 
-  const width = options.lineWidth ?? DEFAULT_WIDTH;
   const counts = countBySeverity(inspection);
-  const tally = counts.major + " major · " + counts.minor + " minor · " + counts.note + " notes";
+  const tally = L("g.tally", counts);
 
   switch (options.phase) {
+    case "pick": {
+      const notes = [...(options.quickNotes ?? []), L("g.cancel")];
+      const index = Math.min(Math.max(0, options.pickIndex ?? 0), notes.length - 1);
+      const rows = notes.map((note, i) => truncate((i === index ? "> " : "  ") + note, width));
+      return {
+        header: L("g.pick.header"),
+        body: [...windowAround(rows, index, MAX_BODY_ROWS - 1), savedAs(options.severity, locale)],
+        footer: L("g.pick.footer"),
+      };
+    }
+
     case "recording":
       return {
         header: sectionLabel(inspection),
-        body: ["Listening…", severityLabel(options.severity)],
-        footer: MIC_ON + (options.mock ? "  ·  MOCK" : "") + "  ·  tap = stop",
+        body: [L("g.listening"), savedAs(options.severity, locale)],
+        footer: MIC_ON + (options.mock ? "  ·  " + L("g.mock") : "") + "  ·  " + L("g.recording.footer"),
       };
 
     case "transcribing":
       return {
         header: sectionLabel(inspection),
-        body: ["Transcribing…"],
-        footer: statusLabel(options.status),
+        body: [L("g.transcribing")],
+        footer: statusLabel(options.status, locale),
       };
 
     // The transcript is shown before it is kept. Speech recognition is
@@ -72,26 +103,32 @@ export function buildView(
     // wrong entry must be catchable at the moment it is made.
     case "review":
       return {
-        header: "Keep this?",
+        header: L("g.review.header"),
         // The severity row always stays visible; a long transcript is cut
         // with "…" — the full text is in the log on the phone.
         body: [
           ...clampRows(wrap(options.pending ?? "", width), MAX_BODY_ROWS - 1, width),
-          severityLabel(options.severity),
+          savedAs(options.severity, locale),
         ],
-        footer: "tap = keep  ·  swipe = discard  ·  hold = photo",
+        footer: L("g.review.footer"),
       };
 
     case "idle":
-    default:
+    default: {
+      // A failed connection says what to do instead of silently ignoring taps.
+      const error = options.voice && options.status === "error"
+        ? [L("g.serverError.1"), truncate(L("g.serverError.2"), width), ""]
+        : [];
+      const time = formatDuration(durationSeconds(inspection, now));
+      const body = inspection.entries.length === 0
+        ? [L("g.noEntries"), truncate(L("g.firstNote"), width)]
+        : [lastEntryLine(inspection, width, locale), tally];
       return {
         header: sectionLabel(inspection),
-        body: [
-          lastEntryLine(inspection, width),
-          tally,
-        ].filter(Boolean),
-        footer: formatDuration(durationSeconds(inspection, now)) + "  ·  tap = record",
+        body: [...error, ...body, "", truncate(L("g.nextSeverity", { severity: severityLabel(options.severity, locale) }), width)],
+        footer: truncate(L(options.voice ? "g.idle.voice" : "g.idle.quick", { time }), FOOTER_WIDTH),
       };
+    }
   }
 }
 
@@ -99,29 +136,37 @@ function sectionLabel(inspection: Inspection): string {
   return truncate(inspection.section || inspection.title, HEADER_WIDTH);
 }
 
-function lastEntryLine(inspection: Inspection, width: number): string {
+function lastEntryLine(inspection: Inspection, width: number, locale: Locale): string {
   const last = inspection.entries[inspection.entries.length - 1];
-  if (!last) return "No entries yet.";
+  if (!last) return t(locale, "g.noEntries");
   const mark = last.severity === "major" ? "! " : last.severity === "minor" ? "· " : "  ";
-  const photo = last.attachment ? " [photo]" : "";
+  const photo = last.attachment ? " " + t(locale, "g.photo") : "";
   return truncate(mark + last.text + photo, width);
 }
 
-export function severityLabel(severity: Severity): string {
-  switch (severity) {
-    case "major": return "MAJOR";
-    case "minor": return "minor";
-    default: return "note";
+export function severityLabel(severity: Severity, locale: Locale = "en"): string {
+  return t(locale, "g.sev." + severity);
+}
+
+/** The row that says which type the entry will be filed as. */
+function savedAs(severity: Severity, locale: Locale): string {
+  return t(locale, "g.as", { severity: severityLabel(severity, locale) });
+}
+
+export function statusLabel(status: SttStatus, locale: Locale = "en"): string {
+  switch (status) {
+    case "connecting": return t(locale, "g.status.connecting");
+    case "reconnecting": return t(locale, "g.status.reconnecting");
+    case "error": return t(locale, "g.status.error");
+    default: return t(locale, "g.status.working");
   }
 }
 
-export function statusLabel(status: SttStatus): string {
-  switch (status) {
-    case "connecting": return "connecting…";
-    case "reconnecting": return "reconnecting…";
-    case "error": return "speech server error";
-    default: return "working…";
-  }
+/** A run of `size` items that keeps `index` in view. */
+function windowAround(items: readonly string[], index: number, size: number): string[] {
+  if (items.length <= size) return [...items];
+  const start = Math.min(Math.max(0, index - Math.floor(size / 2)), items.length - size);
+  return items.slice(start, start + size);
 }
 
 /** Greedy word wrap; a word longer than the line is split rather than overflowing. */

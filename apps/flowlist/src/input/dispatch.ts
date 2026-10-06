@@ -1,6 +1,6 @@
 import type { Gesture } from "./gestures";
 import type { Checklist } from "../checklist/model";
-import { back, complete, currentStep, moveChoice, skip, type RunState } from "../checklist/run";
+import { back, complete, currentStep, isFinished, moveChoice, skip, startRun, type RunState } from "../checklist/run";
 
 /**
  * Gesture handling for the single run screen.
@@ -26,8 +26,10 @@ export function dispatch(list: Checklist, state: RunState, gesture: Gesture): Di
 
   switch (gesture) {
     // One tap completes the step — or picks the highlighted branch, or
-    // confirms a critical step that already asked.
+    // confirms a critical step that already asked. On the summary at the end
+    // it starts the same list again, so a finished run is never a dead end.
     case "click":
+      if (isFinished(state) && list.steps.length > 0) return { state: startRun(list), effects: NONE };
       return { state: complete(list, state), effects: NONE };
 
     case "doubleClick":

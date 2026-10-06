@@ -87,3 +87,9 @@ code {
   border-radius: 5px; padding: 1px 5px; font-size: 13px;
 }
 footer.hint { text-align: center; padding: 8px 0 24px; }
+
+/* Beginner pass: the next-step sentence, the advanced drawer, the data credit. */
+.next { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); font-weight: 600; }
+details.advanced summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.credits { margin: 8px 0 24px; color: var(--muted); font-size: 12px; text-align: center; }
+.credits a { color: var(--accent); }

@@ -58,9 +58,10 @@ export function parseTranscript(text: string, mime = "text/vtt"): Caption[] {
 /** parseTranscript that fails loudly, so an unreadable or empty file reaches the user instead of the console. */
 export function readTranscript(text: string, mime: string): Caption[] { let captions: Caption[]; try { captions = parseTranscript(text, mime); } catch (cause) { throw new Error(`unreadable transcript (${cause instanceof Error ? cause.message : String(cause)})`); } if (!captions.length) throw new Error("transcript is empty"); return captions; }
 function seconds(value: string): number { const parts = value.replace(",", ".").split(":").map(Number); if (parts.some((part) => !Number.isFinite(part))) return 0; return parts.reduce((total, part) => total * 60 + part, 0); }
-export function demoCaptions(): Caption[] { return [
-  { start: 0, end: 4, text: "Willkommen bei PodCaption." },
-  { start: 4, end: 9, text: "Podcast-Untertitel erscheinen direkt im Blickfeld." },
-  { start: 9, end: 14, text: "Der offene RSS-Feed liefert das vorhandene Transkript." },
-  { start: 14, end: 20, text: "Kein Spotify-Audiomitschnitt und kein verstecktes Dauerlauschen." },
-]; }
+/** The first-run captions: by default the original German sample, or the localized how-to the app passes in. */
+export function demoCaptions(lines: readonly string[] = [
+  "Willkommen bei PodCaption.",
+  "Podcast-Untertitel erscheinen direkt im Blickfeld.",
+  "Der offene RSS-Feed liefert das vorhandene Transkript.",
+  "Kein Spotify-Audiomitschnitt und kein verstecktes Dauerlauschen.",
+]): Caption[] { return lines.map((text, index) => ({ start: index * 5, end: index * 5 + 5, text })); }

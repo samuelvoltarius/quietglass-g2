@@ -66,6 +66,8 @@ async function boot(fake: Fake): Promise<FakeRoot> {
   const root = fakeRoot();
   vi.stubGlobal("document", { getElementById: () => root, createElement: () => fakeCanvas() });
   vi.stubGlobal("location", { search: "" });
+  // The app follows the device language; these tests read the English copy.
+  vi.stubGlobal("navigator", { language: "en-US" });
   harness.bridge = fake.bridge;
   vi.resetModules();
   await import("../src/main");
@@ -157,5 +159,37 @@ describe("shiftclock lifecycle", () => {
     await sleep(1200); // a clock tick lands while the page is still being built
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2);
     creating.resolve(0);
+  });
+});
+
+describe("shiftclock first run", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("with nothing stored, the first tap starts the default project", async () => {
+    const fake = fakeBridge(null);
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(stored(fake).open.project).toBe("Work"));
+  });
+
+  it("with no project at all, a tap creates one and the next starts it", async () => {
+    const fake = fakeBridge({ projects: [], entries: [], open: { project: null, startedAt: null }, invertScroll: false });
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect((stored(fake) as unknown as { projects: string[] }).projects).toEqual(["Work"]));
+    fake.emit(0);
+    await vi.waitFor(() => expect(stored(fake).open.project).toBe("Work"));
+  });
+
+  it("the picker can be left with Cancel without starting anything", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0); // open the picker on Client A
+    fake.emit(1); // up wraps to Cancel
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Cancel"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("stopped"));
+    expect(stored(fake).open.project).toBeNull();
   });
 });

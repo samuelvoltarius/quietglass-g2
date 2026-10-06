@@ -23,12 +23,14 @@ export interface Settings {
 const KEY = "quietglass.nextstop.v1";
 
 /**
- * ÖBB is the default because this is where the app was built and verified,
- * and because in Austria it is the only one of the two that carries live
- * delays. Outside Austria it knows nothing, so the phone app says so.
+ * Transitous is the default because it is the only one of the two that a
+ * WebView can reach without help: it sends `Access-Control-Allow-Origin: *`,
+ * needs no key, and covers many countries. ÖBB carries live delays in
+ * Austria but sends no CORS headers, so it only works once the user runs the
+ * small proxy from examples/ — an optional upgrade, never the first screen.
  */
 export const DEFAULT_SETTINGS: Settings = {
-  backend: "oebb",
+  backend: "motis",
   oebbUrl: "http://127.0.0.1:8079/oebb",
   motisUrl: "https://api.transitous.org",
   refreshSeconds: 30,
@@ -70,7 +72,7 @@ export function parseSettings(raw: string): Settings {
   try {
     const value = JSON.parse(raw) as Partial<Settings>;
     return {
-      backend: value.backend === "motis" ? "motis" : "oebb",
+      backend: value.backend === "oebb" ? "oebb" : "motis",
       oebbUrl: validateUrl(String(value.oebbUrl ?? "")).valid
         ? String(value.oebbUrl).trim() : DEFAULT_SETTINGS.oebbUrl,
       motisUrl: validateUrl(String(value.motisUrl ?? "")).valid

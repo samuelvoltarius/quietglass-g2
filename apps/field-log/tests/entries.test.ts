@@ -251,7 +251,7 @@ describe("display budget", () => {
   it("regression: a long transcript under review fits the seven body rows", () => {
     const view = buildView(started(), { phase: "review", severity: "major", pending: long, status: "ready", mock: false }, 0);
     expect(view.body.length).toBeLessThanOrEqual(7);
-    expect(view.body[view.body.length - 1]).toBe("MAJOR");
+    expect(view.body[view.body.length - 1]).toBe("saved as: MAJOR");
     expect(view.body.some((row) => row.endsWith("…"))).toBe(true);
   });
 

@@ -6,8 +6,14 @@
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
-  "permissions": [],
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "desc": "Measure the sound level. The audio is turned into a number and discarded; nothing is recorded."
+    }
+  ],
   "supported_languages": [
+    "de",
     "en"
   ]
 }

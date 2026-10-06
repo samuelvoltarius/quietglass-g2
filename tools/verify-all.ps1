@@ -77,16 +77,26 @@ foreach ($app in $apps) {
   Set-Location "$root\apps\$dir"
 
   # Only start a dev server if that port is not already serving.
+  $started = $false
   if (-not (Test-DevServer $port)) {
     Start-Process -FilePath "cmd.exe" `
       -ArgumentList "/c", "npm run dev > verify-dev.log 2>&1" -WindowStyle Hidden
-    if (-not (Wait-Until { Test-DevServer $port } 60)) { "{0,-18} {1}" -f $dir, "NO DEV SERVER"; continue }
+    $started = $true
+    if (-not (Wait-Until { Test-DevServer $port } 60)) { "{0,-18} {1}" -f $dir, "NO DEV SERVER" }
   }
 
-  $result = Get-Capture $dir $port
-  if ($result -eq "BLANK") { $result = Get-Capture $dir $port }   # one retry for a slow first render
+  if (Test-DevServer $port) {
+    $result = Get-Capture $dir $port
+    if ($result -eq "BLANK") { $result = Get-Capture $dir $port }   # one retry for a slow first render
+    "{0,-18} {1}" -f $dir, $result
+  }
 
-  "{0,-18} {1}" -f $dir, $result
+  # Stop the dev server this script started; one left running per app locks
+  # the folders (moving an app failed with "Permission denied").
+  if ($started) {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+      ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+  }
 }
 
 Set-Location $root

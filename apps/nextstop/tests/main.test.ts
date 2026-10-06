@@ -136,6 +136,24 @@ describe("nextstop lifecycle", () => {
     expect(fake.state.body).not.toContain("Alpha-Ziel");
   });
 
+  it("works straight after install: no saved settings means Transitous, no proxy", async () => {
+    const fake = fakeBridge();
+    (fake.bridge as { getLocalStorage: () => Promise<string> }).getLocalStorage = async () => "";
+    await boot(fake);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const hosts = (vi.mocked(fetch).mock.calls as unknown as [string][]).map(([url]) => new URL(url).origin);
+    expect(new Set(hosts)).toEqual(new Set(["https://api.transitous.org"]));
+  });
+
+  it("asks for the location on the glasses when there is none", async () => {
+    const fake = fakeBridge();
+    (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = async () => null;
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Warte auf deinen Standort"));
+    expect(fake.state.body).toContain("Erlaube den Standort in der Even-App");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("closes cleanly on double tap: no unhandled rejection and no redraw afterwards", async () => {
     // Regression: a failing shutDownPageContainer escaped as an unhandled
     // rejection, and the 2 s redraw kept drawing onto a closed page.

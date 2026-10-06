@@ -1,8 +1,24 @@
 # FieldLog
 
-Use `?demo=1` on the development URL to render a non-persistent sample inspection for screenshots and layout testing.
+**Quietglass** · Walk an inspection hands-free. Note the defect, attach a photo, export the report.
 
-**Quietglass** · Walk an inspection hands-free. Speak the defect, attach a photo, export the report.
+> **Auf Deutsch, kurz:** FieldLog ist dein Notizblock für Rundgänge – Wohnungsübergabe,
+> Auto-Rückgabe, Kontrolle auf der Baustelle. Notizen wählst du mit Tippen und Wischen
+> an der Brille, Fotos macht das Handy. Am Ende exportierst du einen Bericht. Kein
+> Server, kein Konto, kein Internet nötig. Deutsch oder Englisch, je nach Handy-Sprache.
+>
+> **In 3 Schritten loslegen**
+> 1. FieldLog installieren und auf der Brille öffnen.
+> 2. Tipp an die Brille – ein Rundgang startet (mit Datum als Name).
+> 3. Nochmal tippen, mit Wischen eine Schnellnotiz wählen („Beschädigt“, „Fehlt“ …),
+>    tippen zum Speichern. Halten macht ein Foto. Am Handy kannst du Notizen auch
+>    eintippen, Bereiche setzen und den Bericht exportieren.
+>
+> **Erweitert (optional):** Notizen *sprechen* statt wählen geht nur mit einem eigenen
+> Whisper-Sprachserver in deinem Netzwerk – einzurichten am Handy unter „Erweitert“.
+> Für alles andere brauchst du ihn nicht.
+
+Use `?demo=1` on the development URL to render a non-persistent sample inspection for screenshots and layout testing.
 
 Handover, survey, snag list, vehicle return, plant maintenance. You see
 something, both hands are busy or dirty, and writing it down means stopping.
@@ -16,10 +32,19 @@ FieldLog lets you say it and carry on.
 
 ## The walk
 
-1. **Tap** — dictate what you see.
-2. **Tap** — stop. The transcript appears.
-3. **Tap** to keep it, **swipe** to discard.
-4. **Hold** to attach a photo from the phone camera.
+Works out of the box, with no server:
+
+1. **Tap** — with nothing open, an inspection starts, named after the date and time.
+2. **Tap** — the quick-note list opens (*OK, Damaged, Missing, Dirty, Not working,
+   Check later, See photo* — edit the list on the phone). **Swipe** to choose,
+   **tap** to save. The last row is *Cancel*.
+3. **Hold** to attach a photo from the phone camera. With no entry yet, the
+   photo becomes an entry of its own.
+4. On the phone you can also **type** a note, set the area, and export.
+
+With a speech server set up (Advanced, optional), tap dictates instead:
+**tap** to speak, **tap** to stop, **tap** to keep the transcript or **swipe**
+to discard it.
 
 Severity (`note` · `minor` · `major`) is set with a swipe and applies to the
 next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
@@ -34,13 +59,14 @@ So FieldLog never files a transcript silently. It shows what it heard and waits.
 Keeping is one tap; discarding is one swipe. This is the one place in the app
 that costs an extra gesture, and it is the right place for it.
 
-## Your own recogniser
+## Your own recogniser (optional, advanced)
 
-Audio is streamed to a speech server **you** configure — the same wire format
-as Babel Glass, so one `faster-whisper` instance serves both. Leave it empty
-and a mock runs that produces placeholder text and displays `MOCK`, so you can
-try the app without infrastructure and can never mistake its output for a real
-transcription.
+Dictation is optional. Audio is streamed to a speech server **you** configure —
+the same wire format as Babel Glass, so one `faster-whisper` instance serves
+both. Leave it empty (the default) and FieldLog uses quick notes; the microphone
+is never opened. If the server cannot be reached, the glasses say so and point
+to the address under *Advanced* on the phone. The labelled `MOCK` recogniser is
+only used by the `?demo=1` preview.
 
 ## Photos
 
@@ -56,6 +82,13 @@ phone, and the photo attaches to the entry you just made.
 | **Markdown + photos** | The same with images embedded — self-contained but large |
 | **CSV** | One row per entry, for a spreadsheet |
 
+Exports follow the app language (German or English). The CSV stays
+machine-readable: comma-separated, UTF-8, RFC 4180 quoting, time as ISO 8601 in
+UTC. Header and the type/photo columns are translated
+(`Zeit,Abschnitt,Art,Text,Foto` with `Notiz/Mangel/Wichtig` and `ja/nein`).
+There are no decimal numbers in it. German Excel expects `;` — use
+*Data → From Text/CSV* and pick comma as the separator.
+
 Photos are referenced rather than embedded by default: a report with a dozen
 inline base64 images is neither readable nor emailable.
 
@@ -64,7 +97,7 @@ inline base64 images is neither readable nor emailable.
 ```markdown
 # Handover flat 3
 
-Started: 2026-09-25T09:14:00.000Z
+Started: 25 Sept 2026, 11:14
 Major: 1 · Minor: 2 · Notes: 0
 
 ## Kitchen
@@ -81,10 +114,16 @@ Major: 1 · Minor: 2 · Notes: 0
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Dictate · stop · keep the transcript |
-| **Swipe** | Change severity · discard the transcript under review |
+| **Tap** | Start an inspection · open quick notes · save the highlighted note (with a server: dictate · stop · keep) |
+| **Swipe** | Change the type of the next entry · move in the quick-note list · discard a transcript |
 | **Hold** | Attach a photo from the phone camera |
 | **Double tap** | Leave — stops the microphone |
+
+## Language
+
+German and English, following the phone's language (English otherwise), with a
+picker on the phone page. Every glasses string is tested to fit one
+46-character row in both languages.
 
 ## Install
 
@@ -92,7 +131,7 @@ Major: 1 · Minor: 2 · Notes: 0
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5198
 npm run build      # typecheck + production bundle
-npm test           # 44 unit tests
+npm test           # 104 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -101,8 +140,9 @@ For a speech server, use the reference implementation from Babel Glass
 
 ## Privacy
 
-- The microphone opens **only on an explicit tap**, with `● MIC` shown for as
-  long as it is open.
+- Without a speech server (the default) the microphone is **never** opened.
+- With one, the microphone opens **only on an explicit tap**, with `● MIC`
+  shown for as long as it is open.
 - Audio goes **only to the server you configure**, and is **never stored**.
 - Entries and photos stay in this app's storage on your phone until you export
   them. There is no upload and no account.

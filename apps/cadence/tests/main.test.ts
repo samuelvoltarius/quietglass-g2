@@ -49,6 +49,8 @@ describe("cadence run loop", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
+    // The glasses follow the device language; these assertions read the English text.
+    vi.stubGlobal("localStorage", { getItem: () => "en", setItem: () => undefined });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });

@@ -3,6 +3,8 @@ import {
   bestTempoByItem, formatDuration, sessionsToday, toCsv, totalsByItem, totalSeconds,
 } from "../practice/log";
 import { addItem, removeItem, setSettings, type CadenceData } from "../storage/persist";
+import { languageSelect, type Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * The phone companion: tempo, time signature, the user's practice items and
@@ -12,25 +14,39 @@ import { addItem, removeItem, setSettings, type CadenceData } from "../storage/p
 export interface PhoneUiPorts {
   readonly getData: () => CadenceData;
   readonly setData: (data: CadenceData) => Promise<void>;
+  /** Current language; English when the host does not say. */
+  readonly getLocale?: () => Locale;
+  /** Called when the user picks another language on this page. */
+  readonly setLocale?: (locale: Locale) => void;
 }
+
+/** Tempo step for a swipe on the glasses; shown in the controls table. */
+const BPM_STEP = 4;
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   const render = (): void => {
-    root.innerHTML = template(ports.getData());
+    const locale = ports.getLocale?.() ?? "en";
+    if (document.documentElement) document.documentElement.lang = locale;
+    root.innerHTML = template(ports.getData(), locale);
     wire(root, ports, render);
   };
 
   render();
 }
 
-function template(data: CadenceData): string {
+function template(data: CadenceData, locale: Locale): string {
   const s = data.settings;
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const duration = (seconds: number): string => formatDuration(seconds, locale);
   const today = sessionsToday(data.sessions, Date.now());
   const totals = totalsByItem(data.sessions).slice(0, 6);
   const best = bestTempoByItem(data.sessions).slice(0, 6);
+  const next = data.activeItem
+    ? x("p.nextReady", { item: escapeHtml(data.activeItem) })
+    : x("p.nextFirst") + (data.items.length === 0 ? "</p><p class=\"hint\">" + x("p.nextItem") : "");
 
   return `
   <header class="brand">
@@ -38,12 +54,18 @@ function template(data: CadenceData): string {
     <h1>Cadence</h1>
   </header>
 
+  <section class="card next">
+    <p>${next}</p>
+  </section>
+
+  <section class="card compact">${languageSelect(locale)}</section>
+
   <section class="card">
-    <h2>Tempo</h2>
-    <label for="bpm">Speed — <output id="bpm-out">${s.bpm}</output> bpm</label>
+    <h2>${x("p.tempoTitle")}</h2>
+    <label for="bpm">${x("p.speed", { value: `<output id="bpm-out">${s.bpm}</output>` })}</label>
     <input id="bpm" type="range" min="${MIN_BPM}" max="${MAX_BPM}" step="1" value="${s.bpm}" />
 
-    <label for="sig">Time signature</label>
+    <label for="sig">${x("p.sig")}</label>
     <select id="sig">
       ${COMMON_SIGNATURES.map((sig) => {
         const value = sig.beats + "/" + sig.unit;
@@ -51,25 +73,26 @@ function template(data: CadenceData): string {
         return '<option value="' + value + '"' + (selected ? " selected" : "") + ">" + value + "</option>";
       }).join("")}
     </select>
+    <p class="hint">${x("p.sigHint")}</p>
 
-    <label for="mark">Marker</label>
+    <label for="mark">${x("p.mark")}</label>
     <select id="mark">
-      <option value="beat" ${s.mark === "beat" ? "selected" : ""}>Every beat</option>
-      <option value="bar" ${s.mark === "bar" ? "selected" : ""}>Downbeat only</option>
+      <option value="beat" ${s.mark === "beat" ? "selected" : ""}>${x("p.markBeat")}</option>
+      <option value="bar" ${s.mark === "bar" ? "selected" : ""}>${x("p.markBar")}</option>
     </select>
-    <p class="hint">
-      Each display update travels over Bluetooth, and the timing jitter is not
-      something an app can control. At fast tempos <strong>downbeat only</strong>
-      stays readable where every beat starts to blur.
-    </p>
+    <p class="hint">${x("p.downbeatHint")}</p>
+    <details>
+      <summary>${x("p.details")}</summary>
+      <p class="hint">${x("p.markHint")}</p>
+    </details>
   </section>
 
   <section class="card">
-    <h2>What you practise</h2>
-    <label for="item">Add an item</label>
-    <input id="item" type="text" placeholder="Scales, bar 34, Study No. 2 …" />
-    <button id="add" type="button">Add</button>
-    ${data.items.length === 0 ? '<p class="hint">Add something to start logging practice time.</p>' : ""}
+    <h2>${x("p.itemsTitle")}</h2>
+    <label for="item">${x("p.addLabel")}</label>
+    <input id="item" type="text" placeholder="${x("p.addPlaceholder")}" />
+    <button id="add" type="button">${x("p.add")}</button>
+    ${data.items.length === 0 ? `<p class="hint">${x("p.itemsEmpty")}</p>` : ""}
     <ul class="scripts">
       ${data.items.map((item) => `
         <li>
@@ -78,47 +101,42 @@ function template(data: CadenceData): string {
               ${item === data.activeItem ? "checked" : ""} />
             <span>${escapeHtml(item)}</span>
           </label>
-          <button type="button" class="remove" data-item="${escapeHtml(item)}">Remove</button>
+          <button type="button" class="remove" data-item="${escapeHtml(item)}">${x("p.remove")}</button>
         </li>`).join("")}
     </ul>
   </section>
 
   <section class="card">
-    <h2>Practice log</h2>
+    <h2>${x("p.logTitle")}</h2>
     <p class="hint">
-      Today: <strong>${formatDuration(totalSeconds(today))}</strong> across ${today.length}
-      session${today.length === 1 ? "" : "s"}.
-      All time: <strong>${formatDuration(totalSeconds(data.sessions))}</strong>.
+      ${x(today.length === 1 ? "p.todayOne" : "p.today", { time: duration(totalSeconds(today)), count: today.length, total: duration(totalSeconds(data.sessions)) })}
     </p>
-    ${totals.length === 0 ? '<p class="hint">Nothing logged yet.</p>' : `
+    ${totals.length === 0 ? `<p class="hint">${x("p.logEmpty")}</p>` : `
       <table class="keys">
-        <tr><td><strong>Item</strong></td><td><strong>Time</strong></td><td><strong>Best</strong></td></tr>
+        <tr><td><strong>${x("p.colItem")}</strong></td><td><strong>${x("p.colTime")}</strong></td><td><strong>${x("p.colBest")}</strong></td></tr>
         ${totals.map((row) => {
           const top = best.find((b) => b.item === row.item);
-          return "<tr><td>" + escapeHtml(row.item) + "</td><td>" + formatDuration(row.seconds) +
-                 "</td><td>" + (top ? top.bpm + " bpm" : "—") + "</td></tr>";
+          return "<tr><td>" + escapeHtml(row.item) + "</td><td>" + duration(row.seconds) +
+                 "</td><td>" + (top ? x("p.bpm", { bpm: top.bpm }) : "—") + "</td></tr>";
         }).join("")}
       </table>
-      <button id="export" type="button" class="secondary">Export CSV</button>
-      <button id="clear" type="button" class="secondary">Clear log</button>
+      <button id="export" type="button" class="secondary">${x("p.export")}</button>
+      <button id="clear" type="button" class="secondary">${x("p.clear")}</button>
     `}
-    <p class="hint">Sessions shorter than 10 seconds are not recorded, and a best tempo needs at least 30 seconds at that speed.</p>
+    <p class="hint">${x("p.logHint")}</p>
   </section>
 
   <section class="card">
-    <h2>Controls on the glasses</h2>
+    <h2>${x("p.controlsTitle")}</h2>
     <table class="keys">
-      <tr><td>Tap</td><td>Start / pause — also starts and ends the practice session</td></tr>
-      <tr><td>Swipe</td><td>Tempo ±${4} bpm</td></tr>
-      <tr><td>Hold</td><td>Reset the bar count</td></tr>
-      <tr><td>Double tap</td><td>Leave Cadence</td></tr>
+      <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
+      <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo", { step: BPM_STEP })}</td></tr>
+      <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
+      <tr><td>${x("p.double")}</td><td>${x("p.doubleDo")}</td></tr>
     </table>
   </section>
 
-  <footer class="hint">
-    Cadence makes no sound — the G2 has no speaker. It shows the beat instead,
-    and keeps everything on this phone.
-  </footer>`;
+  <footer class="hint">${x("p.privacy")}</footer>`;
 }
 
 function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): void {
@@ -130,6 +148,12 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): voi
     void ports.setData(change(ports.getData())).then(rerender);
   };
   const patch = (change: Partial<MetronomeSettings>): void => commit((data) => setSettings(data, change));
+
+  byId<HTMLSelectElement>("language")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    ports.setLocale?.(value === "de" ? "de" : "en");
+    rerender();
+  });
 
   const bpm = byId<HTMLInputElement>("bpm");
   const bpmOut = byId("bpm-out");

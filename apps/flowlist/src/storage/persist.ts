@@ -1,6 +1,7 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { Checklist } from "../checklist/model";
-import { SAMPLE_CHECKLIST } from "../checklist/sample";
+import { SAMPLE_IDS, sampleChecklists } from "../checklist/sample";
+import type { Locale } from "../i18n";
 
 /**
  * Everything FlowList stores lives in the Even app's per-app storage on the
@@ -64,6 +65,20 @@ export function removeList(data: FlowListData, id: string): FlowListData {
   return { ...data, lists, activeId };
 }
 
+/** True while at least one example list is missing — the phone then offers to add them back. */
+export function samplesMissing(data: FlowListData): boolean {
+  return SAMPLE_IDS.some((id) => !data.lists.some((l) => l.id === id));
+}
+
+/** Adds the example lists that are missing, in `locale`; existing lists stay untouched. */
+export function addSamples(data: FlowListData, locale: Locale): FlowListData {
+  let next = data;
+  for (const sample of sampleChecklists(locale)) {
+    if (!next.lists.some((l) => l.id === sample.id)) next = upsertList(next, sample);
+  }
+  return next;
+}
+
 export function setSettings(data: FlowListData, patch: Partial<FlowListSettings>): FlowListData {
   return { ...data, settings: { ...data.settings, ...patch } };
 }
@@ -73,14 +88,20 @@ export async function save(bridge: EvenAppBridge, data: FlowListData): Promise<v
 }
 
 /**
- * On a first run the sample checklist is installed, so the glasses show
- * something usable immediately and the pack format is learnable by example.
- * It is written back on save like any other list and can be removed.
+ * On a first run the example checklists are installed in the device language,
+ * so the glasses show something usable immediately and the format is learnable
+ * by example. They are written back on save like any other list and can be
+ * removed.
  */
-export async function load(bridge: EvenAppBridge): Promise<FlowListData> {
+export async function load(bridge: EvenAppBridge, locale: Locale = "en"): Promise<FlowListData> {
   const raw = await bridge.getLocalStorage(KEY);
   if (raw) return parseData(raw);
-  return { lists: [SAMPLE_CHECKLIST], activeId: SAMPLE_CHECKLIST.id, settings: DEFAULT_SETTINGS };
+  return firstRunData(locale);
+}
+
+export function firstRunData(locale: Locale): FlowListData {
+  const lists = sampleChecklists(locale);
+  return { lists, activeId: lists[0]?.id ?? null, settings: DEFAULT_SETTINGS };
 }
 
 /** Tolerates partial or corrupted storage rather than discarding everything. */

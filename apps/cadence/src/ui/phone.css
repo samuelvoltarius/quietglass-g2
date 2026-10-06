@@ -101,3 +101,11 @@ button.remove {
 .scripts li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .scripts li:last-child { border-bottom: 0; }
 .scripts label { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text); }
+
+/* First-run callout: the one next step, in a sentence. */
+.card.next { border-color: var(--accent); }
+.card.next p { margin: 0; font-size: 17px; line-height: 1.45; }
+.card.compact label { margin-top: 0; }
+.warn { color: #e5484d; }
+details { margin-top: 14px; }
+summary { cursor: pointer; font-size: 14px; color: var(--muted); }

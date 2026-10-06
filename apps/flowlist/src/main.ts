@@ -8,6 +8,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { activeList, load, save, type FlowListData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { getLocale, type Locale } from "./i18n";
 
 /** Redraw cadence for the elapsed-time readout while a run is open. */
 const CLOCK_MS = 1000;
@@ -15,7 +16,8 @@ const CLOCK_MS = 1000;
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let data: FlowListData = await load(bridge);
+  let locale: Locale = getLocale();
+  let data: FlowListData = await load(bridge, locale);
   let list: Checklist = activeList(data) ?? EMPTY_CHECKLIST;
   let state: RunState = startRun(list);
   let showDetail = false;
@@ -31,6 +33,7 @@ async function boot(): Promise<void> {
       showNext: data.settings.showNext,
       showDetail,
       lineWidth: data.settings.lineWidth,
+      locale,
     });
 
   const drawOnce = async (): Promise<void> => {
@@ -141,6 +144,11 @@ async function boot(): Promise<void> {
       applyData(next);
       await save(bridge, next);
       await draw();
+    },
+    locale: () => locale,
+    onLocaleChange: (next) => {
+      locale = next;
+      void draw();
     },
   });
 }

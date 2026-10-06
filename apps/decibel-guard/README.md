@@ -2,6 +2,26 @@
 
 **Quietglass** · Noise dose over time. Measures the level, records nothing.
 
+## Kurz auf Deutsch
+
+DecibelGuard zählt mit, wie viel Lärm du heute abbekommst, und warnt dich, bevor
+es deinem Gehör zu viel wird — schon bei der Hälfte des Tageslimits. Es wird nie
+Ton aufgenommen oder gespeichert, und es gibt keinen Server.
+
+**In 3 Schritten loslegen**
+
+1. App in der Even-App öffnen und die Brille aufsetzen.
+2. **Einmal auf den Bügel tippen** — die Brille misst und zeigt `● MIKRO AN`.
+3. Einfach weitermachen. Wird es zu viel, steht es groß auf der Brille. Nochmal tippen beendet die Messung.
+
+Ohne Einstellungen sind die Werte grob geschätzt (deutlich mit „etwa“
+markiert). Wer es genauer will, gleicht auf der Handy-Seite unter „Genauer
+messen“ mit einem echten Messgerät ab. Es ist eine Orientierung, kein
+Messgerät. Die App folgt der Sprache deines Handys (Deutsch oder Englisch);
+umstellen kannst du das auf der Handy-Seite unter „Sprache“.
+
+---
+
 A monochrome speaker-and-wave pixel symbol makes the live noise screen immediately recognizable without storing audio.
 
 Hearing damage is cumulative and silent. A single loud moment is rarely the
@@ -24,8 +44,11 @@ its signal into an absolute sound pressure level. DecibelGuard computes an
 exact **dBFS** value from the raw PCM, then applies a **calibration offset you
 enter yourself** to approximate SPL. No frequency weighting (A, C) is applied.
 
-Until you calibrate, every reading on the glasses is marked `uncal.` so a
-number is never mistaken for a measurement it is not.
+Until you calibrate, DecibelGuard uses an **estimated** offset of 120 dB (a
+typical MEMS microphone sensitivity, −26 dBFS at 94 dB SPL) so the dose works
+straight after install. Every such reading is marked `about 72 dB` on the
+glasses, so a number is never mistaken for a measurement it is not. The
+estimate errs high on purpose: for hearing, an early warning beats a late one.
 
 **Do not use it for compliance, legal evidence or workplace assessment.** Use it
 to notice that you have been somewhere loud for a long time.
@@ -51,11 +74,12 @@ DecibelGuard accumulates that fraction as you go. Both the 3 dB (EU) and 5 dB
 
 | Situation | Display |
 |---|---|
-| Stopped | `Not listening.` · `tap = start` |
+| Stopped | `Not listening.` · `Tap once to start measuring.` · `tap = start` |
+| Microphone refused | `Microphone not available.` · `tap = try again` |
 | Quiet | `62 dB` · `● MIC` |
-| Accumulating | `86 dB` · `dose 34%` · `2h 10m left at this level` |
-| Halfway | **`HALFWAY`** · `dose 60%` |
-| Limit reached | **`DAILY DOSE REACHED`** |
+| Accumulating | `86 dB` · `dose 34% of today's limit` · `2h 10m left at this level` |
+| Halfway | **`HALFWAY`** · `dose 60% of today's limit` · `A quiet break helps.` |
+| Limit reached | **`DAILY DOSE REACHED`** · `Go somewhere quiet or use earplugs.` |
 
 The warning at **halfway** is deliberate. Being told only once the limit has
 passed is useless for preventing anything.
@@ -98,7 +122,7 @@ approximation across the mid range and nothing more.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5195
 npm run build      # typecheck + production bundle
-npm test           # 58 unit tests
+npm test           # 78 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 

@@ -34,6 +34,23 @@ export function isCalibrated(data: NoiseData): boolean {
   return data.calibrationOffset !== 0;
 }
 
+/**
+ * Offset used until the user calibrates, so the app is useful straight after
+ * install instead of showing negative dBFS and never accruing a dose.
+ *
+ * 120 dB corresponds to a typical MEMS microphone sensitivity of -26 dBFS at
+ * 94 dB SPL. It is an assumption, not a measurement: the G2 microphone's real
+ * sensitivity is unpublished. Every reading taken with it is labelled as an
+ * estimate on the glasses and on the phone. Erring high is deliberate — for
+ * hearing, a warning that comes early is better than one that comes late.
+ */
+export const ESTIMATED_OFFSET = 120;
+
+/** The offset actually applied to readings: the user's calibration, or the estimate. */
+export function effectiveOffset(data: NoiseData): number {
+  return isCalibrated(data) ? data.calibrationOffset : ESTIMATED_OFFSET;
+}
+
 export async function save(bridge: EvenAppBridge, data: NoiseData): Promise<void> {
   await bridge.setLocalStorage(KEY, JSON.stringify(data));
 }

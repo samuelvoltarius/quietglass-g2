@@ -12,11 +12,13 @@ vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8A
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
 
-function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number } = {}) {
+function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRefusals?: number } = {}) {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false };
   const mic: boolean[] = [];
+  const texts: string[] = [];
+  let refusals = options.micRefusals ?? 0;
   const writes = { count: 0, inFlight: 0, maxInFlight: 0 };
   const write = async (): Promise<void> => {
     writes.count += 1;
@@ -29,11 +31,12 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number } = {}
     getLocalStorage: async () => "",
     setLocalStorage: async () => true,
     rebuildPageContainer: async () => true,
-    createStartUpPageContainer: async () => { await write(); return 0; },
-    textContainerUpgrade: async () => { await write(); return true; },
+    createStartUpPageContainer: async (page: { textObject?: { content?: string }[] }) => { texts.push(...(page.textObject ?? []).map((part) => part.content ?? "")); await write(); return 0; },
+    textContainerUpgrade: async (update: { content?: string }) => { texts.push(update.content ?? ""); await write(); return true; },
     updateImageRawData: async () => 0,
     audioControl: async (on: boolean) => {
       if (on && options.micDelayMs) await new Promise((resolve) => setTimeout(resolve, options.micDelayMs));
+      if (on && refusals > 0) { refusals -= 1; return false; }
       mic.push(on);
       return true;
     },
@@ -42,7 +45,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number } = {}
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, shutdown, mic, writes,
+    bridge, shutdown, mic, writes, texts,
     emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
     audio: (amplitude: number) => {
       const pcm = new Uint8Array(320);
@@ -61,7 +64,7 @@ describe("decibelguard loop", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  async function boot(options: { writeDelayMs?: number; micDelayMs?: number } = {}) {
+  async function boot(options: { writeDelayMs?: number; micDelayMs?: number; micRefusals?: number } = {}) {
     const fake = fakeBridge(options);
     harness.bridge = fake.bridge;
     vi.resetModules();
@@ -116,5 +119,19 @@ describe("decibelguard loop", () => {
     expect(unhandled).toEqual([]);
     expect(fake.mic.at(-1)).toBe(false);
     expect(fake.writes.count).toBe(writesAtClose);
+  });
+
+  it("says what to do when the microphone is refused, and a tap retries", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => "en", setItem: () => undefined });
+    const fake = await boot({ micRefusals: 1 });
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([]);
+    expect(fake.texts.join(" | ")).toContain("Microphone not available.");
+    expect(fake.texts.join(" | ")).toContain("tap = try again");
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([true]);
+    expect(fake.texts.at(-1)).toContain("● MIC");
   });
 });

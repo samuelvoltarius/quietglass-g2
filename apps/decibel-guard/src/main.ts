@@ -7,8 +7,9 @@ import { gestureFromEvent } from "./input/gestures";
 import { buildView, type NoiseView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
-import { isCalibrated, load, save, type NoiseData } from "./storage/persist";
+import { effectiveOffset, isCalibrated, load, save, type NoiseData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 const PIXEL_ICON = ["..........", "...##.....", "..###...#.", "#####....#", "#####..#.#", "#####..#.#", "#####....#", "..###...#.", "...##.....", ".........."] as const;
 
@@ -28,15 +29,20 @@ async function boot(): Promise<void> {
   let opening: Promise<void> | null = null;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
+  let locale: Locale = getLocale();
+  /** The last attempt to open the microphone failed; the glasses say what to do. */
+  let micError = false;
 
   const displayLevel = (): number | null =>
-    smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, data.calibrationOffset);
+    smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, effectiveOffset(data));
 
   const currentView = (): NoiseView =>
     buildView(dose, data.dose, {
       listening,
       level: displayLevel(),
       calibrated: isCalibrated(data),
+      locale,
+      micError,
     });
 
   const drawOnce = async (): Promise<void> => {
@@ -81,8 +87,10 @@ async function boot(): Promise<void> {
       const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
       if (!ok) {
         console.warn("[decibelguard] microphone was refused");
+        micError = true;
         return;
       }
+      micError = false;
       // Closed while the microphone was opening: it must not stay open.
       if (closed) {
         await bridge.audioControl(false).catch(() => undefined);
@@ -126,7 +134,7 @@ async function boot(): Promise<void> {
       // shorten the measured exposure.
       if (lastBlockAt !== null) {
         const seconds = Math.min(5, Math.max(0, (now - lastBlockAt) / 1000));
-        const level = toApproxSpl(smoothedDbfs, data.calibrationOffset);
+        const level = toApproxSpl(smoothedDbfs, effectiveOffset(data));
         dose = accumulate(dose, level, seconds, data.dose, now);
       }
       lastBlockAt = now;
@@ -175,7 +183,13 @@ async function boot(): Promise<void> {
       });
       await draw();
     },
-    getLevel: () => ({ dbfs: smoothedDbfs, listening }),
+    getLevel: () => ({ dbfs: smoothedDbfs, listening, micError }),
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      void draw();
+    },
   });
 }
 

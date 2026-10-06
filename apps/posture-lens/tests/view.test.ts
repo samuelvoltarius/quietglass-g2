@@ -13,8 +13,8 @@ const fast: PostureSettings = {
 describe("uncalibrated", () => {
   it("asks the user to set their upright pose", () => {
     const view = buildView(createMonitor(), fast);
-    expect(view.body.join(" ")).toContain("Sit the way you want to sit");
-    expect(view.footer).toContain("calibrate");
+    expect(view.body.join(" ")).toContain("Sit up straight and tap once");
+    expect(view.footer).toContain("save posture");
   });
 });
 

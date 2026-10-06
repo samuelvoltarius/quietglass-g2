@@ -9,6 +9,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, setSettings, type CadenceData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
 
@@ -28,9 +29,11 @@ async function boot(): Promise<void> {
   let closed = false;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
+  let locale: Locale = getLocale();
 
   const currentView = (): CadenceView =>
     buildView(state, data.settings, {
+      locale,
       ...(data.activeItem ? { item: data.activeItem } : {}),
       ...(sessionStartedAt !== null
         ? { sessionSeconds: (Date.now() - sessionStartedAt) / 1000 }
@@ -167,6 +170,12 @@ async function boot(): Promise<void> {
   tick = setInterval(() => { void draw(); }, 1000);
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      void draw();
+    },
     getData: () => data,
     setData: async (next) => {
       applySettings(next);

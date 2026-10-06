@@ -14,6 +14,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { TEXT, explainFailure, noStopsHint } from "./text";
 
 /**
  * NextStop.
@@ -33,7 +34,7 @@ import { mountPhoneUi } from "./ui/phone";
  *     http://127.0.0.1:5201/?at=47.8060,13.0430
  *
  * The simulator has no GPS at all, so without this the app can only ever be
- * seen saying "Warte auf GPS" and the actual board never appears on a desk.
+ * seen saying "Warte auf deinen Standort" and the actual board never appears on a desk.
  * It is off unless the parameter is present, a real fix always overrides it,
  * and the phone app states plainly when it is in use — an invented position
  * that looked like a measured one would be exactly the kind of quiet lie this
@@ -64,7 +65,8 @@ async function boot(): Promise<void> {
   let ride: Ride | null = null;
   let error: string | null = null;
   let hint = "";
-  let busy = "Haltestelle suchen …";
+  let busy: string = TEXT.searching;
+  let busyHint = "";
 
   let lastView: StopView | null = null;
   let pageReady = false;
@@ -97,7 +99,7 @@ async function boot(): Promise<void> {
     }
 
     const stop = currentStop();
-    if (!stop) return loadingView(busy);
+    if (!stop) return loadingView(busy, busyHint);
 
     const away = position
       ? metresBetween(position.lat, position.lon, stop.lat, stop.lon)
@@ -121,16 +123,8 @@ async function boot(): Promise<void> {
   /** Turns a thrown failure into something a passenger can act on. */
   const explain = (thrown: unknown): void => {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
-    if (settings.backend === "oebb" && /fetch|network|failed/i.test(message)) {
-      error = "ÖBB nicht erreichbar";
-      hint = "Läuft der Proxy? Siehe examples/oebb-cors-proxy.mjs";
-    } else if (/403/.test(message)) {
-      error = "Vom Dienst abgewiesen";
-      hint = "Transitous verlangt einen erkennbaren Client.";
-    } else {
-      error = "Abfrage fehlgeschlagen";
-      hint = message.slice(0, 80);
-    }
+    console.warn("[nextstop] request failed:", message);
+    ({ error, hint } = explainFailure(message, settings.backend));
   };
 
   const loadDepartures = async (seq = ++requestSeq): Promise<void> => {
@@ -153,12 +147,14 @@ async function boot(): Promise<void> {
   const findStops = async (): Promise<void> => {
     const seq = ++requestSeq;
     if (!position) {
-      busy = "Warte auf GPS …";
+      busy = TEXT.waitingForLocation;
+      busyHint = TEXT.waitingHint;
       settle(seq);
       await draw();
       return;
     }
-    busy = "Haltestelle suchen …";
+    busy = TEXT.searching;
+    busyHint = "";
     await draw();
     try {
       const found = await backend().nearbyStops(position.lat, position.lon, 5);
@@ -167,10 +163,8 @@ async function boot(): Promise<void> {
       departures = [];
       stopIndex = 0;
       selected = 0;
-      error = stops.length === 0 ? "Keine Haltestelle in der Nähe" : null;
-      hint = stops.length === 0
-        ? "Das gewählte Backend kennt diese Gegend nicht. In der Handy-App umschalten."
-        : "";
+      error = stops.length === 0 ? TEXT.noStops : null;
+      hint = stops.length === 0 ? noStopsHint(settings.backend) : "";
     } catch (thrown) {
       if (seq !== requestSeq) return;
       explain(thrown);
@@ -182,14 +176,15 @@ async function boot(): Promise<void> {
     const departure = departures[selected];
     if (!departure) return;
     const seq = ++requestSeq;
-    busy = "Fahrt laden …";
+    busy = TEXT.loadingRide;
+    busyHint = "";
     await draw();
     try {
       const loaded = await backend().ride(departure.tripId);
       if (seq !== requestSeq) return;
       ride = loaded;
-      error = ride ? null : "Fahrtverlauf nicht verfügbar";
-      hint = ride ? "" : "Diese Fahrt liefert keine Haltestellenfolge.";
+      error = ride ? null : TEXT.noRide;
+      hint = ride ? "" : TEXT.noRideHint;
     } catch (thrown) {
       if (seq !== requestSeq) return;
       explain(thrown);

@@ -2,6 +2,21 @@
 
 Alle nennenswerten Änderungen an NextStop.
 
+## [Unveröffentlicht]
+
+### Geändert
+
+- Transitous ist jetzt die Voreinstellung: es ist ohne Zusatzprogramm aus der
+  Even-App erreichbar (CORS geprüft). ÖBB-Echtzeit bleibt als Option für
+  Österreich, die Proxy-Adresse liegt unter „Erweitert“.
+- `app.json` fragt nach dem Standort und erlaubt das Netzwerk; ohne die
+  Standort-Berechtigung kam die App nie über „Warte auf GPS“ hinaus.
+  `supported_languages` nennt jetzt Deutsch, die Sprache der App.
+- Fehler und Wartezustände auf der Brille sagen in einfachen Worten, was zu
+  tun ist, statt „Backend“, „Proxy“ oder rohe Browser-Fehler zu zeigen.
+- Handy-App: ein Satz oben sagt, was als Nächstes zu tun ist; Quellenhinweis
+  auf transitous.org/sources, wie die Transitous-Nutzungsregeln verlangen.
+
 ## [0.1.0] — 2026-09-25
 
 Erste Fassung.

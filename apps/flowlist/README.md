@@ -2,6 +2,22 @@
 
 **Quietglass** · Hands-free checklists and workflows for Even Realities G2 smart glasses.
 
+> **Auf Deutsch, kurz:** FlowList zeigt dir eine Checkliste auf der Brille –
+> immer nur den aktuellen Schritt. Ein Tippen an die Brille hakt ihn ab. Kein
+> Server, kein Konto, kein Internet nötig. Die App spricht Deutsch oder Englisch,
+> je nach Handy-Sprache (umstellbar auf der Handy-Seite).
+>
+> **In 3 Schritten loslegen**
+> 1. FlowList installieren und auf der Brille öffnen.
+> 2. Die Beispiel-Liste „Haus verlassen“ ist schon da – tipp seitlich auf die
+>    Brille, um den ersten Schritt abzuhaken. („Reise packen“ ist auch dabei.)
+> 3. Eigene Liste: am Handy einen Schritt pro Zeile mit „- “ davor schreiben und
+>    auf „Checkliste hinzufügen“ tippen, dann oben auswählen.
+>
+> Wischen nach oben = zurück · nach unten = optionalen Schritt auslassen ·
+> halten = Zusatzinfo · doppeltippen = beenden. Am Ende startet ein Tippen die
+> Liste neu.
+
 One step at a time, in your field of view, advanced with a single tap. For when
 both hands are busy: cooking, wiring, packing, servicing, inspecting.
 
@@ -39,6 +55,7 @@ position (`3/8`), the section and the progress are always on screen.
 | **Swipe down** | Skip (optional steps only) |
 | **Hold** | Show the step's detail while held |
 | **Double tap** | Leave FlowList |
+| **Tap on the summary** | Start the same list again |
 
 On a branching step **both swipes move between the options**. The **R1 ring**
 works exactly like the temple pads.
@@ -101,7 +118,7 @@ strand you mid-run.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5191
 npm run build      # typecheck + production bundle
-npm test           # 79 unit tests
+npm test           # 122 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -115,8 +132,18 @@ to IPv6 first and the preview stays blank.
 3. Sideload it, or install from Even Hub once published
 4. Open the phone companion, paste a checklist, and launch FlowList
 
-A sample checklist is installed on first run so the format is learnable by
-example. Remove it like any other.
+Two everyday example checklists — "Leaving the house" and "Packing for a trip"
+(German: "Haus verlassen", "Reise packen") — are installed on first run in the
+device language, so the glasses are useful right away and the format is
+learnable by example. Remove them like any other list; the phone page offers to
+add them back.
+
+## Language
+
+German and English, following the phone's language (English otherwise), with a
+picker on the phone page. Only FlowList's own words are translated; checklist
+text is shown as written. Every glasses string is tested to fit one 46-character
+row in both languages.
 
 ## Privacy
 

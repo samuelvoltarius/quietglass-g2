@@ -2,6 +2,25 @@
 
 **Quietglass** · Visual metronome and practice log for Even Realities G2.
 
+## Kurz auf Deutsch
+
+Cadence ist ein Metronom zum Anschauen: Die Brille zeigt dir den Takt als
+Punkte-Reihe, deine Ohren bleiben frei fürs Instrument. Auf Wunsch schreibt es
+mit, wie lange und wie schnell du was geübt hast. Kein Server, kein Konto —
+alles bleibt auf deinem Handy.
+
+**In 3 Schritten loslegen**
+
+1. App in der Even-App öffnen und die Brille aufsetzen.
+2. **Einmal auf den Bügel tippen** — der Takt läuft (Standard: 100 Schläge pro Minute, 4/4).
+3. **Wischen** macht ihn schneller oder langsamer, **Tippen** pausiert.
+
+Optional: Trag auf der Handy-Seite ein, was du übst — dann landet deine Übezeit
+im Übe-Tagebuch. Die App folgt der Sprache deines Handys (Deutsch oder
+Englisch); umstellen kannst du das auf der Handy-Seite unter „Sprache“.
+
+---
+
 A dedicated pixel metronome marks the beat screen while the numeric tempo remains the primary information.
 
 The G2 has no speaker. That sounds like a reason not to build a metronome — it
@@ -19,16 +38,16 @@ while your ears stay free for the instrument.
 ```
 Scales
 
-    ◆    ○    ○    ○
+    ○  ●  ○  ○
 
-    100 bpm   4/4   bar 12
+    100 bpm  4/4  bar 12
 
 running · 4m 30s · tap = pause
 ```
 
-One marker per beat. The **downbeat has its own shape** (`◆`), so you can find
-the top of the bar without counting from the left — which matters when you are
-reading it out of the corner of your eye.
+One marker per beat. On the **downbeat the whole row lights up** (`●  ●  ●  ●`),
+so you can find the top of the bar without counting from the left — which
+matters when you are reading it out of the corner of your eye.
 
 ## Honest about timing
 
@@ -87,7 +106,7 @@ on an instrument and reaching for your temple is not.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5193
 npm run build      # typecheck + production bundle
-npm test           # 62 unit tests
+npm test           # 83 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 

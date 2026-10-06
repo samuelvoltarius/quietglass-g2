@@ -2,6 +2,23 @@
 
 **Quietglass** · A private posture reminder for desk work.
 
+## Kurz auf Deutsch
+
+PostureLens merkt über den Bewegungssensor der Brille, wenn dein Kopf zu lange
+nach vorne geneigt ist, und erinnert dich leise daran, dich aufzurichten. Keine
+Kamera, keine Aufzeichnung, kein Server — alles bleibt auf deinem Handy.
+
+**In 3 Schritten loslegen**
+
+1. App in der Even-App öffnen und die Brille aufsetzen.
+2. Gerade hinsetzen und **einmal auf den Bügel tippen** — damit ist deine Haltung gespeichert.
+3. Einfach arbeiten. Sitzt du länger als eine Minute stark nach vorne geneigt, meldet sich die Brille.
+
+Die App folgt der Sprache deines Handys (Deutsch oder Englisch); umstellen kannst
+du das auf der Handy-Seite unter „Sprache“.
+
+---
+
 In plain language: sit upright once and tap to calibrate. The glasses then use
 their motion sensor to notice when your head has stayed far forward for too
 long. They show a quiet warning to straighten up. It is not a camera, does not
@@ -57,7 +74,7 @@ A monitor that complains every time you glance down is one you learn to ignore.
 
 | Situation | Display |
 |---|---|
-| Not calibrated | "Sit the way you want to sit. Then tap." |
+| Not calibrated | "Sit up straight and tap once to save your posture." |
 | Upright | *(almost nothing)* · `87% upright` |
 | Leaning | `31° forward` · `leaning · 40s to warning` |
 | Warned | **`HEAD FORWARD`** · `31° forward` · `held 1m 12s` |
@@ -81,7 +98,7 @@ The **R1 ring** works the same as the temple pads.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5192
 npm run build      # typecheck + production bundle
-npm test           # 48 unit tests
+npm test           # 67 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 

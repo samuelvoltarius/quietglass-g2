@@ -68,7 +68,8 @@ describe("the phone settings page", () => {
 
     expect(root.rebuilds).toBe(1);
     expect(root.querySelector("#oebb-url").value).toBe("http://192.168.1.");
-    expect(root.querySelector("#status").textContent).toContain("47.8000, 13.0400");
+    expect(root.querySelector("#status").textContent).toContain("Standort gefunden");
+    expect(root.querySelector("#next").textContent).toContain("Haltestellen");
   });
 
   it("does not undo one setting when the next is changed", () => {

@@ -1,3 +1,6 @@
+import type { Locale } from "../i18n";
+import { t } from "../messages";
+
 /**
  * Noise dose.
  *
@@ -118,11 +121,11 @@ export function remainingSeconds(
   return remainingFraction * permitted;
 }
 
-export function formatDuration(totalSeconds: number): string {
+export function formatDuration(totalSeconds: number, locale: Locale = "en"): string {
   const seconds = Math.max(0, Math.round(totalSeconds));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) return hours + "h " + minutes + "m";
-  if (minutes > 0) return minutes + "m";
-  return seconds + "s";
+  if (hours > 0) return t(locale, "u.hm", { h: hours, m: minutes });
+  if (minutes > 0) return t(locale, "u.m", { m: minutes });
+  return t(locale, "u.s", { s: seconds });
 }

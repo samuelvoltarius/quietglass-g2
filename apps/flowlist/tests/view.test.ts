@@ -15,7 +15,8 @@ describe("empty state", () => {
   it("points at the phone when nothing is loaded", () => {
     const empty = list();
     const view = buildView(empty, startRun(empty));
-    expect(view.body.join(" ")).toContain("phone app");
+    expect(view.body.join(" ")).toContain("on your phone");
+    expect(view.footer).toContain("double tap = exit");
   });
 });
 
@@ -103,7 +104,7 @@ describe("finished view", () => {
     expect(view.body[0]).toBe("Complete.");
     expect(view.body.join(" ")).toContain("1 of 1 done");
     expect(view.body.join(" ")).toContain("1 skipped");
-    expect(view.footer).toContain("0:05");
+    expect(view.body.join(" ")).toContain("took 0:05");
   });
 
   it("offers the way out", () => {

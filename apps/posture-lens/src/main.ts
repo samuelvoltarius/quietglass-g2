@@ -11,6 +11,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, type PostureData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "..######..", "..#.##.#..", "....##....", "...#..#...", "..##..##..", ".##....##."] as const;
 
@@ -22,6 +23,9 @@ const IMU_PACE = ImuReportPace.P500;
 
 /** Redraw cadence for the countdown; sameView() drops the no-op ticks. */
 const TICK_MS = 1000;
+
+/** How long the "saved" confirmation stays after a calibration. */
+const CONFIRM_MS = 8000;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -35,6 +39,11 @@ async function boot(): Promise<void> {
   let tick: ReturnType<typeof setInterval> | undefined;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
+  let locale: Locale = getLocale();
+  let sensorOff = false;
+  /** A tap that arrived before the first IMU sample; it calibrates on that sample. */
+  let calibratePending = false;
+  let calibratedAt: number | null = null;
 
   // A stored calibration makes the app usable immediately after a restart.
   if (data.reference) {
@@ -42,7 +51,24 @@ async function boot(): Promise<void> {
   }
 
   const currentView = (): PostureView =>
-    buildView(monitor, data.settings, { showAngleWhenGood: data.showAngleWhenGood });
+    buildView(monitor, data.settings, {
+      showAngleWhenGood: data.showAngleWhenGood,
+      locale,
+      sensorOff,
+      justCalibrated: calibratedAt !== null && Date.now() - calibratedAt < CONFIRM_MS,
+    });
+
+  const calibrateTo = (sample: Vec3): void => {
+    const now = Date.now();
+    const next = calibrate(monitor, sample, now);
+    // A zero vector carries no direction; keep the tap and use the next usable sample.
+    if (next === monitor) { calibratePending = true; return; }
+    monitor = next;
+    calibratePending = false;
+    calibratedAt = now;
+    data = { ...data, reference: monitor.reference };
+    void persist(data);
+  };
 
   const drawOnce = async (): Promise<void> => {
     if (closed) return;
@@ -81,6 +107,8 @@ async function boot(): Promise<void> {
   const imuOk = await bridge.imuControl(true, IMU_PACE).catch(() => false);
   if (!imuOk) {
     console.warn("[posturelens] IMU reporting was refused; posture cannot be measured.");
+    sensorOff = true;
+    await draw();
   }
 
   bridge.onEvenHubEvent((event) => {
@@ -91,7 +119,9 @@ async function boot(): Promise<void> {
       const sample = sampleFrom(sys.imuData);
       if (!sample) return;
       lastSample = sample;
+      sensorOff = false;
       monitor = addSample(monitor, sample, data.settings, Date.now());
+      if (calibratePending) calibrateTo(sample);
       void draw();
       return;
     }
@@ -103,11 +133,9 @@ async function boot(): Promise<void> {
       case "click":
         // Tap always means "this is upright now" — the one thing the user
         // needs on the glasses, whether calibrating or correcting a drift.
-        if (lastSample) {
-          monitor = calibrate(monitor, lastSample, Date.now());
-          data = { ...data, reference: monitor.reference };
-          void persist(data);
-        }
+        // Before the first sample arrives the tap is remembered, not lost.
+        if (lastSample) calibrateTo(lastSample);
+        else calibratePending = true;
         break;
       case "scrollUp":
       case "scrollDown":
@@ -139,6 +167,13 @@ async function boot(): Promise<void> {
   tick = setInterval(() => { void draw(); }, TICK_MS);
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      void draw();
+    },
+    getSensorOff: () => sensorOff,
     getData: () => data,
     setData: async (next) => {
       data = next;

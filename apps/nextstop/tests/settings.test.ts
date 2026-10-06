@@ -4,8 +4,15 @@ import { positionFromUrl } from "../src/main";
 import { boundingBox } from "../src/transit/motis";
 
 describe("settings", () => {
-  it("starts on ÖBB, the only one with live data here", () => {
-    expect(DEFAULT_SETTINGS.backend).toBe("oebb");
+  it("starts on Transitous, the one that works without anything installed", () => {
+    // ÖBB needs the CORS proxy from examples/; a fresh install must not depend on it.
+    expect(DEFAULT_SETTINGS.backend).toBe("motis");
+    expect(DEFAULT_SETTINGS.motisUrl).toBe("https://api.transitous.org");
+  });
+
+  it("keeps a user's explicit ÖBB choice", () => {
+    expect(parseSettings(JSON.stringify({ backend: "oebb" })).backend).toBe("oebb");
+    expect(parseSettings(JSON.stringify({ backend: "something" })).backend).toBe("motis");
   });
 
   it("falls back cleanly on corrupt storage", () => {

@@ -108,3 +108,6 @@ small.warn { color: #e0a33e; }
 
 .row-actions { display: flex; gap: 6px; }
 button.open, button.drop { margin: 0; padding: 4px 8px; background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 400; font-size: 12px; }
+
+details.card summary { cursor: pointer; list-style-position: outside; }
+details.card summary h2 { display: inline; }

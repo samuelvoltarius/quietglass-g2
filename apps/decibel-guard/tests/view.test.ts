@@ -39,7 +39,7 @@ describe("listening", () => {
 
   it("marks an uncalibrated reading so it is not mistaken for SPL", () => {
     const view = buildView(quiet, DEFAULT_DOSE, { ...listening, calibrated: false });
-    expect(view.body[0]).toContain("uncal.");
+    expect(view.body[0]).toBe("about 75 dB");
   });
 
   it("shows a plain level once calibrated", () => {

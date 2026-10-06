@@ -14,12 +14,13 @@ const nodeProcess = (globalThis as unknown as { process: { on(event: string, lis
 
 const IMU_DATA_REPORT = 8;
 
-function fakeBridge(writeDelayMs = 0) {
+function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 0, y: 0, z: 1 }, showAngleWhenGood: true })) {
   let handler: ((event: unknown) => void) | undefined;
   let statusHandler: ((status: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false };
   const imu: boolean[] = [];
+  const saved: string[] = [];
   const writes = { count: 0, inFlight: 0, maxInFlight: 0 };
   const write = async (): Promise<void> => {
     writes.count += 1;
@@ -30,8 +31,8 @@ function fakeBridge(writeDelayMs = 0) {
   };
   const bridge = {
     // Stored calibration, so the app starts measuring straight away.
-    getLocalStorage: async () => JSON.stringify({ reference: { x: 0, y: 0, z: 1 }, showAngleWhenGood: true }),
-    setLocalStorage: async () => true,
+    getLocalStorage: async () => stored,
+    setLocalStorage: async (_key: string, value: string) => { saved.push(value); return true; },
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async () => { await write(); return 0; },
     textContainerUpgrade: async () => { await write(); return true; },
@@ -42,7 +43,7 @@ function fakeBridge(writeDelayMs = 0) {
     onDeviceStatusChanged: (callback: (status: unknown) => void) => { statusHandler = callback; return () => undefined; },
   };
   return {
-    bridge, shutdown, imu, writes,
+    bridge, shutdown, imu, writes, saved,
     emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
     sample: (y: number) => handler?.({ sysEvent: { eventType: IMU_DATA_REPORT, imuData: { x: 0, y, z: 1 } } }),
     reconnect: () => statusHandler?.({ connectType: "connected" }),
@@ -58,8 +59,8 @@ describe("posturelens loop", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  async function boot(writeDelayMs = 0) {
-    const fake = fakeBridge(writeDelayMs);
+  async function boot(writeDelayMs = 0, stored?: string) {
+    const fake = stored === undefined ? fakeBridge(writeDelayMs) : fakeBridge(writeDelayMs, stored);
     harness.bridge = fake.bridge;
     vi.resetModules();
     await import("../src/main");
@@ -99,5 +100,17 @@ describe("posturelens loop", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(fake.writes.count).toBeGreaterThan(3);
     expect(fake.writes.maxInFlight).toBe(1);
+  });
+
+  it("keeps a first-run tap that arrives before the motion sensor does", async () => {
+    // A beginner taps as soon as the glasses say so; that tap must not be lost.
+    const fake = await boot(0, "");
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.saved).toEqual([]);
+    fake.sample(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.saved).toHaveLength(1);
+    expect(JSON.parse(fake.saved[0] ?? "{}").reference).toEqual({ x: 0, y: 0, z: 1 });
   });
 });

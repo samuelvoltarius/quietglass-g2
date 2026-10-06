@@ -1,5 +1,7 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { ClockState, TimeEntry } from "../tracking/clock";
+import type { Locale } from "../i18n";
+import { defaultProject } from "../messages";
 
 /**
  * Everything ShiftClock stores stays in the Even app's per-app storage on the
@@ -31,8 +33,17 @@ export async function save(bridge: EvenAppBridge, data: ClockData): Promise<void
   await bridge.setLocalStorage(KEY, JSON.stringify(data));
 }
 
-export async function load(bridge: EvenAppBridge): Promise<ClockData> {
-  return parseData(await bridge.getLocalStorage(KEY));
+/**
+ * On a first run (nothing stored yet) one project is ready — "Arbeit" or
+ * "Work" — so the very first tap on the glasses starts the clock.
+ */
+export async function load(bridge: EvenAppBridge, locale: Locale = "en"): Promise<ClockData> {
+  const raw = await bridge.getLocalStorage(KEY);
+  return raw ? parseData(raw) : firstRunData(locale);
+}
+
+export function firstRunData(locale: Locale): ClockData {
+  return addProject(EMPTY_DATA, defaultProject(locale));
 }
 
 export function addProject(data: ClockData, project: string): ClockData {

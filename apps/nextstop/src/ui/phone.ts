@@ -1,6 +1,7 @@
 import type { Stop } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import { DEFAULT_SETTINGS, validateUrl, type Settings } from "../storage/persist";
+import { nextStep } from "../text";
 
 /**
  * The phone side: which service to ask, and where it lives.
@@ -28,20 +29,23 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   const statusText = (): string => {
     const position = ports.getPosition();
     const stops = ports.getStops();
-    const where = position
-      ? `Position: ${position.lat.toFixed(4)}, ${position.lon.toFixed(4)}`
-        + (ports.isSeeded() ? " (aus ?at=, nicht gemessen)" : "")
-      : "Noch keine Position — GPS braucht draußen einen Moment.";
+    const where = !position
+      ? "Noch kein Standort – erlaube den Standort in der Even-App."
+      : ports.isSeeded()
+        ? "Teststandort aus der Adresse (?at=), nicht gemessen."
+        : `Standort gefunden${typeof position.accuracy === "number" ? ` (± ${Math.round(position.accuracy)} m)` : ""}.`;
     const found = stops.length === 0
-      ? "Keine Haltestelle gefunden."
-      : `${stops.length} Haltestellen in der Nähe, nächste: ${stops[0]?.name ?? "?"}`;
-    return `${where} · ${found}`;
+      ? "Noch keine Haltestelle gefunden."
+      : `Nächste Haltestelle: ${stops[0]?.name ?? "?"} (${stops.length} in der Nähe).`;
+    return `${where} ${found}`;
   };
 
-  /** Only the status line is live; it is updated in place. */
+  /** Only the status lines are live; they are updated in place. */
   const updateStatus = (): void => {
     const status = root.querySelector<HTMLElement>("#status");
     if (status) status.textContent = statusText();
+    const next = root.querySelector<HTMLElement>("#next");
+    if (next) next.textContent = nextStep(ports.getPosition() !== null, ports.getStops().length);
   };
 
   const render = (): void => {
@@ -49,43 +53,15 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
     root.innerHTML = `
       <div class="brand"><span class="brand-mark">Quietglass</span> NextStop</div>
+      <p class="next" id="next"></p>
 
       <div class="card">
-        <label for="backend">Datenquelle</label>
+        <label for="backend">Woher kommen die Abfahrten?</label>
         <select id="backend">
-          <option value="oebb">ÖBB — Österreich, mit Echtzeit</option>
-          <option value="motis">Transitous — weltweit, Fahrplan</option>
+          <option value="motis">Überall – Fahrplan (funktioniert sofort)</option>
+          <option value="oebb">ÖBB – Echtzeit in Österreich (Zusatzprogramm nötig)</option>
         </select>
         <p class="hint" id="backend-hint"></p>
-      </div>
-
-      <div class="card" id="oebb-card">
-        <label for="oebb-url">ÖBB-Proxy</label>
-        <input id="oebb-url" type="url" inputmode="url" spellcheck="false" />
-        <p class="hint">
-          Die ÖBB schickt keine CORS-Header, deshalb geht die Anfrage über einen
-          kleinen Proxy. Starten mit
-          <code>node examples/oebb-cors-proxy.mjs</code>.
-        </p>
-      </div>
-
-      <div class="card" id="motis-card">
-        <label for="motis-url">MOTIS-Adresse</label>
-        <input id="motis-url" type="url" inputmode="url" spellcheck="false" />
-        <p class="hint">
-          Voreingestellt ist die öffentliche Transitous-Instanz. Wer MOTIS selbst
-          betreibt, trägt hier die eigene Adresse ein — dann verlässt keine
-          Anfrage das Haus.
-        </p>
-      </div>
-
-      <div class="card">
-        <label for="refresh">Aktualisieren alle <span id="refresh-value"></span> s</label>
-        <input id="refresh" type="range" min="10" max="120" step="5" />
-        <p class="hint">
-          Gilt nur für die Abfahrtstafel. Während der Fahrt bleibt die
-          Haltestellenfolge stehen — sie ändert sich nicht.
-        </p>
       </div>
 
       <div class="card">
@@ -95,14 +71,51 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       </div>
 
       <div class="card keys">
-        <label>Bedienung</label>
+        <label>Bedienung auf der Brille</label>
         <p class="hint">
           <strong>Wischen</strong> — Abfahrt auswählen<br />
-          <strong>Tippen</strong> — Fahrt verfolgen, und zurück<br />
+          <strong>Tippen</strong> — mitfahren und den nächsten Halt sehen, nochmal tippen = zurück<br />
           <strong>Halten</strong> — nächste Haltestelle in der Nähe<br />
-          <strong>Doppeltippen</strong> — NextStop verlassen
+          <strong>Doppeltippen</strong> — NextStop beenden<br />
+          <strong>●</strong> = Echtzeit, <strong>~</strong> = nur Fahrplan, <strong>+3</strong> = 3 Minuten später
         </p>
       </div>
+
+      <details class="card advanced" id="advanced">
+        <summary>Erweitert</summary>
+
+        <div id="oebb-card">
+          <label for="oebb-url">Adresse des ÖBB-Zusatzprogramms</label>
+          <input id="oebb-url" type="url" inputmode="url" spellcheck="false" />
+          <p class="hint">
+            Die ÖBB-Schnittstelle schickt keine CORS-Header, deshalb verwirft die
+            App ihre Antworten. Ein kleiner Proxy auf einem Computer im selben
+            Netz reicht sie durch: <code>node examples/oebb-cors-proxy.mjs</code>
+            (README, Abschnitt „ÖBB-Echtzeit“).
+          </p>
+        </div>
+
+        <div id="motis-card">
+          <label for="motis-url">Fahrplan-Server (MOTIS)</label>
+          <input id="motis-url" type="url" inputmode="url" spellcheck="false" />
+          <p class="hint">
+            Voreingestellt ist die öffentliche Transitous-Instanz. Nur ändern,
+            wenn du MOTIS selbst betreibst — dann verlässt keine Anfrage das Haus.
+          </p>
+        </div>
+
+        <label for="refresh">Abfahrten neu laden alle <span id="refresh-value"></span> s</label>
+        <input id="refresh" type="range" min="10" max="120" step="5" />
+        <p class="hint">
+          Gilt nur für die Abfahrtstafel. Während der Fahrt bleibt die
+          Haltestellenfolge stehen — sie ändert sich nicht.
+        </p>
+      </details>
+
+      <p class="credits">
+        Fahrplandaten: <a href="https://transitous.org/sources/" target="_blank" rel="noopener">Transitous und seine Quellen</a>
+        (u. a. OpenStreetMap) · Echtzeit Österreich: ÖBB
+      </p>
     `;
 
     const backend = root.querySelector<HTMLSelectElement>("#backend");
@@ -110,7 +123,6 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const motisUrl = root.querySelector<HTMLInputElement>("#motis-url");
     const refresh = root.querySelector<HTMLInputElement>("#refresh");
     const refreshValue = root.querySelector<HTMLElement>("#refresh-value");
-    const status = root.querySelector<HTMLElement>("#status");
     const backendHint = root.querySelector<HTMLElement>("#backend-hint");
     const oebbCard = root.querySelector<HTMLElement>("#oebb-card");
     const motisCard = root.querySelector<HTMLElement>("#motis-card");
@@ -126,15 +138,20 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     // editing the one that is not in use and wondering why nothing changed.
     if (oebbCard) oebbCard.hidden = settings.backend !== "oebb";
     if (motisCard) motisCard.hidden = settings.backend !== "motis";
+    // Choosing ÖBB is only half the job until the add-on's address is set, so
+    // the drawer holding it opens by itself.
+    const advanced = root.querySelector<HTMLDetailsElement>("#advanced");
+    if (advanced) advanced.open = settings.backend === "oebb";
 
     if (backendHint) {
       backendHint.textContent = settings.backend === "oebb"
-        ? "Führt Verspätungen, bis hinunter zum Salzburger O-Bus. Kennt nur Österreich."
-        : "Deckt viele Länder ab, aber Echtzeit nur dort, wo Feeds eingespeist "
-          + "werden — in Österreich derzeit fast nirgends.";
+        ? "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines "
+          + "Zusatzprogramm auf einem Computer im selben WLAN – siehe „Erweitert“ unten."
+        : "Funktioniert sofort, in vielen Ländern. Meist reine Fahrplanzeiten (~); "
+          + "Verspätungen nur dort, wo der Verkehrsbetrieb sie meldet.";
     }
 
-    if (status) status.textContent = statusText();
+    updateStatus();
 
     // Each edit starts from the settings as they are now, not as they were when
     // the page was built: otherwise saving the refresh interval after changing

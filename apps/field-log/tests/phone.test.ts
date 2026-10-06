@@ -8,6 +8,8 @@ import { fakeRoot } from "./fake-dom";
 function mount(initial: FieldLogData, save?: () => Promise<void>) {
   const root = fakeRoot();
   vi.stubGlobal("document", { getElementById: () => root });
+  // The page follows the device language; these tests read the English copy.
+  vi.stubGlobal("navigator", { language: "en-US" });
   let data = initial;
   const setData = vi.fn(async (next: FieldLogData) => {
     data = next;
@@ -62,8 +64,9 @@ describe("phone page", () => {
 
   it("regression: a validation message is actually shown", () => {
     const page = mount(EMPTY_DATA);
-    page.root.get("#start").fire("click");
-    expect(page.root.innerHTML).toContain("Give the inspection a title.");
+    page.root.get("#stt").value = "http://not-a-socket";
+    page.root.get("#save-stt").fire("click");
+    expect(page.root.innerHTML).toContain("must start with ws://");
   });
 
   it("shows a started inspection straight away", () => {
@@ -94,5 +97,89 @@ describe("phone page", () => {
     const data = open();
     const page = mount(upsertInspection(data, addEntry(data.inspections[0]!, "<img src=x onerror=alert(1)>", "note", 1)));
     expect(page.root.innerHTML).not.toContain("<img");
+  });
+});
+
+describe("phone page for beginners", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function mountIn(language: string, initial: FieldLogData = EMPTY_DATA, takePhoto?: () => Promise<void>) {
+    const root = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("navigator", { language });
+    let data = initial;
+    const onLocaleChange = vi.fn();
+    const ui = mountPhoneUi({
+      getData: () => data,
+      setData: async (next) => { data = next; },
+      onLocaleChange,
+      ...(takePhoto ? { takePhoto } : {}),
+    });
+    return { root, data: () => data, onLocaleChange, ui, external: (next: FieldLogData) => { data = next; } };
+  }
+
+  it("follows the device language and says what to do first", () => {
+    const page = mountIn("de-AT");
+    expect(page.root.innerHTML).toContain("Tipp an die Brille, um einen Rundgang zu starten");
+    expect(page.root.innerHTML).toContain('<option value="de" selected>');
+  });
+
+  it("starts an inspection without a name", () => {
+    const page = mountIn("de-AT");
+    page.root.get("#start").fire("click");
+    expect(page.data().inspections[0]!.title).toMatch(/^Rundgang /);
+    expect(page.root.innerHTML).toContain("Rundgang läuft");
+  });
+
+  it("files a typed note with its type, and explains an empty box", () => {
+    const page = mountIn("de-AT", open());
+    page.root.get("#add-note").fire("click");
+    expect(page.root.innerHTML).toContain("Schreib zuerst etwas ins Feld.");
+    page.root.get("#note").value = "Fliese gesprungen";
+    page.root.get("#note-sev").value = "major";
+    page.root.get("#add-note").fire("click");
+    const entries = page.data().inspections[0]!.entries;
+    expect(entries.map((e) => [e.text, e.severity])).toEqual([["Fliese gesprungen", "major"]]);
+    expect(page.root.get("#note").value).toBe("");
+  });
+
+  it("offers a photo button when the camera is available", () => {
+    const takePhoto = vi.fn(async () => undefined);
+    const page = mountIn("en-US", open(), takePhoto);
+    page.root.get("#photo").fire("click");
+    expect(takePhoto).toHaveBeenCalledTimes(1);
+    expect(mountIn("en-US", open()).root.querySelector("#photo")).toBeNull();
+  });
+
+  it("saves the user's own quick notes, and the defaults again when emptied", () => {
+    const page = mountIn("de-AT", open());
+    page.root.get("#quick").value = "Riss\n\n  Fleck  ";
+    page.root.get("#save-quick").fire("click");
+    expect(page.data().quickNotes).toEqual(["Riss", "Fleck"]);
+    page.root.get("#quick").value = "";
+    page.root.get("#save-quick").fire("click");
+    expect(page.data().quickNotes).toEqual([]);
+  });
+
+  it("keeps the speech server under Advanced, marked optional", () => {
+    const page = mountIn("de-AT", open());
+    expect(page.root.innerHTML).toContain("Erweitert: Notizen sprechen (optional)");
+    expect(page.root.innerHTML).toContain("Gerade aktiv: Schnellnotizen");
+    expect(page.root.innerHTML).not.toContain("MOCK");
+  });
+
+  it("switches language from the picker and tells the glasses", () => {
+    const page = mountIn("de-AT", open());
+    page.root.get("#language").value = "en";
+    page.root.get("#language").fire("change");
+    expect(page.onLocaleChange).toHaveBeenCalledWith("en");
+    expect(page.root.innerHTML).toContain("Inspection running");
+  });
+
+  it("shows entries filed on the glasses when refreshed", () => {
+    const page = mountIn("en-US", open());
+    page.external(upsertInspection(page.data(), addEntry(page.data().inspections[0]!, "Damaged", "note", 1)));
+    page.ui.refresh();
+    expect(page.root.innerHTML).toContain("Damaged");
   });
 });

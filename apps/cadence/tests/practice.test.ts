@@ -143,8 +143,10 @@ describe("beat display", () => {
     expect(beatRow(settings, 1, false).split("  ")).toHaveLength(4);
   });
 
-  it("gives the downbeat its own shape when it is current", () => {
-    expect(beatRow(settings, 1, true).startsWith("◆")).toBe(true);
+  it("lights the whole row on the downbeat, so the top of the bar needs no counting", () => {
+    expect(beatRow(settings, 1, true)).toBe("●  ●  ●  ●");
+    // No accent glyph the G2 font is not known to draw.
+    expect(beatRow(settings, 1, true)).not.toContain("◆");
   });
 
   it("fills the current beat", () => {
@@ -158,7 +160,7 @@ describe("beat display", () => {
   it("marks only the downbeat in bar mode", () => {
     const barMode: MetronomeSettings = { ...settings, mark: "bar" };
     expect(beatRow(barMode, 2, true)).not.toContain("●");
-    expect(beatRow(barMode, 1, true)).toContain("◆");
+    expect(beatRow(barMode, 1, true)).toBe("●  ●  ●  ●");
   });
 
   it("labels the signature", () => {

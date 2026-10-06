@@ -1,5 +1,7 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { Inspection, Severity } from "../log/entries";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Inspections live in the Even app's per-app storage on the phone.
@@ -20,6 +22,8 @@ export interface FieldLogData {
   /** Severity applied to the next entry. */
   readonly severity: Severity;
   readonly invertScroll: boolean;
+  /** The user's own quick notes; empty means the defaults in the app language. */
+  readonly quickNotes: readonly string[];
 }
 
 const KEY = "quietglass.fieldlog.v1";
@@ -31,10 +35,16 @@ export const EMPTY_DATA: FieldLogData = {
   language: "auto",
   severity: "note",
   invertScroll: false,
+  quickNotes: [],
 };
 
+/** No speech server set up: dictation is unavailable and quick notes are used. */
 export function usesMockStt(data: FieldLogData): boolean {
   return data.sttUrl.trim() === "";
+}
+
+export function hasSpeechServer(data: FieldLogData): boolean {
+  return !usesMockStt(data);
 }
 
 export function activeInspection(data: FieldLogData): Inspection | null {
@@ -85,17 +95,17 @@ export async function load(bridge: EvenAppBridge): Promise<FieldLogData> {
   return parseData(await bridge.getLocalStorage(KEY));
 }
 
-export function validateWsUrl(url: string): { valid: boolean; errors: string[] } {
+export function validateWsUrl(url: string, locale: Locale = "en"): { valid: boolean; errors: string[] } {
   const trimmed = url.trim();
   if (!trimmed) return { valid: true, errors: [] };
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-      return { valid: false, errors: ["Speech server URL must start with ws:// or wss://."] };
+      return { valid: false, errors: [t(locale, "v.scheme")] };
     }
     return { valid: true, errors: [] };
   } catch {
-    return { valid: false, errors: ["Speech server URL is not valid."] };
+    return { valid: false, errors: [t(locale, "v.invalid")] };
   }
 }
 
@@ -137,6 +147,9 @@ export function parseData(raw: string): FieldLogData {
       language: typeof value.language === "string" && value.language ? value.language : "auto",
       severity: isSeverity(value.severity) ? value.severity : "note",
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
+      quickNotes: Array.isArray(value.quickNotes)
+        ? value.quickNotes.filter((note): note is string => typeof note === "string" && note.trim() !== "")
+        : [],
     };
   } catch {
     return EMPTY_DATA;
@@ -147,6 +160,6 @@ function isSeverity(value: unknown): value is Severity {
   return value === "note" || value === "minor" || value === "major";
 }
 
-export function maskSecret(secret: string | undefined): string {
-  return secret ? "set (" + secret.length + " chars)" : "none";
+export function maskSecret(secret: string | undefined, locale: Locale = "en"): string {
+  return secret ? t(locale, "v.secretSet", { n: secret.length }) : t(locale, "v.secretNone");
 }

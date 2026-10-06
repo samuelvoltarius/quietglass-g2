@@ -6,10 +6,25 @@
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
-  "permissions": [{
-    "name": "network",
-    "desc": "Load current weather and forecasts from Open-Meteo.",
-    "whitelist": ["https://api.open-meteo.com"]
-  }],
-  "supported_languages": ["de", "en", "fr", "es", "it"]
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Load the forecast from Open-Meteo and look up place names you type.",
+      "whitelist": [
+        "https://api.open-meteo.com",
+        "https://geocoding-api.open-meteo.com"
+      ]
+    },
+    {
+      "name": "location",
+      "desc": "Show the weather where you are. Optional: you can type a place instead."
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en",
+    "fr",
+    "es",
+    "it"
+  ]
 }

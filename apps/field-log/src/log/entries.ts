@@ -7,6 +7,9 @@
  * assembled for you and exported afterwards.
  */
 
+import type { Locale } from "../i18n";
+import { severityName, t } from "../messages";
+
 export type Severity = "note" | "minor" | "major";
 
 export interface Attachment {
@@ -123,18 +126,18 @@ export function durationSeconds(inspection: Inspection, now: number): number {
  * base64 images is neither readable nor emailable. `withImages` inlines them
  * for the cases where a self-contained file is wanted.
  */
-export function toMarkdown(inspection: Inspection, withImages = false): string {
+export function toMarkdown(inspection: Inspection, withImages = false, locale: Locale = "en"): string {
   const lines: string[] = [];
   lines.push("# " + oneLine(inspection.title));
   lines.push("");
-  lines.push("Started: " + new Date(inspection.startedAt).toISOString());
+  lines.push(t(locale, "x.started") + ": " + stamp(inspection.startedAt, locale));
   if (inspection.finishedAt !== null) {
-    lines.push("Finished: " + new Date(inspection.finishedAt).toISOString());
+    lines.push(t(locale, "x.finished") + ": " + stamp(inspection.finishedAt, locale));
   }
 
   const counts = countBySeverity(inspection);
   lines.push("");
-  lines.push("Major: " + counts.major + " · Minor: " + counts.minor + " · Notes: " + counts.note);
+  lines.push(t(locale, "x.counts", counts));
   lines.push("");
 
   let section: string | undefined;
@@ -143,28 +146,35 @@ export function toMarkdown(inspection: Inspection, withImages = false): string {
       section = entry.section;
       if (section) { lines.push("## " + oneLine(section)); lines.push(""); }
     }
-    const mark = entry.severity === "major" ? "**MAJOR**"
-      : entry.severity === "minor" ? "*minor*" : "note";
+    const name = severityName(locale, entry.severity);
+    const mark = entry.severity === "major" ? "**" + name.toUpperCase() + "**"
+      : entry.severity === "minor" ? "*" + name + "*" : name;
     lines.push("- [" + timeOf(entry.at) + "] " + mark + " — " + oneLine(entry.text));
     if (entry.attachment) {
       lines.push(withImages
-        ? "  ![photo](" + entry.attachment.dataUri + ")"
-        : "  (photo attached, " + Math.round(entry.attachment.size / 1024) + " kB)");
+        ? "  ![" + t(locale, "x.photoAlt") + "](" + entry.attachment.dataUri + ")"
+        : "  " + t(locale, "x.photoRef", { kb: Math.round(entry.attachment.size / 1024) }));
     }
   }
 
   return lines.join("\n") + "\n";
 }
 
-export function toCsv(inspection: Inspection): string {
-  const rows = [["time", "section", "severity", "text", "photo"].join(",")];
+/**
+ * CSV for a spreadsheet: comma-separated, UTF-8, RFC 4180 quoting, one row per
+ * entry. The header and the type/photo columns are in the user's language;
+ * the time stays ISO 8601 in UTC so it sorts and parses everywhere. There are
+ * no decimal numbers in this file.
+ */
+export function toCsv(inspection: Inspection, locale: Locale = "en"): string {
+  const rows = [t(locale, "x.csvHeader")];
   for (const entry of inspection.entries) {
     rows.push([
       new Date(entry.at).toISOString(),
       csvField(entry.section ?? ""),
-      entry.severity,
+      locale === "en" ? entry.severity : severityName(locale, entry.severity),
       csvField(entry.text),
-      entry.attachment ? "yes" : "no",
+      t(locale, entry.attachment ? "x.yes" : "x.no"),
     ].join(","));
   }
   return rows.join("\n") + "\n";
@@ -183,6 +193,11 @@ function csvField(value: string): string {
 /** Keeps dictated text on its own Markdown line: a line break would end the list item. */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+/** Date and time as people read them, in local time — the report is for humans. */
+function stamp(timestamp: number, locale: Locale): string {
+  return new Date(timestamp).toLocaleString(locale === "de" ? "de-AT" : "en-GB", { dateStyle: "medium", timeStyle: "short" });
 }
 
 function timeOf(timestamp: number): string {

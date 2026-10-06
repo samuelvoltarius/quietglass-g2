@@ -8,6 +8,7 @@
   "entrypoint": "index.html",
   "permissions": [],
   "supported_languages": [
-    "en"
+    "en",
+    "de"
   ]
 }

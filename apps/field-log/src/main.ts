@@ -8,9 +8,11 @@ import { buildView, type LogView, type Phase } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import {
-  activeInspection, load, save, upsertInspection, usesMockStt, type FieldLogData,
+  activeInspection, hasSpeechServer, load, nextInspectionId, save, upsertInspection, usesMockStt, type FieldLogData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { getLocale, type Locale } from "./i18n";
+import { autoTitle, quickNotes, t } from "./messages";
 
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
@@ -30,7 +32,10 @@ async function boot(): Promise<void> {
     sample = addEntry(sample, "Window seal is damaged", "major", now - 480_000); sample = addEntry(sample, "Lamp flickers above desk", "minor", now - 180_000); sample = addEntry(sample, "Smoke detector tested", "note", now - 30_000);
     data = { ...data, inspections: [sample], activeId: sample.id };
   }
+  let locale: Locale = getLocale();
   let phase: Phase = "idle";
+  /** Highlighted quick note; the row after the last note is "Cancel". */
+  let pickIndex = 0;
   let pending: string | null = null;
   let stt: SttProvider | null = null;
   let status: SttStatus = "idle";
@@ -45,6 +50,13 @@ async function boot(): Promise<void> {
   let redrawQueued = false;
 
   const inspection = (): Inspection | null => activeInspection(data);
+  /**
+   * Dictation needs a speech server. Without one, a tap offers quick notes
+   * instead — the app is fully usable with no server at all. The labelled mock
+   * recogniser is only used by the `?demo=1` preview.
+   */
+  const voice = (): boolean => hasSpeechServer(data) || DEMO;
+  const notes = (): string[] => quickNotes(locale, data.quickNotes);
 
   const currentView = (): LogView =>
     buildView(inspection(), {
@@ -53,7 +65,14 @@ async function boot(): Promise<void> {
       pending,
       status,
       mock: usesMockStt(data),
+      locale,
+      voice: voice(),
+      quickNotes: notes(),
+      pickIndex,
     });
+
+  /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
+  let refreshPhone: () => void = () => undefined;
 
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
@@ -95,7 +114,28 @@ async function boot(): Promise<void> {
 
   const persist = async (next: Inspection): Promise<void> => {
     data = upsertInspection(data, next);
+    refreshPhone();
     await save(bridge, data);
+  };
+
+  /** A tap with no inspection open starts one, named after the date and time. */
+  const startNew = async (): Promise<void> => {
+    const id = nextInspectionId(data);
+    const now = Date.now();
+    data = { ...upsertInspection(data, startInspection(id, autoTitle(locale, now), now)), activeId: id };
+    refreshPhone();
+    await draw();
+    await save(bridge, data);
+  };
+
+  /** Files the highlighted quick note, or leaves the list on "Cancel". */
+  const pickNote = async (): Promise<void> => {
+    const current = inspection();
+    const note = notes()[pickIndex];
+    phase = "idle";
+    pickIndex = 0;
+    if (current && note) await persist(addEntry(current, note, data.severity, Date.now()));
+    await draw();
   };
 
   const closeStt = async (): Promise<void> => {
@@ -159,9 +199,10 @@ async function boot(): Promise<void> {
       phase = "recording";
     } catch (error) {
       console.warn("[fieldlog] speech server unavailable:", error);
-      status = "error";
       if (stt === provider) stt = null;
       await provider.stop().catch(() => undefined);
+      // After stop(): it reports "idle", which would hide the error again.
+      status = "error";
     } finally {
       starting = false;
     }
@@ -199,11 +240,14 @@ async function boot(): Promise<void> {
    * user-initiated picker. The glasses have no camera.
    */
   const attachPhoto = async (): Promise<void> => {
-    const current = inspection();
-    if (!current) return;
+    if (!inspection()) return;
     const asset = await bridge.captureImageFromCamera().catch(() => null);
-    if (!asset?.base64) return;
+    // Read again: an entry may have been filed while the camera was open.
+    let current = inspection();
+    if (!asset?.base64 || !current) return;
 
+    // With nothing to attach it to, the photo becomes an entry of its own.
+    if (current.entries.length === 0) current = addEntry(current, t(locale, "photoOnly"), data.severity, Date.now());
     const dataUri = "data:" + (asset.mimeType || "image/jpeg") + ";base64," + asset.base64;
     await persist(attachToLatest(current, {
       dataUri,
@@ -242,6 +286,9 @@ async function boot(): Promise<void> {
 
     switch (gesture.gesture) {
       case "click":
+        if (!inspection()) { background(startNew(), "starting an inspection"); return; }
+        if (phase === "pick") { background(pickNote(), "saving the note"); return; }
+        if (phase === "idle" && !voice()) { phase = "pick"; pickIndex = 0; break; }
         if (phase === "idle") { background(startMic(), "starting dictation"); return; }
         if (phase === "recording") { background(endRecording(), "stopping the microphone"); break; }
         if (phase === "review") { background(keepPending(), "saving the entry"); return; }
@@ -249,6 +296,11 @@ async function boot(): Promise<void> {
 
       case "scrollUp":
       case "scrollDown":
+        if (phase === "pick") {
+          const count = notes().length + 1;
+          pickIndex = (pickIndex + (gesture.gesture === "scrollDown" ? 1 : -1) + count) % count;
+          break;
+        }
         if (phase === "review") {
           // Discard rather than file a bad transcript.
           pending = null;
@@ -268,7 +320,12 @@ async function boot(): Promise<void> {
         break;
 
       case "longPress":
-        if (phase === "review" || phase === "idle") { background(attachPhoto(), "attaching a photo"); return; }
+        if (phase === "idle") { background(attachPhoto(), "attaching a photo"); return; }
+        // Under review the photo belongs to the text on screen: keep it first.
+        if (phase === "review") {
+          background(keepPending().then(attachPhoto), "attaching a photo");
+          return;
+        }
         break;
 
       case "doubleClick":
@@ -293,14 +350,24 @@ async function boot(): Promise<void> {
 
   clock = setInterval(() => { void draw(); }, 10_000);
 
-  mountPhoneUi({
+  const phone = mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
       data = next;
+      // Quick notes or the server may have changed under an open list.
+      if (phase === "pick" && voice()) phase = "idle";
+      pickIndex = Math.min(pickIndex, notes().length);
       await save(bridge, next);
       await draw();
     },
+    locale: () => locale,
+    onLocaleChange: (next) => {
+      locale = next;
+      void draw();
+    },
+    takePhoto: () => attachPhoto(),
   });
+  refreshPhone = phone.refresh;
 }
 
 void boot().catch((error: unknown) => {

@@ -3,11 +3,13 @@ import {
   addEntry, isRunning, nextEntryId, startProject, stop, type ClockState,
 } from "./tracking/clock";
 import { gestureFromEvent } from "./input/gestures";
-import { buildView, type ClockView } from "./glasses/view";
+import { buildView, CANCEL, type ClockView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
-import { load, save, type ClockData } from "./storage/persist";
+import { addProject, load, save, type ClockData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { getLocale, type Locale } from "./i18n";
+import { defaultProject } from "./messages";
 
 const PIXEL_ICON = ["...####...", ".########.", ".##....##.", "##...#.###", "##...#.###", "##...####.", "##......##", ".##....##.", ".########.", "...####..."] as const;
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
@@ -15,7 +17,8 @@ const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let data: ClockData = await load(bridge);
+  let locale: Locale = getLocale();
+  let data: ClockData = await load(bridge, locale);
   if (DEMO) {
     const now = Date.now();
     data = { ...data, projects: ["Client Portal", "Research"], entries: [{ id: "demo-1", project: "Research", startedAt: now - 7_200_000, endedAt: now - 5_850_000 }], open: { project: "Client Portal", startedAt: now - 2_754_000 } };
@@ -31,7 +34,10 @@ async function boot(): Promise<void> {
   let redrawQueued = false;
 
   const currentView = (): ClockView =>
-    buildView(clock, data.entries, { selecting, projects: data.projects });
+    buildView(clock, data.entries, { selecting, projects: data.projects, locale });
+
+  /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
+  let refreshPhone: () => void = () => undefined;
 
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
@@ -78,6 +84,7 @@ async function boot(): Promise<void> {
   };
 
   const persistInBackground = (): void => {
+    refreshPhone();
     persist().catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); });
   };
 
@@ -113,8 +120,16 @@ async function boot(): Promise<void> {
           clock = result.state;
           if (result.closed) data = { ...data, entries: addEntry(data.entries, result.closed) };
           selecting = null;
-        } else if (selecting !== null) {
-          const result = startProject(clock, selecting, now, () => nextEntryId(data.entries));
+        } else if (data.projects.length === 0) {
+          // One tap creates a project, so the glasses are never a dead end.
+          data = addProject(data, defaultProject(locale));
+        } else if (selecting === CANCEL) {
+          selecting = null;
+          break;
+        } else if (selecting !== null || data.projects.length === 1) {
+          // A single project needs no picker: the tap starts it.
+          const project = selecting ?? data.projects[0] ?? "";
+          const result = startProject(clock, project, now, () => nextEntryId(data.entries));
           clock = result.state;
           if (result.closed) data = { ...data, entries: addEntry(data.entries, result.closed) };
           selecting = null;
@@ -159,26 +174,36 @@ async function boot(): Promise<void> {
 
   ticker = setInterval(() => { void draw(); }, 1000);
 
-  mountPhoneUi({
+  const phone = mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
       data = next;
       clock = next.open;
+      // A project removed on the phone cannot stay highlighted in the picker.
+      if (selecting !== null && selecting !== CANCEL && !data.projects.includes(selecting)) selecting = null;
       await save(bridge, next);
       await draw();
     },
+    locale: () => locale,
+    onLocaleChange: (next) => {
+      locale = next;
+      void draw();
+    },
   });
+  refreshPhone = phone.refresh;
 }
 
+/** Moves through the projects and the trailing "Cancel" row, wrapping around. */
 function stepProject(
   projects: readonly string[],
   current: string | null,
   delta: number,
 ): string {
-  const index = current === null ? -1 : projects.indexOf(current);
-  const count = projects.length;
+  const choices = [...projects, CANCEL];
+  const index = current === null ? -1 : choices.indexOf(current);
+  const count = choices.length;
   const next = (((index + delta) % count) + count) % count;
-  return projects[next] ?? projects[0] ?? "";
+  return choices[next] ?? projects[0] ?? "";
 }
 
 function mostRecentProject(data: ClockData): string | null {

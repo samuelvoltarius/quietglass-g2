@@ -6,8 +6,24 @@
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
-  "permissions": [],
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "desc": "Optional: dictate notes through the glasses microphone. Only used when you set up your own speech server."
+    },
+    {
+      "name": "network",
+      "desc": "Optional: send dictation to the speech server you enter in the phone app.",
+      "whitelist": [
+        "http://*",
+        "https://*",
+        "ws://*",
+        "wss://*"
+      ]
+    }
+  ],
   "supported_languages": [
-    "en"
+    "en",
+    "de"
   ]
 }

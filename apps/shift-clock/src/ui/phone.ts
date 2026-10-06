@@ -3,6 +3,8 @@ import {
   totalsByProject,
 } from "../tracking/clock";
 import { addProject, removeProject, type ClockData } from "../storage/persist";
+import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
+import { defaultProject, t } from "../messages";
 
 /**
  * The phone companion: projects, the log and export. The glasses keep three
@@ -13,15 +15,27 @@ export interface PhoneUiPorts {
   /** Must already reflect a `setData` call by the time that call returns its promise. */
   readonly getData: () => ClockData;
   readonly setData: (data: ClockData) => Promise<void>;
+  /** Language shown; defaults to the device language. */
+  readonly locale?: () => Locale;
+  /** Called after the user picked another language, so the glasses follow. */
+  readonly onLocaleChange?: (locale: Locale) => void;
 }
 
-type Commit = (next: ClockData, options?: { readonly keepDraft?: boolean }) => void;
+export interface PhoneUi {
+  /** Redraws the page after a change made on the glasses. */
+  readonly refresh: () => void;
+}
 
-export function mountPhoneUi(ports: PhoneUiPorts): void {
+type Commit = (next: ClockData, options?: { readonly keepDraft?: boolean; readonly notice?: string }) => void;
+
+export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   const root = document.getElementById("app");
-  if (!root) return;
+  if (!root) return { refresh: () => undefined };
 
   let notice = "";
+  let locale: Locale = ports.locale?.() ?? getLocale();
+  /** "Clear log" asks once before it deletes every entry. */
+  let confirmClear = false;
 
   // Re-rendered after every change. Handlers always read the current data:
   // the glasses start and stop the clock while this page is open, and a change
@@ -29,27 +43,52 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   // and drop the entries recorded since.
   const render = (keepDraft = true): void => {
     const draft = keepDraft ? root.querySelector<HTMLInputElement>("#project")?.value ?? "" : "";
-    root.innerHTML = template(ports.getData(), notice);
+    root.innerHTML = template(ports.getData(), notice, locale);
     notice = "";
     const field = root.querySelector<HTMLInputElement>("#project");
     if (field && draft) field.value = draft;
-    wire(root, ports.getData, commit);
+    const notify = (message: string): void => { notice = message; render(); };
+    const askClear = (): boolean => {
+      if (confirmClear) { confirmClear = false; return true; }
+      confirmClear = true;
+      notify(t(locale, "p.clearConfirm"));
+      return false;
+    };
+    wire(root, ports.getData, commit, notify, locale, askClear);
+    root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
+      const value = (event.target as HTMLSelectElement).value;
+      if (value !== "de" && value !== "en") return;
+      locale = value;
+      setLocale(locale);
+      ports.onLocaleChange?.(locale);
+      render();
+    });
   };
 
   const commit: Commit = (next, options = {}) => {
     const saving = ports.setData(next);
+    notice = options.notice ?? "";
+    confirmClear = false;
     render(options.keepDraft ?? true);
     saving.catch((error: unknown) => {
       console.warn("[shiftclock] save failed:", error);
-      notice = "Could not save: " + (error instanceof Error ? error.message : String(error));
+      notice = t(locale, "p.saveFailed", { error: error instanceof Error ? error.message : String(error) });
       render();
     });
   };
 
   render();
+  return { refresh: () => render() };
 }
 
-function template(data: ClockData, notice: string): string {
+/** Decimal hours as people read them: "1,50" in German, "1.50" in English. */
+function hoursFor(locale: Locale, seconds: number): string {
+  const hours = formatHours(seconds);
+  return locale === "de" ? hours.replace(".", ",") : hours;
+}
+
+function template(data: ClockData, notice: string, locale: Locale): string {
+  const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const now = Date.now();
   const dayStart = startOfDay(now);
   const today = entriesOnDay(data.entries, dayStart);
@@ -57,84 +96,105 @@ function template(data: ClockData, notice: string): string {
   const todaySeconds = secondsOnDay(data.entries, dayStart);
   const totals = totalsByProject(data.entries).slice(0, 8);
   const running = data.open.project !== null;
+  const name = defaultProject(locale);
+  const timeOf = (timestamp: number): string =>
+    new Date(timestamp).toLocaleTimeString(locale === "de" ? "de-AT" : "en-GB", { hour: "2-digit", minute: "2-digit" });
+
+  let next: string;
+  if (running) next = L("p.running", { project: escapeHtml(data.open.project ?? "") });
+  else if (data.projects.length === 1) next = L("p.nextOne", { project: escapeHtml(data.projects[0] ?? "") });
+  else if (data.projects.length > 1) next = L("p.nextMany");
+  else next = L("p.nextNone", { name: escapeHtml(name) });
 
   return `
   <header class="brand">
     <span class="brand-mark">Quietglass</span>
     <h1>ShiftClock</h1>
+    <p class="hint">${L("p.lede")}</p>
   </header>
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
-  ${running ? '<p class="notice">Running: <strong>' + escapeHtml(data.open.project ?? "") + "</strong></p>" : ""}
+  <section class="card">
+    <h2>${L("p.start")}</h2>
+    <p>${next}</p>
+    ${data.projects.length === 0 ? `<button id="add-default" type="button">${L("p.addDefault", { name: escapeHtml(name) })}</button>` : ""}
+    ${languageSelect(locale)}
+  </section>
 
   <section class="card">
-    <h2>Projects</h2>
-    <label for="project">Add a project</label>
-    <input id="project" type="text" placeholder="Client, job number, task …" />
-    <button id="add" type="button">Add</button>
-    ${data.projects.length === 0 ? '<p class="hint">Add a project to start tracking on the glasses.</p>' : ""}
+    <h2>${L("p.projects")}</h2>
+    <label for="project">${L("p.addLabel")}</label>
+    <input id="project" type="text" placeholder="${L("p.addPlaceholder")}" />
+    <button id="add" type="button">${L("p.add")}</button>
     <ul class="scripts">
       ${data.projects.map((p) => `
         <li>
           <span>${escapeHtml(p)}</span>
-          <button type="button" class="remove" data-project="${escapeHtml(p)}">Remove</button>
+          <button type="button" class="remove" data-project="${escapeHtml(p)}">${L("p.remove")}</button>
         </li>`).join("")}
     </ul>
-    <p class="hint">Removing a project keeps the time already recorded against it.</p>
+    <p class="hint">${L("p.removeHint")}</p>
   </section>
 
   <section class="card">
-    <h2>Today</h2>
-    <p class="hint">
-      <strong>${formatClock(todaySeconds)}</strong>
-      (${formatHours(todaySeconds)} h) across ${today.length}
-      entr${today.length === 1 ? "y" : "ies"}.
-    </p>
+    <h2>${L("p.today")}</h2>
+    <p class="hint">${L(today.length === 1 ? "p.todayLineOne" : "p.todayLine", {
+      clock: formatClock(todaySeconds), hours: hoursFor(locale, todaySeconds), n: today.length,
+    })}</p>
     ${today.length === 0 ? "" : `
       <table class="keys">
-        ${today.map((e) => "<tr><td>" + escapeHtml(e.project) + "</td><td>" +
-            new Date(e.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) +
+        ${today.map((e) => "<tr><td>" + escapeHtml(e.project) + "</td><td>" + timeOf(e.startedAt) +
             "</td><td>" + formatClock(entrySeconds(e)) + "</td></tr>").join("")}
       </table>`}
   </section>
 
   <section class="card">
-    <h2>All time</h2>
-    ${totals.length === 0 ? '<p class="hint">Nothing recorded yet.</p>' : `
+    <h2>${L("p.allTime")}</h2>
+    ${totals.length === 0 ? `<p class="hint">${L("p.nothing")}</p>` : `
       <table class="keys">
         ${totals.map((row) => "<tr><td>" + escapeHtml(row.project) + "</td><td>" +
-            formatClock(row.seconds) + "</td><td>" + formatHours(row.seconds) + " h</td></tr>").join("")}
+            formatClock(row.seconds) + "</td><td>" + hoursFor(locale, row.seconds) + " h</td></tr>").join("")}
       </table>
-      <button id="export" type="button" class="secondary">Export CSV</button>
-      <button id="clear" type="button" class="secondary">Clear log</button>`}
+      <button id="export" type="button" class="secondary">${L("p.export")}</button>
+      <p class="hint">${L("p.exportHint")}</p>
+      <button id="clear" type="button" class="secondary">${L("p.clear")}</button>`}
   </section>
 
   <section class="card">
-    <h2>Controls on the glasses</h2>
+    <h2>${L("p.controls")}</h2>
     <table class="keys">
-      <tr><td>Tap</td><td>Stopped: choose a project, then tap to start · Running: stop</td></tr>
-      <tr><td>Swipe</td><td>Move through the project list while choosing</td></tr>
-      <tr><td>Double tap</td><td>Leave — the clock keeps running</td></tr>
+      <tr><td>${L("p.key.tap")}</td><td>${L("p.key.tapDo")}</td></tr>
+      <tr><td>${L("p.key.swipe")}</td><td>${L("p.key.swipeDo")}</td></tr>
+      <tr><td>${L("p.key.double")}</td><td>${L("p.key.doubleDo")}</td></tr>
     </table>
-    <p class="hint">
-      Leaving the app does not stop the clock. The open entry is saved and
-      resumes next time, so a disconnect or a closed app never loses time.
-      Entries under 10 seconds are discarded as fumbles.
-    </p>
+    <p class="hint">${L("p.controlsHint")}</p>
+    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+    <p class="hint">${L("p.invertHint")}</p>
   </section>
 
-  <footer class="hint">
-    ShiftClock keeps everything on this phone. No account, no sync, no server.
-  </footer>`;
+  <footer class="hint">${L("p.privacy")}</footer>`;
 }
 
-function wire(root: HTMLElement, current: () => ClockData, commit: Commit): void {
+function wire(
+  root: HTMLElement,
+  current: () => ClockData,
+  commit: Commit,
+  notify: (message: string) => void,
+  locale: Locale,
+  askClear: () => boolean,
+): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
 
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
-    const input = byId<HTMLInputElement>("project");
-    if (input?.value.trim()) commit(addProject(current(), input.value), { keepDraft: false });
+    const name = byId<HTMLInputElement>("project")?.value.trim() ?? "";
+    if (!name) { notify(t(locale, "p.nameFirst")); return; }
+    if (current().projects.includes(name)) { notify(t(locale, "p.duplicate", { name })); return; }
+    commit(addProject(current(), name), { keepDraft: false });
+  });
+
+  byId<HTMLButtonElement>("add-default")?.addEventListener("click", () => {
+    commit(addProject(current(), defaultProject(locale)));
   });
 
   root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
@@ -145,11 +205,15 @@ function wire(root: HTMLElement, current: () => ClockData, commit: Commit): void
   });
 
   byId<HTMLButtonElement>("export")?.addEventListener("click", () => {
-    download("shiftclock.csv", toCsv(current().entries), "text/csv");
+    download("shiftclock.csv", toCsv(current().entries, locale), "text/csv");
   });
 
   byId<HTMLButtonElement>("clear")?.addEventListener("click", () => {
-    commit({ ...current(), entries: [] });
+    if (askClear()) commit({ ...current(), entries: [] }, { notice: t(locale, "p.cleared") });
+  });
+
+  byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
+    commit({ ...current(), invertScroll: (event.target as HTMLInputElement).checked });
   });
 }
 

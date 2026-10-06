@@ -51,6 +51,8 @@ async function boot(fake: Fake): Promise<FakeRoot> {
   const root = fakeRoot();
   vi.stubGlobal("document", { getElementById: () => root });
   vi.stubGlobal("location", { search: "" });
+  // The app follows the device language; these tests read the English copy.
+  vi.stubGlobal("navigator", { language: "en-US" });
   harness.bridge = fake.bridge;
   vi.resetModules();
   await import("../src/main");
@@ -212,5 +214,75 @@ describe("fieldlog lifecycle", () => {
     fake.emit(2);
     await sleep(20);
     expect(fake.bridge.setLocalStorage).toHaveBeenCalled();
+  });
+});
+
+describe("fieldlog without a speech server", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const storedEntries = (fake: Fake): Array<{ text: string; attachment?: unknown }> => {
+    const calls = fake.bridge.setLocalStorage.mock.calls;
+    const last = calls[calls.length - 1]?.[1] ?? "{}";
+    const saved = JSON.parse(last) as { inspections?: Array<{ entries: Array<{ text: string; attachment?: unknown }> }> };
+    return saved.inspections?.[0]?.entries ?? [];
+  };
+
+  it("first run: a tap starts an inspection, the next picks and files a quick note", async () => {
+    const fake = fakeBridge(null);
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("No entries yet."));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> OK"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Damaged"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("next entry"));
+    expect(lastBody(fake)).toContain("Damaged");
+    expect(lastBody(fake)).not.toContain(">");
+    await vi.waitFor(() => expect(storedEntries(fake).map((e) => e.text)).toEqual(["Damaged"]));
+    // No server: the microphone is never touched.
+    expect(fake.bridge.audioControl).not.toHaveBeenCalled();
+  });
+
+  it("cancel leaves the list without filing anything", async () => {
+    const fake = fakeBridge(data(""));
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> OK"));
+    fake.emit(1);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Cancel"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("No entries yet."));
+  });
+
+  it("a photo with no entry yet becomes an entry of its own", async () => {
+    const fake = fakeBridge(data(""));
+    fake.bridge.captureImageFromCamera.mockResolvedValue({ base64: "AAAA", mimeType: "image/jpeg", size: 3 } as never);
+    await boot(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(storedEntries(fake)).toHaveLength(1));
+    expect(storedEntries(fake)[0]!.text).toBe("Photo");
+    expect(storedEntries(fake)[0]!.attachment).toBeDefined();
+  });
+
+  it("switches the glasses to German from the phone page", async () => {
+    const fake = fakeBridge(data(""));
+    const root = await boot(fake);
+    await vi.waitFor(() => expect(lastBody(fake) || "No entries yet.").toContain("No entries yet."));
+    root.get("#language").value = "de";
+    root.get("#language").fire("change");
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Noch keine Einträge."));
+    expect(root.innerHTML).toContain("Rundgang läuft");
+  });
+
+  it("an unreachable speech server says what to do", async () => {
+    vi.stubGlobal("WebSocket", class { constructor() { throw new Error("blocked"); } });
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Speech server not reachable."));
+    expect(lastBody(fake)).toContain("(Advanced)");
   });
 });

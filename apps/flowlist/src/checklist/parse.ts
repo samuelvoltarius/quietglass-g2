@@ -1,4 +1,6 @@
 import { danglingJumps, type Checklist, type Choice, type Step, type StepKind } from "./model";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Two import formats.
@@ -26,7 +28,7 @@ const INDENTED = /^\s{2,}\S/;
  * - a trailing `(optional)` makes it skippable, `(!)` makes it critical
  * - an indented line under a step becomes that step's detail text
  */
-export function parseMarkdown(raw: string, id = "imported"): ParseResult {
+export function parseMarkdown(raw: string, id = "imported", locale: Locale = "en"): ParseResult {
   const warnings: string[] = [];
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
 
@@ -66,7 +68,7 @@ export function parseMarkdown(raw: string, id = "imported"): ParseResult {
 
     const marked = readMarkers(body.trim());
     if (!marked.text) {
-      warnings.push("Skipped a step with no text.");
+      warnings.push(t(locale, "w.noText"));
       continue;
     }
 
@@ -78,10 +80,10 @@ export function parseMarkdown(raw: string, id = "imported"): ParseResult {
     });
   }
 
-  if (steps.length === 0) warnings.push("No steps found.");
+  if (steps.length === 0) warnings.push(t(locale, "w.noSteps"));
 
   return {
-    checklist: { id, title: title || "Untitled checklist", steps },
+    checklist: { id, title: title || t(locale, "untitled"), steps },
     warnings,
   };
 }
@@ -105,13 +107,13 @@ function readMarkers(body: string): { text: string; kind: StepKind } {
  * The shareable pack format. Unknown fields are ignored, so a pack written for
  * a newer FlowList still loads in an older one.
  */
-export function parsePack(raw: string): ParseResult {
+export function parsePack(raw: string, locale: Locale = "en"): ParseResult {
   const warnings: string[] = [];
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
-    return { checklist: { id: "", title: "", steps: [] }, warnings: ["Not valid JSON."] };
+    return { checklist: { id: "", title: "", steps: [] }, warnings: [t(locale, "w.badJson")] };
   }
 
   const root = (value ?? {}) as Record<string, unknown>;
@@ -122,7 +124,7 @@ export function parsePack(raw: string): ParseResult {
     const s = (candidate ?? {}) as Record<string, unknown>;
     const text = typeof s["text"] === "string" ? s["text"].trim() : "";
     if (!text) {
-      warnings.push("Step " + (index + 1) + " has no text and was dropped.");
+      warnings.push(t(locale, "w.dropped", { n: index + 1 }));
       return;
     }
 
@@ -139,17 +141,17 @@ export function parsePack(raw: string): ParseResult {
     });
   });
 
-  if (steps.length === 0) warnings.push("No steps found.");
+  if (steps.length === 0) warnings.push(t(locale, "w.noSteps"));
 
   const checklist: Checklist = {
     id: typeof root["id"] === "string" ? root["id"] : "imported",
-    title: typeof root["title"] === "string" ? root["title"] : "Untitled checklist",
+    title: typeof root["title"] === "string" ? root["title"] : t(locale, "untitled"),
     steps,
     ...(typeof root["description"] === "string" ? { description: root["description"] } : {}),
   };
 
   for (const target of danglingJumps(checklist)) {
-    warnings.push('A step jumps to "' + target + '", which does not exist.');
+    warnings.push(t(locale, "w.dangling", { target }));
   }
 
   return { checklist, warnings };

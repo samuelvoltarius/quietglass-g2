@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mountPhoneUi } from "../src/ui/phone";
-import { EMPTY_DATA, type FlowListData } from "../src/storage/persist";
+import { EMPTY_DATA, firstRunData, type FlowListData } from "../src/storage/persist";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
 
 function mount(initial: FlowListData = EMPTY_DATA, save?: () => Promise<void>) {
   const root = fakeRoot();
   vi.stubGlobal("document", { getElementById: () => root });
+  // The page follows the device language; these tests read the English copy.
+  vi.stubGlobal("navigator", { language: "en-US" });
   let data = initial;
   const setData = vi.fn(async (next: FlowListData) => {
     data = next;
@@ -82,5 +84,55 @@ describe("phone page warnings", () => {
     addList(page.root, JSON.stringify({ title: "Pack", steps: [{ text: "a" }, { text: "" }] }));
     expect(page.data().lists).toHaveLength(1);
     expect(page.root.innerHTML).toContain("Step 2 has no text");
+  });
+});
+
+describe("phone page for beginners", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function mountIn(language: string, initial: FlowListData = EMPTY_DATA) {
+    const root = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("navigator", { language });
+    let data = initial;
+    const onLocaleChange = vi.fn();
+    mountPhoneUi({ getData: () => data, setData: async (next) => { data = next; }, onLocaleChange });
+    return { root, data: () => data, onLocaleChange };
+  }
+
+  it("follows the device language and says what to do first", () => {
+    const page = mountIn("de-AT", firstRunData("de"));
+    expect(page.root.innerHTML).toContain("Gerade auf der Brille: <b>Haus verlassen</b>");
+    expect(page.root.innerHTML).toContain("Tipp an die Brille, um einen Schritt");
+    expect(page.root.innerHTML).toContain('<option value="de" selected>');
+  });
+
+  it("switches language from the picker and tells the glasses", () => {
+    const page = mountIn("de-AT", firstRunData("de"));
+    page.root.get("#language").value = "en";
+    page.root.get("#language").fire("change");
+    expect(page.onLocaleChange).toHaveBeenCalledWith("en");
+    expect(page.root.innerHTML).toContain("On your glasses now");
+  });
+
+  it("explains an empty box instead of doing nothing", () => {
+    const page = mountIn("de-AT");
+    page.root.get("#add").fire("click");
+    expect(page.root.innerHTML).toContain("Schreib zuerst mindestens einen Schritt");
+  });
+
+  it("explains text it cannot read", () => {
+    const page = mountIn("de-AT");
+    page.root.get("#source").value = "nur ein Satz";
+    page.root.get("#add").fire("click");
+    expect(page.root.innerHTML).toContain("Schreib jeden Schritt in eine eigene Zeile");
+  });
+
+  it("with no lists, offers the examples and adds them on one tap", () => {
+    const page = mountIn("de-AT");
+    expect(page.root.innerHTML).toContain("Noch keine Checkliste");
+    page.root.get("#samples").fire("click");
+    expect(page.data().lists.map((l) => l.title)).toEqual(["Haus verlassen", "Reise packen"]);
+    expect(page.root.querySelector("#samples")).toBeNull();
   });
 });

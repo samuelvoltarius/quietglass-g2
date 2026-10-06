@@ -1,3 +1,6 @@
+import type { Locale } from "../i18n";
+import { t } from "../messages";
+
 /**
  * Time tracking.
  *
@@ -168,9 +171,14 @@ export function formatHours(totalSecs: number): string {
   return (Math.max(0, totalSecs) / 3600).toFixed(2);
 }
 
-/** CSV for a spreadsheet or an invoice. */
-export function toCsv(entries: readonly TimeEntry[]): string {
-  const rows = [["date", "project", "start", "end", "seconds", "hours"].join(",")];
+/**
+ * CSV for a spreadsheet or an invoice. Machine-readable in every language:
+ * comma-separated, UTF-8, RFC 4180 quoting, start/end as ISO 8601 in UTC, the
+ * date as the local YYYY-MM-DD, and hours with a decimal point ("1.50"). Only
+ * the header row follows the app language.
+ */
+export function toCsv(entries: readonly TimeEntry[], locale: Locale = "en"): string {
+  const rows = [t(locale, "x.csvHeader")];
   for (const entry of entries) {
     const start = new Date(entry.startedAt);
     rows.push([

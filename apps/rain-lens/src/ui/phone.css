@@ -137,3 +137,10 @@ footer.hint { text-align: center; padding: 8px 0 24px; }
   .forecast-list > div { grid-template-columns: 48px 1fr auto; }
   .forecast-list small { display: none; }
 }
+
+/* Beginner pass: the one sentence that says what to do next, place results, the advanced drawer. */
+.next { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: var(--soft); border-left: 3px solid var(--accent); font-weight: 600; }
+.place-list { display: grid; gap: 8px; margin-top: 12px; }
+.place-list button.place { margin: 0; text-align: left; background: var(--soft); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+details.advanced summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.credits { margin: 8px 0 24px; color: var(--muted); font-size: 12px; text-align: center; }

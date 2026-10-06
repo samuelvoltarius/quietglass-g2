@@ -2,6 +2,20 @@
 
 **Quietglass** · Hands-free time tracking for Even Realities G2.
 
+> **Auf Deutsch, kurz:** ShiftClock misst deine Arbeitszeit mit einem Tippen an der
+> Brille – starten, stoppen, fertig. Die laufende Zeit und die Tagessumme siehst du
+> direkt im Blickfeld. Kein Server, kein Konto, kein Internet nötig. Deutsch oder
+> Englisch, je nach Handy-Sprache (umstellbar auf der Handy-Seite).
+>
+> **In 3 Schritten loslegen**
+> 1. ShiftClock installieren und auf der Brille öffnen.
+> 2. Das Projekt „Arbeit“ ist schon angelegt – tipp an die Brille, die Zeit läuft.
+> 3. Nochmal tippen stoppt. Weitere Projekte (Kunden, Aufträge) legst du am Handy
+>    an; dann wählst du mit Wischen und startest mit Tippen.
+>
+> Verlassen (doppeltippen) stoppt die Zeit **nicht**. Am Handy siehst du den Tag
+> und exportierst eine CSV-Tabelle.
+
 A compact pixel clock separates the running timer visually from project and history text.
 
 For a non-persistent simulator showcase, open the development URL with `?demo=1`.
@@ -57,12 +71,19 @@ new one's start time are the same number.
 
 | Gesture | Stopped | Running |
 |---|---|---|
-| **Tap** | Open the project picker, then start | Stop |
-| **Swipe** | Move through the projects | — |
+| **Tap** | Start the only project · or open the picker, then start | Stop |
+| **Swipe** | Move through the projects (last row: *Cancel*) | — |
 | **Double tap** | Leave (clock keeps running) | Leave (clock keeps running) |
 
 The picker opens on your **most recently used project**, which is nearly always
-the one you want again.
+the one you want again. With just one project there is no picker: the tap
+starts it.
+
+## First run
+
+One project — "Work" (German: "Arbeit") — is ready on first run, so the very
+first tap starts the clock. If every project has been removed, the glasses say
+so and one tap creates it again; the phone page has the same one-tap button.
 
 The **R1 ring** works the same as the temple pads.
 
@@ -71,13 +92,28 @@ The **R1 ring** works the same as the temple pads.
 CSV with date, project, start, end, seconds and **decimal hours** — the unit
 invoices use, so the file goes straight into a spreadsheet.
 
+The format is the same in every language, so it stays machine-readable: comma
+between fields, UTF-8, RFC 4180 quoting, `date` as the local `YYYY-MM-DD`,
+`start`/`end` as ISO 8601 in UTC, and hours with a **decimal point** (`1.50`),
+even in German. Only the header row follows the app language
+(`Datum,Projekt,Beginn,Ende,Sekunden,Stunden`). German Excel expects `;` and a
+decimal comma — import via *Data → From Text/CSV* and choose comma as the
+separator and "English (US)" as the locale. The phone page itself shows German
+hours with a comma (`1,50 h`).
+
+## Language
+
+German and English, following the phone's language (English otherwise), with a
+picker on the phone page. Every glasses string is tested against its row: 46
+characters in the header and footer, 38 beside the pixel icon.
+
 ## Install
 
 ```bash
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5194
 npm run build      # typecheck + production bundle
-npm test           # 40 unit tests
+npm test           # 85 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
