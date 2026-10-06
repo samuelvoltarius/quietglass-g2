@@ -1,6 +1,8 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { LatLng } from "../geo/geometry";
-import type { TravelMode } from "../routing/provider";
+import { DEFAULT_ROUTER_URL, type TravelMode } from "../routing/provider";
+import { DEFAULT_GEOCODER_URL } from "../geocode/photon";
+import type { GlassLayout } from "../glasses/view";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -16,8 +18,17 @@ export interface Destination {
 }
 
 export interface NavData {
-  /** Base URL of a Valhalla instance. Empty uses the mock router. */
+  /**
+   * Base URL of a Valhalla instance. Empty uses the free public FOSSGIS
+   * server, so OpenGlance routes right after install with nothing to host.
+   */
   readonly valhallaUrl: string;
+  /** Base URL of a Photon instance for place search. Empty uses photon.komoot.io. */
+  readonly geocoderUrl: string;
+  /** Demonstration route instead of real routing; nothing leaves the device. */
+  readonly demo: boolean;
+  /** Next-turn arrow or overview map on the glasses; swipe switches. */
+  readonly glassView: GlassLayout;
   readonly mode: TravelMode;
   /** Saved places, so a destination can be picked without typing in the field. */
   readonly places: readonly Destination[];
@@ -30,14 +41,27 @@ const KEY = "quietglass.openglance.v1";
 
 export const EMPTY_DATA: NavData = {
   valhallaUrl: "",
-  mode: "driving",
+  geocoderUrl: "",
+  demo: false,
+  glassView: "turns",
+  // Walking is the safe default: on foot, glancing at the glasses is fine.
+  mode: "walking",
   places: [],
   destinationId: null,
   invertScroll: false,
 };
 
 export function usesMockRouter(data: NavData): boolean {
-  return data.valhallaUrl.trim() === "";
+  return data.demo;
+}
+
+/** The router actually used: the user's own, or the public default. */
+export function routerUrlOf(data: NavData): string {
+  return data.valhallaUrl.trim() || DEFAULT_ROUTER_URL;
+}
+
+export function geocoderUrlOf(data: NavData): string {
+  return data.geocoderUrl.trim() || DEFAULT_GEOCODER_URL;
 }
 
 export function destinationOf(data: NavData): Destination | null {
@@ -71,7 +95,7 @@ export interface Check {
 
 export function validateRouterUrl(url: string): Check {
   const trimmed = url.trim();
-  if (!trimmed) return { valid: true, errors: [] };   // empty means mock
+  if (!trimmed) return { valid: true, errors: [] };   // empty means the public default
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -123,10 +147,9 @@ export function parseData(raw: string): NavData {
       }
     }
 
-    const valhallaUrl = typeof value.valhallaUrl === "string"
-      && validateRouterUrl(value.valhallaUrl).valid
-      ? value.valhallaUrl.trim()
-      : "";
+    const url = (candidate: unknown): string =>
+      typeof candidate === "string" && validateRouterUrl(candidate).valid ? candidate.trim() : "";
+    const valhallaUrl = url(value.valhallaUrl);
 
     const destinationId = typeof value.destinationId === "string"
       && places.some((p) => p.id === value.destinationId)
@@ -135,6 +158,9 @@ export function parseData(raw: string): NavData {
 
     return {
       valhallaUrl,
+      geocoderUrl: url(value.geocoderUrl),
+      demo: value.demo === true,
+      glassView: value.glassView === "overview" ? "overview" : "turns",
       mode: isMode(value.mode) ? value.mode : EMPTY_DATA.mode,
       places,
       destinationId,

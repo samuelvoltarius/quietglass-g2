@@ -9,6 +9,7 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
 }));
 // Canvas is unavailable in node; the arrow bitmap is not what these tests are about.
 vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8Array([1]) }));
+vi.mock("../src/overview/draw", () => ({ renderRoutePng: async () => new Uint8Array([2]) }));
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as {
@@ -61,10 +62,14 @@ function valhalla(street: string): unknown {
 // promises, which would hide exactly the rejections these tests look for.
 function fakeBridge() {
   let onEvent: ((event: unknown) => void) | undefined;
-  const state = { locationStarts: 0, shutdowns: 0, shutdownFails: false, draws: 0, body: "" };
+  const state = {
+    locationStarts: 0, shutdowns: 0, shutdownFails: false, draws: 0, body: "", header: "",
+    noFix: false, pages: [] as string[], images: [] as string[], saved: "",
+  };
   const record = (id: number | undefined, content: string | undefined): void => {
     state.draws += 1;
     if (id === 2) state.body = content ?? "";
+    if (id === 1) state.header = content ?? "";
   };
   const bridge = {
     getLocalStorage: async () => JSON.stringify({
@@ -72,9 +77,10 @@ function fakeBridge() {
       places: [{ id: "p1", label: "Office", at: { lat: START.lat + 0.004, lon: START.lon } }],
       destinationId: "p1",
     }),
-    setLocalStorage: async () => true,
+    setLocalStorage: async (_key: string, value: string) => { state.saved = value; return true; },
     rebuildPageContainer: async () => false,
-    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
+      state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return 0;
     },
@@ -82,10 +88,10 @@ function fakeBridge() {
       record(upgrade.containerID, upgrade.content);
       return true;
     },
-    updateImageRawData: async () => "success",
+    updateImageRawData: async (update: { containerName?: string }) => { state.images.push(update.containerName ?? ""); return "success"; },
     startAppLocationUpdates: async () => { state.locationStarts += 1; return true; },
     stopAppLocationUpdates: async () => true,
-    getAppLocation: async () => ({ latitude: START.lat, longitude: START.lon }),
+    getAppLocation: async () => (state.noFix ? null : { latitude: START.lat, longitude: START.lon }),
     shutDownPageContainer: (): Promise<boolean> => {
       state.shutdowns += 1;
       return state.shutdownFails ? Promise.reject(new Error("page already gone")) : Promise.resolve(true);
@@ -102,6 +108,7 @@ function fakeBridge() {
 }
 
 const TAP = 0;
+const SWIPE = 1;
 const DOUBLE_TAP = 3;
 const HOLD = 9;
 
@@ -115,6 +122,10 @@ describe("openglance lifecycle", () => {
     replies = [];
     nodeProcess.on("unhandledRejection", onUnhandled);
     vi.stubGlobal("location", { search: "" });
+    // The glasses text follows the device language; pin it so assertions
+    // do not depend on the machine running the tests.
+    vi.stubGlobal("navigator", { language: "en-US", onLine: true });
+    vi.stubGlobal("localStorage", undefined);
     vi.stubGlobal("document", { getElementById: () => null });
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => {
       replies.push((body) => resolve(new Response(JSON.stringify(body), { status: 200 })));
@@ -148,7 +159,8 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     fake.gesture(TAP);
-    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    // The second request waits out the one-per-second limit of the public router.
+    await vi.waitFor(() => expect(replies).toHaveLength(2), { timeout: 3000 });
 
     replies[1]?.(valhalla("New Street"));
     await vi.waitFor(() => expect(fake.state.body).toContain("New Street"));
@@ -169,7 +181,8 @@ describe("openglance lifecycle", () => {
     await settle();
     replies[0]?.(valhalla("Late Street"));
     await settle();
-    expect(fake.state.body).toContain("No route.");
+    // Idle again, with the destination still chosen and ready to restart.
+    expect(fake.state.body).toContain("Tap to start.");
     expect(fake.state.body).not.toContain("Late Street");
   });
 
@@ -187,7 +200,7 @@ describe("openglance lifecycle", () => {
     await settle();
     const before = fake.state.locationStarts;
     fake.gesture(TAP);
-    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    await vi.waitFor(() => expect(replies).toHaveLength(2), { timeout: 3000 });
     expect(fake.state.locationStarts).toBeGreaterThan(before);
   });
 
@@ -211,5 +224,46 @@ describe("openglance lifecycle", () => {
     await vi.advanceTimersByTimeAsync(10000);
     expect(fake.state.draws).toBe(drawsAtClose);
     expect(replies).toHaveLength(1);
+  });
+  it("switches to the overview map on a swipe, and back", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(valhalla("Map Street"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Map Street"));
+
+    fake.gesture(SWIPE);
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("overview-map"));
+    await vi.waitFor(() => expect(fake.state.images).toContain("overview-map"));
+    expect(fake.state.header).toBe("Overview");
+    expect(fake.state.body).toContain("Map Street");
+    // The choice is remembered for next time.
+    expect(JSON.parse(fake.state.saved).glassView).toBe("overview");
+
+    fake.gesture(SWIPE);
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("pixel-icon"));
+    // Switching views is local: it never asks the router again.
+    expect(replies).toHaveLength(1);
+  });
+
+  it("says in plain German that there is no GPS, without asking the router", async () => {
+    vi.stubGlobal("navigator", { language: "de-DE", onLine: true });
+    const fake = fakeBridge();
+    fake.state.noFix = true;
+    await boot(fake);
+    expect(fake.state.body).toContain("Ziel: Office");
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Kein GPS — geh ins Freie"));
+    expect(replies).toHaveLength(0);
+  });
+
+  it("says there is no connection when the phone is offline", async () => {
+    vi.stubGlobal("navigator", { language: "en-US", onLine: false });
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("No connection"));
+    expect(replies).toHaveLength(0);
   });
 });

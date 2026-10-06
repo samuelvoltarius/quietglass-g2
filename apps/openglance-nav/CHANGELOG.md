@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.4.0] — 2026-10-06
+
+Works right after install, for anyone. Map Glass is merged in.
+
+### Added
+- Routes through the free public OpenStreetMap routing server of FOSSGIS e.V.
+  (`valhalla1.openstreetmap.de`) when no server is entered — nothing to host.
+  Its terms are kept: at most one request per second, automatic reroutes at
+  least 15 s apart, an `X-Client-Id`, attribution with a fix-the-map link.
+- Place search by name or address via Photon (`photon.komoot.io`), on an
+  explicit Search only, with a cache and a rounded position bias. "Go here"
+  saves the result and selects it in one step.
+- Overview map on the glasses, ported from Map Glass with its projection
+  fixes (uniform scale, centring, antimeridian) and tests. Swipe switches
+  between the turn arrow and the overview; the choice is remembered.
+- German and English, following the device language, with real umlauts.
+- Plain error messages: no GPS, no connection, server busy, no way found,
+  too far for the chosen way of travel.
+- First-run guidance on phone and glasses; travel choice as words and icons.
+
+### Changed
+- An empty router address now means the public server, not the mock. The
+  demonstration route is a separate switch under Advanced and is labelled
+  `DEMO` (was `MOCK`).
+- Walking is the default way of travel.
+- Server addresses, demo route, coordinates and swipe direction moved under
+  "Advanced". `app.json` now declares the network and location permissions.
+
 ## [0.3.0] — 2026-10-05
 
 - Replaced the ambiguous fixed pixel symbol with large manoeuvre-specific

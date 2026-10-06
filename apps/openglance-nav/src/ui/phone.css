@@ -105,3 +105,34 @@ button.remove {
 .notice { margin: 0 0 16px; padding: 10px 14px; background: var(--card); border: 1px solid var(--accent); border-radius: 10px; font-size: 14px; }
 small { color: var(--muted); font-size: 12px; word-break: break-all; }
 small.warn { color: #e0a33e; }
+
+/* Beginner flow: steps, travel choice, collapsible advanced sections. */
+.card h3 { margin: 18px 0 4px; font-size: 14px; color: var(--muted); font-weight: 600; }
+.steps { margin: 0; padding-left: 20px; }
+.steps li { margin: 4px 0; }
+.card.ready { border-color: var(--accent); }
+.card.ready p { margin: 0; }
+.notice.warn { border-color: #e0a33e; }
+.hint.error { color: #e05d5d; }
+input[type="search"] {
+  width: 100%; padding: 10px 12px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px;
+  font: inherit;
+}
+button:disabled { opacity: 0.6; cursor: default; }
+button.pick { margin: 0; padding: 6px 12px; font-size: 14px; }
+.choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.choice {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin: 0; padding: 12px 6px; border: 1px solid var(--line); border-radius: 12px;
+  color: var(--text); cursor: pointer; text-align: center;
+}
+.choice:has(input:checked) { border-color: var(--accent); }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice .icon { font-size: 28px; line-height: 1; }
+details summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+details[open] summary { margin-bottom: 8px; }
+.card details { margin-top: 14px; }
+footer.hint p { margin: 6px 0; }
+footer.hint a { color: var(--muted); }

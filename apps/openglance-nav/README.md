@@ -1,16 +1,31 @@
 # OpenGlance Navigation
 
-**Quietglass** · Turn-by-turn navigation on OpenStreetMap data. No Mapbox, no API key.
+**Quietglass** · Turn-by-turn navigation on OpenStreetMap data. No Mapbox, no API key,
+nothing to host.
 
-A large high-contrast pixel arrow now changes with every manoeuvre: left,
-right, straight, U-turn, roundabout, or arrival. It is the primary visual cue;
-the smaller text arrow remains as a redundant accessibility fallback.
+## Works right after install
 
-For a non-persistent mock route in the simulator, open the development URL with `?demo=1`.
+1. Open OpenGlance on the phone and **search for your destination** by name
+   ("Mirabellplatz Salzburg"), then tap **Go here**.
+2. Choose **On foot**, **Bike** or **Car**.
+3. **Tap** the side of your glasses. That's it.
 
-Every navigation app found for the Even G2 routes through Mapbox or another
-proprietary service — an account, a key, a quota. OpenGlance targets
-**Valhalla** on OpenStreetMap data, which you can host yourself.
+No account, no key, no server of your own. Routes come from the free public
+OpenStreetMap routing server run by FOSSGIS e.V., place search from the free
+public Photon server by komoot. The phone page and the glasses follow the
+device language — **German and English** — and say what is wrong in plain
+words: *"Kein GPS — geh ins Freie"*, *"Keine Verbindung"*, *"Kein Weg zum Ziel
+gefunden"*.
+
+Running your own servers is still one field away — see
+[Advanced: your own servers](#advanced-your-own-servers).
+
+A large high-contrast pixel arrow changes with every manoeuvre: left, right,
+straight, U-turn, roundabout, or arrival. It is the primary visual cue; the
+smaller text arrow remains as a redundant accessibility fallback.
+
+For a non-persistent demo route in the simulator, open the development URL
+with `?demo=1`, or switch on **Advanced → Demo route** on the phone.
 
 ---
 
@@ -34,12 +49,28 @@ decoration** — there is a test asserting the footer is empty in driving mode,
 so it cannot creep back in.
 
 Walking and cycling add the remaining distance and arrival time, because
-glancing at them on foot is safe.
+glancing at them on foot is safe. Walking is the default.
+
+## Two views: next turn, or the whole route
+
+**Swipe** on the glasses to switch between the turn arrow and an **overview
+map** — the whole route as a high-contrast picture with your position (ringed
+dot), the next turn (ring), the destination (square) and north. Three lines of
+turn text stay below the map. The choice is remembered and can also be picked
+on the phone.
+
+The overview comes from Map Glass, which has been merged into OpenGlance. Its
+projection keeps one scale for both axes (turns keep their real angles),
+centres straight routes instead of pinning them to an edge, and keeps routes
+across the antimeridian in one piece — those fixes and their tests came along.
+The faint diagonal lines behind the route are texture, **not real streets**.
 
 ## Rerouting is automatic
 
 A driver should not have to ask. Three consecutive fixes more than 40 m from
-the route trigger a new one.
+the route trigger a new one — at most once every 15 seconds, so someone
+standing beside the route does not hammer a free public server. A tap reroutes
+at once.
 
 The count matters: a single noisy GPS fix must not throw away a valid route, so
 one stray reading is ignored and the counter resets the moment you are back on
@@ -50,12 +81,42 @@ course. Both behaviours are pinned by tests.
 | | |
 |---|---|
 | **Position** | `getAppLocation` / `onAppLocationChanged` from the phone, with a 5 m distance filter so a stationary phone does not drain itself |
-| **Routing** | Valhalla `/route`, costing `auto` · `bicycle` · `pedestrian` |
+| **Routing** | Valhalla `/route`, costing `auto` · `bicycle` · `pedestrian`; default `https://valhalla1.openstreetmap.de` (FOSSGIS e.V.) |
+| **Place search** | Photon `/api/`; default `https://photon.komoot.io` (komoot) |
 | **Geometry** | Encoded polyline at **precision 6** |
 
 > The precision-6 detail is worth stating: Valhalla encodes at 6, while Google
 > and OSRM use 5. Getting it wrong misplaces the entire route by a factor of
 > ten with no error raised anywhere. There is a test asserting the ratio.
+
+## Public servers, and keeping to their rules
+
+Checked on 2026-10-06 by reading the terms and by calling the servers with an
+`Origin` header:
+
+| Server | Terms | WebView (CORS) | What OpenGlance does |
+|---|---|---|---|
+| `valhalla1.openstreetmap.de` (FOSSGIS e.V.) | [Nutzungsbedingungen](https://www.fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen/): max. **1 request per second**; OSM attribution with a *fix the map* link; identifiable client; no high-traffic sites, commercial use only if not a substantial part of the offering; URL should not be hard-coded; no availability guarantee | `Access-Control-Allow-Origin: *`; preflight allows `Content-Type` and `X-Client-Id` | ≥ 1.1 s between requests (quick taps are queued, not dropped); automatic reroutes ≥ 15 s apart; never polls; sends `X-Client-Id: quietglass-openglance` because a WebView cannot set its User-Agent; attribution and fix-the-map link on the phone page; address editable under Advanced |
+| `photon.komoot.io` (komoot) | [photon.komoot.io](https://photon.komoot.io/): free, "please be fair", heavy use is throttled | `Access-Control-Allow-Origin: *` | searches only on **Search** or Enter, never while typing; a repeated query is answered from memory; ≥ 1 s between searches; position bias rounded to about 1 km |
+
+**Not used:** Nominatim. Its [usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+forbids client-side autocomplete, requires an identifying User-Agent (which a
+WebView cannot set) and asks apps to proxy requests. The OSRM demo server
+(`router.project-osrm.org`) also answers with CORS, but is for non-commercial
+use at 1 request per second and does not give Valhalla's instructions and
+street names, so it was not needed as a fallback.
+
+The public Valhalla server caps walking routes at 100 km; OpenGlance then says
+*"Too far for this way of travel"*.
+
+### Attribution
+
+The phone page shows, as both services' terms require:
+
+> Map data © OpenStreetMap contributors (ODbL) · report a map error ·
+> Routes: FOSSGIS e.V. · Valhalla · Search: Photon by komoot
+
+With your own servers entered, the provider line names them instead.
 
 ## Progress is measured along the route
 
@@ -66,7 +127,18 @@ proximity alone announces the wrong turn.
 Positions are projected onto the route line, and both the distance to the next
 manoeuvre and the distance remaining are measured along that line.
 
-## Setting up a router
+## Destinations
+
+Search by address or place name; **Go here** saves the result and makes it the
+destination in one step. Saved places stay on the phone for next time. **Save
+my current position** remembers where you are (the car, the hotel).
+Coordinates can still be typed under *Enter coordinates instead*.
+
+## Advanced: your own servers
+
+Everything a beginner never needs sits under **Advanced** on the phone page:
+the routing server, the place-search server, the demo route, reversed swipe
+direction and the language.
 
 Any Valhalla instance works. Self-hosted, using a community image:
 
@@ -75,23 +147,25 @@ docker run -p 8002:8002 -v "$(pwd)/custom_files:/custom_files" \
   ghcr.io/gis-ops/docker-valhalla/valhalla:latest
 ```
 
-Then enter `http://your-host:8002` in the phone app. No key, no account.
+Then enter `http://your-host:8002` as the routing server. No key, no account.
+Your server must answer the WebView's CORS preflight
+(`Access-Control-Allow-Origin`, `Content-Type` allowed); OpenGlance sends it no
+extra headers.
 
-Leave the URL empty and a **mock router** runs: a fixed demonstration route that
-exercises the whole pipeline, labelled `MOCK` on the glasses so it can never be
-mistaken for real navigation.
+Photon self-hosts the same way (see [komoot/photon](https://github.com/komoot/photon));
+enter its base URL as the place-search server. Empty either field to return to
+the public default.
 
-## Destinations
-
-Coordinates or saved places — not a search box. Geocoding would mean relying on
-a third service, and the point of OpenGlance is that every piece can be yours.
-Copy coordinates from any map, or save your current position with one button.
+The **demo route** is a fixed made-up route that exercises the whole pipeline
+without any network; the glasses mark it `DEMO` so it can never be mistaken for
+real navigation.
 
 ## Controls
 
 | Gesture | Effect |
 |---|---|
 | **Tap** | Start navigating · retry after an error · reroute when off route |
+| **Swipe** (either way) | Switch between next turn and overview map |
 | **Hold** | Stop navigating |
 | **Double tap** | Leave OpenGlance |
 
@@ -101,7 +175,7 @@ Copy coordinates from any map, or save your current position with one button.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5199
 npm run build      # typecheck + production bundle
-npm test           # 68 unit tests
+npm test           # 166 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -111,8 +185,10 @@ Your position is used to route and **is never stored**. No position history is
 written anywhere — where a person has been is among the most sensitive data a
 device holds, and this app has no reason to keep it.
 
-Coordinates are sent only to the routing server **you** configure. With the
-mock router, nothing leaves the device at all.
+Your position and destination go only to the routing server (the public
+FOSSGIS one unless you enter your own) when a route is calculated. A place
+search sends the words you typed and an area rounded to about a kilometre to
+the search server. With the demo route, nothing leaves the device at all.
 
 See [docs/PRIVACY.md](docs/PRIVACY.md).
 
@@ -120,9 +196,9 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Limitation | Detail |
 |---|---|
-| **No map** | Text and an arrow only. The G2 renders 576 × 288 monochrome; a legible map is not possible, and a glanceable instruction is more useful anyway. |
-| No geocoding | Destinations are coordinates or saved places, by design. |
-| Valhalla only | OSRM and GraphHopper fit the provider interface but are not implemented in 0.1.0. |
+| **Public servers, no guarantee** | FOSSGIS and komoot run them for free on single servers and may change terms or switch them off at any time. If OpenGlance became popular enough to matter to them, a self-hosted or sponsored server would be the right answer. |
+| Overview is a sketch | It shows the route's shape, not a street map; the 576 × 288 monochrome display cannot carry a legible map. |
+| Long walks | The public server caps walking routes at 100 km. |
 | No lane guidance | Valhalla supplies some; it is not displayed yet. |
 | No speed or speed limits | Not shown. |
 | **Not verified on hardware** | Built and tested against SDK 0.0.16. The simulator supplies no GPS, so the position pipeline is covered by unit tests with synthetic fixes rather than by a real drive. |
@@ -131,7 +207,6 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Roadmap
 
-- OSRM and GraphHopper providers.
 - Lane guidance where the router supplies it.
 - Waypoints.
 - Offline route caching for a planned trip.

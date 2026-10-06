@@ -21,20 +21,27 @@ Location updates stop when you stop navigating and when you leave the app.
 
 ## What leaves the device
 
-Your current coordinates and your destination are sent to the **routing server
-you configure**, because that is what routing requires. Nothing else is sent,
-and nothing is sent anywhere else.
+When a route is calculated, your current coordinates and your destination are
+sent to the **routing server** — the free public server of FOSSGIS e.V.
+(`valhalla1.openstreetmap.de`) unless you enter your own. That is what routing
+requires. The request carries `X-Client-Id: quietglass-openglance`, which
+identifies the app, not you.
 
-With no server configured, the mock router runs and **nothing leaves the device
-at all**.
+When you press **Search**, the words you typed and an area rounded to about
+one kilometre are sent to the **place-search server** — Photon by komoot
+(`photon.komoot.io`) unless you enter your own. Nothing is sent while you type.
+
+Nothing else is sent, and nothing is sent anywhere else. With the demo route
+switched on, **nothing leaves the device at all**.
 
 ## What is stored
 
 | Data | Where | Leaves the device |
 |---|---|---|
-| Routing server URL | Even app per-app storage, on the phone | No |
+| Routing and search server addresses | Even app per-app storage, on the phone | No |
 | Saved places | same | Only the selected one, to the router |
-| Mode and settings | same | No |
+| Mode, glasses view and settings | same | No |
+| Language choice (only if changed) | WebView local storage | No |
 
 Written through `setLocalStorage()` under `quietglass.openglance.v1`.
 
@@ -43,8 +50,9 @@ Saved places are yours to add and remove. Removing one deletes its coordinates.
 ## Choosing a routing server
 
 A routing server necessarily learns where you are and where you are going.
-That is a good reason to run your own — the README shows how, and it needs no
-account or key.
+The public default is run by FOSSGIS e.V. (see their privacy policy at
+fossgis.de). If you would rather nobody else saw it, run your own — the README
+shows how, and it needs no account or key.
 
 If you use a public instance, that operator sees those coordinates. OpenGlance
 cannot change that; it can only make sure the choice is yours and visible.
@@ -59,4 +67,4 @@ cannot change that; it can only make sure the choice is yours and visible.
 ## Third-party code
 
 One runtime dependency: `@evenrealities/even_hub_sdk`, the official SDK.
-Map data comes from OpenStreetMap contributors via your routing server.
+Map data © OpenStreetMap contributors (ODbL), via the routing and search servers.

@@ -1,6 +1,8 @@
 import { formatDistance, formatEta } from "../geo/geometry";
 import type { ManeuverType, TravelMode } from "../routing/provider";
 import type { Progress } from "../nav/navigator";
+import { tr, type Locale } from "../i18n";
+import { messages } from "../messages";
 
 /**
  * What the glasses show.
@@ -41,6 +43,14 @@ const ARROWS: Readonly<Record<ManeuverType, string>> = {
  */
 export const ROAD_WIDTH = 36;
 
+/** Hard limits of a full-width body: 7 rows of at most 46 characters. */
+export const MAX_ROWS = 7;
+export const LINE_WIDTH = 46;
+/** In the overview the map takes the top half; the text below has 3 rows. */
+export const OVERVIEW_ROWS = 3;
+
+export type GlassLayout = "turns" | "overview";
+
 export interface ViewOptions {
   readonly mode: TravelMode;
   readonly navigating: boolean;
@@ -50,6 +60,12 @@ export interface ViewOptions {
   readonly mock: boolean;
   /** No position fix yet. */
   readonly waitingForFix: boolean;
+  /** Language of the glasses text; English when omitted. */
+  readonly locale?: Locale;
+  /** Label of the selected destination, shown while idle. */
+  readonly destination?: string | null;
+  /** Which glasses layout the text is for; "turns" when omitted. */
+  readonly layout?: GlassLayout;
 }
 
 export function buildView(
@@ -57,51 +73,67 @@ export function buildView(
   options: ViewOptions,
   now = Date.now(),
 ): NavView {
+  const view = rawView(progress, options, now);
+  const overview = options.layout === "overview";
+  return {
+    header: overview && !view.header ? t(options, "g.overview") : view.header,
+    // Beside the pixel arrow a line holds 36 characters; the overview text runs full width.
+    body: fitLines(view.body, overview ? OVERVIEW_ROWS : MAX_ROWS, overview ? LINE_WIDTH : ROAD_WIDTH),
+    footer: clip(view.footer, LINE_WIDTH),
+  };
+}
+
+function rawView(progress: Progress | null, options: ViewOptions, now: number): NavView {
   if (options.error) {
-    return { header: "OpenGlance", body: [options.error], footer: "tap = retry" };
+    return { header: "OpenGlance", body: [options.error], footer: t(options, "g.tapRetry") };
   }
 
   if (!options.navigating || !progress) {
     return {
       header: "OpenGlance",
-      body: ["No route.", "Set a destination in the phone app."],
-      footer: options.mock ? "mock routing" : "",
+      body: options.destination
+        ? [t(options, "g.ready1", { place: options.destination }), t(options, "g.ready2")]
+        : [t(options, "g.noDest1"), t(options, "g.noDest2")],
+      footer: options.mock ? t(options, "g.demoFooter") : "",
     };
   }
 
   if (progress.arrived) {
     return {
       header: "",
-      body: [ARROWS.arrive + "  Arrived"],
-      footer: "double tap = exit",
+      body: [ARROWS.arrive + "  " + t(options, "g.arrived")],
+      footer: t(options, "g.doubleTapExit"),
     };
   }
 
   if (options.waitingForFix) {
-    return { header: "", body: ["Waiting for position…"], footer: statusFooter(options, null, now) };
+    return { header: "", body: [t(options, "g.waitingFix")], footer: statusFooter(options, null, now) };
   }
 
   if (options.rerouting) {
-    return { header: "", body: ["Off route", "Rerouting…"], footer: "" };
+    return { header: "", body: [t(options, "g.offRoute"), t(options, "g.rerouting")], footer: "" };
   }
 
   if (progress.offRoute) {
-    return { header: "", body: ["Off route"], footer: "tap = reroute" };
+    return { header: "", body: [t(options, "g.offRoute")], footer: t(options, "g.tapReroute") };
   }
 
   const maneuver = progress.maneuver;
   const arrow = maneuver ? ARROWS[maneuver.type] : ARROWS.straight;
-  const distance = formatDistance(progress.distanceToManeuver);
+  const distance = formatDistance(progress.distanceToManeuver, options.locale ?? "en");
 
   const body: string[] = [];
   // The arrow and the distance on one line: this is the line a driver reads.
   body.push(arrow + "  " + distance);
 
+  // Beside the pixel arrow there is room for 36 characters; the overview
+  // text runs the full width.
+  const width = options.layout === "overview" ? LINE_WIDTH : ROAD_WIDTH;
   const road = roadLabel(maneuver?.street, maneuver?.instruction);
-  if (road) body.push(road.length > ROAD_WIDTH ? road.slice(0, ROAD_WIDTH - 1) + "…" : road);
+  if (road) body.push(clip(road, width));
 
   if (maneuver?.type === "roundabout" && maneuver.exitNumber) {
-    body.push("exit " + maneuver.exitNumber);
+    body.push(t(options, "g.exit", { n: maneuver.exitNumber }));
   }
 
   return {
@@ -111,19 +143,34 @@ export function buildView(
   };
 }
 
+/** Cuts text to `width` characters, marking the cut with an ellipsis. */
+export function clip(text: string, width: number): string {
+  return text.length > width ? text.slice(0, width - 1) + "…" : text;
+}
+
+/** Keeps a body within the glasses' row and character limits. */
+export function fitLines(lines: readonly string[], rows = MAX_ROWS, width = LINE_WIDTH): string[] {
+  return lines.slice(0, rows).map((line) => clip(line, width));
+}
+
+function t(options: ViewOptions, key: string, vars: Record<string, string | number> = {}): string {
+  return tr(messages, options.locale ?? "en", key, vars);
+}
+
 /**
  * Driving carries no footer at all. Walking and cycling get the remaining
  * distance and the arrival time, which are worth a glance when stationary.
  */
 function statusFooter(options: ViewOptions, progress: Progress | null, now: number): string {
-  if (options.mode === "driving") return options.mock ? "MOCK" : "";
+  const tag = t(options, "g.demoTag");
+  if (options.mode === "driving") return options.mock ? tag : "";
 
   const parts: string[] = [];
   if (progress) {
-    parts.push(formatDistance(progress.distanceRemaining));
+    parts.push(formatDistance(progress.distanceRemaining, options.locale ?? "en"));
     parts.push(formatEta(progress.secondsRemaining, now));
   }
-  if (options.mock) parts.push("MOCK");
+  if (options.mock) parts.push(tag);
   return parts.join("  ·  ");
 }
 

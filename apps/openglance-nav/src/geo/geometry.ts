@@ -169,12 +169,18 @@ export function remainingAlong(path: readonly LatLng[], projection: Projection):
   return total;
 }
 
-/** "250 m" / "1.4 km" — the precision a driver can act on, and no more. */
-export function formatDistance(meters: number): string {
+/**
+ * "250 m" / "1.4 km" — the precision a driver can act on, and no more.
+ * German uses a decimal comma and "jetzt"; English is the default.
+ */
+export function formatDistance(meters: number, locale: "de" | "en" = "en"): string {
   if (!Number.isFinite(meters) || meters < 0) return "--";
-  if (meters < 20) return "now";
+  if (meters < 20) return locale === "de" ? "jetzt" : "now";
   if (meters < 1000) return String(Math.round(meters / 10) * 10) + " m";
-  if (meters < 10_000) return (meters / 1000).toFixed(1) + " km";
+  if (meters < 10_000) {
+    const km = (meters / 1000).toFixed(1);
+    return (locale === "de" ? km.replace(".", ",") : km) + " km";
+  }
   return String(Math.round(meters / 1000)) + " km";
 }
 

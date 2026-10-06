@@ -49,9 +49,18 @@ export interface RouteRequest {
   readonly mode: TravelMode;
 }
 
+/**
+ * Why a route could not be had, in terms a person can act on. The app turns
+ * these into plain sentences ("No connection", "Server busy") instead of
+ * showing HTTP codes or router internals.
+ */
+export type RouteErrorCode = "offline" | "timeout" | "busy" | "noRoute" | "tooFar" | "server";
+
 export interface RouteOutcome {
   readonly route: Route | null;
   readonly error: string | null;
+  /** Present whenever `route` is null. */
+  readonly code?: RouteErrorCode;
 }
 
 export interface RoutingProvider {
@@ -59,11 +68,42 @@ export interface RoutingProvider {
   route(request: RouteRequest): Promise<RouteOutcome>;
 }
 
+/**
+ * The public Valhalla server run by FOSSGIS e.V. — keyless, CORS-enabled,
+ * planet-wide. Terms (fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen):
+ * at most one request per second, OpenStreetMap attribution with a
+ * "fix the map" link, an identifiable client, no high-traffic use. The address
+ * stays user-editable, as those terms recommend, and self-hosting is one
+ * field away.
+ */
+export const DEFAULT_ROUTER_URL = "https://valhalla1.openstreetmap.de";
+export const DEFAULT_ROUTER_HOST = "valhalla1.openstreetmap.de";
+
+/**
+ * A browser cannot set its User-Agent, so on the FOSSGIS server the client is
+ * identified with the `X-Client-Id` header that server explicitly allows in its
+ * CORS preflight. It is sent nowhere else: a self-hosted server's CORS setup
+ * may not allow the extra header and would then refuse every request.
+ */
+export const CLIENT_ID = "quietglass-openglance";
+
+export function clientIdFor(url: string): string | undefined {
+  try {
+    return new URL(url).hostname === DEFAULT_ROUTER_HOST ? CLIENT_ID : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface ValhallaConfig {
   /** Base URL of a Valhalla instance, e.g. https://valhalla.example. */
   readonly url: string;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
+  /** Language for the router's own instruction text, e.g. "de-DE". */
+  readonly language?: string;
+  /** Sent as `X-Client-Id` when set. */
+  readonly clientId?: string;
 }
 
 const COSTING: Readonly<Record<TravelMode, string>> = {
@@ -88,20 +128,26 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
             { lat: to.lat, lon: to.lon },
           ],
           costing: COSTING[mode],
-          directions_options: { units: "kilometers" },
+          directions_options: {
+            units: "kilometers",
+            ...(config.language ? { language: config.language } : {}),
+          },
         };
+
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (config.clientId) headers["X-Client-Id"] = config.clientId;
 
         const response = await doFetch(joinUrl(config.url, "/route"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           signal: controller.signal,
           body: JSON.stringify(body),
         });
 
-        if (!response.ok) return { route: null, error: "HTTP " + response.status };
+        if (!response.ok) return failedResponse(response);
         return parseValhalla(await response.json());
       } catch (error) {
-        return { route: null, error: describeError(error) };
+        return { route: null, error: describeError(error), code: errorCodeOf(error) };
       } finally {
         clearTimeout(timeout);
       }
@@ -109,18 +155,49 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
   };
 }
 
+/**
+ * A non-2xx answer. Valhalla explains a 400 in JSON ("No path could be
+ * found", "No suitable edges near location"): to the user that is "no way to
+ * this destination", not a server fault. 429 is the public server's rate limit.
+ */
+async function failedResponse(response: Response): Promise<RouteOutcome> {
+  const fallback = "HTTP " + response.status;
+  let message = fallback;
+  try {
+    const value = await response.json() as Record<string, unknown>;
+    if (value && typeof value["error"] === "string") message = value["error"].slice(0, 60);
+  } catch { /* not JSON */ }
+  // The public server caps route length per mode (100 km on foot, verified
+  // 2026-10-06): that deserves its own sentence, not "no way found".
+  const code = /max distance/i.test(message) ? "tooFar" : codeForStatus(response.status);
+  return { route: null, error: message, code };
+}
+
+export function codeForStatus(status: number): RouteErrorCode {
+  if (status === 429 || status === 503) return "busy";
+  if (status === 504) return "timeout";
+  if (status >= 400 && status < 500) return "noRoute";
+  return "server";
+}
+
+export function errorCodeOf(error: unknown): RouteErrorCode {
+  if (error instanceof DOMException && error.name === "AbortError") return "timeout";
+  if (error instanceof TypeError) return "offline";
+  return "server";
+}
+
 /** Parses a Valhalla `/route` response into the normalised shape. */
 export function parseValhalla(value: unknown): RouteOutcome {
-  if (!value || typeof value !== "object") return { route: null, error: "unreadable response" };
+  if (!value || typeof value !== "object") return { route: null, error: "unreadable response", code: "server" };
   const root = value as Record<string, unknown>;
 
   if (root["error"]) {
-    return { route: null, error: String(root["error"]).slice(0, 60) };
+    return { route: null, error: String(root["error"]).slice(0, 60), code: "noRoute" };
   }
 
   const trip = root["trip"] as Record<string, unknown> | undefined;
   const legs = Array.isArray(trip?.["legs"]) ? trip["legs"] as unknown[] : null;
-  if (!legs || legs.length === 0) return { route: null, error: "no route found" };
+  if (!legs || legs.length === 0) return { route: null, error: "no route found", code: "noRoute" };
 
   const shape: LatLng[] = [];
   const maneuvers: Maneuver[] = [];
@@ -158,7 +235,7 @@ export function parseValhalla(value: unknown): RouteOutcome {
 
   const summary = trip?.["summary"] as Record<string, unknown> | undefined;
   if (shape.length === 0 || maneuvers.length === 0) {
-    return { route: null, error: "route had no usable geometry" };
+    return { route: null, error: "route had no usable geometry", code: "noRoute" };
   }
 
   return {

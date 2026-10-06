@@ -64,8 +64,8 @@ describe("driving display is deliberately bare", () => {
     expect(view.footer).toMatch(/\d/);
   });
 
-  it("marks a mock route even in driving mode", async () => {
-    expect(buildView(progressOf(await navigating()), { ...options, mock: true }).footer).toBe("MOCK");
+  it("marks a demo route even in driving mode", async () => {
+    expect(buildView(progressOf(await navigating()), { ...options, mock: true }).footer).toBe("DEMO");
   });
 });
 
@@ -120,9 +120,11 @@ describe("labels", () => {
 });
 
 describe("configuration", () => {
-  it("treats an empty router URL as the mock", () => {
-    expect(usesMockRouter(EMPTY_DATA)).toBe(true);
-    expect(usesMockRouter({ ...EMPTY_DATA, valhallaUrl: "https://v" })).toBe(false);
+  it("routes for real by default; only the demo switch uses the made-up route", () => {
+    // An empty router URL used to mean the mock. It now means the public
+    // server, so OpenGlance works right after install with nothing to host.
+    expect(usesMockRouter(EMPTY_DATA)).toBe(false);
+    expect(usesMockRouter({ ...EMPTY_DATA, demo: true })).toBe(true);
   });
 
   it("validates the router URL", () => {

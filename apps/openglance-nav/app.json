@@ -2,12 +2,28 @@
   "package_id": "glass.quiet.openglancenav",
   "edition": "202601",
   "name": "OpenGlance",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
-  "permissions": [],
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Calculate routes with the free OpenStreetMap routing server of FOSSGIS e.V. and search places with Photon (komoot), or with your own servers if you set them up.",
+      "whitelist": [
+        "https://valhalla1.openstreetmap.de",
+        "https://photon.komoot.io",
+        "http://*",
+        "https://*"
+      ]
+    },
+    {
+      "name": "location",
+      "desc": "Route from where you are and show how far the next turn is. Your position is never stored."
+    }
+  ],
   "supported_languages": [
+    "de",
     "en"
   ]
 }
