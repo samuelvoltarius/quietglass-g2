@@ -50,3 +50,9 @@ export function captionRows(episode: string, captions: readonly Caption[], curso
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
 }
+
+/** One glasses row for a feed or transcript error, cut to the width so it can never wrap into an eighth row. */
+export function errorRow(message: string, width: number = LINE_WIDTH): string {
+  const line = `! ${message.replace(/\s+/g, " ").trim()}`;
+  return line.length <= width ? line : cut(line, width);
+}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, fitLines, joinPcm, parseReply, wrap } from "../src/assistant/audio";
+import { MAX_RECORDING_MS, MIN_RECORDING_MS, PCM_BYTES_PER_SECOND, askAssistant, fitLines, isTooLong, isTooShort, joinPcm, parseReply, recordingMs, wrap } from "../src/assistant/audio";
 
 describe("assistant transport", () => {
   it("joins PCM without gaps", () => { expect([...joinPcm([new Uint8Array([1, 2]), new Uint8Array([3])])]).toEqual([1, 2, 3]); });
@@ -86,5 +86,19 @@ describe("asking the assistant bridge", () => {
     const assertion = expect(pending).rejects.toThrow("timed out");
     await vi.advanceTimersByTimeAsync(1000);
     await assertion;
+  });
+});
+
+describe("recording length", () => {
+  const bytesFor = (ms: number): number => Math.round(ms / 1000 * PCM_BYTES_PER_SECOND);
+  it("converts 16 kHz 16-bit mono bytes to milliseconds", () => { expect(recordingMs(32000)).toBe(1000); expect(recordingMs(-5)).toBe(0); });
+  it("treats empty and sub-minimum recordings as too short", () => {
+    expect(isTooShort(new Uint8Array(0))).toBe(true);
+    expect(isTooShort(new Uint8Array(bytesFor(MIN_RECORDING_MS) - 2))).toBe(true);
+    expect(isTooShort(new Uint8Array(bytesFor(MIN_RECORDING_MS)))).toBe(false);
+  });
+  it("flags a recording that reached the maximum", () => {
+    expect(isTooLong(bytesFor(MAX_RECORDING_MS) - 2)).toBe(false);
+    expect(isTooLong(bytesFor(MAX_RECORDING_MS))).toBe(true);
   });
 });

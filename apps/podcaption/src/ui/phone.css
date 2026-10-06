@@ -100,6 +100,7 @@ button.remove {
 .keys tr:last-child td { border-bottom: 0; }
 
 .hint { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.error { margin: 10px 0; padding: 8px 10px; border-radius: 8px; background: rgba(239,68,68,.12); color: #fca5a5; font-size: 13px; overflow-wrap: anywhere; }
 code {
   background: var(--bg); border: 1px solid var(--line);
   border-radius: 5px; padding: 1px 5px; font-size: 13px;

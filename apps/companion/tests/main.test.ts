@@ -24,8 +24,12 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), audio: (bytes: number) => handler?.({ audioEvent: { audioPcm: new Uint8Array(bytes) } }), ready: () => handler !== undefined };
 }
+
+// The body container (id 2) carries the answer; textContainerUpgrade is called header, body, footer in order.
+function lastBody(fake: ReturnType<typeof fakeBridge>): string { const bodies = fake.bridge.textContainerUpgrade.mock.calls.map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0]).filter((upgrade) => upgrade.containerID === 2); return bodies[bodies.length - 1]?.content ?? ""; }
+function lastHeader(fake: ReturnType<typeof fakeBridge>): string { const headers = fake.bridge.textContainerUpgrade.mock.calls.map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0]).filter((upgrade) => upgrade.containerID === 1); return headers[headers.length - 1]?.content ?? ""; }
 
 async function boot(fake: ReturnType<typeof fakeBridge>): Promise<void> {
   harness.bridge = fake.bridge;
@@ -55,7 +59,9 @@ describe("companion push-to-talk", () => {
     fake.emit(10); // release, before the mic is open
     opening.resolve(true);
     await vi.waitFor(() => expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    // Nothing was recorded, so nothing may be sent — the user gets the "too short" hint instead.
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Too short"));
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("does not open the microphone twice on a repeated long press", async () => {
@@ -86,5 +92,52 @@ describe("companion push-to-talk", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     nodeProcess.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
+  });
+
+  it("does not send a very short press to the bridge and says why", async () => {
+    // Regression: a tap-length press still posted an empty or near-empty recording to the bridge.
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenCalledWith(true, expect.anything()));
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("COMPANION  MIC ON"));
+    fake.audio(3200); // 0.1 s
+    fake.emit(10);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Too short. Keep holding while you speak."));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(lastHeader(fake)).toBe("COMPANION  PRIVATE");
+  });
+
+  it("sends a recording that is long enough", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("COMPANION  MIC ON"));
+    fake.audio(16000); fake.audio(16000); // 1 s
+    fake.emit(10);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const init = vi.mocked(fetch).mock.calls[0]?.[1] as RequestInit;
+    expect((init.body as ArrayBuffer).byteLength).toBe(32000);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("ok"));
+  });
+
+  it("stops recording by itself when the release never arrives", async () => {
+    // A lost release event used to leave the mic open and the buffer growing without bound.
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("COMPANION  MIC ON"));
+    for (let second = 0; second < 60; second += 1) fake.audio(32000);
+    await vi.waitFor(() => expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]));
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  });
+
+  it("localizes the glasses header", async () => {
+    localStorage.setItem("quietglass.locale", "de");
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalled());
+    const page = (fake.bridge.createStartUpPageContainer.mock.calls[0] as unknown as [{ textObject: Array<{ content?: string }> }])[0];
+    expect(page.textObject[0]?.content).toBe("COMPANION  PRIVAT");
   });
 });

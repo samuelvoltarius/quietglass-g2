@@ -89,3 +89,4 @@ code {
   border-radius: 5px; padding: 1px 5px; font-size: 13px;
 }
 footer.hint { text-align: center; padding: 8px 0 24px; }
+.error { margin: 0 0 12px; font-size: 13px; color: var(--warning); overflow-wrap: anywhere; }

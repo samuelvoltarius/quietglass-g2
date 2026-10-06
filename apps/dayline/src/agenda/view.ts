@@ -18,14 +18,14 @@ export function fit(text: string, width: number = LINE_WIDTH): string {
   return chars.length <= width ? text : chars.slice(0, Math.max(0, width - 1)).join("") + "…";
 }
 
-export function agendaLine(item: AgendaItem, selected: boolean, locale: string): string {
+export function agendaLine(item: AgendaItem, selected: boolean, locale: string, now?: Date): string {
   const box = item.kind === "reminder" ? (item.done ? "[x]" : "[ ]") : "   ";
-  return fit(`${selected ? ">" : " "} ${when(item.at, locale)} ${box} ${item.title}`);
+  return fit(`${selected ? ">" : " "} ${when(item.at, locale, now)} ${box} ${item.title}`);
 }
 
-export function agendaRows(items: readonly AgendaItem[], cursor: number, locale: string, rows: number = AGENDA_ROWS): string[] {
+export function agendaRows(items: readonly AgendaItem[], cursor: number, locale: string, rows: number = AGENDA_ROWS, now?: Date): string[] {
   const first = windowStart(items.length, cursor, rows);
-  return items.slice(first, first + rows).map((item, offset) => agendaLine(item, first + offset === cursor, locale));
+  return items.slice(first, first + rows).map((item, offset) => agendaLine(item, first + offset === cursor, locale, now));
 }
 
 /** Calendar titles come from imported files and bridges; never let them become markup on the phone. */

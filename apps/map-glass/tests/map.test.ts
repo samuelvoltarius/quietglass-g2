@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nearestPixel } from "../src/map/draw";
-import { demoRoute, fetchRoute, parseRoute, project, readDestination, wrapLongitude, type GeoPoint } from "../src/map/model";
+import { DEMO_ORIGIN, demoRoute, fetchRoute, parseRoute, project, readDestination, wrapLongitude, type GeoPoint } from "../src/map/model";
 
 const span = (values: readonly number[]): number => Math.max(...values) - Math.min(...values);
 
@@ -87,7 +87,14 @@ describe("parsing bridge routes", () => {
     // Regression: `parseRoute(null)` threw a TypeError reading `points` of null.
     expect(() => parseRoute(null)).toThrow("at least two points");
   });
-  it("defaults optional fields", () => { expect(parseRoute({ points: two })).toMatchObject({ instruction: "Route folgen", road: "", distanceMeters: 0 }); });
+  it("defaults optional fields", () => { expect(parseRoute({ points: two })).toMatchObject({ instruction: "", road: "", distanceMeters: 0 }); });
+  it("leaves a missing instruction empty instead of hard-coding German", () => {
+    // Regression: the fallback was "Route folgen" in every language; the UI now substitutes a translated text.
+    expect(parseRoute({ points: two, instruction: "   " }).instruction).toBe("");
+    expect(demoRoute().instruction).toBe("");
+    expect(demoRoute("Turn right onto X").instruction).toBe("Turn right onto X");
+  });
+  it("starts the demo route at the exported demo origin", () => { expect(demoRoute().points[0]).toEqual(DEMO_ORIGIN); });
   it("rounds the distance shown on the lens and never shows it negative", () => {
     expect(parseRoute({ points: two, distanceMeters: 182.3456 }).distanceMeters).toBe(182);
     expect(parseRoute({ points: two, distanceMeters: -5 }).distanceMeters).toBe(0);

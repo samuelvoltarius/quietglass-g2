@@ -29,7 +29,8 @@ export function parseOpenMeteo(value: unknown): WeatherForecast {
   const hourRainChance = numbers(hourly.precipitation_probability); const hourRain = numbers(hourly.precipitation);
   const hourCodes = numbers(hourly.weather_code); const hourWind = numbers(hourly.wind_speed_10m); const hours: HourWeather[] = [];
   for (let index = 0; index < hourTimes.length && hours.length < 12; index += 1) {
-    const time = hourTimes[index]; if (!time || time < current.time) continue;
+    // Compare whole hours: current.time comes in 15-minute steps ("11:15"), and the 11:00 hour is still the current one.
+    const time = hourTimes[index]; if (!time || time.slice(0, 13) < current.time.slice(0, 13)) continue;
     const values = [hourTemperature[index], hourRainChance[index], hourRain[index], hourCodes[index], hourWind[index]];
     if (!values.every(Number.isFinite)) continue;
     hours.push({ time, temperature: values[0]!, precipitationProbability: values[1]!, precipitation: values[2]!, weatherCode: values[3]!, windSpeed: values[4]! });
@@ -61,3 +62,13 @@ export function weatherKind(code: number): WeatherKind {
 export function windCompass(degrees: number): string { const points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]; return points[Math.round(((degrees % 360) + 360) % 360 / 45) % 8] ?? "N"; }
 export function clock(iso: string, locale = "de-AT"): string { const date = new Date(iso); return Number.isNaN(date.valueOf()) ? "--:--" : date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }); }
 export function dayName(iso: string, locale = "de-AT"): string { const date = new Date(`${iso}T12:00:00`); return Number.isNaN(date.valueOf()) ? "---" : date.toLocaleDateString(locale, { weekday: "short" }); }
+
+/** Rows the 214 px body shows, and roughly the characters across it next to the 104 px icon column. */
+export const BODY_ROWS = 7;
+export const LINE_WIDTH = 38;
+/** Cuts to the line budget with an ellipsis instead of letting the glasses wrap into a row that gets clipped. */
+export function fit(text: string, width: number = LINE_WIDTH): string { const chars = Array.from(text); return chars.length <= width ? text : chars.slice(0, Math.max(0, width - 1)).join("") + "…"; }
+/** Page lines plus an optional error row, each one row wide and seven rows at most, so the error is never pushed into an eighth row. */
+export function glassesBody(lines: readonly string[], error = "", rows: number = BODY_ROWS, width: number = LINE_WIDTH): string[] { return [...lines.slice(0, error ? rows - 1 : rows), ...(error ? [`! ${error.replace(/\s+/g, " ").trim()}`] : [])].map((line) => fit(line, width)); }
+/** Error text and stored coordinates are not trusted markup on the phone page. */
+export function escapeHtml(text: string): string { return text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char); }

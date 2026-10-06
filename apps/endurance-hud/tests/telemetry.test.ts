@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { demoTelemetry, elapsed, fetchTelemetry, pace, parseTelemetry } from "../src/telemetry/model";
+import { STALE_AFTER_MS, ageLabel, demoTelemetry, effectiveSport, elapsed, fetchTelemetry, nextSport, pace, paceOf, parseTelemetry, parseTimestamp, speedOf, staleAge } from "../src/telemetry/model";
 
 describe("telemetry", () => { it("normalizes a Garmin-style payload", () => expect(parseTelemetry({ sport: "run", speedKph: "12.5", powerWatts: 301 }).powerWatts).toBe(301)); it("formats pace", () => expect(pace(305)).toBe("5:05")); it("formats elapsed time", () => expect(elapsed(3661)).toBe("1:01:01")); });
 
@@ -9,9 +9,12 @@ describe("parsing bridge payloads", () => {
     const parsed = parseTelemetry({ speedKph: "fast", powerWatts: Number.NaN, heartRate: Infinity, cadence: undefined });
     expect([parsed.speedKph, parsed.powerWatts, parsed.heartRate, parsed.cadence]).toEqual([0, 0, 0, 0]);
   });
-  it("defaults the sport to bike unless it is exactly run", () => {
+  it("reads the sport case-insensitively and defaults to bike", () => {
     expect(parseTelemetry({ sport: "run" }).sport).toBe("run");
-    expect(parseTelemetry({ sport: "RUN" }).sport).toBe("bike");
+    // Regression: "RUN" / Garmin's "Running" used to be shown as bike.
+    expect(parseTelemetry({ sport: "RUN" }).sport).toBe("run");
+    expect(parseTelemetry({ sport: " Running " }).sport).toBe("run");
+    expect(parseTelemetry({ sport: "cycling" }).sport).toBe("bike");
     expect(parseTelemetry({}).sport).toBe("bike");
   });
   it("keeps the reported source and timestamp, defaulting them when absent", () => {
@@ -78,5 +81,39 @@ describe("polling the bridge", () => {
     const assertion = expect(pending).rejects.toThrow("timed out");
     await vi.advanceTimersByTimeAsync(500);
     await assertion;
+  });
+});
+
+describe("sport choice", () => {
+  it("cycles bike and run in both directions", () => {
+    expect(nextSport("bike")).toBe("run");
+    expect(nextSport("run")).toBe("bike");
+    expect(nextSport("bike", -1)).toBe("run");
+  });
+  it("prefers the saved choice over the reported sport, ignoring junk", () => {
+    expect(effectiveSport("run", "bike")).toBe("run");
+    expect(effectiveSport(null, "run")).toBe("run");
+    expect(effectiveSport("swim", "bike")).toBe("bike");
+  });
+  it("derives pace from speed and speed from pace when only one is reported", () => {
+    const bikeOnly = parseTelemetry({ speedKph: 12 });
+    expect(pace(paceOf(bikeOnly))).toBe("5:00");
+    expect(speedOf(parseTelemetry({ paceSecPerKm: 300 }))).toBe(12);
+    expect(paceOf(parseTelemetry({}))).toBe(0);
+  });
+});
+
+describe("staleness", () => {
+  const now = Date.UTC(2026, 0, 1, 12);
+  it("parses updatedAt and rejects junk", () => {
+    expect(parseTimestamp("2026-01-01T12:00:00Z")).toBe(now);
+    expect(parseTimestamp("soon")).toBeNull();
+  });
+  it("is fresh within the threshold, stale beyond it or after a failed poll", () => {
+    expect(staleAge(now - STALE_AFTER_MS, now, false)).toBeNull();
+    expect(staleAge(now - 75_000, now, false)).toBe("1m");
+    expect(staleAge(now - 3_000, now, true)).toBe("3s");
+    expect(staleAge(now + 5_000, now, false)).toBeNull();
+    expect(ageLabel(7_200_000)).toBe("2h");
   });
 });

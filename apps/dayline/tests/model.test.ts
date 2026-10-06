@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { byTime, demoAgenda, fetchBridge, parseBridge, parseIcs, parseIcsDate, toggleDone, unescapeIcsText, unfoldIcs, when, type AgendaItem } from "../src/agenda/model";
 
+const OCT3 = { now: new Date(2026, 9, 3, 12) };
 const ics = (...events: string[][]): string => ["BEGIN:VCALENDAR", ...events.flatMap((lines) => ["BEGIN:VEVENT", ...lines, "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
 
 describe("parseIcsDate", () => {
@@ -34,21 +35,21 @@ describe("unfoldIcs and text escapes", () => {
 describe("parseIcs", () => {
   it("reads a folded summary from pasted LF text", () => {
     const text = ["BEGIN:VEVENT", "UID:x", "DTSTART:20261003T090000", "SUMMARY:Quarterly planning wi", " th the whole team", "END:VEVENT"].join("\n");
-    expect(parseIcs(text)[0]?.title).toBe("Quarterly planning with the whole team");
+    expect(parseIcs(text, OCT3)[0]?.title).toBe("Quarterly planning with the whole team");
   });
   it("ignores parameters on property names", () => {
-    expect(parseIcs(ics(["DTSTART;TZID=Europe/Vienna:20261003T080000", "SUMMARY;LANGUAGE=de:Werkstatt"]))[0]).toMatchObject({ at: "2026-10-03T08:00:00", title: "Werkstatt" });
+    expect(parseIcs(ics(["DTSTART;TZID=Europe/Vienna:20261003T080000", "SUMMARY;LANGUAGE=de:Werkstatt"]), OCT3)[0]).toMatchObject({ at: "2026-10-03T06:00:00.000Z", title: "Werkstatt" });
   });
   it("skips events without a summary or start and lines outside events", () => {
-    expect(parseIcs(ics(["SUMMARY:No start"], ["DTSTART:20261003T080000"], ["DTSTART:20261003T090000", "SUMMARY:Kept"]))).toHaveLength(1);
-    expect(parseIcs("SUMMARY:Stray\nDTSTART:20261003T080000")).toEqual([]);
+    expect(parseIcs(ics(["SUMMARY:No start"], ["DTSTART:20261003T080000"], ["DTSTART:20261003T090000", "SUMMARY:Kept"]), OCT3)).toHaveLength(1);
+    expect(parseIcs("SUMMARY:Stray\nDTSTART:20261003T080000", OCT3)).toEqual([]);
   });
   it("derives an id when UID is missing", () => {
-    expect(parseIcs(ics(["DTSTART:20261003T090000", "SUMMARY:Gym"]))[0]?.id).toBe("20261003T090000-Gym");
+    expect(parseIcs(ics(["DTSTART:20261003T090000", "SUMMARY:Gym"]), OCT3)[0]?.id).toBe("20261003T090000-Gym");
   });
   it("orders UTC and local events chronologically", () => {
     // 07:30Z is 09:30 in Vienna, so it belongs after the local 09:00 event.
-    const items = parseIcs(ics(["DTSTART:20261003T073000Z", "SUMMARY:Call"], ["DTSTART:20261003T090000", "SUMMARY:Coffee"]));
+    const items = parseIcs(ics(["DTSTART:20261003T073000Z", "SUMMARY:Call"], ["DTSTART:20261003T090000", "SUMMARY:Coffee"]), OCT3);
     expect(items.map((item) => item.title)).toEqual(["Coffee", "Call"]);
   });
 });

@@ -16,12 +16,12 @@ const nodeProcess = (globalThis as unknown as { process: { on(event: string, lis
 function fakeBridge() {
   let onEvent: ((event: unknown) => void) | undefined;
   let onLocation: ((location: { latitude: number; longitude: number }) => void) | undefined;
-  const state = { createFails: false, imageFailures: 0, imageCalls: 0, stopFails: false, shutdowns: 0 };
+  const state = { createFails: false, imageFailures: 0, imageCalls: 0, stopFails: false, shutdowns: 0, fix: { latitude: 47.79, longitude: 13.04 } as { latitude: number; longitude: number } | null, footers: [] as string[] };
   const bridge = {
     createStartUpPageContainer: (): Promise<number> => state.createFails ? Promise.reject(new Error("not connected")) : Promise.resolve(0),
     updateImageRawData: (): Promise<number> => { state.imageCalls += 1; if (state.imageFailures > 0) { state.imageFailures -= 1; return Promise.reject(new Error("ble busy")); } return Promise.resolve(0); },
-    textContainerUpgrade: (): Promise<boolean> => Promise.resolve(true),
-    getAppLocation: (): Promise<null> => Promise.resolve(null),
+    textContainerUpgrade: (upgrade: { content?: string }): Promise<boolean> => { state.footers.push(upgrade.content ?? ""); return Promise.resolve(true); },
+    getAppLocation: (): Promise<{ latitude: number; longitude: number } | null> => Promise.resolve(state.fix),
     startAppLocationUpdates: (): Promise<boolean> => Promise.resolve(true),
     stopAppLocationUpdates: (): Promise<boolean> => state.stopFails ? Promise.reject(new Error("gps gone")) : Promise.resolve(true),
     shutDownPageContainer: (): Promise<boolean> => { state.shutdowns += 1; return Promise.resolve(true); },
@@ -104,6 +104,95 @@ describe("map-glass lifecycle", () => {
     fake.tap(0);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  const lastFooter = (fake: ReturnType<typeof fakeBridge>): string => fake.state.footers[fake.state.footers.length - 1] ?? "";
+
+  it("waits for a GPS fix instead of routing from the Salzburg demo point", async () => {
+    // Regression: without a fix the route silently started at the hard-coded demo origin.
+    const fake = fakeBridge();
+    fake.state.fix = null;
+    await boot(fake);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Waiting for GPS fix..."));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetch).not.toHaveBeenCalled();
+    fake.move(48.2, 16.37);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const url = vi.mocked(fetch).mock.calls[0]?.[0] as URL;
+    expect([url.searchParams.get("lat"), url.searchParams.get("lon")]).toEqual(["48.2", "16.37"]);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("40 m  Links"));
+  });
+
+  it("uses the demo origin only in explicit demo mode, and labels it", async () => {
+    store.set("mapglass.demo", "1");
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    const url = vi.mocked(fetch).mock.calls[0]?.[0] as URL;
+    expect([url.searchParams.get("lat"), url.searchParams.get("lon")]).toEqual(["47.806", "13.052"]);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("40 m  Links  [DEMO]"));
+  });
+
+  it("shows the translated demo route when the bridge is down in demo mode", async () => {
+    // Regression: the demo instruction was German ("Rechts auf Sterneckstrasse") in every language.
+    store.set("mapglass.demo", "1"); store.set("quietglass.locale", "fr");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 502 })));
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("180 m  Tournez à droite sur Sterneckstrasse  [DÉMO]\nItinéraire indisponible : HTTP 502"));
+  });
+
+  it("translates the fallback instruction when the bridge sends none", async () => {
+    store.set("quietglass.locale", "it");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...routeBody, instruction: undefined }), { status: 200 })));
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("40 m  Segui il percorso"));
+  });
+
+  it("tells the user when the route cannot be loaded", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Route unavailable: HTTP 503"));
+  });
+
+  it("never lets an older route reply overwrite a newer one", async () => {
+    // Regression: each tap started a request without cancelling the last; a slow first reply landed after the second.
+    const replies: Array<(body: unknown) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { replies.push((body) => resolve(new Response(JSON.stringify(body), { status: 200 }))); })));
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    fake.tap(0);
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    replies[1]?.({ ...routeBody, instruction: "Newer", distanceMeters: 10 });
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("10 m  Newer"));
+    replies[0]?.({ ...routeBody, instruction: "Older", distanceMeters: 99 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fake.state.footers.some((footer) => footer.includes("Older"))).toBe(false);
+    expect(lastFooter(fake)).toBe("10 m  Newer");
+  });
+
+  it("shows the waiting state on the phone, even when the glasses page is not there", async () => {
+    // Regression: drawMap returned before renderPhone when the page was not created, so the phone never updated.
+    const app = { innerHTML: "" };
+    vi.stubGlobal("document", { querySelector: (selector: string) => selector === "#app" ? app : null });
+    const fake = fakeBridge();
+    fake.state.createFails = true; fake.state.fix = null;
+    await boot(fake);
+    await vi.waitFor(() => expect(app.innerHTML).toContain("Waiting for GPS fix..."));
+    fake.move(48.2, 16.37);
+    await vi.waitFor(() => expect(app.innerHTML).toContain("<span>Links</span>"));
+  });
+
+  it("escapes bridge text on the phone", async () => {
+    const app = { innerHTML: "" };
+    vi.stubGlobal("document", { querySelector: (selector: string) => selector === "#app" ? app : null });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...routeBody, instruction: "<img src=x onerror=alert(1)>", road: "<b>" }), { status: 200 })));
+    await boot(fakeBridge());
+    await vi.waitFor(() => expect(app.innerHTML).toContain("&lt;img src=x onerror=alert(1)&gt;"));
+    expect(app.innerHTML).not.toContain("<img");
   });
 
   it("shuts down on double tap even if stopping location updates fails", async () => {

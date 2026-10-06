@@ -1,4 +1,13 @@
 export function joinPcm(chunks: readonly Uint8Array[]): Uint8Array { const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0); const joined = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.length; } return joined; }
+/** The glasses deliver 16 kHz signed 16-bit mono PCM: 32 000 bytes per second of speech. */
+export const PCM_BYTES_PER_SECOND = 32000;
+/** Shorter recordings are a mis-press, not a question: they are dropped locally and never reach the bridge. */
+export const MIN_RECORDING_MS = 400;
+/** A lost release event must not leave the microphone recording (and buffering) forever. */
+export const MAX_RECORDING_MS = 60000;
+export function recordingMs(bytes: number): number { return Math.max(0, bytes) / PCM_BYTES_PER_SECOND * 1000; }
+export function isTooShort(pcm: Uint8Array, minMs = MIN_RECORDING_MS): boolean { return recordingMs(pcm.length) < minMs; }
+export function isTooLong(bytes: number, maxMs = MAX_RECORDING_MS): boolean { return recordingMs(bytes) >= maxMs; }
 export interface AssistantReply { readonly heard: string; readonly answer: string; readonly actions: readonly string[]; }
 export function parseReply(value: unknown): AssistantReply { const row = (value && typeof value === "object" ? value : {}) as Partial<AssistantReply>; if (typeof row.answer !== "string") throw new Error("assistant response has no answer"); return { heard: typeof row.heard === "string" ? row.heard : "", answer: row.answer, actions: Array.isArray(row.actions) ? row.actions.filter((action): action is string => typeof action === "string") : [] }; }
 /** Words longer than a whole line (URLs, IDs) are hard-split so no line ever exceeds `width`. */

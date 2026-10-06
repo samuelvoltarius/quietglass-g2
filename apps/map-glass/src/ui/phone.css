@@ -105,3 +105,4 @@ code {
   border-radius: 5px; padding: 1px 5px; font-size: 13px;
 }
 footer.hint { text-align: center; padding: 8px 0 24px; }
+.hint.error { color: var(--warning); }

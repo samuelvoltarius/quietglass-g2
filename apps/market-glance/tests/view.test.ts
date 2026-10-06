@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BODY_ROWS, LINE_WIDTH, PAGE_SIZE, glassesView, positionLines } from "../src/glasses/view";
+import { BODY_ROWS, LINE_WIDTH, PAGE_SIZE, glassesView, modeLabel, positionLines, type FeedStatus } from "../src/glasses/view";
 import { demoPositions, type Position } from "../src/markets/model";
 
 const labels = { mode: "LIVE", title: "POSITIONS", empty: "No open positions", controls: "Tap: refresh" };
@@ -43,5 +43,25 @@ describe("glasses view", () => {
     expect(title.length).toBeLessThanOrEqual(LINE_WIDTH);
     expect(detail.length).toBeLessThanOrEqual(LINE_WIDTH);
     expect(detail.endsWith(" 33c  +$12.50")).toBe(true);
+  });
+  it("regression: an unknown provider is tagged ? and a missing price shows a marker", () => {
+    expect(positionLines(pos({ provider: "binance", price: null, pnl: null }), false)).toEqual(["  ? Rain tomorrow?", "  YES –  –"]);
+  });
+});
+
+describe("header mode", () => {
+  const words = { live: "LIVE", demo: "DEMO", stale: "STALE" };
+  const now = Date.UTC(2026, 0, 1, 12);
+  const live = (over: Partial<FeedStatus> = {}): FeedStatus => ({ source: "live", updatedAt: now - 1000, failed: false, errors: [], ...over });
+  it("shows LIVE only for fresh live data", () => expect(modeLabel(live(), now, words)).toBe("LIVE"));
+  it("regression: old data is no longer labelled LIVE", () => expect(modeLabel(live({ updatedAt: now - 180_000 }), now, words)).toBe("STALE 3m"));
+  it("regression: a failed refresh turns the label stale immediately", () => expect(modeLabel(live({ failed: true }), now, words)).toBe("STALE 1s"));
+  it("keeps demo data labelled DEMO", () => expect(modeLabel(live({ source: "demo", failed: true }), now, words)).toBe("DEMO"));
+  it("names providers that failed in a partial response", () => {
+    expect(modeLabel(live({ errors: [{ provider: "polymarket", message: "HTTP 500" }] }), now, words)).toBe("LIVE  P ERR");
+  });
+  it("fits the header within the line width in the longest case", () => {
+    const longest = `MARKET GLANCE  ${modeLabel(live({ updatedAt: now - 3_600_000 * 99, errors: [{ provider: "polymarket", message: "" }, { provider: "kalshi", message: "" }, { provider: "x", message: "" }] }), now, { ...words, stale: "DESACTUALIZADO" })}`;
+    expect(longest.length).toBeLessThanOrEqual(LINE_WIDTH);
   });
 });

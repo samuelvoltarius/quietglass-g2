@@ -14,7 +14,7 @@ describe("parsePodcastFeed", () => {
   });
   it("reads CDATA titles, single-quoted attributes and defaults the type", () => {
     const xml = `<item><title><![CDATA[Ep <1>]]></title><podcast:transcript url='https://x.test/t.txt'></podcast:transcript></item>`;
-    expect(parsePodcastFeed(xml)[0]).toEqual({ title: "Ep <1>", transcriptUrl: "https://x.test/t.txt", transcriptType: "text/plain" });
+    expect(parsePodcastFeed(xml)[0]).toMatchObject({ title: "Ep <1>", transcriptUrl: "https://x.test/t.txt", transcriptType: "text/plain" });
   });
   it("skips items without a transcript and keeps feed order", () => {
     const xml = `<rss><item><title>No transcript</title></item><item><title>Two</title><podcast:transcript url="u2" type="application/json"/></item><item><title>Three</title><podcast:transcript url="u3"/></item></rss>`;

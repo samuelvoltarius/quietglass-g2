@@ -21,4 +21,4 @@ npm run dev
 npm run sim
 ```
 
-Ohne Konfiguration läuft ein deutlich markierter Demo-Modus. Unterstützt Deutsch, Englisch, Französisch, Spanisch und Italienisch. Nur Informationsanzeige, keine Finanzberatung. Noch nicht auf echter G2-Hardware geprüft.
+Ohne Konfiguration läuft ein deutlich markierter Demo-Modus. Antwortet die Bridge nicht mehr oder sind die Daten älter als 45 s, zeigt die Brille `STALE 3m` statt `LIVE`; fällt nur ein Anbieter aus, liefert die Bridge die übrigen Positionen plus `errors` (Brille: `LIVE  P ERR`, Fehlertext auf der Handy-Seite). Kalshi-Preise sind das aktuelle Geld-Gebot der gehaltenen Seite (Fallback: letzter Handelspreis), P/L ist offen = Wert − Einstand; realisierter P/L steht separat auf der Handy-Seite. Unterstützt Deutsch, Englisch, Französisch, Spanisch und Italienisch. Nur Informationsanzeige, keine Finanzberatung. Noch nicht auf echter G2-Hardware geprüft.
