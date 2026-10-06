@@ -2,20 +2,17 @@
 # display. One at a time is deliberate: several simulator instances at once make
 # page creation fail as "invalid" and render blank.
 
-$apps = @(
-  @{ dir = "promptflow";     port = 5190 },
-  @{ dir = "flowlist";       port = 5191 },
-  @{ dir = "posture-lens";   port = 5192 },
-  @{ dir = "cadence";        port = 5193 },
-  @{ dir = "shift-clock";    port = 5194 },
-  @{ dir = "decibel-guard";  port = 5195 },
-  @{ dir = "status-glass";   port = 5196 },
-  @{ dir = "babel-glass";    port = 5197 },
-  @{ dir = "field-log";      port = 5198 },
-  @{ dir = "openglance-nav"; port = 5199 }
-)
-
 $root = "F:\quietglass"
+
+# Every app under apps\ with the dev port from its vite.config, so new apps are
+# picked up without editing this list.
+$apps = Get-ChildItem "$root\apps" -Directory | ForEach-Object {
+  $config = Get-ChildItem $_.FullName -Filter "vite.config.*" | Select-Object -First 1
+  if ($config -and ((Get-Content $config.FullName -Raw) -match "port:\s*(\d+)")) {
+    @{ dir = $_.Name; port = [int]$Matches[1] }
+  }
+}
+
 $shots = "$root\.verify"
 New-Item -ItemType Directory -Force -Path $shots | Out-Null
 $automationPort = 9880
