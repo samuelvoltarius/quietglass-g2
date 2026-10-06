@@ -15,7 +15,7 @@ const nodeProcess = (globalThis as unknown as { process: { on(event: string, lis
 function fakeBridge(writeDelayMs = 0) {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
-  const shutdown = { calls: 0, fail: false };
+  const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
   const writes = { count: 0, inFlight: 0, maxInFlight: 0, body: "" };
   const write = async (content: string, isBody: boolean): Promise<void> => {
     writes.count += 1;
@@ -38,7 +38,7 @@ function fakeBridge(writeDelayMs = 0) {
       return true;
     },
     updateImageRawData: async () => 0,
-    shutDownPageContainer: (): Promise<boolean> => { shutdown.calls += 1; return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(true); },
+    shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
@@ -89,8 +89,37 @@ describe("cadence run loop", () => {
     expect(fake.writes.maxInFlight).toBe(1);
   });
 
-  it("stops drawing after a double tap, even if shutdown rejects", async () => {
-    // Regression: `void bridge.shutDownPageContainer()` left a rejection unhandled, and the running beat and 1 s tick kept writing to a closed page.
+  it("asks for the system exit dialog and stops drawing once the user confirms", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const writesAtClose = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fake.writes.count).toBe(writesAtClose);
+  });
+
+  it("keeps the beat running when the user cancels the exit dialog", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    fake.shutdown.confirm = false;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const writesAtCancel = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
+    // Gestures still work after staying.
+    fake.emit(1);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.writes.body).toContain("104 bpm");
+  });
+
+  it("keeps running when the exit call rejects, without an unhandled rejection", async () => {
+    // Regression: `void bridge.shutDownPageContainer()` left a rejection unhandled. A rejected call means no dialog appeared, so the app stays.
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     nodeProcess.on("unhandledRejection", onUnhandled);
@@ -100,13 +129,13 @@ describe("cadence run loop", () => {
     fake.shutdown.fail = true;
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
-    const writesAtClose = fake.writes.count;
-    await vi.advanceTimersByTimeAsync(10_000);
+    const writesAtFailure = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
     vi.useRealTimers();
     await new Promise((resolve) => setTimeout(resolve, 20));
     nodeProcess.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.calls).toBe(1);
-    expect(fake.writes.count).toBe(writesAtClose);
+    expect(fake.writes.count).toBeGreaterThan(writesAtFailure);
   });
 });

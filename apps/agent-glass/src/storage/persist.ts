@@ -1,4 +1,6 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Where Even Terminal runs, and the token to reach it.
@@ -79,22 +81,22 @@ function clampRate(value: unknown): number {
 
 export interface UrlCheck { readonly valid: boolean; readonly error?: string }
 
-export function validateUrl(url: string): UrlCheck {
+export function validateUrl(url: string, locale: Locale = "en"): UrlCheck {
   const trimmed = url.trim();
-  if (!trimmed) return { valid: false, error: "Address is required." };
+  if (!trimmed) return { valid: false, error: t(locale, "p.addressRequired") };
   try {
     const parsed = new URL(trimmed);
     if (!["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
-      return { valid: false, error: "Address must start with http://, https://, ws:// or wss://." };
+      return { valid: false, error: t(locale, "p.addressScheme") };
     }
     return { valid: true };
   } catch {
-    return { valid: false, error: "This is not a valid address." };
+    return { valid: false, error: t(locale, "p.addressInvalid") };
   }
 }
 
-export function validateProviderUrl(url: string, provider: ProviderKind): UrlCheck {
-  const base = validateUrl(url);
+export function validateProviderUrl(url: string, provider: ProviderKind, locale: Locale = "en"): UrlCheck {
+  const base = validateUrl(url, locale);
   if (!base.valid) return base;
   const protocol = new URL(url.trim()).protocol;
   const valid = provider === "hermes"
@@ -102,8 +104,8 @@ export function validateProviderUrl(url: string, provider: ProviderKind): UrlChe
     : protocol === "http:" || protocol === "https:";
   if (valid) return { valid: true };
   return { valid: false, error: provider === "hermes"
-    ? "Hermes bridge addresses must start with ws:// or wss://."
-    : "This provider address must start with http:// or https://." };
+    ? t(locale, "p.addressHermes")
+    : t(locale, "p.addressHttp") };
 }
 
 export function parseProvider(value: unknown): ProviderKind {
@@ -130,9 +132,9 @@ export type AddressResult =
  * read by hand because `URLSearchParams` turns a literal `+` (common in base64
  * tokens) into a space.
  */
-export function normalizeAddress(input: string, provider: ProviderKind): AddressResult {
-  const check = validateProviderUrl(input, provider);
-  if (!check.valid) return { ok: false, error: check.error ?? "Invalid address." };
+export function normalizeAddress(input: string, provider: ProviderKind, locale: Locale = "en"): AddressResult {
+  const check = validateProviderUrl(input, provider, locale);
+  if (!check.valid) return { ok: false, error: check.error ?? t(locale, "p.addressInvalid") };
   const url = new URL(input.trim());
   let token: string | undefined;
   const kept: string[] = [];
@@ -171,10 +173,10 @@ export function parsePairingUrl(input: string): { baseUrl: string; token: string
 }
 
 /** Shows that a token exists without revealing it. */
-export function maskToken(token: string): string {
-  if (!token) return "none";
+export function maskToken(token: string, locale: Locale = "en"): string {
+  if (!token) return t(locale, "p.tokenNone");
   // Four characters of a short token are most of it; only a long one can
   // afford a recognisable suffix.
-  if (token.length < 16) return `set (${token.length} characters)`;
-  return `set (${token.length} characters, ends in ${token.slice(-4)})`;
+  if (token.length < 16) return t(locale, "p.tokenShort", { count: token.length });
+  return t(locale, "p.tokenLong", { count: token.length, end: token.slice(-4) });
 }

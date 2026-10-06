@@ -20,7 +20,7 @@ const nodeProcess = (globalThis as unknown as {
 // promises, which would hide exactly the rejections these tests look for.
 function fakeBridge() {
   let onEvent: ((event: unknown) => void) | undefined;
-  const state = { shutdowns: 0, shutdownFails: false, draws: 0, header: "", body: "" };
+  const state = { shutdowns: 0, shutdownFails: false, confirm: true, modes: [] as (number | undefined)[], draws: 0, header: "", body: "" };
   const record = (id: number | undefined, content: string | undefined): void => {
     state.draws += 1;
     if (id === 1) state.header = content ?? "";
@@ -43,9 +43,10 @@ function fakeBridge() {
     startAppLocationUpdates: async () => true,
     stopAppLocationUpdates: async () => true,
     getAppLocation: async () => ({ latitude: 47.8057, longitude: 13.0429 }),
-    shutDownPageContainer: (): Promise<boolean> => {
+    shutDownPageContainer: (mode?: number): Promise<boolean> => {
       state.shutdowns += 1;
-      return state.shutdownFails ? Promise.reject(new Error("page already gone")) : Promise.resolve(true);
+      state.modes.push(mode);
+      return state.shutdownFails ? Promise.reject(new Error("page already gone")) : Promise.resolve(state.confirm);
     },
     onAppLocationChanged: () => () => undefined,
     onEvenHubEvent: (callback: (event: unknown) => void) => { onEvent = callback; return () => undefined; },
@@ -85,6 +86,9 @@ describe("nextstop lifecycle", () => {
     nodeProcess.on("unhandledRejection", onUnhandled);
     vi.stubGlobal("document", { getElementById: () => null });
     vi.stubGlobal("location", { search: "" });
+    // The assertions below read the reviewed German text, so the device says German.
+    vi.stubGlobal("navigator", { language: "de-AT" });
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     vi.stubGlobal("fetch", vi.fn((input: string) => {
       const url = new URL(input);
       if (url.pathname === "/api/v1/map/stops") {
@@ -154,19 +158,18 @@ describe("nextstop lifecycle", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("closes cleanly on double tap: no unhandled rejection and no redraw afterwards", async () => {
-    // Regression: a failing shutDownPageContainer escaped as an unhandled
-    // rejection, and the 2 s redraw kept drawing onto a closed page.
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  it("closes cleanly once the exit dialog is confirmed: no redraw afterwards", async () => {
+    // Regression: the 2 s redraw kept drawing onto a closed page.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     const fake = fakeBridge();
-    fake.state.shutdownFails = true;
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
     await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
 
     fake.gesture(3); // double tap
-    await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
+    await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const drawsAtClose = fake.state.draws;
 
     // Long enough for both the countdown beat and a board refresh; the board
@@ -176,4 +179,28 @@ describe("nextstop lifecycle", () => {
     expect(fake.state.draws).toBe(drawsAtClose);
     expect(pending).toHaveLength(1);
   });
+
+  for (const outcome of ["cancelled", "rejected"] as const) {
+    it(`keeps the board updating when the exit dialog is ${outcome}`, async () => {
+      // Regression: a failing shutDownPageContainer escaped as an unhandled rejection.
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+      const fake = fakeBridge();
+      if (outcome === "cancelled") fake.state.confirm = false;
+      else fake.state.shutdownFails = true;
+      await boot(fake);
+      await vi.waitFor(() => expect(pending).toHaveLength(1));
+      pending[0]?.reply(stopTimes("Alpha-Ziel"));
+      await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+
+      fake.gesture(3);
+      await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const drawsAtCancel = fake.state.draws;
+
+      vi.setSystemTime(Date.now() + 3 * 60000);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(fake.state.draws).toBeGreaterThan(drawsAtCancel);
+      expect(pending.length).toBeGreaterThan(1);
+    });
+  }
 });

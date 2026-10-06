@@ -8,6 +8,7 @@ import {
 } from "../log/entries";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { autoTitle, quickNotes, severityName, t } from "../messages";
+import { csvFormatFor } from "../csv";
 
 /**
  * The phone companion: starting an inspection, reviewing entries, exporting.
@@ -118,6 +119,7 @@ function template(data: FieldLogData, view: View): string {
   const active = data.activeId ? data.inspections.find((i) => i.id === data.activeId) : null;
   const bytes = approximateBytes(data);
   const voice = hasSpeechServer(data);
+  const csvFormat = csvFormatFor(data.csvFormat, locale);
   const severityOptions = (selected: Severity): string => SEVERITIES.map((s) =>
     '<option value="' + s + '"' + (s === selected ? " selected" : "") + ">" + escapeHtml(severityName(locale, s)) + "</option>").join("");
 
@@ -181,7 +183,13 @@ function template(data: FieldLogData, view: View): string {
       </table>
       <button id="md" type="button" class="secondary">${L("p.exportMd")}</button>
       <button id="md-img" type="button" class="secondary">${L("p.exportMdImg")}</button>
+      <label for="csv-format">${L("p.csvFormat")}</label>
+      <select id="csv-format">
+        <option value="excel-de"${csvFormat === "excel-de" ? " selected" : ""}>${L("p.csvExcel")}</option>
+        <option value="standard"${csvFormat === "standard" ? " selected" : ""}>${L("p.csvStandard")}</option>
+      </select>
       <button id="csv" type="button" class="secondary">${L("p.exportCsv")}</button>
+      <p class="hint">${L("p.csvHint")}</p>
     `}
   </section>` : ""}
 
@@ -338,9 +346,16 @@ function wire(
     const open = active();
     if (open) download(fileName("full.md"), toMarkdown(open, true, locale), "text/markdown");
   });
+  byId<HTMLSelectElement>("csv-format")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    commit({ ...current(), csvFormat: value === "excel-de" ? "excel-de" : "standard" });
+  });
   byId<HTMLButtonElement>("csv")?.addEventListener("click", () => {
     const open = active();
-    if (open) download(fileName("csv"), toCsv(open, locale), "text/csv");
+    if (!open) return;
+    const format = csvFormatFor(current().csvFormat, locale);
+    // Plain ASCII names; the Excel variant says so, so the two cannot be mixed up.
+    download(fileName(format === "excel-de" ? "excel.csv" : "csv"), toCsv(open, locale, format), "text/csv;charset=utf-8");
   });
 
   byId<HTMLButtonElement>("save-quick")?.addEventListener("click", () => {

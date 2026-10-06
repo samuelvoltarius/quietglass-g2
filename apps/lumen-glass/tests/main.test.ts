@@ -15,7 +15,7 @@ const nodeProcess = (globalThis as unknown as { process: { on(event: string, lis
 function fakeBridge() {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
-  const shutdown = { calls: 0, fail: false };
+  const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
   const writes = { count: 0, body: "" };
   const bridge = {
     getLocalStorage: async () => "",
@@ -32,7 +32,7 @@ function fakeBridge() {
       return true;
     },
     updateImageRawData: async () => 0,
-    shutDownPageContainer: (): Promise<boolean> => { shutdown.calls += 1; return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(true); },
+    shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
@@ -97,31 +97,59 @@ describe("lumen polling loop", () => {
     expect(lumen.fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("stops polling and drawing after a double tap during a request, even if shutdown rejects", async () => {
+  it("asks for the system dialog and stops polling and drawing once the user confirms, even during a request", async () => {
     // Regression: a refresh in flight at the double tap re-armed the 60 s poll via
-    // `.then(schedule)` and drew to the closed page; the shutdown rejection was unhandled.
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
-    nodeProcess.on("unhandledRejection", onUnhandled);
+    // `.then(schedule)` and drew to the closed page.
     const lumen = fakeLumen(3000);
     vi.stubGlobal("fetch", lumen.fetchMock);
     const fake = await boot();
 
     await vi.advanceTimersByTimeAsync(60_000); // the poll fires and its request is in flight
     const fetchesAtClose = lumen.fetchMock.mock.calls.length;
-    fake.shutdown.fail = true;
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
     const writesAtClose = fake.writes.count;
     lumen.setGesture("after close");
     await vi.advanceTimersByTimeAsync(200_000);
+
+    expect(lumen.fetchMock.mock.calls.length).toBe(fetchesAtClose);
+    expect(fake.writes.count).toBe(writesAtClose);
+  });
+
+  it("keeps polling when the user cancels the exit dialog", async () => {
+    const lumen = fakeLumen(10);
+    vi.stubGlobal("fetch", lumen.fetchMock);
+    const fake = await boot();
+    fake.shutdown.confirm = false;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const fetchesAtCancel = lumen.fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(lumen.fetchMock.mock.calls.length).toBeGreaterThanOrEqual(fetchesAtCancel + 2);
+    fake.emit(1); // swipes still refresh
+    await vi.advanceTimersByTimeAsync(10);
+    expect(lumen.fetchMock.mock.calls.length).toBeGreaterThanOrEqual(fetchesAtCancel + 3);
+  });
+
+  it("keeps polling when the exit call rejects, without an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    nodeProcess.on("unhandledRejection", onUnhandled);
+    const lumen = fakeLumen(10);
+    vi.stubGlobal("fetch", lumen.fetchMock);
+    const fake = await boot();
+    fake.shutdown.fail = true;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    const fetchesAtFailure = lumen.fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(70_000);
     vi.useRealTimers();
     await new Promise((resolve) => setTimeout(resolve, 20));
     nodeProcess.off("unhandledRejection", onUnhandled);
-
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.calls).toBe(1);
-    expect(lumen.fetchMock.mock.calls.length).toBe(fetchesAtClose);
-    expect(fake.writes.count).toBe(writesAtClose);
+    expect(lumen.fetchMock.mock.calls.length).toBeGreaterThan(fetchesAtFailure);
   });
 });

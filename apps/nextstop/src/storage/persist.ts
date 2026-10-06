@@ -1,4 +1,6 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Which backend to ask, and where it lives. Nothing else is kept.
@@ -53,17 +55,17 @@ export interface UrlCheck {
  * Plain http is expected, not merely tolerated: the ÖBB proxy runs on the
  * user's own phone or network, where there is no certificate to have.
  */
-export function validateUrl(url: string): UrlCheck {
+export function validateUrl(url: string, locale: Locale = "en"): UrlCheck {
   const trimmed = url.trim();
-  if (!trimmed) return { valid: false, error: "Adresse fehlt." };
+  if (!trimmed) return { valid: false, error: t(locale, "p.urlMissing") };
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { valid: false, error: "Adresse muss mit http:// oder https:// beginnen." };
+      return { valid: false, error: t(locale, "p.urlScheme") };
     }
     return { valid: true };
   } catch {
-    return { valid: false, error: "Das ist keine gültige Adresse." };
+    return { valid: false, error: t(locale, "p.urlInvalid") };
   }
 }
 

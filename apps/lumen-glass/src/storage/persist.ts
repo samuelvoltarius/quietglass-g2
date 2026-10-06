@@ -1,4 +1,6 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Where your LUMEN lives, and nothing else.
@@ -46,17 +48,17 @@ export interface UrlCheck {
  * normally run on the user's own machine or LAN, where there is no
  * certificate. The phone app points that out rather than refusing it.
  */
-export function validateUrl(url: string): UrlCheck {
+export function validateUrl(url: string, locale: Locale = "en"): UrlCheck {
   const trimmed = url.trim();
-  if (!trimmed) return { valid: false, errors: ["Address is required."] };
+  if (!trimmed) return { valid: false, errors: [t(locale, "p.urlRequired")] };
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { valid: false, errors: ["Address must start with http:// or https://."] };
+      return { valid: false, errors: [t(locale, "p.urlScheme")] };
     }
     return { valid: true, errors: [] };
   } catch {
-    return { valid: false, errors: ["Address is not a valid URL."] };
+    return { valid: false, errors: [t(locale, "p.urlInvalid")] };
   }
 }
 
@@ -92,6 +94,6 @@ export function parseData(raw: string): LumenData {
 }
 
 /** Shows that a token exists without revealing it. */
-export function maskToken(token: string | undefined): string {
-  return token ? "set (" + token.length + " chars)" : "none";
+export function maskToken(token: string | undefined, locale: Locale): string {
+  return token ? t(locale, "p.tokenSet", { count: token.length }) : t(locale, "p.tokenNone");
 }

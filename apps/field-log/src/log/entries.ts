@@ -9,6 +9,7 @@
 
 import type { Locale } from "../i18n";
 import { severityName, t } from "../messages";
+import { joinCsv, localDateTime, textCell, type CsvFormat } from "../csv";
 
 export type Severity = "note" | "minor" | "major";
 
@@ -161,33 +162,34 @@ export function toMarkdown(inspection: Inspection, withImages = false, locale: L
 }
 
 /**
- * CSV for a spreadsheet: comma-separated, UTF-8, RFC 4180 quoting, one row per
- * entry. The header and the type/photo columns are in the user's language;
- * the time stays ISO 8601 in UTC so it sorts and parses everywhere. There are
- * no decimal numbers in this file.
+ * CSV for a spreadsheet, one row per entry, in one of two formats (see
+ * src/csv.ts). The header and the type/photo columns are in the user's language.
+ *
+ * - `standard`: comma, LF, RFC 4180 quoting, time as ISO 8601 in UTC so it
+ *   sorts and parses everywhere.
+ * - `excel-de`: for opening by double-click in German or Austrian Excel — `;`,
+ *   CRLF, UTF-8 BOM, the time in local time as `07.10.2026 14:05`, and the
+ *   exact ISO time in an extra last column.
+ *
+ * There are no decimal numbers in this file. Text cells are defused against
+ * formulas: a transcript starting with `=`, `+`, `-` or `@` would otherwise be
+ * evaluated when the export is opened.
  */
-export function toCsv(inspection: Inspection, locale: Locale = "en"): string {
-  const rows = [t(locale, "x.csvHeader")];
-  for (const entry of inspection.entries) {
-    rows.push([
-      new Date(entry.at).toISOString(),
-      csvField(entry.section ?? ""),
-      locale === "en" ? entry.severity : severityName(locale, entry.severity),
-      csvField(entry.text),
-      t(locale, entry.attachment ? "x.yes" : "x.no"),
-    ].join(","));
-  }
-  return rows.join("\n") + "\n";
-}
-
-/**
- * Quotes a field when it holds a separator, a quote or a line break, and
- * defuses spreadsheet formulas: a transcript that starts with `=`, `+`, `-`
- * or `@` would otherwise be evaluated when the export is opened.
- */
-function csvField(value: string): string {
-  const safe = /^[=+\-@\t\r]/.test(value) ? "'" + value : value;
-  return /[",\r\n]/.test(safe) ? '"' + safe.split('"').join('""') + '"' : safe;
+export function toCsv(inspection: Inspection, locale: Locale = "en", format: CsvFormat = "standard"): string {
+  const excel = format === "excel-de";
+  const header = t(locale, "x.csvHeader").split(",");
+  if (excel) header.push(t(locale, "x.csvIso"));
+  return joinCsv([
+    header.map((name) => textCell(name, format)),
+    ...inspection.entries.map((entry) => [
+      excel ? localDateTime(entry.at) : new Date(entry.at).toISOString(),
+      textCell(entry.section ?? "", format),
+      textCell(locale === "en" ? entry.severity : severityName(locale, entry.severity), format),
+      textCell(entry.text, format),
+      textCell(t(locale, entry.attachment ? "x.yes" : "x.no"), format),
+      ...(excel ? [new Date(entry.at).toISOString()] : []),
+    ]),
+  ], format);
 }
 
 /** Keeps dictated text on its own Markdown line: a line break would end the list item. */

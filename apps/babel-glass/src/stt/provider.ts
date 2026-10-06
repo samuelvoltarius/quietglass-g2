@@ -1,3 +1,6 @@
+import type { Locale } from "../i18n";
+import { t } from "../messages";
+
 /**
  * Speech recognition providers.
  *
@@ -169,12 +172,13 @@ export function parseTranscript(raw: unknown): Transcript | null {
  * UI can be exercised, never to make the app look like it is working when it
  * is not.
  */
-export function createMockStt(config: Pick<SttConfig, "onTranscript" | "onStatus">): SttProvider {
-  const phrases = [
-    "This is the mock recogniser.",
-    "It produces fixed text without a server.",
-    "Configure a real speech server in the phone app.",
-  ];
+export function createMockStt(
+  config: Pick<SttConfig, "onTranscript" | "onStatus"> & {
+    /** UI language of the placeholder lines; read on every line, so a switch shows at once. */
+    readonly locale?: () => Locale;
+  },
+): SttProvider {
+  const phrases = ["g.mock1", "g.mock2", "g.mock3"];
   let index = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   let status: SttStatus = "idle";
@@ -186,9 +190,10 @@ export function createMockStt(config: Pick<SttConfig, "onTranscript" | "onStatus
       status = "ready";
       config.onStatus?.("ready");
       timer = setInterval(() => {
-        const text = phrases[index % phrases.length] ?? "";
+        const locale = config.locale?.() ?? "en";
+        const text = t(locale, phrases[index % phrases.length] ?? "g.mock1");
         index++;
-        config.onTranscript({ text, final: true, language: "en" });
+        config.onTranscript({ text, final: true, language: locale });
       }, 3000);
     },
     send() { /* the mock ignores audio by design */ },

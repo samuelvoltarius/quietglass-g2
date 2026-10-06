@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shoot Day · web terminal</title>
+<style>
+  :root { --bg:#0e1113; --panel:#171b1e; --line:#2a3136; --fg:#e7edf0; --dim:#93a1a8; --acc:#28d17c; --ng:#ff6b5e; color-scheme: dark; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,"Segoe UI",Roboto,sans-serif; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.5px; }
+  .pill { background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:3px 10px; color:var(--dim); font-size:12px; }
+  main { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; padding:16px; align-items:start; }
+  @media (max-width:820px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .wide { grid-column:1/-1; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin:0 0 10px; }
+  input, select, button, textarea { font:inherit; }
+  input, select, textarea { background:var(--bg); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:7px 9px; }
+  textarea { width:100%; min-height:160px; resize:vertical; line-height:1.7; }
+  button { background:var(--acc); color:#04110a; border:none; border-radius:8px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); font-weight:500; }
+  button.sm { padding:4px 8px; font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .scene { border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px; }
+  .scene-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:middle; }
+  th { color:var(--dim); font-weight:600; }
+  .ok { color:var(--acc); } .bad { color:var(--ng); } .muted { color:var(--dim); }
+  .grow { flex:1; min-width:120px; }
+  #auth { display:none; }
+  #auth.show { display:block; }
+</style>
+</head>
+<body>
+<header>
+  <h1 data-t="title">Shoot Day</h1>
+  <span class="pill"><span data-t="active">Active</span>: <b id="activeName">–</b></span>
+  <span class="grow"></span>
+  <select id="projSel" aria-label="project"></select>
+  <button class="ghost sm" id="btnSetActive" data-t="setActive">make active</button>
+</header>
+
+<main>
+  <section class="card wide" id="auth">
+    <h2 data-t="authTitle">Token</h2>
+    <p class="muted" data-t="authHint">This server needs a token. It is kept in this browser only.</p>
+    <div class="row"><input id="tokenInput" type="password" class="grow" autocomplete="off" /><button id="btnToken" data-t="authSave">Use token</button></div>
+  </section>
+
+  <section class="card">
+    <h2 data-t="shotsTitle">Shoot and scenes</h2>
+    <div class="row" style="margin-bottom:12px">
+      <input id="projectName" class="grow" data-tp="projectPlaceholder" />
+      <button id="btnNewProj" data-t="projectSave">Create / load project</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="newScene" data-tp="scenePlaceholder" style="width:180px" />
+      <button class="ghost" id="btnAddScene" data-t="addScene">+ scene</button>
+    </div>
+    <div id="scenes"></div>
+    <div class="row" style="margin-top:12px">
+      <button id="btnSave" data-t="sendToGlasses">Save → glasses</button>
+      <span id="saveHint" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 data-t="takesTitle">Take log (from set)</h2>
+    <div class="row" style="margin-bottom:8px">
+      <button class="ghost sm" id="btnRefresh" data-t="refresh">refresh</button>
+      <label class="muted"><input type="checkbox" id="autoRef" checked /> <span data-t="auto">auto</span></label>
+    </div>
+    <table>
+      <thead><tr><th data-t="scene">Scene</th><th data-t="shot">Shot</th><th>Take</th><th data-t="status">Status</th><th data-t="note">Note</th><th data-t="time">Time</th></tr></thead>
+      <tbody id="takes"></tbody>
+    </table>
+  </section>
+
+  <section class="card wide">
+    <h2 data-t="scriptTitle">Teleprompter script</h2>
+    <p class="muted" style="margin-top:0" data-t="scriptHint">The Teleprompter module on the glasses scrolls this text.</p>
+    <textarea id="promptText" data-tp="scriptPlaceholder"></textarea>
+    <div class="row" style="margin-top:10px"><button id="btnSavePrompt" data-t="sendToGlasses">Save → glasses</button><span id="promptHint" class="muted"></span></div>
+  </section>
+
+  <section class="card wide">
+    <h2 data-t="dispoTitle">Schedule (call sheet)</h2>
+    <div class="row" style="margin-bottom:10px">
+      <input id="dDate" data-tp="datePlaceholder" style="width:200px" />
+      <input id="dCall" data-tp="callPlaceholder" style="width:120px" />
+      <input id="dLoc" data-tp="locationPlaceholder" class="grow" />
+      <input id="dContact" data-tp="contactPlaceholder" class="grow" />
+    </div>
+    <div id="sched"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="sTime" data-tp="timePlaceholder" style="width:100px" />
+      <input id="sWhat" data-tp="whatPlaceholder" class="grow" />
+      <button class="ghost" id="btnAddSched" data-t="addRow">+ row</button>
+    </div>
+    <div class="row" style="margin-top:10px"><button id="btnSaveDispo" data-t="sendToGlasses">Save → glasses</button><span id="dispoHint" class="muted"></span></div>
+  </section>
+
+  <section class="card wide">
+    <h2><span data-t="packTitle">Packing list</span> <span class="muted" id="eqCount" style="font-weight:400;font-size:14px"></span></h2>
+    <p class="muted" style="margin-top:0" data-t="packHint">Left: what this shoot needs. Right: tick on the day what is packed. Every project has its own list.</p>
+    <div class="row" style="margin-bottom:10px">
+      <input id="eqNew" data-tp="itemPlaceholder" class="grow" />
+      <input id="eqNewGroup" data-tp="groupPlaceholder" style="width:140px" />
+      <button class="ghost" id="btnAddEq" data-t="addItem">+ item</button>
+      <button class="ghost sm" id="btnEqNoneNeed" data-t="clearNeed">clear selection</button>
+      <button class="ghost sm" id="btnEqUnpack" data-t="clearPacked">remove ticks</button>
+    </div>
+    <div id="equip"></div>
+    <div class="row" style="margin-top:10px"><span class="muted" data-t="packSaved">Every change is saved at once — also while someone ticks on the glasses.</span><span id="eqHint" class="muted"></span></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Language: follows the browser, German or English.
+// ---------------------------------------------------------------------------
+const WORDS = {
+  en: {
+    title: "Shoot Day", active: "Active", setActive: "make active",
+    authTitle: "Token", authHint: "This server needs a token. It is kept in this browser only.", authSave: "Use token",
+    shotsTitle: "Shoot and scenes", projectPlaceholder: "Project name (e.g. Example shoot)", projectSave: "Create / load project",
+    scenePlaceholder: "Scene (e.g. 3 or 3A)", addScene: "+ scene", sendToGlasses: "Save → glasses",
+    takesTitle: "Take log (from set)", refresh: "refresh", auto: "auto",
+    scene: "Scene", shot: "Shot", status: "Status", note: "Note", time: "Time", size: "Size", description: "Description",
+    scriptTitle: "Teleprompter script", scriptHint: "The Teleprompter module on the glasses scrolls this text.", scriptPlaceholder: "Your script …",
+    dispoTitle: "Schedule (call sheet)", datePlaceholder: "Day / date", callPlaceholder: "Call (07:30)",
+    locationPlaceholder: "Location", contactPlaceholder: "Contact", timePlaceholder: "Time", whatPlaceholder: "What happens", addRow: "+ row",
+    packTitle: "Packing list", packHint: "Left: what this shoot needs. Right: tick on the day what is packed. Every project has its own list.",
+    itemPlaceholder: "Own item (e.g. spare battery)", groupPlaceholder: "Group", addItem: "+ item",
+    clearNeed: "clear selection", clearPacked: "remove ticks",
+    packSaved: "Every change is saved at once — also while someone ticks on the glasses.",
+    needs: "needed", packed: "packed", noScenes: "No scenes yet. Add one above.", noTakes: "– none yet –", noRows: "No schedule rows yet.",
+    deleteScene: "Delete scene", shotPlaceholder: "Shot (A, B, 1 …)", addShot: "+ shot", nameRequired: "Please enter a project name.",
+    sceneExists: "That scene already exists.", saved: "saved ✓", savedGlasses: "saved ✓ – the glasses load it next time",
+    notSaved: "NOT saved – reload the page", confirmRemove: "Remove “{name}” from the list?",
+    countNone: "– nothing selected yet", countSome: "– {packed}/{need} packed", unreachable: "Server not reachable.",
+  },
+  de: {
+    title: "Shoot Day", active: "Aktiv", setActive: "aktiv setzen",
+    authTitle: "Token", authHint: "Dieser Server braucht ein Token. Es bleibt nur in diesem Browser.", authSave: "Token verwenden",
+    shotsTitle: "Dreh und Szenen", projectPlaceholder: "Projektname (z. B. Beispiel-Dreh)", projectSave: "Projekt anlegen / laden",
+    scenePlaceholder: "Szene (z. B. 3 oder 3A)", addScene: "+ Szene", sendToGlasses: "Speichern → Brille",
+    takesTitle: "Take-Protokoll (vom Set)", refresh: "aktualisieren", auto: "automatisch",
+    scene: "Szene", shot: "Shot", status: "Status", note: "Notiz", time: "Zeit", size: "Größe", description: "Beschreibung",
+    scriptTitle: "Teleprompter-Text", scriptHint: "Das Teleprompter-Modul auf der Brille rollt diesen Text ab.", scriptPlaceholder: "Dein Sprechtext …",
+    dispoTitle: "Tagesplan (Dispo)", datePlaceholder: "Tag / Datum", callPlaceholder: "Call (07:30)",
+    locationPlaceholder: "Ort", contactPlaceholder: "Kontakt", timePlaceholder: "Zeit", whatPlaceholder: "Programmpunkt", addRow: "+ Zeile",
+    packTitle: "Packliste", packHint: "Links: was für diesen Dreh mit muss. Rechts: am Drehtag abhaken, was eingepackt ist. Jedes Projekt hat seine eigene Liste.",
+    itemPlaceholder: "Eigene Position (z. B. Ersatzakku)", groupPlaceholder: "Gruppe", addItem: "+ Position",
+    clearNeed: "Auswahl leeren", clearPacked: "Haken entfernen",
+    packSaved: "Jede Änderung wird sofort gespeichert – auch wenn parallel auf der Brille abgehakt wird.",
+    needs: "braucht", packed: "eingepackt", noScenes: "Noch keine Szenen. Oben eine anlegen.", noTakes: "– noch keine –", noRows: "Noch keine Zeilen im Zeitplan.",
+    deleteScene: "Szene löschen", shotPlaceholder: "Shot (A, B, 1 …)", addShot: "+ Shot", nameRequired: "Bitte einen Projektnamen eingeben.",
+    sceneExists: "Diese Szene gibt es schon.", saved: "gespeichert ✓", savedGlasses: "gespeichert ✓ – die Brille lädt es beim nächsten Öffnen",
+    notSaved: "NICHT gespeichert – Seite neu laden", confirmRemove: "„{name}“ aus der Liste entfernen?",
+    countNone: "– noch nichts ausgewählt", countSome: "– {packed}/{need} eingepackt", unreachable: "Server nicht erreichbar.",
+  },
+};
+const LANG = (navigator.language || "en").slice(0, 2).toLowerCase() === "de" ? "de" : "en";
+document.documentElement.lang = LANG;
+const T = (key, vars = {}) => Object.entries(vars).reduce((text, [k, v]) => text.replaceAll("{" + k + "}", String(v)), WORDS[LANG][key] ?? WORDS.en[key] ?? key);
+document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = T(el.dataset.t); });
+document.querySelectorAll("[data-tp]").forEach((el) => { el.placeholder = T(el.dataset.tp); });
+
+// ---------------------------------------------------------------------------
+// Helpers. Everything from the server or typed by people is set as text or as
+// a property — never as HTML — so a note like <img onerror=…> stays a note.
+// ---------------------------------------------------------------------------
+const $ = (selector) => document.querySelector(selector);
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "class") el.className = value;
+    else if (key === "style") el.style.cssText = value;
+    else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else el[key] = value;
+  }
+  for (const child of children.flat()) if (child !== null && child !== undefined) el.append(child instanceof Node ? child : String(child));
+  return el;
+}
+const flash = (selector, text) => { $(selector).textContent = text; setTimeout(() => { $(selector).textContent = ""; }, 3000); };
+
+const TOKEN_KEY = "shootday.token";
+const token = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } };
+async function api(path, options = {}) {
+  const headers = { ...(options.body ? { "Content-Type": "application/json" } : {}) };
+  if (token()) headers.Authorization = "Bearer " + token();
+  const response = await fetch(path, { ...options, headers, signal: AbortSignal.timeout(10000) });
+  if (response.status === 401) { $("#auth").classList.add("show"); throw new Error("unauthorized"); }
+  $("#auth").classList.remove("show");
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  return response.json();
+}
+const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
+$("#btnToken").onclick = () => {
+  try { localStorage.setItem(TOKEN_KEY, $("#tokenInput").value); } catch { /* private window: per page load only */ }
+  $("#tokenInput").value = "";
+  void loadEverything();
+};
+
+// ---------------------------------------------------------------------------
+// Projects and scenes
+// ---------------------------------------------------------------------------
+const SIZES = ["WS", "LS", "MS", "MCU", "CU", "ECU", "OTS", "Insert"];
+let scenes = [];
+
+function renderScenes() {
+  const box = $("#scenes");
+  box.replaceChildren();
+  if (!scenes.length) { box.append(h("p", { class: "muted" }, T("noScenes"))); return; }
+  scenes.forEach((scene, si) => {
+    const rows = scene.shots.map((shot, i) => h("tr", {},
+      h("td", {}, h("input", { value: shot.shot || "", style: "width:60px", oninput: (e) => { shot.shot = e.target.value; } })),
+      h("td", {}, h("input", { value: shot.desc || "", style: "width:100%", oninput: (e) => { shot.desc = e.target.value; } })),
+      h("td", {}, h("select", { onchange: (e) => { shot.size = e.target.value; } },
+        SIZES.map((size) => h("option", { value: size, selected: size === shot.size }, size)))),
+      h("td", {}, h("button", { class: "ghost sm", onclick: () => { scene.shots.splice(i, 1); renderScenes(); } }, "✕")),
+    ));
+    const newShot = h("input", { placeholder: T("shotPlaceholder"), style: "width:140px" });
+    box.append(h("div", { class: "scene" },
+      h("div", { class: "scene-head" }, h("b", {}, T("scene") + " " + scene.scene),
+        h("button", { class: "ghost sm", onclick: () => { scenes.splice(si, 1); renderScenes(); } }, T("deleteScene"))),
+      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, T("shot")), h("th", {}, T("description")), h("th", {}, T("size")), h("th", {}))), h("tbody", {}, rows)),
+      h("div", { class: "row", style: "margin-top:8px" }, newShot,
+        h("button", { class: "ghost sm", onclick: () => { scene.shots.push({ shot: newShot.value.trim() || "A", desc: "", size: "MS" }); renderScenes(); } }, T("addShot"))),
+    ));
+  });
+}
+
+$("#btnAddScene").onclick = () => {
+  const value = $("#newScene").value.trim();
+  if (!value) return;
+  if (scenes.some((s) => s.scene === value)) { alert(T("sceneExists")); return; }
+  scenes.push({ scene: value, shots: [] });
+  $("#newScene").value = "";
+  renderScenes();
+};
+
+async function saveProject(hint) {
+  const name = $("#projectName").value.trim();
+  if (!name) { alert(T("nameRequired")); return; }
+  await post("/api/project", { name, scenes });
+  if (hint) flash("#saveHint", T("savedGlasses"));
+  await loadState();
+  await loadProjectData();
+}
+$("#btnNewProj").onclick = () => { saveProject(false).catch(report); };
+$("#btnSave").onclick = () => { saveProject(true).catch(report); };
+$("#btnSetActive").onclick = async () => {
+  const name = $("#projSel").value;
+  if (!name) return;
+  try { await post("/api/active", { name }); await loadState(); await loadProjectData(); } catch (error) { report(error); }
+};
+
+async function loadState() {
+  const s = await api("/api/state");
+  $("#activeName").textContent = s.active || "–";
+  $("#projSel").replaceChildren(...s.projects.map((p) => h("option", { value: p.name, selected: p.name === s.active }, p.name)));
+}
+async function loadProject() {
+  const p = await api("/api/project");
+  $("#projectName").value = p.name || "";
+  scenes = Array.isArray(p.scenes) ? p.scenes : [];
+  renderScenes();
+}
+
+// ---------------------------------------------------------------------------
+// Takes
+// ---------------------------------------------------------------------------
+let loadingTakes = false;
+async function loadTakes() {
+  if (loadingTakes) return;          // never two polls at once
+  loadingTakes = true;
+  try {
+    const { takes } = await api("/api/takes");
+    const body = $("#takes");
+    if (!takes || !takes.length) { body.replaceChildren(h("tr", {}, h("td", { colSpan: 6, class: "muted" }, T("noTakes")))); return; }
+    body.replaceChildren(...takes.map((t) => h("tr", {},
+      h("td", {}, t.scene), h("td", {}, t.shot), h("td", {}, "T" + t.n),
+      h("td", { class: t.status === "OK" ? "ok" : "bad" }, t.status), h("td", {}, t.note || ""),
+      h("td", { class: "muted" }, new Date(t.ts).toLocaleString(LANG, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })),
+    )));
+  } finally {
+    loadingTakes = false;
+  }
+}
+$("#btnRefresh").onclick = () => { loadTakes().catch(report); };
+setInterval(() => { if ($("#autoRef").checked && !document.hidden) loadTakes().catch(() => undefined); }, 3000);
+
+// ---------------------------------------------------------------------------
+// Script
+// ---------------------------------------------------------------------------
+async function loadPrompt() { $("#promptText").value = (await api("/api/prompter")).text || ""; }
+$("#btnSavePrompt").onclick = async () => {
+  try { await post("/api/prompter", { text: $("#promptText").value }); flash("#promptHint", T("saved")); } catch (error) { report(error); }
+};
+
+// ---------------------------------------------------------------------------
+// Schedule
+// ---------------------------------------------------------------------------
+let schedule = [];
+function renderSchedule() {
+  const box = $("#sched");
+  if (!schedule.length) { box.replaceChildren(h("p", { class: "muted" }, T("noRows"))); return; }
+  box.replaceChildren(h("table", {},
+    h("thead", {}, h("tr", {}, h("th", {}, T("time")), h("th", {}, T("whatPlaceholder")), h("th", {}))),
+    h("tbody", {}, schedule.map((row, i) => h("tr", {},
+      h("td", {}, row.time || ""), h("td", {}, row.what || ""),
+      h("td", {}, h("button", { class: "ghost sm", onclick: () => { schedule.splice(i, 1); renderSchedule(); } }, "✕")),
+    ))),
+  ));
+}
+$("#btnAddSched").onclick = () => {
+  const time = $("#sTime").value.trim();
+  const what = $("#sWhat").value.trim();
+  if (!what) return;
+  schedule.push({ time, what });
+  $("#sTime").value = "";
+  $("#sWhat").value = "";
+  renderSchedule();
+};
+async function loadDispo() {
+  const d = await api("/api/dispo");
+  $("#dDate").value = d.date || ""; $("#dCall").value = d.call || ""; $("#dLoc").value = d.location || ""; $("#dContact").value = d.contact || "";
+  schedule = Array.isArray(d.schedule) ? d.schedule : [];
+  renderSchedule();
+}
+$("#btnSaveDispo").onclick = async () => {
+  try {
+    await post("/api/dispo", { date: $("#dDate").value, call: $("#dCall").value, location: $("#dLoc").value, contact: $("#dContact").value, schedule });
+    flash("#dispoHint", T("saved"));
+  } catch (error) { report(error); }
+};
+
+// ---------------------------------------------------------------------------
+// Packing list — every change goes to the server on its own, never the whole
+// list, so a tick here cannot overwrite a tick made on the glasses meanwhile.
+// ---------------------------------------------------------------------------
+let equipment = [];
+function renderEquipment() {
+  const groups = [...new Set(equipment.map((item) => item.group))];
+  $("#equip").replaceChildren(...groups.map((group) => h("div", {},
+    h("h3", { style: "margin:14px 0 4px;font-size:15px" }, group),
+    h("table", {}, h("tbody", {}, equipment.filter((item) => item.group === group).map((item) => h("tr", {},
+      h("td", { style: "width:110px" }, h("label", {}, h("input", { type: "checkbox", checked: item.need, onchange: (e) => {
+        item.need = e.target.checked; if (!item.need) item.packed = false; renderEquipment();
+        void send({ setneed: { name: item.name, need: item.need } });
+      } }), " " + T("needs"))),
+      h("td", { style: "width:130px" }, h("label", { class: item.need ? "" : "muted" }, h("input", { type: "checkbox", checked: item.packed, disabled: !item.need, onchange: (e) => {
+        item.packed = e.target.checked; renderEquipment();
+        void send({ toggle: { name: item.name, packed: item.packed } });
+      } }), " " + T("packed"))),
+      h("td", { class: item.need ? "" : "muted" }, item.name),
+      h("td", { style: "width:40px" }, h("button", { class: "ghost sm", onclick: () => {
+        if (!confirm(T("confirmRemove", { name: item.name }))) return;
+        equipment = equipment.filter((x) => x !== item); renderEquipment();
+        void send({ remove: { name: item.name } });
+      } }, "✕")),
+    )))),
+  )));
+  const need = equipment.filter((i) => i.need).length;
+  const packed = equipment.filter((i) => i.need && i.packed).length;
+  $("#eqCount").textContent = need ? T("countSome", { packed, need }) : T("countNone");
+}
+async function loadEquipment() {
+  const e = await api("/api/equipment");
+  equipment = Array.isArray(e.items) ? e.items : [];
+  renderEquipment();
+}
+async function send(payload) {
+  try { await post("/api/equipment", payload); flash("#eqHint", T("saved")); }
+  catch (error) { $("#eqHint").textContent = T("notSaved"); console.error(error); }
+}
+$("#btnAddEq").onclick = async () => {
+  const name = $("#eqNew").value.trim();
+  if (!name) return;
+  const group = $("#eqNewGroup").value.trim() || "Other";
+  $("#eqNew").value = "";
+  await send({ add: { group, name, need: true } });
+  await loadEquipment().catch(report);
+};
+$("#btnEqNoneNeed").onclick = async () => {
+  for (const item of equipment.filter((i) => i.need)) await send({ setneed: { name: item.name, need: false } });
+  await loadEquipment().catch(report);
+};
+$("#btnEqUnpack").onclick = async () => {
+  for (const item of equipment.filter((i) => i.packed)) await send({ toggle: { name: item.name, packed: false } });
+  await loadEquipment().catch(report);
+};
+// Pick up ticks made on the glasses — unless someone is typing here.
+let loadingEquipment = false;
+setInterval(async () => {
+  if (loadingEquipment || document.hidden || document.activeElement?.tagName === "INPUT") return;
+  loadingEquipment = true;
+  try { await loadEquipment(); } catch { /* next round */ } finally { loadingEquipment = false; }
+}, 10000);
+
+// ---------------------------------------------------------------------------
+function report(error) {
+  if (String(error?.message) === "unauthorized") return;
+  console.error(error);
+  alert(T("unreachable"));
+}
+// Switching projects always reloads everything, so nothing of the previous shoot stays on screen.
+async function loadProjectData() { await loadProject(); await loadTakes(); await loadPrompt(); await loadDispo(); await loadEquipment(); }
+async function loadEverything() {
+  try { await loadState(); await loadProjectData(); } catch (error) { report(error); }
+}
+void loadEverything();
+</script>
+</body>
+</html>

@@ -187,6 +187,57 @@ describe("German exports", () => {
     expect(toMarkdown(report())).toContain("**MAJOR**");
   });
 
+  describe("CSV for Excel (DE/AT)", () => {
+    const at = new Date(2026, 9, 7, 14, 5).getTime();
+    const one = (text: string, section = "Küche", locale: "de" | "en" = "de"): string =>
+      toCsv(addEntry(setSection(startInspection("i1", "Top 3", at), section), text, "minor", at), locale, "excel-de");
+
+    it("has a BOM, semicolons, CRLF, local time and the exact time last", () => {
+      const csv = toCsv(report(), "de", "excel-de");
+      expect(csv.startsWith("﻿")).toBe(true);
+      expect(csv.endsWith("\r\n")).toBe(true);
+      expect(csv.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/);
+      const lines = csv.slice(1).split("\r\n");
+      expect(lines[0]).toBe("Zeit;Abschnitt;Art;Text;Foto;Zeit (ISO, UTC)");
+      expect(lines[1]).toMatch(/^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2};Küche;Mangel;Wasserhahn tropft;ja;\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
+      expect(lines[2]).toContain(";Wichtig;Schimmel hinter der Spüle;nein;");
+    });
+
+    it("writes the local time the way German Excel reads it", () => {
+      expect(one("Riss").slice(1).split("\r\n")[1])
+        .toBe("07.10.2026 14:05;Küche;Mangel;Riss;nein;" + new Date(at).toISOString());
+    });
+
+    it("quotes semicolons, quotes and line breaks, but not a plain comma", () => {
+      expect(one('Riss; "groß"')).toContain(';"Riss; ""groß""";');
+      expect(one("erste\nzweite")).toContain(';"erste\nzweite";');
+      expect(one("erste\rzweite")).toContain(';"erste\rzweite";');
+      expect(one("Riss, Fleck")).toContain(";Riss, Fleck;");
+    });
+
+    it("defuses formulas in text and section", () => {
+      for (const text of ["=1+1", "+cmd", "-2", "@SUM(A1)"]) expect(one(text)).toContain(";'" + text + ";");
+      expect(one("ok", "=cmd|' /C calc'!A0")).toContain(";'=cmd|' /C calc'!A0;");
+    });
+
+    it("translates the header for English", () => {
+      expect(one("x", "Hall", "en").slice(1).split("\r\n")[0]).toBe("time;section;severity;text;photo;time (ISO, UTC)");
+    });
+
+    it("leaves the standard CSV as it was: comma, LF, no BOM", () => {
+      const csv = toCsv(report(), "de", "standard");
+      expect(csv).toBe(toCsv(report(), "de"));
+      expect(csv).not.toContain("\r");
+      expect(csv).not.toContain("﻿");
+    });
+
+    it("keeps the chosen format in storage and ignores nonsense", () => {
+      expect(parseData(JSON.stringify({ csvFormat: "standard" })).csvFormat).toBe("standard");
+      expect(parseData(JSON.stringify({ csvFormat: "excel-de" })).csvFormat).toBe("excel-de");
+      expect(parseData(JSON.stringify({ csvFormat: 7 })).csvFormat).toBeUndefined();
+    });
+  });
+
   it("explains a bad server address in German", () => {
     expect(validateWsUrl("http://x", "de").errors[0]).toContain("ws://");
     expect(validateWsUrl("::::", "de").errors[0]).toBe("Die Server-Adresse ist ungültig.");

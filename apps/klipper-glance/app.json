@@ -1,0 +1,23 @@
+{
+  "package_id": "glass.quiet.klipperglance",
+  "edition": "202601",
+  "name": "Klipper Glance",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Read your 3D printer's status from the Klipper Glance bridge you run and enter in the phone app, and send pause, resume or cancel after you confirm twice. No other server is contacted.",
+      "whitelist": [
+        "http://*",
+        "https://*"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en"
+  ]
+}

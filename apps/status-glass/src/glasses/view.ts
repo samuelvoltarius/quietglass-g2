@@ -1,6 +1,8 @@
 import { formatMetric, type MetricState } from "../protocol/schema";
+import type { Locale } from "../i18n";
+import { describeIssue, t } from "../messages";
 import {
-  overallState, problems, sourceState, type SourceStatus,
+  overallState, problems, sourceState, type Problem, type SourceStatus,
 } from "../monitor/dashboard";
 
 /**
@@ -21,6 +23,8 @@ export interface ViewOptions {
   readonly cursor?: number;
   /** Lines available for problems. */
   readonly maxRows?: number;
+  /** Language of everything the app itself says; English when omitted. */
+  readonly locale?: Locale;
 }
 
 const DEFAULT_ROWS = 5;
@@ -44,10 +48,11 @@ export function buildView(
   options: ViewOptions = {},
   now = Date.now(),
 ): StatusView {
+  const locale = options.locale ?? "en";
   if (sources.length === 0) {
     return {
-      header: "Status Glass",
-      body: ["No sources configured.", "Add one in the phone app."],
+      header: t(locale, "g.title"),
+      body: [t(locale, "g.noSources"), t(locale, "g.addOnPhone")],
       footer: "",
     };
   }
@@ -59,8 +64,8 @@ export function buildView(
     // Everything healthy: one line, no header, no noise.
     return {
       header: "",
-      body: [countLabel(sources, now)],
-      footer: "all ok",
+      body: [countLabel(sources, now, locale)],
+      footer: t(locale, "g.allOk"),
     };
   }
 
@@ -73,29 +78,43 @@ export function buildView(
   const body = window.map((problem, index) => {
     const selected = start + index === cursor;
     const mark = problem.state === "critical" ? "!" : problem.state === "warn" ? "·" : "?";
-    const ack = problem.acknowledged ? " (ack)" : "";
+    const ack = problem.acknowledged ? " " + t(locale, "g.ack") : "";
     // The acknowledgement marker is kept; the text before it gives way.
     const head = (selected ? "> " : "  ") + mark + " ";
-    return head + fit(problem.sourceName + " " + formatMetric(problem.metric), LINE_WIDTH - head.length - ack.length) + ack;
+    return head + fit(problem.sourceName + " " + problemText(problem.metric, locale), LINE_WIDTH - head.length - ack.length) + ack;
   });
 
   const hidden = list.length - window.length;
   return {
-    header: headerFor(overall, list.length),
+    header: headerFor(overall, list.length, locale),
     body,
-    footer: (hidden > 0 ? "+" + hidden + " more  ·  " : "") + "tap = acknowledge",
+    footer: (hidden > 0 ? t(locale, "g.more", { count: hidden }) + SEPARATOR : "") + t(locale, "g.tapAck"),
   };
 }
 
-function headerFor(state: MetricState, count: number): string {
-  const label = state === "critical" ? "CRITICAL" : state === "warn" ? "WARNING" : "NO DATA";
-  return label + "  " + count;
+/** Between two footer hints. */
+export const SEPARATOR = "  ·  ";
+
+/**
+ * The row text for a problem. The two problems the app makes up itself (a
+ * source that failed, a source gone quiet) are said in the chosen language;
+ * a metric from a source keeps its own label.
+ */
+function problemText(metric: Problem["metric"], locale: Locale): string {
+  if (metric.id === "__stale") return t(locale, "g.stale");
+  if (metric.id === "__source") return describeIssue(metric.label, locale);
+  return formatMetric(metric, locale);
 }
 
-/** "4 sources ok" — enough to know monitoring is alive, nothing more. */
-function countLabel(sources: readonly SourceStatus[], now: number): string {
+function headerFor(state: MetricState, count: number, locale: Locale): string {
+  const label = state === "critical" ? "g.critical" : state === "warn" ? "g.warning" : "g.noData";
+  return t(locale, label) + "  " + count;
+}
+
+/** "4 of 4 ok" — enough to know monitoring is alive, nothing more. */
+function countLabel(sources: readonly SourceStatus[], now: number, locale: Locale): string {
   const ok = sources.filter((s) => sourceState(s, now) === "ok").length;
-  return ok + " of " + sources.length + " ok";
+  return t(locale, "g.countOk", { ok, total: sources.length });
 }
 
 function clamp(value: number, min: number, max: number): number {

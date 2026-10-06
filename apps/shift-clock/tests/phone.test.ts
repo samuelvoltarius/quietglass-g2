@@ -144,3 +144,70 @@ describe("phone page for beginners", () => {
     expect(page.root.innerHTML).toContain("Running now: <b>Work</b>");
   });
 });
+
+describe("phone page: export format and daily target", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const recorded = { id: "e1", project: "Küche", startedAt: new Date(2026, 9, 7, 14, 5).getTime(), endedAt: new Date(2026, 9, 7, 15, 35).getTime() };
+
+  function mountIn(language: string, initial: ClockData) {
+    const root = fakeRoot();
+    const blobs: Blob[] = [];
+    vi.stubGlobal("document", { getElementById: () => root, createElement: () => ({ click: () => undefined }) });
+    vi.stubGlobal("navigator", { language });
+    vi.stubGlobal("URL", { createObjectURL: (blob: Blob) => { blobs.push(blob); return "blob:x"; }, revokeObjectURL: () => undefined });
+    let data = initial;
+    mountPhoneUi({ getData: () => data, setData: async (next) => { data = next; } });
+    return { root, data: () => data, blobs };
+  }
+
+  it("offers Excel (Germany/Austria) first in German and standard CSV in English, in plain words", () => {
+    const de = mountIn("de-AT", { ...firstRunData("de"), entries: [recorded] });
+    expect(de.root.innerHTML).toContain('<option value="excel-de" selected>Excel (Deutschland/Österreich)</option>');
+    expect(de.root.innerHTML).toContain("Womit öffnest du die Tabelle?");
+    const en = mountIn("en-US", { ...firstRunData("en"), entries: [recorded] });
+    expect(en.root.innerHTML).toContain('<option value="standard" selected>Other programs or English Excel</option>');
+  });
+
+  it("exports for German Excel by default in German: BOM, semicolons, decimal comma", async () => {
+    const page = mountIn("de-AT", { ...firstRunData("de"), entries: [recorded] });
+    page.root.get("#export").fire("click");
+    const bytes = new Uint8Array(await page.blobs[0]!.arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    expect(text).toContain("\r\n07.10.2026;Küche;07.10.2026 14:05;07.10.2026 15:35;5400;1,50\r\n");
+    expect(page.blobs[0]!.type).toContain("charset=utf-8");
+  });
+
+  it("remembers the chosen format and exports with it", async () => {
+    const page = mountIn("de-AT", { ...firstRunData("de"), entries: [recorded] });
+    page.root.get("#csv-format").value = "standard";
+    page.root.get("#csv-format").fire("change");
+    expect(page.data().csvFormat).toBe("standard");
+    expect(page.root.innerHTML).toContain('<option value="standard" selected>');
+    page.root.get("#export").fire("click");
+    const text = await page.blobs[0]!.text();
+    expect(text.split("\n")[1]).toMatch(/^2026-10-07,Küche,.*,5400,1\.50$/);
+  });
+
+  it("ignores an unknown format value", () => {
+    const page = mountIn("de-AT", { ...firstRunData("de"), entries: [recorded] });
+    page.root.get("#csv-format").value = "xlsx";
+    page.root.get("#csv-format").fire("change");
+    expect(page.data().csvFormat).toBeNull();
+  });
+
+  it("sets and clears a daily target, accepting a decimal comma", () => {
+    const page = mountIn("de-AT", firstRunData("de"));
+    page.root.get("#target").value = "7,5";
+    page.root.get("#target").fire("change");
+    expect(page.data().dailyTargetHours).toBe(7.5);
+    expect(page.root.get("#target").value).toBe("7,5");
+    page.root.get("#target").value = "";
+    page.root.get("#target").fire("change");
+    expect(page.data().dailyTargetHours).toBeNull();
+    page.root.get("#target").value = "zwölf";
+    page.root.get("#target").fire("change");
+    expect(page.data().dailyTargetHours).toBeNull();
+  });
+});

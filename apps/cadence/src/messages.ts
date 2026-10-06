@@ -45,6 +45,10 @@ export const messages: Messages = {
     "p.colBest": "Bestes Tempo",
     "p.bpm": "{bpm} /Min",
     "p.export": "Als Tabelle (CSV) sichern",
+    "p.csvFormat": "Format der Tabelle",
+    "p.csvExcel": "Für Excel (DE/AT)",
+    "p.csvStandard": "Standard-CSV",
+    "p.csvHint": "„Für Excel (DE/AT)“ öffnet sich per Doppelklick richtig im deutschen Excel: Strichpunkt zwischen den Spalten, Komma bei Zahlen (1,50), Datum wie 07.10.2026 14:05. „Standard-CSV“ nimmt Kommas und Punkte – für andere Programme.",
     "p.clear": "Tagebuch löschen",
     "p.logHint": "Einheiten unter 10 Sekunden werden nicht gespeichert. Ein bestes Tempo zählt erst ab 30 Sekunden bei dieser Geschwindigkeit.",
     "p.controlsTitle": "Bedienung an der Brille",
@@ -61,6 +65,8 @@ export const messages: Messages = {
     "u.s": "{s} s",
     "u.ms": "{m} min {s} s",
     "u.hm": "{h} h {m} min",
+    // Excel CSV header, one column per `;`
+    "x.csvHeader": "Beginn;Eintrag;Tempo (Schläge/Min);Dauer (Sekunden);Dauer (Minuten);Beginn (ISO, UTC)",
   },
   en: {
     "g.title": "Cadence",
@@ -99,6 +105,10 @@ export const messages: Messages = {
     "p.colBest": "Best",
     "p.bpm": "{bpm} bpm",
     "p.export": "Export CSV",
+    "p.csvFormat": "Spreadsheet format",
+    "p.csvExcel": "For Excel (DE/AT)",
+    "p.csvStandard": "Standard CSV",
+    "p.csvHint": "“For Excel (DE/AT)” opens correctly by double-click in German or Austrian Excel: semicolons between columns, decimal comma (1,50), dates like 07.10.2026 14:05. “Standard CSV” uses commas and decimal points — for other apps.",
     "p.clear": "Clear log",
     "p.logHint": "Sessions shorter than 10 seconds are not recorded, and a best tempo needs at least 30 seconds at that speed.",
     "p.controlsTitle": "Controls on the glasses",
@@ -114,6 +124,7 @@ export const messages: Messages = {
     "u.s": "{s}s",
     "u.ms": "{m}m {s}s",
     "u.hm": "{h}h {m}m",
+    "x.csvHeader": "Start;Item;Tempo (bpm);Duration (seconds);Duration (minutes);Start (ISO, UTC)",
   },
 };
 

@@ -11,6 +11,7 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import type { GlassLayout, NavView } from "./view";
 import { renderPixelIcon, type PixelIcon } from "./pixel";
+import { CARD_HEIGHT, CARD_WIDTH, renderTurnCardPng, type TurnCard } from "./turncard";
 
 /**
  * Renders the navigation onto the G2.
@@ -50,6 +51,21 @@ const OVERVIEW_TEXT: Readonly<Record<"header" | "body" | "footer", { x: number; 
   footer: { x: 0, y: 252, width: SCREEN_WIDTH, height: 34 },
 };
 
+/**
+ * Turn layout: the pixel arrow on the left, the turn card (big distance and
+ * approach bar) to its right, and the road text beneath the card.
+ */
+const ICON = { id: 4, name: "pixel-icon", x: 0, y: 36, width: 96, height: 144 } as const;
+const CARD = { id: 5, name: "turn-distance", x: 104, y: 36, width: CARD_WIDTH, height: CARD_HEIGHT } as const;
+const CARD_BODY = { y: CARD.y + CARD.height + 4, height: CONTAINER.footer.y - 2 - (CARD.y + CARD.height + 4) } as const;
+
+/** Images of the turn layout to send; a field left out is unchanged on the glasses. */
+export interface TurnImages {
+  readonly icon?: PixelIcon;
+  /** The card to show; null blanks it. */
+  readonly card?: TurnCard | null;
+}
+
 export interface RenderResult {
   readonly ok: boolean;
   /** Present when page creation failed, for the caller to surface or log. */
@@ -58,15 +74,20 @@ export interface RenderResult {
 
 export function buildPage(view: NavView, icon?: PixelIcon, layout: GlassLayout = "turns"): CreateStartUpPageContainer {
   if (layout === "overview") return buildOverviewPage(view);
+  const body = text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon));
   return new CreateStartUpPageContainer({
-    containerTotalNum: icon ? 4 : 3,
+    containerTotalNum: icon ? 5 : 3,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
-      // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon)),
+      // Exactly one container may capture input; the body owns it. With the
+      // card above it, the body starts below the card.
+      icon ? new TextContainerProperty({ ...body, yPosition: CARD_BODY.y, height: CARD_BODY.height }) : body,
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
+    imageObject: icon ? [
+      new ImageContainerProperty({ containerID: ICON.id, containerName: ICON.name, xPosition: ICON.x, yPosition: ICON.y, width: ICON.width, height: ICON.height, zOrderIndex: 4 }),
+      new ImageContainerProperty({ containerID: CARD.id, containerName: CARD.name, xPosition: CARD.x, yPosition: CARD.y, width: CARD.width, height: CARD.height, zOrderIndex: 5 }),
+    ] : [],
   });
 }
 
@@ -125,7 +146,7 @@ function text(
  * though it is reported to always fail on hardware: the call itself registers
  * event routing, and skipping it leaves the app deaf to input.
  */
-export async function createPage(bridge: EvenAppBridge, view: NavView, icon?: PixelIcon): Promise<RenderResult> {
+export async function createPage(bridge: EvenAppBridge, view: NavView, icon?: PixelIcon, card: TurnCard | null = null): Promise<RenderResult> {
   const page = buildPage(view, icon);
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
@@ -135,17 +156,29 @@ export async function createPage(bridge: EvenAppBridge, view: NavView, icon?: Pi
 
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
+    if (result === StartUpPageCreateResult.success) return icon ? updateTurnImages(bridge, { icon, card }) : { ok: true };
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
 
-/** Fast path: change the text of the three containers in place. */
-export async function updatePage(bridge: EvenAppBridge, view: NavView, icon?: PixelIcon): Promise<RenderResult> {
+/**
+ * Fast path: change the text of the three containers in place, and send only
+ * the images that changed — each one crosses Bluetooth.
+ */
+export async function updatePage(bridge: EvenAppBridge, view: NavView, images: TurnImages = {}): Promise<RenderResult> {
   const updated = await updateTexts(bridge, view);
-  return updated.ok ? updatePixel(bridge, icon) : updated;
+  return updated.ok ? updateTurnImages(bridge, images) : updated;
+}
+
+async function updateTurnImages(bridge: EvenAppBridge, images: TurnImages): Promise<RenderResult> {
+  if (images.icon) {
+    const sent = await updatePixel(bridge, images.icon);
+    if (!sent.ok) return sent;
+  }
+  if (images.card === undefined) return { ok: true };
+  return sendImage(bridge, CARD, () => renderTurnCardPng(images.card ?? null));
 }
 
 async function updateTexts(bridge: EvenAppBridge, view: NavView): Promise<RenderResult> {
@@ -203,11 +236,14 @@ async function updateOverviewImage(bridge: EvenAppBridge, png: Uint8Array): Prom
   } catch (error) { return { ok: false, reason: errorMessage(error) }; }
 }
 
-async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
-  if (!icon) return { ok: true };
+function updatePixel(bridge: EvenAppBridge, icon: PixelIcon): Promise<RenderResult> {
+  return sendImage(bridge, ICON, () => renderPixelIcon(icon));
+}
+
+async function sendImage(bridge: EvenAppBridge, target: { readonly id: number; readonly name: string }, render: () => Promise<Uint8Array>): Promise<RenderResult> {
   try {
-    const imageData = await renderPixelIcon(icon);
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "pixel-icon", imageData }));
+    const imageData = await render();
+    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: target.id, containerName: target.name, imageData }));
     return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
   } catch (error) { return { ok: false, reason: errorMessage(error) }; }
 }

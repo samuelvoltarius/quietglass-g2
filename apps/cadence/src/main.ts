@@ -10,6 +10,7 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, setSettings, type CadenceData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { getLocale, setLocale, type Locale } from "./i18n";
+import { createExitRequest } from "./exit";
 
 const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
 
@@ -115,6 +116,15 @@ async function boot(): Promise<void> {
     sessionStartedAt = null;
   };
 
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => {
+      endSession();
+      closed = true;
+      clearTimeout(timer);
+      clearInterval(tick);
+    },
+  }, "cadence");
+
   await draw();
 
   bridge.onEvenHubEvent((event) => {
@@ -145,13 +155,8 @@ async function boot(): Promise<void> {
         state = reset();
         break;
       case "doubleClick":
-        endSession();
-        closed = true;
-        clearTimeout(timer);
-        clearInterval(tick);
-        bridge.shutDownPageContainer().catch((error: unknown) => {
-          console.warn("[cadence] shutdown failed:", error);
-        });
+        // System exit dialog; the beat keeps running until the user confirms.
+        void requestExit();
         return;
       default:
         return;

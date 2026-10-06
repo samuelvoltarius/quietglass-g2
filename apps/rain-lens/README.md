@@ -46,3 +46,7 @@ npm run sim
 ```
 
 Noch nicht auf echter G2-Hardware geprüft. Wetterdaten sind modellbasierte Prognosen und keine amtlichen Unwetterwarnungen.
+
+## Datenschutz
+
+Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).

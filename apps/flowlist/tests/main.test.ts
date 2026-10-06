@@ -31,6 +31,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
     createStartUpPageContainer: vi.fn(async (): Promise<number> => 0),
     textContainerUpgrade: vi.fn(async () => true),
     shutDownPageContainer: vi.fn(async () => true),
+    updateImageRawData: vi.fn(async (): Promise<unknown> => "success"),
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: (callback: (status: unknown) => void) => { statusHandler = callback; return () => undefined; },
   };
@@ -66,9 +67,19 @@ function lastBody(fake: Fake): string {
   return calls[calls.length - 1]?.content ?? "";
 }
 
+/** Enough of a canvas for the progress bar to encode. */
+function fakeCanvas() {
+  return {
+    width: 0,
+    height: 0,
+    getContext: () => ({ imageSmoothingEnabled: false, fillStyle: "", fillRect: () => undefined }),
+    toBlob: (done: (blob: Blob | null) => void) => done(new Blob([new Uint8Array(4)])),
+  };
+}
+
 async function boot(fake: Fake): Promise<FakeRoot> {
   const root = fakeRoot();
-  vi.stubGlobal("document", { getElementById: () => root });
+  vi.stubGlobal("document", { getElementById: () => root, createElement: () => fakeCanvas() });
   harness.bridge = fake.bridge;
   vi.resetModules();
   await import("../src/main");
@@ -91,7 +102,10 @@ describe("flowlist lifecycle", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  it("regression: a failed shutdown on double tap is not an unhandled rejection", async () => {
+  const drawCount = (fake: ReturnType<typeof fakeBridge>): number =>
+    fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.textContainerUpgrade.mock.calls.length;
+
+  it("regression: a failed exit call on double tap is not an unhandled rejection, and the run continues", async () => {
     const fake = fakeBridge(data());
     fake.bridge.shutDownPageContainer.mockRejectedValue(new Error("already closed"));
     await boot(fake);
@@ -99,18 +113,34 @@ describe("flowlist lifecycle", () => {
     fake.emit(3);
     await sleep(20);
     expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1);
+    expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1);
+    const drawn = drawCount(fake);
+    fake.emit(0); // tap: complete the step
+    await vi.waitFor(() => expect(drawCount(fake)).toBeGreaterThan(drawn));
   });
 
-  it("regression: stops redrawing the clock once the app was closed", async () => {
+  it("regression: stops redrawing once the exit dialog was confirmed", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.emit(3);
     await sleep(20);
-    const created = fake.bridge.createStartUpPageContainer.mock.calls.length;
-    const upgraded = fake.bridge.textContainerUpgrade.mock.calls.length;
+    expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1);
+    const drawn = drawCount(fake);
+    fake.emit(0);
     await sleep(1300);
-    expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBe(created);
-    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBe(upgraded);
+    expect(drawCount(fake)).toBe(drawn);
+  });
+
+  it("keeps the run going when the exit dialog is cancelled", async () => {
+    const fake = fakeBridge(data());
+    fake.bridge.shutDownPageContainer.mockResolvedValue(false);
+    await boot(fake);
+    fake.emit(3);
+    await sleep(20);
+    expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1);
+    const drawn = drawCount(fake);
+    fake.emit(0); // tap: complete the step
+    await vi.waitFor(() => expect(drawCount(fake)).toBeGreaterThan(drawn));
   });
 
   it("regression: rebuilds the page after a reconnect even when nothing changed", async () => {
@@ -150,6 +180,29 @@ describe("flowlist lifecycle", () => {
     root.get("#invert").fire("change");
     await sleep(50);
     expect(lastBody(fake)).toContain("Step number 4");
+  });
+
+  it("sends the progress bar with the page, and again only when a step is done", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
+    const page = (fake.bridge.createStartUpPageContainer.mock.calls[0] as unknown as [{ imageObject?: Array<{ width?: number; height?: number; containerName?: string }> }])[0];
+    expect(page.imageObject?.[0]).toMatchObject({ containerName: "progress", width: 280, height: 24 });
+    await sleep(1300); // clock ticks change the footer, not the bar
+    expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1);
+    fake.emit(0);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(2));
+  });
+
+  it("the progress bar never holds up the text, even when its transfer hangs", async () => {
+    const fake = fakeBridge(data());
+    fake.bridge.updateImageRawData.mockImplementation(() => new Promise(() => undefined));
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
+    fake.emit(0);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Step number 3"));
+    expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1);
   });
 
   it("regression: never sends more body rows than the display holds", async () => {

@@ -35,6 +35,11 @@ export interface NavData {
   /** Selected destination id, or null. */
   readonly destinationId: string | null;
   readonly invertScroll: boolean;
+  /**
+   * Real streets behind the overview route, loaded from OpenStreetMap
+   * (Overpass) once per route. Off: the route alone, nothing extra sent.
+   */
+  readonly streets: boolean;
 }
 
 const KEY = "quietglass.openglance.v1";
@@ -49,6 +54,7 @@ export const EMPTY_DATA: NavData = {
   places: [],
   destinationId: null,
   invertScroll: false,
+  streets: true,
 };
 
 export function usesMockRouter(data: NavData): boolean {
@@ -165,6 +171,7 @@ export function parseData(raw: string): NavData {
       places,
       destinationId,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
+      streets: typeof value.streets === "boolean" ? value.streets : EMPTY_DATA.streets,
     };
   } catch {
     return EMPTY_DATA;

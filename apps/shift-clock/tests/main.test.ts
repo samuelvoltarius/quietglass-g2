@@ -89,14 +89,30 @@ describe("shiftclock lifecycle", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  it("regression: a failed shutdown on double tap is not an unhandled rejection", async () => {
-    const fake = fakeBridge(data());
+  it("regression: a failed exit call on double tap is not an unhandled rejection, and the app stays", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
     fake.bridge.shutDownPageContainer.mockRejectedValue(new Error("already closed"));
     await boot(fake);
     fake.emit(3);
     fake.emit(3);
     await sleep(20);
     expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1);
+    expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1);
+    const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn);
+  });
+
+  it("keeps the running clock on screen when the exit dialog is cancelled", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    fake.bridge.shutDownPageContainer.mockResolvedValue(false);
+    await boot(fake);
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+    const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn);
+    expect(stored(fake).open.project).toBe("Client A");
   });
 
   it("regression: the running entry is saved before the page is shut down", async () => {
@@ -128,18 +144,42 @@ describe("shiftclock lifecycle", () => {
     const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
     await boot(fake);
     fake.emit(3);
-    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalled());
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+    await sleep(10);
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length + fake.bridge.createStartUpPageContainer.mock.calls.length;
     await sleep(1300);
     expect(fake.bridge.textContainerUpgrade.mock.calls.length + fake.bridge.createStartUpPageContainer.mock.calls.length).toBe(drawn);
   });
 
-  it("regression: the icon is sent with the page, not again on every clock tick", async () => {
+  it("regression: the day bar is sent with the page, not again on every clock tick", async () => {
     const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
     await boot(fake);
     await sleep(2200);
     expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(0);
     expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1);
+  });
+
+  it("the day bar never holds up the text, even when its transfer hangs", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    fake.bridge.updateImageRawData.mockImplementation(() => new Promise(() => undefined));
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
+    const before = fake.bridge.textContainerUpgrade.mock.calls.length;
+    await sleep(2200);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(before);
+    expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1);
+  });
+
+  it("resends the day bar when the clock stops, and sends the day-bar container", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 600_000 }));
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
+    fake.emit(0); // stop
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(2));
+    const update = (fake.bridge.updateImageRawData.mock.calls[1] as unknown as [{ containerID?: number; containerName?: string }])[0];
+    expect(update).toMatchObject({ containerID: 4, containerName: "day-bar" });
+    const page = (fake.bridge.createStartUpPageContainer.mock.calls[0] as unknown as [{ imageObject?: Array<{ width?: number; height?: number }> }])[0];
+    expect(page.imageObject?.[0]).toMatchObject({ width: 96, height: 144 });
   });
 
   it("regression: rebuilds the page after a reconnect even when nothing changed", async () => {

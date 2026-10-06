@@ -2,6 +2,13 @@
 
 **Quietglass** · Watch and steer a coding agent without returning to your desk.
 
+> **Auf Deutsch, kurz:** Agent Glass zeigt dir auf der Brille, was dein
+> Coding-Agent (Claude/Codex über Even Terminal, Hermes oder OpenClaw) gerade
+> tut. Fragt er nach einer Freigabe, erscheint die Frage im Blickfeld:
+> nach oben wischen erlaubt, nach unten wischen lehnt ab. Auf Wunsch liest das
+> Handy die Antworten über Kopfhörer vor. Die App spricht Deutsch oder
+> Englisch, je nach Handy-Sprache (umstellbar oben auf der Handy-Seite).
+
 Agent Glass connects the Even G2 to Even Terminal, the existing Hermes
 EvenHub bridge, or the existing OpenClaw gateway. It streams the active agent
 to the glasses and, where the backend exposes real permission events, surfaces
@@ -15,6 +22,13 @@ must be activated once from the phone after opening the app.
 
 *Captured at the real 576 × 288 simulator resolution using the private,
 offline `?demo=1` mode. No live terminal session or personal data is shown.*
+
+## Languages
+
+The glasses and the phone page are available in **German and English**. The
+language follows the phone; a picker at the top of the phone page switches it,
+and the glasses redraw immediately. Agent output, tool names and provider names
+are shown as they come.
 
 ## What it shows
 
@@ -82,6 +96,13 @@ allow/deny control.
 Enable **Spoken output** in the phone view, then choose a language, one of the
 voices installed on the phone, and a speed. Agent Glass waits for completed
 sentences instead of reading streaming tokens one by one.
+
+The speech language is its own setting, separate from the app language.
+**Automatic** (the default) speaks the phone language; if the phone is German
+or English and you switch the app to the other one, it follows the app. Its
+own short announcements (“Permission required …”, “code omitted”) are spoken
+in German for a German voice and in English otherwise. Agent text is never
+translated.
 
 For privacy and clarity, it does not read code blocks, inline code, URLs,
 permission commands, or values that look like access tokens. A permission
@@ -214,6 +235,10 @@ and is not added to this repository.
 Agent Glass is a proof of concept built against Even Hub SDK 0.0.16 and tested
 in the simulator. Hardware behaviour and the complete permission flow still
 need validation on a physical Even G2.
+
+## Privacy
+
+What data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## License
 

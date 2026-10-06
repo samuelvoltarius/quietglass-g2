@@ -2,6 +2,8 @@ import type { Stop } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import { DEFAULT_SETTINGS, validateUrl, type Settings } from "../storage/persist";
 import { nextStep } from "../text";
+import { languageSelect, type Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * The phone side: which service to ask, and where it lives.
@@ -20,23 +22,32 @@ export interface PhoneUiPorts {
   isSeeded(): boolean;
   getStops(): readonly Stop[];
   refresh(): void;
+  /** The language of the phone page and the glasses; English when absent. */
+  getLocale?(): Locale;
+  /** Called when the language is changed on this page; must redraw the glasses. */
+  setLocale?(locale: Locale): void;
 }
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
 
+  const locale = (): Locale => ports.getLocale?.() ?? "en";
+
   const statusText = (): string => {
+    const lang = locale();
     const position = ports.getPosition();
     const stops = ports.getStops();
     const where = !position
-      ? "Noch kein Standort – erlaube den Standort in der Even-App."
+      ? t(lang, "p.noPosition")
       : ports.isSeeded()
-        ? "Teststandort aus der Adresse (?at=), nicht gemessen."
-        : `Standort gefunden${typeof position.accuracy === "number" ? ` (± ${Math.round(position.accuracy)} m)` : ""}.`;
+        ? t(lang, "p.seeded")
+        : typeof position.accuracy === "number"
+          ? t(lang, "p.positionFoundAccuracy", { metres: Math.round(position.accuracy) })
+          : t(lang, "p.positionFound");
     const found = stops.length === 0
-      ? "Noch keine Haltestelle gefunden."
-      : `Nächste Haltestelle: ${stops[0]?.name ?? "?"} (${stops.length} in der Nähe).`;
+      ? t(lang, "p.noStopsYet")
+      : t(lang, "p.nearestStop", { count: stops.length, stop: stops[0]?.name ?? "?" });
     return `${where} ${found}`;
   };
 
@@ -45,76 +56,75 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const status = root.querySelector<HTMLElement>("#status");
     if (status) status.textContent = statusText();
     const next = root.querySelector<HTMLElement>("#next");
-    if (next) next.textContent = nextStep(ports.getPosition() !== null, ports.getStops().length);
+    if (next) next.textContent = nextStep(ports.getPosition() !== null, ports.getStops().length, locale());
   };
 
   const render = (): void => {
     const settings = ports.getSettings();
 
+    const lang = locale();
+    const x = (key: string, vars: Record<string, string | number> = {}): string => t(lang, key, vars);
+    if (document.documentElement) document.documentElement.lang = lang;
+
     root.innerHTML = `
       <div class="brand"><span class="brand-mark">Quietglass</span> NextStop</div>
+      <div class="card compact">${languageSelect(lang)}</div>
       <p class="next" id="next"></p>
 
       <div class="card">
-        <label for="backend">Woher kommen die Abfahrten?</label>
+        <label for="backend">${x("p.sourceLabel")}</label>
         <select id="backend">
-          <option value="motis">Überall – Fahrplan (funktioniert sofort)</option>
-          <option value="oebb">ÖBB – Echtzeit in Österreich (Zusatzprogramm nötig)</option>
+          <option value="motis">${x("p.sourceMotis")}</option>
+          <option value="oebb">${x("p.sourceOebb")}</option>
         </select>
         <p class="hint" id="backend-hint"></p>
       </div>
 
       <div class="card">
-        <label>Status</label>
+        <label>${x("p.status")}</label>
         <p class="hint" id="status"></p>
-        <button id="refresh-now" type="button">Haltestellen neu suchen</button>
+        <button id="refresh-now" type="button">${x("p.refreshNow")}</button>
       </div>
 
       <div class="card keys">
-        <label>Bedienung auf der Brille</label>
+        <label>${x("p.controls")}</label>
         <p class="hint">
-          <strong>Wischen</strong> — Abfahrt auswählen<br />
-          <strong>Tippen</strong> — mitfahren und den nächsten Halt sehen, nochmal tippen = zurück<br />
-          <strong>Halten</strong> — nächste Haltestelle in der Nähe<br />
-          <strong>Doppeltippen</strong> — NextStop beenden<br />
-          <strong>●</strong> = Echtzeit, <strong>~</strong> = nur Fahrplan, <strong>+3</strong> = 3 Minuten später
+          <strong>${x("p.swipe")}</strong> — ${x("p.swipeDoes")}<br />
+          <strong>${x("p.tap")}</strong> — ${x("p.tapDoes")}<br />
+          <strong>${x("p.hold")}</strong> — ${x("p.holdDoes")}<br />
+          <strong>${x("p.doubleTap")}</strong> — ${x("p.doubleTapDoes")}<br />
+          ${x("p.legend")}
         </p>
       </div>
 
       <details class="card advanced" id="advanced">
-        <summary>Erweitert</summary>
+        <summary>${x("p.advanced")}</summary>
 
         <div id="oebb-card">
-          <label for="oebb-url">Adresse des ÖBB-Zusatzprogramms</label>
+          <label for="oebb-url">${x("p.oebbUrl")}</label>
           <input id="oebb-url" type="url" inputmode="url" spellcheck="false" />
           <p class="hint">
-            Die ÖBB-Schnittstelle schickt keine CORS-Header, deshalb verwirft die
-            App ihre Antworten. Ein kleiner Proxy auf einem Computer im selben
-            Netz reicht sie durch: <code>node examples/oebb-cors-proxy.mjs</code>
-            (README, Abschnitt „ÖBB-Echtzeit“).
+            ${x("p.oebbUrlHint")}
           </p>
         </div>
 
         <div id="motis-card">
-          <label for="motis-url">Fahrplan-Server (MOTIS)</label>
+          <label for="motis-url">${x("p.motisUrl")}</label>
           <input id="motis-url" type="url" inputmode="url" spellcheck="false" />
           <p class="hint">
-            Voreingestellt ist die öffentliche Transitous-Instanz. Nur ändern,
-            wenn du MOTIS selbst betreibst — dann verlässt keine Anfrage das Haus.
+            ${x("p.motisUrlHint")}
           </p>
         </div>
 
-        <label for="refresh">Abfahrten neu laden alle <span id="refresh-value"></span> s</label>
+        <label for="refresh">${x("p.refreshEvery", { value: '<span id="refresh-value"></span>' })}</label>
         <input id="refresh" type="range" min="10" max="120" step="5" />
         <p class="hint">
-          Gilt nur für die Abfahrtstafel. Während der Fahrt bleibt die
-          Haltestellenfolge stehen — sie ändert sich nicht.
+          ${x("p.refreshHint")}
         </p>
       </details>
 
       <p class="credits">
-        Fahrplandaten: <a href="https://transitous.org/sources/" target="_blank" rel="noopener">Transitous und seine Quellen</a>
-        (u. a. OpenStreetMap) · Echtzeit Österreich: ÖBB
+        ${x("p.credits", { link: `<a href="https://transitous.org/sources/" target="_blank" rel="noopener">${x("p.creditsLink")}</a>` })}
       </p>
     `;
 
@@ -144,11 +154,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     if (advanced) advanced.open = settings.backend === "oebb";
 
     if (backendHint) {
-      backendHint.textContent = settings.backend === "oebb"
-        ? "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines "
-          + "Zusatzprogramm auf einem Computer im selben WLAN – siehe „Erweitert“ unten."
-        : "Funktioniert sofort, in vielen Ländern. Meist reine Fahrplanzeiten (~); "
-          + "Verspätungen nur dort, wo der Verkehrsbetrieb sie meldet.";
+      backendHint.textContent = x(settings.backend === "oebb" ? "p.sourceHintOebb" : "p.sourceHintMotis");
     }
 
     updateStatus();
@@ -167,9 +173,9 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
     for (const [field, key] of [[oebbUrl, "oebbUrl"], [motisUrl, "motisUrl"]] as const) {
       field.addEventListener("change", () => {
-        const check = validateUrl(field.value);
+        const check = validateUrl(field.value, lang);
         if (!check.valid) {
-          field.setCustomValidity(check.error ?? "Ungültig");
+          field.setCustomValidity(check.error ?? x("p.invalid"));
           field.reportValidity();
           // Refuse the edit rather than silently storing an address that can
           // never answer; the old one at least worked.
@@ -180,6 +186,13 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         commit({ [key]: field.value.trim() });
       });
     }
+
+    // The language applies to the glasses too: the port redraws them at once.
+    const language = root.querySelector<HTMLSelectElement>("#language");
+    language?.addEventListener("change", () => {
+      ports.setLocale?.(language.value === "de" ? "de" : "en");
+      render();
+    });
 
     refresh.addEventListener("input", () => {
       if (refreshValue) refreshValue.textContent = refresh.value;

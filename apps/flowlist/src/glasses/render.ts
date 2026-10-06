@@ -1,5 +1,8 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -7,12 +10,15 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { FlowView } from "./view";
+import { encodeBitmap } from "./pixel";
+import { BAR_IMAGE_HEIGHT, BAR_IMAGE_WIDTH, type Bitmap } from "./progressbar";
 
 /**
  * Renders the checklist onto the G2.
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
+ * Layout is fixed at three stacked text containers on the 576 x 288 display,
+ * with the progress bar image in the right half of the header row. After the
+ * page exists, updates go through `textContainerUpgrade`, which
  * changes text without rebuilding the page — on real hardware a rebuild falls
  * back to a full page creation and costs seconds, discarding input meanwhile.
  */
@@ -39,15 +45,24 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
+/** The header text keeps the left half; the bar takes the right half of that row. */
+export const HEADER_TEXT_PX = 288;
+export const PROGRESS_BAR = { id: 4, name: "progress", x: 292, y: 4 } as const;
+
 export function buildPage(view: FlowView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: 3,
+    containerTotalNum: 4,
     textObject: [
-      text(CONTAINER.header, view.header, 1, false),
+      text(CONTAINER.header, view.header, 1, false, HEADER_TEXT_PX),
       // Exactly one container may capture input; the body owns it.
       text(CONTAINER.body, view.body.join("\n"), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
+    // Image containers take 20-288 x 20-144 px.
+    imageObject: [new ImageContainerProperty({
+      containerID: PROGRESS_BAR.id, containerName: PROGRESS_BAR.name, xPosition: PROGRESS_BAR.x, yPosition: PROGRESS_BAR.y,
+      width: BAR_IMAGE_WIDTH, height: BAR_IMAGE_HEIGHT, zOrderIndex: 4,
+    })],
   });
 }
 
@@ -56,13 +71,14 @@ function text(
   content: string,
   zOrderIndex: number,
   captureEvents: boolean,
+  width = SCREEN_WIDTH,
 ): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
     xPosition: 0,
     yPosition: spec.y,
-    width: SCREEN_WIDTH,
+    width,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
@@ -110,6 +126,20 @@ export async function updatePage(bridge: EvenAppBridge, view: FlowView): Promise
       }));
     }
     return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/**
+ * Sends the progress bar. Separate from the text on purpose: an image is a
+ * slow BLE transfer, and the caller runs it on its own lane (image-sync.ts).
+ */
+export async function sendProgressBar(bridge: EvenAppBridge, bitmap: Bitmap): Promise<RenderResult> {
+  try {
+    const imageData = await encodeBitmap(bitmap);
+    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: PROGRESS_BAR.id, containerName: PROGRESS_BAR.name, imageData }));
+    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }

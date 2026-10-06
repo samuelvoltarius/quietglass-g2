@@ -1,3 +1,5 @@
+import { languageSelect, type Locale } from "../i18n";
+import { t } from "../messages";
 import {
   isPlainHttp, maskToken, nextSourceId, removeSource, upsertSource, validateUrl,
   type StatusData,
@@ -14,6 +16,10 @@ import {
 export interface PhoneUiPorts {
   readonly getData: () => StatusData;
   readonly setData: (data: StatusData) => Promise<void>;
+  /** Current language; English when the host does not say. */
+  readonly getLocale?: () => Locale;
+  /** Called when the user picks another language on this page. */
+  readonly setLocale?: (locale: Locale) => void;
 }
 
 /** Text inputs whose unsaved contents are carried across a redraw. */
@@ -27,22 +33,25 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
   const render = (): void => {
     const data = ports.getData();
+    const locale = ports.getLocale?.() ?? "en";
+    if (document.documentElement) document.documentElement.lang = locale;
     // Whatever is half typed survives a redraw caused by another control.
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
-    root.innerHTML = template(data, notice);
+    root.innerHTML = template(data, notice, locale);
     DRAFT_FIELDS.forEach((id, index) => {
       const field = root.querySelector<HTMLInputElement>("#" + id);
       const value = typed[index];
       if (field && value !== undefined) field.value = value;
     });
     notice = "";
-    wire(root, ports, data, (message) => { notice = message; render(); }, render);
+    wire(root, ports, data, locale, (message) => { notice = message; render(); }, render);
   };
 
   render();
 }
 
-function template(data: StatusData, notice: string): string {
+function template(data: StatusData, notice: string, locale: Locale): string {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   return `
   <header class="brand">
     <span class="brand-mark">Quietglass</span>
@@ -51,88 +60,76 @@ function template(data: StatusData, notice: string): string {
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
+  <section class="card compact">${languageSelect(locale)}</section>
+
   <section class="card">
-    <h2>Add a source</h2>
-    <label for="name">Name</label>
-    <input id="name" type="text" placeholder="nas, pi, web" />
-    <label for="url">URL</label>
+    <h2>${x("p.addTitle")}</h2>
+    <label for="name">${x("p.name")}</label>
+    <input id="name" type="text" placeholder="${x("p.namePlaceholder")}" />
+    <label for="url">${x("p.url")}</label>
     <input id="url" type="text" placeholder="https://host.example/status.json" />
-    <label for="token">Bearer token (optional)</label>
-    <input id="token" type="password" placeholder="sent as an Authorization header" />
-    <button id="add" type="button">Add source</button>
-    <p class="hint">
-      The URL must return the Status Glass JSON shape. See the README for the
-      format and a reference server you can copy.
-    </p>
+    <details>
+      <summary>${x("p.advanced")}</summary>
+      <label for="token">${x("p.token")}</label>
+      <input id="token" type="password" placeholder="${x("p.tokenPlaceholder")}" />
+    </details>
+    <button id="add" type="button">${x("p.add")}</button>
+    <p class="hint">${x("p.addHint")}</p>
   </section>
 
   <section class="card">
-    <h2>Sources</h2>
-    ${data.sources.length === 0 ? '<p class="hint">Nothing configured yet.</p>' : ""}
+    <h2>${x("p.sourcesTitle")}</h2>
+    ${data.sources.length === 0 ? `<p class="hint">${x("p.sourcesEmpty")}</p>` : ""}
     <ul class="scripts">
       ${data.sources.map((s) => `
         <li>
           <span>
             <strong>${escapeHtml(s.name)}</strong><br />
             <small>${escapeHtml(s.url)}</small><br />
-            <small>token: ${escapeHtml(maskToken(s.token))}</small>
-            ${isPlainHttp(s.url) ? '<br /><small class="warn">unencrypted http</small>' : ""}
+            <small>${escapeHtml(x("p.tokenLine", { mask: maskToken(s.token, locale) }))}</small>
+            ${isPlainHttp(s.url) ? `<br /><small class="warn">${x("p.plainHttp")}</small>` : ""}
           </span>
-          <button type="button" class="remove" data-id="${escapeHtml(s.id)}">Remove</button>
+          <button type="button" class="remove" data-id="${escapeHtml(s.id)}">${x("p.remove")}</button>
         </li>`).join("")}
     </ul>
   </section>
 
   <section class="card">
-    <h2>Polling</h2>
-    <label for="poll">Interval — <output id="poll-out">${data.pollSeconds}</output> s</label>
+    <h2>${x("p.pollTitle")}</h2>
+    <label for="poll">${x("p.pollLabel", { value: `<output id="poll-out">${data.pollSeconds}</output>` })}</label>
     <input id="poll" type="range" min="5" max="300" step="5" value="${data.pollSeconds}" />
-    <p class="hint">
-      A source that fails backs off automatically, up to five minutes, so a host
-      that is down is not hammered. Healthy sources keep their normal interval.
-    </p>
-    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> Invert swipe direction</label>
+    <p class="hint">${x("p.pollHint")}</p>
+    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
   </section>
 
   <section class="card">
-    <h2>Controls on the glasses</h2>
+    <h2>${x("p.controlsTitle")}</h2>
     <table class="keys">
-      <tr><td>Tap</td><td>Acknowledge the highlighted problem</td></tr>
-      <tr><td>Swipe</td><td>Move through the problem list</td></tr>
-      <tr><td>Hold</td><td>Open the actions, or refresh every source when none are offered</td></tr>
-      <tr><td>Double tap</td><td>Leave Status Glass</td></tr>
+      <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
+      <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
+      <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
+      <tr><td>${x("p.double")}</td><td>${x("p.doubleDo")}</td></tr>
     </table>
-    <p class="hint">
-      When everything is healthy the glasses show a single line. Acknowledging
-      a problem moves it to the bottom of the list — it never hides it, and it
-      comes back if the metric recovers and fails again.
-    </p>
+    <p class="hint">${x("p.controlsHint")}</p>
   </section>
 
   <section class="card">
-    <h2>Security</h2>
-    <p class="hint">
-      Tokens are sent in an <code>Authorization</code> header, never in the URL,
-      and are stored in this app's private storage on the phone. They are never
-      written to logs and never shown in full here.
-    </p>
-    <p class="hint">
-      Prefer <code>https://</code>. Plain <code>http://</code> is permitted
-      because homelab services routinely lack certificates, but anything sent
-      over it — including your token — travels in the clear.
-    </p>
+    <h2>${x("p.securityTitle")}</h2>
+    <details>
+      <summary>${x("p.advanced")}</summary>
+      <p class="hint">${x("p.securityToken")}</p>
+      <p class="hint">${x("p.securityHttp")}</p>
+    </details>
   </section>
 
-  <footer class="hint">
-    Status Glass talks only to the sources you configure. There is no vendor
-    service, no account and no telemetry.
-  </footer>`;
+  <footer class="hint">${x("p.footer")}</footer>`;
 }
 
 function wire(
   root: HTMLElement,
   ports: PhoneUiPorts,
   data: StatusData,
+  locale: Locale,
   notify: (message: string) => void,
   rerender: () => void,
 ): void {
@@ -144,13 +141,19 @@ function wire(
     const saving = ports.setData(next);
     rerender();
     void saving.catch((thrown: unknown) => {
-      notify("Could not save: " + (thrown instanceof Error ? thrown.message : String(thrown)));
+      notify(t(locale, "p.saveFailed", { error: thrown instanceof Error ? thrown.message : String(thrown) }));
     });
   };
 
+  byId<HTMLSelectElement>("language")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    ports.setLocale?.(value === "de" ? "de" : "en");
+    rerender();
+  });
+
   byId<HTMLButtonElement>("add")?.addEventListener("click", () => {
     const url = byId<HTMLInputElement>("url")?.value.trim() ?? "";
-    const check = validateUrl(url);
+    const check = validateUrl(url, locale);
     if (!check.valid) { notify(check.errors.join(" ")); return; }
 
     const name = byId<HTMLInputElement>("name")?.value.trim() ?? "";

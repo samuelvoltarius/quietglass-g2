@@ -1,5 +1,13 @@
 # Cadence — privacy
 
+## Kurzfassung (Deutsch)
+
+Cadence hat keinen Netzwerk-Code und nutzt keine Sensoren, auch nicht das
+Mikrofon. Tempo, Übungsstücke und dein Übungsprotokoll bleiben im App-Speicher
+auf deinem Handy. Ein CSV-Export geht nur über das Teilen-Menü deines Handys.
+Kein Konto, kein Tracking. „Protokoll löschen“ oder Deinstallieren entfernt
+alles.
+
 ## Short version
 
 Cadence has no network code. Your practice log stays on your phone.

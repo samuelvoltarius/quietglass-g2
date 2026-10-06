@@ -105,3 +105,8 @@ button.remove {
 .notice { margin: 0 0 16px; padding: 10px 14px; background: var(--card); border: 1px solid var(--accent); border-radius: 10px; font-size: 14px; }
 small { color: var(--muted); font-size: 12px; word-break: break-all; }
 small.warn { color: #e0a33e; }
+
+/* Language picker and the "Advanced" fold-outs. */
+.card.compact label { margin-top: 0; }
+details { margin-top: 12px; }
+summary { cursor: pointer; font-size: 14px; color: var(--muted); }

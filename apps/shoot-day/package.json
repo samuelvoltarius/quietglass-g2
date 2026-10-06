@@ -1,0 +1,29 @@
+{
+  "name": "@quietglass/shoot-day",
+  "version": "0.1.0",
+  "description": "Quietglass Shoot Day — take log, teleprompter, call sheet and packing list for film shoots, on your own server",
+  "author": "Quietglass",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "evenhub-simulator --automation-port 9918 http://127.0.0.1:5218",
+    "pack": "evenhub pack app.json dist -o shoot-day.ehpk",
+    "server": "node examples/shoot-day-server.mjs"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

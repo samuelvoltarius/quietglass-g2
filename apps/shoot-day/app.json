@@ -1,0 +1,27 @@
+{
+  "package_id": "glass.quiet.shootday",
+  "edition": "202601",
+  "name": "Shoot Day",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Load shot list, script, schedule and packing list from the Shoot Day server you enter in the phone app, and log takes there. No other server is contacted.",
+      "whitelist": [
+        "http://*",
+        "https://*"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Optional voice commands: hold to speak on the packing list, or pick Voice for a take. Audio is recorded only while you speak and goes only to your own Shoot Day server for transcription."
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en"
+  ]
+}

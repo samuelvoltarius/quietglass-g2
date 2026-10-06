@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/status-glass",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Quietglass Status Glass — homelab and service monitoring over an open protocol",
   "author": "Quietglass",
   "license": "MIT",

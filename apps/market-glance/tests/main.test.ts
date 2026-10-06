@@ -10,15 +10,16 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
 function fakeBridge() {
   let handler: ((event: unknown) => void) | undefined;
   const headers: string[] = [];
+  const shutdown = { confirm: true, modes: [] as (number | undefined)[] };
   const bridge = {
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async (page: { textObject?: { content?: string }[] }) => { headers.push(page.textObject?.[0]?.content ?? ""); return 0; },
     textContainerUpgrade: async (update: { containerName?: string; content?: string }) => { if (update.containerName === "header") headers.push(update.content ?? ""); return true; },
-    shutDownPageContainer: async () => true,
+    shutDownPageContainer: async (mode?: number) => { shutdown.modes.push(mode); return shutdown.confirm; },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, headers, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, headers, shutdown, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
 }
 
 function fakeDocument() {
@@ -91,5 +92,33 @@ describe("market glance refresh loop", () => {
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
     expect(pending).toHaveLength(2);
+  });
+
+  it("asks for the system exit dialog and stops refreshing once the user confirms", async () => {
+    const fake = await boot();
+    pending[0]?.resolve(live());
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(pending).toHaveLength(1);
+  });
+
+  it("keeps refreshing and reacting when the user cancels the exit dialog", async () => {
+    const fake = await boot();
+    pending[0]?.resolve(live());
+    await vi.advanceTimersByTimeAsync(10);
+    fake.shutdown.confirm = false;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(pending).toHaveLength(2);
+    pending[1]?.resolve(live());
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(pending).toHaveLength(3);
   });
 });

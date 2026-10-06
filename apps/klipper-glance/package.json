@@ -1,0 +1,30 @@
+{
+  "name": "@quietglass/klipper-glance",
+  "version": "0.1.0",
+  "description": "Quietglass Klipper Glance — Klipper/Moonraker print status at a glance, with confirmed pause, resume and cancel",
+  "author": "Quietglass",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "evenhub-simulator --automation-port 9919 http://127.0.0.1:5219",
+    "pack": "evenhub pack app.json dist -o klipper-glance.ehpk",
+    "bridge": "node examples/klipper-bridge.mjs",
+    "mock": "node examples/mock-moonraker.mjs"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

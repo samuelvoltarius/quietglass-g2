@@ -7,7 +7,7 @@ import { firstRunData, parseData } from "../src/storage/persist";
 
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 /** Worst-case values for every placeholder that reaches the glasses. */
-const WORST: Record<string, string | number> = { total: "99:59:59", name: "Arbeit", project: "" };
+const WORST: Record<string, string | number> = { total: "99:59:59", name: "Arbeit", project: "", target: "12,75", left: "16:00:00" };
 const widthOf = (key: string): number => (key.startsWith("g.h.") || key.startsWith("g.f.") ? FOOTER_WIDTH : BODY_WIDTH);
 
 describe("message catalogue", () => {
@@ -116,6 +116,35 @@ describe("glasses copy fits the display", () => {
     const running = buildView(startProject(STOPPED, "Gone", 0, ids()).state, [], { projects: [] }, 65_000);
     expect(running.header).toBe("Gone");
     expect(running.footer).toContain("tap = stop");
+  });
+});
+
+describe("daily target on the glasses", () => {
+  for (const locale of locales) {
+    it(`${locale}: shows how much is left, then that it is reached, within the row`, () => {
+      const day = 4 * 86_400_000;
+      const running = startProject(STOPPED, "Arbeit", day, ids()).state;
+      for (const targetHours of [0.25, 7.5, 8, 12.75, 16]) {
+        for (const state of [STOPPED, running]) {
+          const view = buildView(state, [], { projects: ["Arbeit"], locale, targetHours }, day + 9 * 3_600_000);
+          expect(view.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
+          for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(BODY_WIDTH);
+        }
+      }
+    });
+  }
+
+  it("speaks German about the target", () => {
+    const running = startProject(STOPPED, "Arbeit", 0, ids()).state;
+    const view = buildView(running, [], { projects: ["Arbeit"], locale: "de", targetHours: 7.5 }, 3_600_000);
+    expect(view.body).toEqual(["1:00:00", "", "Tagesziel 7,5 h · noch 6:30:00"]);
+    const done = buildView(running, [], { projects: ["Arbeit"], locale: "de", targetHours: 0.5 }, 3_600_000);
+    expect(done.body[2]).toBe("Tagesziel 0,5 h erreicht");
+  });
+
+  it("shows nothing extra without a target", () => {
+    const view = buildView(STOPPED, [], { projects: ["A", "B"], locale: "en", targetHours: null }, 0);
+    expect(view.body).toEqual(["stopped"]);
   });
 });
 

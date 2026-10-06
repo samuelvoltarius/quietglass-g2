@@ -93,3 +93,7 @@ footer.hint { text-align: center; padding: 8px 0 24px; }
 details.advanced summary { cursor: pointer; color: var(--muted); font-weight: 600; }
 .credits { margin: 8px 0 24px; color: var(--muted); font-size: 12px; text-align: center; }
 .credits a { color: var(--accent); }
+
+/* Language picker at the top of the page. */
+.card.compact label { margin: 0; }
+.card.compact select { margin-top: 6px; }

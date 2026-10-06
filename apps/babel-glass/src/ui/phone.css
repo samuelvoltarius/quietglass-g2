@@ -107,3 +107,8 @@ small { color: var(--muted); font-size: 12px; word-break: break-all; }
 small.warn { color: #e0a33e; }
 
 [hidden] { display: none !important; }
+
+/* UI language picker, and the server settings tucked away under "Advanced". */
+.card.compact label { margin-top: 0; }
+details.advanced { margin-top: 14px; }
+details.advanced summary { cursor: pointer; font-size: 14px; color: var(--muted); }

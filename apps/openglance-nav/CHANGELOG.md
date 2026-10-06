@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Real streets on the overview map: OpenStreetMap data from the public
+  Overpass API, one request per route (after 1.5 s on the overview), main
+  roads bright, side streets dim, footpaths faint and only on foot; cut to the
+  picture and capped. Falls back to the route alone on any failure. Switch
+  under Advanced; attribution on the phone page; PRIVACY.md updated.
+- Turn card: the distance to the turn in large pixel digits and an eight-block
+  approach bar that fills as the turn comes closer.
+
+### Changed
+- Images are sent only when they change: the arrow on a new manoeuvre, the
+  card when its digits or bar change (at most every 2 s while counting
+  down), the overview marker after 6 px and 5 s. Previously the arrow went
+  out with every text update and the overview with every ~11 m.
+- The fake diagonal grid behind the overview route is gone.
+- Double tap asks the glasses for the exit confirmation
+  (`shutDownPageContainer(1)`); cancelling keeps navigating.
+- Pixel arrow drawn larger (80 px); U-turn and roundabout patterns fixed to
+  the 10 × 10 grid.
+
 ## [0.4.0] — 2026-10-06
 
 Works right after install, for anyone. Map Glass is merged in.

@@ -1,9 +1,24 @@
 # FieldLog — privacy
 
+## Kurzfassung (Deutsch)
+
+FieldLog speichert Einträge und Fotos nur auf deinem Handy, bis du sie selbst
+exportierst. Diktieren ist optional: Das Mikrofon öffnet sich nur nach deinem
+Tippen (Anzeige **● MIC**), der Ton geht nur an deinen eigenen
+Spracherkennungs-Server und wird nie gespeichert. Ohne eigenen Server schickt die
+App nichts ins Netz. Kein Konto, kein Tracking. Deinstallieren löscht alles.
+
 ## Short version
 
 Audio goes only to the server you configure and is never stored. Entries and
 photos stay on your phone until you export them.
+
+## Permissions
+
+| Permission (`app.json`) | Why | Used for nothing else |
+|---|---|---|
+| `g2-microphone` (optional) | Dictate one note at a time after you tap | Never on launch, never continuous; always shown as **● MIC** |
+| `network` (`http`, `https`, `ws`, `wss`, optional) | Send dictation to the speech server you enter | No other host is contacted; without a server nothing is sent |
 
 ## The microphone
 
@@ -48,7 +63,13 @@ no automatic sync.
 - No analytics, telemetry or crash reporting.
 - No account, login or device identifier.
 - No advertising or third-party SDKs.
-- No location in 0.1.0.
+- No location.
+
+## Removing your data
+
+Delete single entries or whole inspections in the phone app. Clear the speech
+server address and token to forget them. Uninstalling removes everything,
+including photos.
 
 ## Third-party code
 

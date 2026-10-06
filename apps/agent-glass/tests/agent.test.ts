@@ -106,14 +106,14 @@ describe("the decision screen", () => {
   });
 
   it("shows what will actually run, not just the tool name", () => {
-    const view = buildView(asked, NOW);
+    const view = buildView(asked, NOW, "en");
     expect(view.header).toBe("Permission required");
     expect(view.body.join(" ")).toContain("curl");
   });
 
   it("puts neither answer on a plain tap", () => {
     // A stray touch must not be able to authorise a command.
-    const footer = buildView({ ...asked, controllable: true }, NOW).footer;
+    const footer = buildView({ ...asked, controllable: true }, NOW, "en").footer;
     expect(footer).toContain("up");
     expect(footer).toContain("down");
     expect(footer).not.toMatch(/tap = allow/);
@@ -123,18 +123,18 @@ describe("the decision screen", () => {
     // Even Terminal answers 404 for a session it merely read off disk.
     // Offering "swipe to allow" there would promise something that fails in
     // silence -- the screen says where the answer has to be given instead.
-    const footer = buildView({ ...asked, controllable: false }, NOW).footer;
+    const footer = buildView({ ...asked, controllable: false }, NOW, "en").footer;
     expect(footer).toContain("watch only");
     expect(footer).not.toContain("up");
   });
 
   it("drops the running commentary while a decision is pending", () => {
     const withText = { ...asked, text: "A long paragraph full of context." };
-    expect(buildView(withText, NOW).body.join(" ")).not.toContain("paragraph");
+    expect(buildView(withText, NOW, "en").body.join(" ")).not.toContain("paragraph");
   });
 
   it("fits the display", () => {
-    const view = buildView(asked, NOW);
+    const view = buildView(asked, NOW, "en");
     for (const row of view.body) expect(row.length).toBeLessThanOrEqual(LINE_WIDTH);
     expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
   });
@@ -146,34 +146,34 @@ describe("the working screen", () => {
   it("keeps the newest text rather than the oldest", () => {
     // While the agent types, the last sentence is the one worth reading.
     const long = { ...base, text: Array.from({ length: 30 }, (_, i) => `Line ${i}`).join("\n") };
-    expect(buildView(long, NOW).body.join(" ")).toContain("Line 29");
+    expect(buildView(long, NOW, "en").body.join(" ")).toContain("Line 29");
   });
 
   it("names the running tool", () => {
-    const view = buildView({ ...base, tool: "Bash", busy: true, startedAt: NOW }, NOW);
+    const view = buildView({ ...base, tool: "Bash", busy: true, startedAt: NOW }, NOW, "en");
     expect(view.body.join(" ")).toContain("Bash");
   });
 
   it("counts how long it has been working", () => {
     const started = new Date(NOW.getTime() - 12000);
-    expect(buildView({ ...base, busy: true, startedAt: started }, NOW).footer).toContain("12 s");
+    expect(buildView({ ...base, busy: true, startedAt: started }, NOW, "en").footer).toContain("12 s");
   });
 
   it("says ready when nothing is running", () => {
-    expect(buildView({ ...base, controllable: true }, NOW).footer).toContain("ready");
+    expect(buildView({ ...base, controllable: true }, NOW, "en").footer).toContain("ready");
   });
 
   it("says plainly when it is only watching", () => {
-    expect(buildView(base, NOW).footer).toContain("watch only");
+    expect(buildView(base, NOW, "en").footer).toContain("watch only");
   });
 
   it("explains the CORS trap, which looks exactly like a dead server", () => {
-    const view = buildView({ ...base, error: "Even Terminal unreachable" }, NOW);
+    const view = buildView({ ...base, error: "Even Terminal unreachable" }, NOW, "en");
     expect(view.body.join(" ")).toContain("--allow-cors");
   });
 
   it("fits the display even with a tool line", () => {
-    const view = buildView({ ...base, text: "x ".repeat(400), tool: "Bash", busy: true }, NOW);
+    const view = buildView({ ...base, text: "x ".repeat(400), tool: "Bash", busy: true }, NOW, "en");
     for (const row of view.body) expect(row.length).toBeLessThanOrEqual(LINE_WIDTH);
     expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
   });
@@ -185,22 +185,22 @@ describe("the session list", () => {
   }));
 
   it("marks the selected row with something the glasses can draw", () => {
-    const view = sessionList(many, 2);
+    const view = sessionList(many, 2, "en");
     expect(view.body.some((row) => row.startsWith(">"))).toBe(true);
     // "▸" is drawn as nothing at all on this display.
     expect(view.body.join("")).not.toContain("▸");
   });
 
   it("keeps the selection visible on a long list", () => {
-    expect(sessionList(many, 11).body.join(" ")).toContain("Session 11");
+    expect(sessionList(many, 11, "en").body.join(" ")).toContain("Session 11");
   });
 
   it("flags a session that is currently working", () => {
-    expect(sessionList(many, 0).body[3]).toContain("*");
+    expect(sessionList(many, 0, "en").body[3]).toContain("*");
   });
 
   it("says so plainly when there is nothing to show", () => {
-    expect(sessionList([], 0).body.join(" ")).toContain("no sessions");
+    expect(sessionList([], 0, "en").body.join(" ")).toContain("no sessions");
   });
 });
 
@@ -238,7 +238,7 @@ describe("pairing and the token", () => {
   });
 
   it("never reveals the token", () => {
-    const shown = maskToken("0366d1d7440bab2495d39633bd9c5a45");
+    const shown = maskToken("0366d1d7440bab2495d39633bd9c5a45", "en");
     expect(shown).not.toContain("0366d1d7440bab2495d39633bd9c5a45");
     expect(shown).toContain("32 characters");
   });

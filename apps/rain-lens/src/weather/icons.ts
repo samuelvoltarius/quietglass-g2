@@ -1,3 +1,4 @@
+import { columnDivider, createBitmap, drawPattern, MAX_LEVEL, type Bitmap } from "../glasses/bitmap";
 import { weatherKind, type WeatherForecast, type WeatherKind } from "../rain/model";
 
 const icons: Record<WeatherKind, readonly string[]> = {
@@ -9,18 +10,28 @@ const icons: Record<WeatherKind, readonly string[]> = {
   storm: ["............", ".....####...", "...########.", ".###########", "############", "############", ".....##.....", "....###.....", "...#####....", ".....##.....", "....##......", "...##......."],
 };
 
-function drawIcon(ctx: CanvasRenderingContext2D, kind: WeatherKind, x: number, y: number, scale: number): void {
-  const pattern = icons[kind]; ctx.fillStyle = "#fff";
-  pattern.forEach((row, rowIndex) => { for (let column = 0; column < row.length; column += 1) if (row[column] === "#") ctx.fillRect(x + column * scale, y + rowIndex * scale, scale, scale); });
+export const ICONS = { id: 4, name: "weather-icons", x: 0, y: 36, width: 96, height: 144 } as const;
+
+/** What the icon column shows: one large icon for now, six small for the hours, three for the days, or nothing (page -1). */
+export function iconKinds(forecast: WeatherForecast, page: number): WeatherKind[] {
+  if (page === 0) return [weatherKind(forecast.current.weatherCode)];
+  if (page === 1) return forecast.hourly.slice(0, 12).filter((_, index) => index % 3 === 0).map((hour) => weatherKind(hour.weatherCode));
+  if (page === 2) return forecast.daily.slice(0, 3).map((day) => weatherKind(day.weatherCode));
+  return [];
 }
 
-export async function renderWeatherIcons(forecast: WeatherForecast, page: number, width = 96, height = 144): Promise<Uint8Array> {
-  const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height; const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("2d canvas unavailable");
-  ctx.imageSmoothingEnabled = false; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = "#555"; for (let y = 4; y < height; y += 8) ctx.fillRect(width - 2, y, 1, 3);
-  if (page === 0) drawIcon(ctx, weatherKind(forecast.current.weatherCode), 18, 42, 5);
-  if (page === 1) forecast.hourly.slice(0, 6).forEach((hour, index) => drawIcon(ctx, weatherKind(hour.weatherCode), 36, index * 24, 2));
-  if (page === 2) forecast.daily.slice(0, 3).forEach((day, index) => drawIcon(ctx, weatherKind(day.weatherCode), 30, 8 + index * 48, 3));
-  const blob: Blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encode failed")), "image/png"));
-  return new Uint8Array(await blob.arrayBuffer());
+/** Key of the icon column: the image is only sent again when it changes. */
+export function iconKey(forecast: WeatherForecast, page: number): string {
+  return `${page}:${iconKinds(forecast, page).join(",")}`;
+}
+
+export function drawWeatherIcons(forecast: WeatherForecast, page: number): Bitmap {
+  const bitmap = createBitmap(ICONS.width, ICONS.height);
+  columnDivider(bitmap);
+  const kinds = iconKinds(forecast, page);
+  if (page === 0) kinds.forEach((kind) => drawPattern(bitmap, icons[kind], 18, 42, 5, MAX_LEVEL));
+  // One icon per body row: the hourly view lists every third hour.
+  if (page === 1) kinds.forEach((kind, index) => drawPattern(bitmap, icons[kind], 30, 6 + index * 25, 2, MAX_LEVEL));
+  if (page === 2) kinds.forEach((kind, index) => drawPattern(bitmap, icons[kind], 36, 4 + index * 25, 2, MAX_LEVEL));
+  return bitmap;
 }

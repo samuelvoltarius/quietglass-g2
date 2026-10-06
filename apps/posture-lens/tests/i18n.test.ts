@@ -106,7 +106,7 @@ describe("first run", () => {
 
   it("tells the user on the glasses exactly what to do", () => {
     const view = buildView(createMonitor(), DEFAULT_SETTINGS, { locale: "de" });
-    expect(view.body.join(" ")).toBe("Setz dich gerade hin und tippe einmal, um deine Haltung zu speichern.");
+    expect(view.body.join(" ")).toBe("Setz dich gerade hin und tippe einmal zum Speichern.");
     expect(view.footer).toBe("Tippen = Haltung speichern");
   });
 

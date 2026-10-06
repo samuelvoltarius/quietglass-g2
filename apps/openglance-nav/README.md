@@ -20,9 +20,29 @@ gefunden"*.
 Running your own servers is still one field away — see
 [Advanced: your own servers](#advanced-your-own-servers).
 
-A large high-contrast pixel arrow changes with every manoeuvre: left, right,
-straight, U-turn, roundabout, or arrival. It is the primary visual cue; the
-smaller text arrow remains as a redundant accessibility fallback.
+The turn view is three things you can read in a glance:
+
+```
+┌────────┐ ┌──────────────────────────┐
+│   ██   │ │ 250 m          (large)   │
+│  ████  │ │ ■■■■■□□□  ← fills as the  │
+│   ██   │ └──────────────────────────┘    turn comes closer
+│   ██   │  Example Road
+└────────┘
+```
+
+A large high-contrast **pixel arrow** that changes with every manoeuvre
+(left, right, straight, U-turn, roundabout, arrival); the **distance to the
+turn in large pixel digits** — the glasses' text has one fixed size, so this
+is a small image; and below it an **approach bar** of eight blocks that fill
+over the last 150 m on foot, 300 m by bike, 600 m by car (or over the whole
+stretch if it is shorter, so a quick double turn starts empty). The road name
+stays as text beside the arrow.
+
+What crosses Bluetooth is kept small: the arrow image is sent only when the
+manoeuvre changes, the distance card only when its digits or a bar block
+change (and while it only counts down, at most every 2 s); the text changes
+in place.
 
 For a non-persistent demo route in the simulator, open the development URL
 with `?demo=1`, or switch on **Advanced → Demo route** on the phone.
@@ -36,17 +56,13 @@ with `?demo=1`, or switch on **Advanced → Demo route** on the phone.
 ## Driving mode is the whole design
 
 A navigation display in a car competes with the road. So in driving mode the
-glasses show exactly three things:
+glasses show exactly three things: the pixel arrow, the distance to the turn
+(large, with its approach bar), and the road name.
 
-```
-↱  250 m
-
-Example Road
-```
-
-The arrow. The distance. The road name. **No arrival time, no progress bar, no
-decoration** — there is a test asserting the footer is empty in driving mode,
-so it cannot creep back in.
+The approach bar belongs to the distance — it is the same number, made
+readable from the corner of the eye — not a progress bar for the trip.
+**No arrival time, no trip progress, no decoration** — there is a test
+asserting the footer is empty in driving mode, so it cannot creep back in.
 
 Walking and cycling add the remaining distance and arrival time, because
 glancing at them on foot is safe. Walking is the default.
@@ -54,16 +70,48 @@ glancing at them on foot is safe. Walking is the default.
 ## Two views: next turn, or the whole route
 
 **Swipe** on the glasses to switch between the turn arrow and an **overview
-map** — the whole route as a high-contrast picture with your position (ringed
-dot), the next turn (ring), the destination (square) and north. Three lines of
-turn text stay below the map. The choice is remembered and can also be picked
-on the phone.
+map** — the whole route as a thick white line with a black edge over the
+**real streets around it**, your position (ringed dot), the next turn (ring),
+the destination (square) and north. Three lines of turn text stay below the
+map. The choice is remembered and can also be picked on the phone.
+
+![Overview with real streets (rendered by the tests from a made-up route and street data)](docs/overview-preview.png)
+![Turn card: big distance and approach bar](docs/turn-card-preview.png)
+
+### What the map shows
+
+The G2 converts images to 16 grey levels, so streets are drawn dimmer than
+the route and by importance: **main roads** (motorway … secondary) brighter
+and thicker, **side streets** (tertiary, residential, living streets,
+pedestrian zones) dim, and **footpaths** faint and thin — footpaths only on
+foot. Service roads, tracks, sidewalks and crossings are never drawn. How
+much is shown follows the zoom: footpaths only when the picture covers at
+most 2.5 km, side streets up to 4 km, main roads up to 25 km, nothing beyond
+(a cross-country route is just the route). Lines are cut to the picture,
+thinned to whole pixels and capped at 1 500 segments, main roads kept first.
+
+### Where the streets come from, and what happens when they don't
+
+Streets are OpenStreetMap data from the public **Overpass API**: one request
+per route, made only after the overview has been on screen for 1.5 s (so a
+swipe past it costs nothing), with only way geometry asked for and cut to
+the area server-side. A reroute inside the area already loaded asks nothing.
+The answer is held in memory, never stored. The overview image is sent when
+the route, the streets or the next turn change — not per GPS fix: your
+position marker moves only after it has moved 6 px and 5 s have passed.
+
+If the street server is slow (12 s timeout), busy, offline, or answers with
+something oversized (> 3 MB) or broken, the next server is tried once, then
+OpenGlance pauses street requests for a minute and shows **the route alone**.
+Navigation never waits for streets. **Advanced → Show real streets on the
+overview map** switches them off; the demo route never fetches them.
 
 The overview comes from Map Glass, which has been merged into OpenGlance. Its
 projection keeps one scale for both axes (turns keep their real angles),
 centres straight routes instead of pinning them to an edge, and keeps routes
 across the antimeridian in one piece — those fixes and their tests came along.
-The faint diagonal lines behind the route are texture, **not real streets**.
+Map Glass drew faint diagonal lines behind the route as texture; they looked
+like streets and were not, so they are gone — real streets replaced them.
 
 ## Rerouting is automatic
 
@@ -97,6 +145,7 @@ Checked on 2026-10-06 by reading the terms and by calling the servers with an
 | Server | Terms | WebView (CORS) | What OpenGlance does |
 |---|---|---|---|
 | `valhalla1.openstreetmap.de` (FOSSGIS e.V.) | [Nutzungsbedingungen](https://www.fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen/): max. **1 request per second**; OSM attribution with a *fix the map* link; identifiable client; no high-traffic sites, commercial use only if not a substantial part of the offering; URL should not be hard-coded; no availability guarantee | `Access-Control-Allow-Origin: *`; preflight allows `Content-Type` and `X-Client-Id` | ≥ 1.1 s between requests (quick taps are queued, not dropped); automatic reroutes ≥ 15 s apart; never polls; sends `X-Client-Id: quietglass-openglance` because a WebView cannot set its User-Agent; attribution and fix-the-map link on the phone page; address editable under Advanced |
+| `overpass-api.de` (FOSSGIS e.V., Overpass API) | [Overpass API wiki](https://wiki.openstreetmap.org/wiki/Overpass_API): fewer than 10 000 queries and 1 GB per day per user (divide by 100 for regular use); identify the app via User-Agent or Referer; after a 429 or 406 wait at least 30 s; no commercial use of the public instance | `Access-Control-Allow-Origin: *`. Returns **406** to a request with no `Referer`, or a bare default user agent (tested with curl); with a browser user agent plus `Referer` it answers 200. A WebView sends a `Referer` itself — whether the Even app's WebView does is **not verified on hardware**. Under load it answers **504** | one query per route, lazily, only after 1.5 s on the overview; reused for reroutes inside the loaded area; form POST (no preflight); 12 s timeout; on failure one try at `overpass.private.coffee` (no rate limit stated; it did not answer at all when tested), then a 60 s pause; switch under Advanced |
 | `photon.komoot.io` (komoot) | [photon.komoot.io](https://photon.komoot.io/): free, "please be fair", heavy use is throttled | `Access-Control-Allow-Origin: *` | searches only on **Search** or Enter, never while typing; a repeated query is answered from memory; ≥ 1 s between searches; position bias rounded to about 1 km |
 
 **Not used:** Nominatim. Its [usage policy](https://operations.osmfoundation.org/policies/nominatim/)
@@ -114,7 +163,8 @@ The public Valhalla server caps walking routes at 100 km; OpenGlance then says
 The phone page shows, as both services' terms require:
 
 > Map data © OpenStreetMap contributors (ODbL) · report a map error ·
-> Routes: FOSSGIS e.V. · Valhalla · Search: Photon by komoot
+> Routes: FOSSGIS e.V. · Valhalla · Search: Photon by komoot ·
+> Overview streets: OpenStreetMap via Overpass API
 
 With your own servers entered, the provider line names them instead.
 
@@ -167,7 +217,7 @@ real navigation.
 | **Tap** | Start navigating · retry after an error · reroute when off route |
 | **Swipe** (either way) | Switch between next turn and overview map |
 | **Hold** | Stop navigating |
-| **Double tap** | Leave OpenGlance |
+| **Double tap** | Leave OpenGlance — the glasses ask to confirm; cancelling keeps navigating |
 
 ## Install
 
@@ -175,7 +225,9 @@ real navigation.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5199
 npm run build      # typecheck + production bundle
-npm test           # 166 unit tests
+npm test           # 216 unit tests
+OPENGLANCE_PREVIEW=1 npx vitest run tests/overview-streets.test.ts tests/turncard.test.ts
+                   # re-render docs/overview-preview.png and docs/turn-card-preview.png
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -184,6 +236,9 @@ npm run sim        # Even Hub simulator pointed at the dev server
 Your position is used to route and **is never stored**. No position history is
 written anywhere — where a person has been is among the most sensitive data a
 device holds, and this app has no reason to keep it.
+
+The overview map sends the area around the route, rounded to about 10 m,
+once per route to the street server (Overpass), unless switched off.
 
 Your position and destination go only to the routing server (the public
 FOSSGIS one unless you enter your own) when a route is calculated. A place
@@ -197,7 +252,7 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 | Limitation | Detail |
 |---|---|
 | **Public servers, no guarantee** | FOSSGIS and komoot run them for free on single servers and may change terms or switch them off at any time. If OpenGlance became popular enough to matter to them, a self-hosted or sponsored server would be the right answer. |
-| Overview is a sketch | It shows the route's shape, not a street map; the 576 × 288 monochrome display cannot carry a legible map. |
+| Overview streets are best effort | They depend on a free public server that is often overloaded (504) and may refuse a WebView that sends no `Referer` (406); then the overview shows the route alone. No street names, no buildings — the 288 × 144 picture cannot carry them. |
 | Long walks | The public server caps walking routes at 100 km. |
 | No lane guidance | Valhalla supplies some; it is not displayed yet. |
 | No speed or speed limits | Not shown. |

@@ -8,12 +8,14 @@ import {
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type PostureView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, sendImage, updatePage } from "./glasses/render";
+import { GAUGE, drawGauge, gaugeAngle, gaugeKey, type GaugeState } from "./glasses/gauge";
+import { createImageLane } from "./glasses/lane";
+import { encodePng } from "./glasses/pixel";
 import { load, save, type PostureData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
 import { getLocale, setLocale, type Locale } from "./i18n";
-
-const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "..######..", "..#.##.#..", "....##....", "...#..#...", "..##..##..", ".##....##."] as const;
 
 /**
  * IMU sampling rate. 500 ms is plenty for posture, which changes over minutes,
@@ -44,6 +46,9 @@ async function boot(): Promise<void> {
   /** A tap that arrived before the first IMU sample; it calibrates on that sample. */
   let calibratePending = false;
   let calibratedAt: number | null = null;
+  /** Angle as last drawn on the gauge, in 2° steps; the hysteresis works against it. */
+  let gaugeDeg: number | null = null;
+  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData));
 
   // A stored calibration makes the app usable immediately after a restart.
   if (data.reference) {
@@ -70,19 +75,35 @@ async function boot(): Promise<void> {
     void persist(data);
   };
 
+  /**
+   * Asks the lane for the head gauge. The key is quantised, so most calls
+   * change nothing and send nothing; the lane is never awaited.
+   */
+  const requestGauge = (): void => {
+    if (!pageReady || closed) return;
+    const calibrated = monitor.reference !== null && !sensorOff;
+    gaugeDeg = calibrated ? gaugeAngle(gaugeDeg, monitor.angle) : null;
+    const state: GaugeState = { calibrated, angle: gaugeDeg, warnAngle: data.settings.warnAngle, alert: monitor.state === "leaning" || monitor.state === "warned" };
+    lane.request(GAUGE, gaugeKey(state), () => encodePng(drawGauge(state)));
+  };
+
   const drawOnce = async (): Promise<void> => {
     if (closed) return;
     const view = currentView();
-    if (sameView(lastView, view)) return;
-
-    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
-    if (result.ok) {
+    if (!pageReady || !sameView(lastView, view)) {
+      const created = !pageReady;
+      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+      if (!result.ok) {
+        pageReady = false;
+        console.warn("[posturelens] draw failed:", result.reason);
+        return;
+      }
       pageReady = true;
       lastView = view;
-      return;
+      // A new page starts with a blank image.
+      if (created) lane.invalidate();
     }
-    pageReady = false;
-    console.warn("[posturelens] draw failed:", result.reason);
+    requestGauge();
   };
 
   /** One page write at a time; a request during a write redraws once after it. */
@@ -110,6 +131,15 @@ async function boot(): Promise<void> {
     sensorOff = true;
     await draw();
   }
+
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: async () => {
+      closed = true;
+      clearInterval(tick);
+      lane.close();
+      await bridge.imuControl(false).catch(() => undefined);
+    },
+  }, "posturelens");
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
@@ -142,12 +172,8 @@ async function boot(): Promise<void> {
         monitor = reset(monitor);
         break;
       case "doubleClick":
-        closed = true;
-        clearInterval(tick);
-        void bridge.imuControl(false).catch(() => undefined);
-        bridge.shutDownPageContainer().catch((error: unknown) => {
-          console.warn("[posturelens] shutdown failed:", error);
-        });
+        // System exit dialog; monitoring (and the IMU) carry on until the user confirms.
+        void requestExit();
         return;
       default:
         return;

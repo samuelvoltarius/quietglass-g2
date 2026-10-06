@@ -20,6 +20,8 @@
  * ```
  */
 
+import type { Locale } from "../i18n";
+
 export type MetricState = "ok" | "warn" | "critical" | "unknown";
 
 export interface Metric {
@@ -190,13 +192,17 @@ export function severityOf(state: MetricState): number {
   return SEVERITY[state];
 }
 
-/** Formats a metric for one display line. */
-export function formatMetric(metric: Metric): string {
+/**
+ * Formats a metric for one display line. Label and unit are the source's own;
+ * only the number follows the language (German writes 34,6).
+ */
+export function formatMetric(metric: Metric, locale: Locale = "en"): string {
   if (metric.value === undefined) return metric.label;
   const rounded = Math.abs(metric.value) >= 100
     ? Math.round(metric.value)
     : Math.round(metric.value * 10) / 10;
-  return metric.label + " " + rounded + (metric.unit ?? "");
+  const number = locale === "de" ? String(rounded).replace(".", ",") : String(rounded);
+  return metric.label + " " + number + (metric.unit ?? "");
 }
 
 function isNumber(value: unknown): value is number {

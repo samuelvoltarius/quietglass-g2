@@ -199,7 +199,8 @@ describe("talking to LUMEN", () => {
 });
 
 describe("the display", () => {
-  const idle = { phase: "idle" as const, result: null, error: null };
+  // Pinned: the glasses follow the device language, these assertions read the English text.
+  const idle = { phase: "idle" as const, result: null, error: null, locale: "en" as const };
   const status = parseStatus(statusPayload);
 
   it("shows the moth above everything else", () => {
@@ -223,7 +224,7 @@ describe("the display", () => {
       quest: { ...statusPayload.quest, medium: "video" },
     });
     expect(buildView(videoQuest, idle).body.join(" ")).toContain("VIDEO");
-    expect(questMeta({ medium: "video", minutes: 30 })).toContain("camera");
+    expect(questMeta({ medium: "video", minutes: 30 }, "en")).toContain("camera");
   });
 
   it("puts the light window in the footer — the reason to stand up now", () => {
@@ -257,17 +258,17 @@ describe("the display", () => {
   });
 
   it("formats light windows readably", () => {
-    expect(windowLabel("golden", 42)).toBe("golden in 42m");
-    expect(windowLabel("blau", 0)).toBe("blue now");
-    expect(windowLabel("golden_frueh", 135)).toBe("golden in 2h 15m");
+    expect(windowLabel("golden", 42, "en")).toBe("golden in 42m");
+    expect(windowLabel("blau", 0, "en")).toBe("blue now");
+    expect(windowLabel("golden_frueh", 135, "en")).toBe("golden in 2h 15m");
   });
 
   it("does not round a window just under the hour into \"1h 60m\"", () => {
     // Regression: hours were floored and the remainder rounded on its own.
-    expect(windowLabel("golden", 119.7)).toBe("golden in 2h 0m");
-    expect(windowLabel("golden", 59.6)).toBe("golden in 1h 0m");
-    expect(windowLabel("blau", 0.3)).toBe("blue now");
-    expect(windowLabel("golden", Number.NaN)).toBe("golden now");
+    expect(windowLabel("golden", 119.7, "en")).toBe("golden in 2h 0m");
+    expect(windowLabel("golden", 59.6, "en")).toBe("golden in 1h 0m");
+    expect(windowLabel("blau", 0.3, "en")).toBe("blue now");
+    expect(windowLabel("golden", Number.NaN, "en")).toBe("golden now");
   });
 
   it("keeps the body within the seven rows the display shows", () => {
@@ -311,8 +312,8 @@ describe("configuration", () => {
   });
 
   it("never reveals the session token", () => {
-    expect(maskToken("abcdef")).toBe("set (6 chars)");
-    expect(maskToken("abcdef")).not.toContain("abcdef");
+    expect(maskToken("abcdef", "en")).toBe("set (6 chars)");
+    expect(maskToken("abcdef", "en")).not.toContain("abcdef");
   });
 
   it("falls back cleanly on corrupt storage", () => {

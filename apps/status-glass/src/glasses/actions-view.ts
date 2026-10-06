@@ -1,6 +1,8 @@
 import type { Action } from "../protocol/schema";
 import type { SourceStatus } from "../monitor/dashboard";
-import { LINE_WIDTH, fit, type StatusView } from "./view";
+import type { Locale } from "../i18n";
+import { describeIssue, t } from "../messages";
+import { LINE_WIDTH, SEPARATOR, fit, type StatusView } from "./view";
 
 /**
  * The actions screen.
@@ -36,6 +38,8 @@ export interface ActionsViewOptions {
   readonly result: { readonly label: string; readonly ok: boolean } | null;
   readonly busy: boolean;
   readonly maxRows?: number;
+  /** Language of everything the app itself says; English when omitted. */
+  readonly locale?: Locale;
 }
 
 const DEFAULT_ROWS = 5;
@@ -44,11 +48,12 @@ export function buildActionsView(
   actions: readonly AvailableAction[],
   options: ActionsViewOptions,
 ): StatusView {
+  const locale = options.locale ?? "en";
   if (actions.length === 0) {
     return {
-      header: "Actions",
-      body: ["No source offers any.", "Sources are read-only by default."],
-      footer: "hold = back",
+      header: t(locale, "g.actions"),
+      body: [t(locale, "g.noActions"), t(locale, "g.readOnly")],
+      footer: t(locale, "g.holdBack"),
     };
   }
 
@@ -63,7 +68,7 @@ export function buildActionsView(
     const prefix = selected ? "> " : "  ";
     const mark = entry.action.confirm ? "! " : "  ";
     const label = entry.sourceName + " " + entry.action.label;
-    const head = prefix + mark + (confirming ? "CONFIRM: " : "");
+    const head = prefix + mark + (confirming ? t(locale, "g.confirm") : "");
     return head + fit(label, LINE_WIDTH - head.length);
   });
 
@@ -75,9 +80,10 @@ export function buildActionsView(
 }
 
 function headerFor(options: ActionsViewOptions): string {
-  if (options.busy) return "Running…";
-  if (options.result) return options.result.ok ? "Done" : "Failed";
-  return "Actions";
+  const locale = options.locale ?? "en";
+  if (options.busy) return t(locale, "g.running");
+  if (options.result) return t(locale, options.result.ok ? "g.done" : "g.actionFailed");
+  return t(locale, "g.actions");
 }
 
 function footerFor(
@@ -85,20 +91,21 @@ function footerFor(
   cursor: number,
   options: ActionsViewOptions,
 ): string {
+  const locale = options.locale ?? "en";
+  const back = SEPARATOR + t(locale, "g.holdBack");
   if (options.busy) return "";
   if (options.result) {
     // The label can be an error from the source; the way back must stay visible.
-    const back = "  ·  hold = back";
-    return fit(options.result.label, LINE_WIDTH - back.length) + back;
+    // On success it is the action's own label and stays as the source wrote it.
+    const label = options.result.ok ? options.result.label : describeIssue(options.result.label, locale);
+    return fit(label, LINE_WIDTH - back.length) + back;
   }
 
   const current = actions[cursor];
   if (options.pendingId && current?.action.id === options.pendingId) {
-    return "tap again = run  ·  swipe = cancel";
+    return t(locale, "g.tapAgain") + SEPARATOR + t(locale, "g.swipeCancel");
   }
-  return current?.action.confirm
-    ? "tap = confirm first  ·  hold = back"
-    : "tap = run  ·  hold = back";
+  return (current?.action.confirm ? t(locale, "g.tapConfirmFirst") : t(locale, "g.tapRun")) + back;
 }
 
 function clamp(value: number, min: number, max: number): number {

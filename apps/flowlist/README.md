@@ -36,6 +36,29 @@ large, with an optional dim preview of what comes next — and nothing else.
 Finding your place again is the thing that breaks a hands-free workflow, so the
 position (`3/8`), the section and the progress are always on screen.
 
+## The progress bar
+
+![Progress bar states](docs/graphic-preview.png)
+
+*The header row in five states, drawn by the app's own function
+(`node tools/preview.mjs`): start, 2 of 7 done, at the second critical step,
+finished, and a 60-step list.*
+
+The right half of the header row is a bar with **one segment per step that
+counts** (optional steps have none): done steps are solid, the current step is
+a bright double frame, steps still to come are a dimmer frame, and a step
+marked `(!)` carries a small **▼ mark** above its segment, so you see a
+critical step coming before you reach it. A list too long for readable
+segments becomes one continuous bar with the marks at their positions.
+
+The header text keeps the left half: the section name (shortened if needed)
+and the exact position, `3/8`. The footer keeps the gesture hint and the
+elapsed time; the old percentage is gone, the bar says it better.
+
+The bar is an image, and every image is a Bluetooth transfer, so it is only
+sent when a step is done or undone — never on the clock tick — and on its own
+lane: a slow transfer never holds up the step text.
+
 ## What makes it different
 
 | | |
@@ -118,7 +141,7 @@ strand you mid-run.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5191
 npm run build      # typecheck + production bundle
-npm test           # 122 unit tests
+npm test           # 135 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 

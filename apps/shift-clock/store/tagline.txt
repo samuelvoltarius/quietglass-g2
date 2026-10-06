@@ -1,0 +1,2 @@
+One-tap time tracking for projects and shifts.
+Zeiterfassung für Projekte und Schichten mit einem Tipp.

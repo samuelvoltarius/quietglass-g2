@@ -1,6 +1,8 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { CaptionMode } from "../glasses/view";
 import { AUTO, normalizeLanguageCode } from "../text/languages";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -81,6 +83,7 @@ export async function load(bridge: EvenAppBridge): Promise<BabelData> {
 
 export interface UrlCheck {
   readonly valid: boolean;
+  /** Message keys (src/messages.ts), translated where they are shown. */
   readonly errors: readonly string[];
 }
 
@@ -90,25 +93,25 @@ export function validateWsUrl(url: string): UrlCheck {
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-      return { valid: false, errors: ["Speech server URL must start with ws:// or wss://."] };
+      return { valid: false, errors: ["e.wsScheme"] };
     }
     return { valid: true, errors: [] };
   } catch {
-    return { valid: false, errors: ["Speech server URL is not valid."] };
+    return { valid: false, errors: ["e.wsInvalid"] };
   }
 }
 
-export function validateHttpUrl(url: string, label = "Translation URL"): UrlCheck {
+export function validateHttpUrl(url: string, field: "translate" | "llm" = "translate"): UrlCheck {
   const trimmed = url.trim();
   if (!trimmed) return { valid: true, errors: [] };   // empty disables translation
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { valid: false, errors: [label + " must start with http:// or https://."] };
+      return { valid: false, errors: ["e." + field + "Scheme"] };
     }
     return { valid: true, errors: [] };
   } catch {
-    return { valid: false, errors: [label + " is not valid."] };
+    return { valid: false, errors: ["e." + field + "Invalid"] };
   }
 }
 
@@ -169,7 +172,7 @@ function isMode(value: unknown): value is CaptionMode {
 }
 
 /** Shows that a credential exists without revealing it. */
-export function maskSecret(secret: string | undefined): string {
-  if (!secret) return "none";
-  return "set (" + secret.length + " chars)";
+export function maskSecret(secret: string | undefined, locale: Locale = "en"): string {
+  if (!secret) return t(locale, "p.secretNone");
+  return t(locale, "p.secretSet", { count: secret.length });
 }

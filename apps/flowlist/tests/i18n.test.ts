@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, setLocale, tr, type Messages } from "../src/i18n";
 import { messages, t } from "../src/messages";
-import { buildView, FOOTER_WIDTH, HEADER_WIDTH, MAX_BODY_ROWS } from "../src/glasses/view";
+import { buildView, FOOTER_WIDTH, HEADER_TEXT_WIDTH, MAX_BODY_ROWS } from "../src/glasses/view";
 import { complete, currentStep, moveChoice, skip, startRun, type RunState } from "../src/checklist/run";
 import { danglingJumps, type Checklist } from "../src/checklist/model";
 import { parseMarkdown, parsePack } from "../src/checklist/parse";
@@ -118,7 +118,7 @@ describe("glasses copy fits the display", () => {
         for (const view of views) {
           expect(view.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
           for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(GLASSES_WIDTH);
-          expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_WIDTH);
+          expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_TEXT_WIDTH); // shares its row with the bar
           expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
           expect(view.footer).not.toBe("");
         }

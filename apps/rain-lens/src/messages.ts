@@ -2,8 +2,8 @@ import type { Messages } from "./i18n";
 
 /**
  * Every word RainLens shows. Lines in the `glass*` keys are separated by "\n"
- * and must each fit the 38-character column next to the weather icons; the
- * tests hold every language to that.
+ * and must each fit the 38-character column next to the weather icons, in
+ * the four rows above the 12-hour chart; the tests hold every language to that.
  */
 export const messages: Messages = {
   de: {
@@ -23,8 +23,8 @@ export const messages: Messages = {
     nextLive: "Fertig: Wetter für {place}. Tippe auf die Brille, um neu zu laden.",
     nextOffline: "Keine Verbindung zum Wetterdienst – prüfe das Internet und tippe auf „Jetzt aktualisieren“.",
     glassLoading: "Wetter wird geladen …",
-    glassNoLocation: "Kein Standort.\n\nErlaube den Standort in der\nEven-App oder gib am Handy\neinen Ort ein.\n\nTippen = nochmal versuchen",
-    glassOffline: "Keine Verbindung zum Wetterdienst.\n\nPrüfe das Internet am Handy.\n\nTippen = nochmal versuchen",
+    glassNoLocation: "Kein Standort.\nErlaube den Standort in der Even-App\noder gib am Handy einen Ort ein.\nTippen = nochmal versuchen",
+    glassOffline: "Keine Verbindung zum Wetterdienst.\nPrüfe das Internet am Handy.\n\nTippen = nochmal versuchen",
     errorTimeout: "Der Wetterdienst antwortet nicht.", errorServer: "Wetterdienst gestört ({status}).", errorOffline: "Keine Internetverbindung.", errorData: "Wetterdienst: unerwartete Antwort.",
     geoError: "Die Ortssuche ist gerade nicht erreichbar. Versuch es gleich nochmal.",
     clear: "Klar", cloud: "Bewölkt", fog: "Nebel", rain: "Regen", snow: "Schnee", storm: "Gewitter",
@@ -46,8 +46,8 @@ export const messages: Messages = {
     nextLive: "Done: weather for {place}. Tap the glasses to refresh.",
     nextOffline: "Can't reach the weather service – check your internet and tap “Refresh now”.",
     glassLoading: "Loading the weather …",
-    glassNoLocation: "No location.\n\nAllow location in the Even app\nor enter a place on your phone.\n\nTap = try again",
-    glassOffline: "Can't reach the weather service.\n\nCheck your phone's internet.\n\nTap = try again",
+    glassNoLocation: "No location.\nAllow location in the Even app\nor enter a place on your phone.\nTap = try again",
+    glassOffline: "Can't reach the weather service.\nCheck your phone's internet.\n\nTap = try again",
     errorTimeout: "Weather service not answering.", errorServer: "Weather service down ({status}).", errorOffline: "No internet connection.", errorData: "Weather service: unexpected reply.",
     geoError: "Place search is unavailable right now. Try again in a moment.",
     clear: "Clear", cloud: "Cloudy", fog: "Fog", rain: "Rain", snow: "Snow", storm: "Storm",
@@ -69,8 +69,8 @@ export const messages: Messages = {
     nextLive: "Prêt : météo pour {place}. Touche les lunettes pour actualiser.",
     nextOffline: "Service météo injoignable – vérifie Internet et touche « Actualiser ».",
     glassLoading: "Chargement de la météo …",
-    glassNoLocation: "Pas de position.\n\nAutorise la position dans l'app\nEven ou saisis un lieu sur\nle téléphone.\n\nTap = réessayer",
-    glassOffline: "Service météo injoignable.\n\nVérifie Internet sur le téléphone.\n\nTap = réessayer",
+    glassNoLocation: "Pas de position.\nAutorise la position dans l'app Even\nou saisis un lieu sur le téléphone.\nTap = réessayer",
+    glassOffline: "Service météo injoignable.\nVérifie Internet sur le téléphone.\n\nTap = réessayer",
     errorTimeout: "Le service météo ne répond pas.", errorServer: "Service météo en panne ({status}).", errorOffline: "Pas de connexion Internet.", errorData: "Service météo : réponse inattendue.",
     geoError: "La recherche de lieux est indisponible. Réessaie dans un instant.",
     clear: "Clair", cloud: "Nuageux", fog: "Brouillard", rain: "Pluie", snow: "Neige", storm: "Orage",
@@ -92,8 +92,8 @@ export const messages: Messages = {
     nextLive: "Listo: el tiempo para {place}. Toca las gafas para actualizar.",
     nextOffline: "Sin conexión con el servicio del tiempo: revisa Internet y toca «Actualizar».",
     glassLoading: "Cargando el tiempo …",
-    glassNoLocation: "Sin ubicación.\n\nPermite la ubicación en la app\nEven o escribe un lugar en\nel teléfono.\n\nTap = reintentar",
-    glassOffline: "Sin conexión con el servicio.\n\nRevisa Internet en el teléfono.\n\nTap = reintentar",
+    glassNoLocation: "Sin ubicación.\nPermite la ubicación en la app Even\no escribe un lugar en el teléfono.\nTap = reintentar",
+    glassOffline: "Sin conexión con el servicio.\nRevisa Internet en el teléfono.\n\nTap = reintentar",
     errorTimeout: "El servicio no responde.", errorServer: "Servicio del tiempo caído ({status}).", errorOffline: "Sin conexión a Internet.", errorData: "Respuesta inesperada del servicio.",
     geoError: "La búsqueda de lugares no está disponible. Inténtalo en un momento.",
     clear: "Despejado", cloud: "Nublado", fog: "Niebla", rain: "Lluvia", snow: "Nieve", storm: "Tormenta",
@@ -115,8 +115,8 @@ export const messages: Messages = {
     nextLive: "Pronto: meteo per {place}. Tocca gli occhiali per aggiornare.",
     nextOffline: "Servizio meteo non raggiungibile: controlla Internet e tocca «Aggiorna».",
     glassLoading: "Carico il meteo …",
-    glassNoLocation: "Nessuna posizione.\n\nConsenti la posizione nell'app\nEven o inserisci un luogo\nsul telefono.\n\nTap = riprova",
-    glassOffline: "Servizio meteo non raggiungibile.\n\nControlla Internet sul telefono.\n\nTap = riprova",
+    glassNoLocation: "Nessuna posizione.\nConsenti la posizione nell'app Even\no inserisci un luogo sul telefono.\nTap = riprova",
+    glassOffline: "Servizio meteo non raggiungibile.\nControlla Internet sul telefono.\n\nTap = riprova",
     errorTimeout: "Il servizio meteo non risponde.", errorServer: "Servizio meteo guasto ({status}).", errorOffline: "Nessuna connessione Internet.", errorData: "Risposta inattesa dal servizio.",
     geoError: "La ricerca dei luoghi non è disponibile. Riprova tra poco.",
     clear: "Sereno", cloud: "Nuvoloso", fog: "Nebbia", rain: "Pioggia", snow: "Neve", storm: "Temporale",

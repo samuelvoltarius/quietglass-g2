@@ -3,15 +3,17 @@ import {
   addEntry, isRunning, nextEntryId, startProject, stop, type ClockState,
 } from "./tracking/clock";
 import { gestureFromEvent } from "./input/gestures";
-import { buildView, CANCEL, type ClockView } from "./glasses/view";
+import { buildView, CANCEL, dayBarFor, type ClockView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, sendDayBar, updatePage } from "./glasses/render";
+import { drawDayBar, sameDayBar, type DayBarState } from "./glasses/daybar";
+import { createImageSync } from "./glasses/image-sync";
 import { addProject, load, save, type ClockData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
 import { getLocale, type Locale } from "./i18n";
 import { defaultProject } from "./messages";
 
-const PIXEL_ICON = ["...####...", ".########.", ".##....##.", "##...#.###", "##...#.###", "##...####.", "##......##", ".##....##.", ".########.", "...####..."] as const;
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 async function boot(): Promise<void> {
@@ -21,7 +23,7 @@ async function boot(): Promise<void> {
   let data: ClockData = await load(bridge, locale);
   if (DEMO) {
     const now = Date.now();
-    data = { ...data, projects: ["Client Portal", "Research"], entries: [{ id: "demo-1", project: "Research", startedAt: now - 7_200_000, endedAt: now - 5_850_000 }], open: { project: "Client Portal", startedAt: now - 2_754_000 } };
+    data = { ...data, dailyTargetHours: 8, projects: ["Client Portal", "Research"], entries: [{ id: "demo-1", project: "Research", startedAt: now - 7_200_000, endedAt: now - 5_850_000 }], open: { project: "Client Portal", startedAt: now - 2_754_000 } };
   }
   let clock: ClockState = data.open;
   /** Non-null while the user is picking a project on the glasses. */
@@ -34,21 +36,36 @@ async function boot(): Promise<void> {
   let redrawQueued = false;
 
   const currentView = (): ClockView =>
-    buildView(clock, data.entries, { selecting, projects: data.projects, locale });
+    buildView(clock, data.entries, { selecting, projects: data.projects, locale, targetHours: data.dailyTargetHours });
+
+  /**
+   * The day bar runs on its own lane: an image is a slow BLE transfer and must
+   * never hold up the text. It is quantized to five-minute steps, so while the
+   * clock runs it is resent at most every five minutes.
+   */
+  const dayBar = createImageSync<DayBarState>(sameDayBar, async (bar) => {
+    if (closed) return false;
+    const result = await sendDayBar(bridge, drawDayBar(bar));
+    if (!result.ok) console.warn("[shiftclock] day bar failed:", result.reason);
+    return result.ok;
+  });
 
   /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
   let refreshPhone: () => void = () => undefined;
 
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
+    // Checked on every redraw, but only sent when a five-minute step changed.
+    if (pageReady) dayBar.request(dayBarFor(clock, data.entries, data.dailyTargetHours));
     if (sameView(lastView, view)) return;
 
-    // The icon never changes, so it is sent with the page only. Re-encoding
-    // and resending it on every clock tick cost a BLE image transfer a second.
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, PIXEL_ICON);
+    const created = !pageReady;
+    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
     if (result.ok) {
       pageReady = true;
       lastView = view;
+      // A new page starts with an empty image container.
+      if (created) { dayBar.reset(); dayBar.request(dayBarFor(clock, data.entries, data.dailyTargetHours)); }
       return;
     }
     pageReady = false;
@@ -92,18 +109,23 @@ async function boot(): Promise<void> {
 
   let ticker: ReturnType<typeof setInterval> | undefined;
 
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => { closed = true; clearInterval(ticker); },
+  }, "shiftclock");
+  let leaving: Promise<void> | null = null;
+
   /**
    * Leaving does not stop the clock: the open entry is persisted and resumes
-   * next time. The page is shut only once that save has landed.
+   * next time. The system exit dialog is asked only once that save has
+   * landed; if the user cancels, the clock simply keeps ticking on screen.
    */
   const close = (): void => {
-    if (closed) return;
-    closed = true;
-    clearInterval(ticker);
-    persist()
+    if (closed || leaving) return;
+    leaving = persist()
       .catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); })
-      .then(() => bridge.shutDownPageContainer())
-      .catch((error: unknown) => { console.warn("[shiftclock] shutdown failed:", error); });
+      .then(() => requestExit())
+      .then(() => undefined)
+      .finally(() => { leaving = null; });
   };
 
   bridge.onEvenHubEvent((event) => {

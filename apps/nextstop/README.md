@@ -10,6 +10,18 @@
 > 3. **Wischen** wählt eine Abfahrt, **Tippen** fährt mit (nächster Halt), **Halten** springt zur nächsten Haltestelle, **Doppeltippen** beendet.
 >
 > **Optional:** ÖBB-Echtzeit in Österreich (Verspätungen bis zum Stadtbus). Dafür läuft ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe [ÖBB-Echtzeit](#öbb-echtzeit-optional). Ohne es funktioniert alles mit Fahrplanzeiten.
+>
+> **Sprache:** Deutsch und Englisch. Die App folgt der Sprache des Handys; umstellen lässt sie sich oben auf der Handy-Seite.
+
+> **In English:** NextStop shows on the glasses what leaves from the stop next to you – and, while you ride, which stop comes next. No account, no key, no server of your own.
+>
+> 1. Install and open NextStop in the Even app.
+> 2. Allow location when the Even app asks. The glasses then show the departures of the nearest stop.
+> 3. **Swipe** picks a departure, **tap** rides along (next stop), **hold** jumps to the next stop nearby, **double-tap** exits.
+>
+> `●` = live, `~` = timetable only, `+3` = three minutes late. Optional: ÖBB live times in Austria need a small add-on on a computer on the same Wi-Fi (see [ÖBB-Echtzeit](#öbb-echtzeit-optional)); without it everything works with timetable times.
+>
+> **Languages:** German and English. The app follows the phone's language and can be switched at the top of the phone page.
 
 Am Bahnsteig: was fährt hier weg, und ist es pünktlich.
 Im Bus: welcher Halt kommt als Nächstes, und wann bin ich da.
@@ -69,17 +81,31 @@ verlässt keine Anfrage das Haus.
 ```
 Salzburg Mirabellplatz · 99 m
 
-> Bus 175  Rif Ortsmitte · jetzt +11 H
-  Bus 170  Salzburg Hbf · jetzt +2 B
-  Bus 22   Josefiau · jetzt +2 C
-  O-Bus 1  Kleßheim · jetzt +2 E
-  Bus 120  Palting via Mitterhof · 3 min +4 G
-  O-Bus 3  Salzburg Nord · 2 min ● A
+> jetzt +11  Bus 175  Rif Ortsmitte · H
+  jetzt +2  Bus 170  Salzburg Hbf · B
+  jetzt +2  Bus 22  Josefiau · C
+  jetzt +2  O-Bus 1  Kleßheim · E
+  2 min ●  O-Bus 3  Salzburg Nord · A
+  3 min +4  Bus 120  Palting via Mitterhof · G
 
 tippen = verfolgen · ● live  ~ Fahrplan
 ```
 
-Die letzte Spalte ist der Punkt, an dem die meisten Abfahrtstafeln schummeln:
+Jede Zeile liest sich in der Reihenfolge, in der man fragt: **wie lange** –
+**welche Linie** – **wohin** – Steig. Die Wartezeit steht vorne, weil sie das
+ist, wofür man hinschaut, und am linken Rand springt sie nicht hin und her.
+Das Ziel wird gekürzt, wie es Anzeigetafeln tun („Hbf“, „Bf“, „Str.“, der
+Steig in Klammern fällt weg) und gibt als einziges Feld nach, wenn die Zeile
+zu lang wird – mit „…“ markiert. Ein Ortsname wird nie weggelassen.
+
+**Warum keine Grafik:** Größere Schrift gibt es auf der Brille nicht, und eine
+Bild-Zeile pro Abfahrt würde jede Minute für jede Zeile eine Bluetooth-Übertragung
+kosten (Bilder sind auf dem G2 deutlich langsamer als Text). Linien-„Badges“
+als Bild würden nur die Liniennummer schöner machen, die Wartezeit aber nicht
+lesbarer. Text mit fester Reihenfolge und klaren Abständen ist hier schneller
+erfasst – und bleibt nach jedem Neuladen sofort aktuell.
+
+Das Zeichen gleich nach der Zeit ist der Punkt, an dem die meisten Abfahrtstafeln schummeln:
 
 | | Bedeutung |
 |---|---|
@@ -87,7 +113,7 @@ Die letzte Spalte ist der Punkt, an dem die meisten Abfahrtstafeln schummeln:
 | `-2` | fährt früher — kommt vor und wird nicht verschwiegen |
 | `●` | der Betreiber meldet: pünktlich |
 | `~` | **nur Fahrplan.** Niemand hat das bestätigt. |
-| `X` | fällt aus |
+| `X` | fällt aus (in der Zeile steht dann „fällt aus“ statt der Zeit) |
 
 Die Tilde ist die wichtigste. Eine Tafel, die eine geplante Zeit genauso
 druckt wie eine gemessene, wird genauso geglaubt — und ist genauso oft falsch.
@@ -147,7 +173,7 @@ verworfen.
 npm install
 npm run dev        # Handy-UI + App auf http://127.0.0.1:5201
 npm run build      # Typecheck + Produktions-Bundle
-npm test           # 103 Tests
+npm test           # 109 Tests
 npm run sim        # Simulator auf den Dev-Server gerichtet
 ```
 
@@ -190,6 +216,10 @@ eigenen Netz halten.
 - Umstiegswarnung, wenn der Anschluss laut Echtzeit nicht mehr zu schaffen ist.
 - Steiermark-Echtzeit über Transitous nutzen, wo die ÖBB nichts weiß.
 - Alarm kurz vor dem eigenen Ausstieg, statt selbst mitzählen zu müssen.
+
+## Datenschutz
+
+Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Lizenz
 

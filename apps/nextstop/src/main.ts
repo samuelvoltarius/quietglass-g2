@@ -14,7 +14,9 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
-import { TEXT, explainFailure, noStopsHint } from "./text";
+import { createExitRequest } from "./exit";
+import { explainFailure, glassesText, noStopsHint, type Explanation } from "./text";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 /**
  * NextStop.
@@ -62,11 +64,17 @@ async function boot(): Promise<void> {
   let departures: readonly Departure[] = [];
   let selected = 0;
 
+  let locale: Locale = getLocale();
+
+  /**
+   * What the glasses say is kept as a function of the language rather than as
+   * finished text, so switching the language on the phone redraws the very
+   * same message in the other language at once.
+   */
+  type Say = (locale: Locale) => Explanation;
   let ride: Ride | null = null;
-  let error: string | null = null;
-  let hint = "";
-  let busy: string = TEXT.searching;
-  let busyHint = "";
+  let error: Say | null = null;
+  let busy: Say = (lang) => ({ error: glassesText(lang).searching, hint: "" });
 
   let lastView: StopView | null = null;
   let pageReady = false;
@@ -91,20 +99,26 @@ async function boot(): Promise<void> {
   const currentStop = (): Stop | undefined => stops[stopIndex];
 
   const currentView = (): StopView => {
-    if (error) return errorView(error, hint);
+    if (error) {
+      const { error: message, hint } = error(locale);
+      return errorView(message, hint, locale);
+    }
 
     if (ride) {
       const progress = trackRide(ride, new Date(), position);
-      if (progress) return ridingView(progress, new Date(), ride.line, ride.headsign);
+      if (progress) return ridingView(progress, new Date(), ride.line, ride.headsign, locale);
     }
 
     const stop = currentStop();
-    if (!stop) return loadingView(busy, busyHint);
+    if (!stop) {
+      const { error: what, hint } = busy(locale);
+      return loadingView(what, hint, locale);
+    }
 
     const away = position
       ? metresBetween(position.lat, position.lon, stop.lat, stop.lon)
       : null;
-    return departureBoard(stop, departures, away, selected, new Date());
+    return departureBoard(stop, departures, away, locale, selected, new Date());
   };
 
   const draw = async (): Promise<void> => {
@@ -124,7 +138,8 @@ async function boot(): Promise<void> {
   const explain = (thrown: unknown): void => {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     console.warn("[nextstop] request failed:", message);
-    ({ error, hint } = explainFailure(message, settings.backend));
+    const backendId = settings.backend;
+    error = (lang) => explainFailure(message, backendId, lang);
   };
 
   const loadDepartures = async (seq = ++requestSeq): Promise<void> => {
@@ -147,14 +162,12 @@ async function boot(): Promise<void> {
   const findStops = async (): Promise<void> => {
     const seq = ++requestSeq;
     if (!position) {
-      busy = TEXT.waitingForLocation;
-      busyHint = TEXT.waitingHint;
+      busy = (lang) => ({ error: glassesText(lang).waitingForLocation, hint: glassesText(lang).waitingHint });
       settle(seq);
       await draw();
       return;
     }
-    busy = TEXT.searching;
-    busyHint = "";
+    busy = (lang) => ({ error: glassesText(lang).searching, hint: "" });
     await draw();
     try {
       const found = await backend().nearbyStops(position.lat, position.lon, 5);
@@ -163,8 +176,10 @@ async function boot(): Promise<void> {
       departures = [];
       stopIndex = 0;
       selected = 0;
-      error = stops.length === 0 ? TEXT.noStops : null;
-      hint = stops.length === 0 ? noStopsHint(settings.backend) : "";
+      const backendId = settings.backend;
+      error = stops.length === 0
+        ? (lang) => ({ error: glassesText(lang).noStops, hint: noStopsHint(backendId, lang) })
+        : null;
     } catch (thrown) {
       if (seq !== requestSeq) return;
       explain(thrown);
@@ -176,15 +191,13 @@ async function boot(): Promise<void> {
     const departure = departures[selected];
     if (!departure) return;
     const seq = ++requestSeq;
-    busy = TEXT.loadingRide;
-    busyHint = "";
+    busy = (lang) => ({ error: glassesText(lang).loadingRide, hint: "" });
     await draw();
     try {
       const loaded = await backend().ride(departure.tripId);
       if (seq !== requestSeq) return;
       ride = loaded;
-      error = ride ? null : TEXT.noRide;
-      hint = ride ? "" : TEXT.noRideHint;
+      error = ride ? null : (lang) => ({ error: glassesText(lang).noRide, hint: glassesText(lang).noRideHint });
     } catch (thrown) {
       if (seq !== requestSeq) return;
       explain(thrown);
@@ -281,25 +294,30 @@ async function boot(): Promise<void> {
         void draw();
         return;
       case "doubleClick":
-        // Everything that could draw again or keep GPS awake is stopped first,
-        // and a failing shutdown is caught rather than left as an unhandled
-        // rejection on the way out.
-        closed = true;
-        requestSeq++;
-        if (refreshTimer !== null) clearInterval(refreshTimer);
-        if (tickTimer !== null) clearInterval(tickTimer);
-        refreshTimer = null;
-        tickTimer = null;
-        if (typeof stopListening === "function") stopListening();
-        void bridge.stopAppLocationUpdates()
-          .catch(() => undefined)
-          .then(() => bridge.shutDownPageContainer())
-          .catch((thrown: unknown) => { console.warn("[nextstop] shutdown failed:", thrown); });
+        // System exit dialog; departures and the ride keep updating until the user confirms.
+        void requestExit();
         return;
       default:
         return;
     }
   });
+
+  /**
+   * Only a confirmed exit stops everything that could draw again or keep GPS
+   * awake. A cancelled or failed dialog leaves the app exactly as it was.
+   */
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: async () => {
+      closed = true;
+      requestSeq++;
+      if (refreshTimer !== null) clearInterval(refreshTimer);
+      if (tickTimer !== null) clearInterval(tickTimer);
+      refreshTimer = null;
+      tickTimer = null;
+      if (typeof stopListening === "function") stopListening();
+      await bridge.stopAppLocationUpdates().catch(() => undefined);
+    },
+  }, "nextstop");
 
   bridge.onDeviceStatusChanged((status) => {
     if (status?.connectType === "connected" && !closed) {
@@ -312,6 +330,12 @@ async function boot(): Promise<void> {
   tickTimer = setInterval(() => { void draw(); }, 2000);
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      void draw();
+    },
     getSettings: () => settings,
     setSettings: async (next) => {
       const backendChanged = next.backend !== settings.backend

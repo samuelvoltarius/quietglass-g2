@@ -56,9 +56,10 @@ class FakeRoot {
 // promises, which would hide exactly the rejections these tests look for.
 function fakeBridge() {
   let onEvent: ((event: unknown) => void) | undefined;
-  const state = { shutdowns: 0, shutdownFails: false, body: "" };
+  const state = { shutdowns: 0, shutdownFails: false, confirm: true, modes: [] as (number | undefined)[], body: "", footer: "", draws: 0 };
   const record = (id: number | undefined, content: string | undefined): void => {
-    if (id === 2) state.body = content ?? "";
+    if (id === 2) { state.body = content ?? ""; state.draws += 1; }
+    if (id === 3) state.footer = content ?? "";
   };
   const bridge = {
     getLocalStorage: async () => JSON.stringify({
@@ -74,9 +75,10 @@ function fakeBridge() {
       record(upgrade.containerID, upgrade.content);
       return true;
     },
-    shutDownPageContainer: (): Promise<boolean> => {
+    shutDownPageContainer: (mode?: number): Promise<boolean> => {
       state.shutdowns += 1;
-      return state.shutdownFails ? Promise.reject(new Error("page already gone")) : Promise.resolve(true);
+      state.modes.push(mode);
+      return state.shutdownFails ? Promise.reject(new Error("page already gone")) : Promise.resolve(state.confirm);
     },
     onEvenHubEvent: (callback: (event: unknown) => void) => { onEvent = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
@@ -97,11 +99,20 @@ describe("status-glass lifecycle", () => {
   const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
   let replies: ((body: unknown) => void)[];
   let root: FakeRoot;
+  let savedLocale: string | null;
 
   beforeEach(() => {
     unhandled = [];
     replies = [];
     root = new FakeRoot();
+    // The text checks below are English: pin the language rather than
+    // inheriting whatever the machine running the tests reports.
+    savedLocale = null;
+    vi.stubGlobal("navigator", { language: "en-US" });
+    vi.stubGlobal("localStorage", {
+      getItem: () => savedLocale,
+      setItem: (_key: string, value: string) => { savedLocale = value; },
+    });
     nodeProcess.on("unhandledRejection", onUnhandled);
     vi.stubGlobal("location", { search: "" });
     vi.stubGlobal("document", { getElementById: (id: string) => (id === "app" ? root : null) });
@@ -161,9 +172,38 @@ describe("status-glass lifecycle", () => {
     expect(replies).toHaveLength(3);
   });
 
-  it("closes cleanly on double tap: no unhandled rejection and no polling afterwards", async () => {
-    // Regression: shutDownPageContainer's rejection was unhandled, and a poll
-    // in flight at the time re-armed its timer after the app had closed.
+  it("closes cleanly once the exit dialog is confirmed: no polling afterwards", async () => {
+    // Regression: a poll in flight at the time re-armed its timer after the app had closed.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+
+    fake.gesture(DOUBLE_TAP);
+    expect(fake.state.modes).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(0);
+    replies[0]?.(REPORT);
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(replies).toHaveLength(1);
+  });
+
+  it("keeps polling when the exit dialog is cancelled", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const fake = fakeBridge();
+    fake.state.confirm = false;
+    await boot(fake);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+
+    fake.gesture(DOUBLE_TAP);
+    expect(fake.state.modes).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(0);
+    replies[0]?.(REPORT);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(replies).toHaveLength(2);
+  });
+
+  it("keeps polling when the exit call rejects, with no unhandled rejection", async () => {
+    // Regression: shutDownPageContainer's rejection was unhandled. A rejected call shows no dialog, so the app stays.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     const fake = fakeBridge();
     fake.state.shutdownFails = true;
@@ -172,8 +212,30 @@ describe("status-glass lifecycle", () => {
 
     fake.gesture(DOUBLE_TAP);
     expect(fake.state.shutdowns).toBe(1);
+    await vi.advanceTimersByTimeAsync(0);
     replies[0]?.(REPORT);
-    await vi.advanceTimersByTimeAsync(120000);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(replies).toHaveLength(2);
+  });
+
+  it("redraws the glasses in German as soon as the phone switches language", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.({ name: "nas", metrics: [{ id: "load", label: "Load", value: 97.5, warn: 85, critical: 95 }] });
+    await vi.waitFor(() => expect(fake.state.body).toContain("nas Load 97.5"));
+    expect(fake.state.footer).toBe("tap = acknowledge");
+
+    const picker = root.querySelector("#language");
+    picker.value = "de";
+    picker.fire("change");
+
+    // No poll answers in between: the redraw comes from the switch itself.
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tippen = gesehen"));
+    expect(fake.state.body).toContain("nas Load 97,5");
     expect(replies).toHaveLength(1);
+    expect(savedLocale).toBe("de");
+    expect(root.innerHTML).toContain('<option value="de" selected>');
+    expect(root.innerHTML).toContain("Quelle hinzufügen");
   });
 });

@@ -1,24 +1,30 @@
 import type { LatLng } from "../geo/geometry";
-import { project, wrapLongitude, type PixelPoint } from "./project";
+import { project, type PixelPoint } from "./project";
+import type { RoadClass, StreetSegment } from "./streets";
+import { nearestPixel, OVERVIEW_HEIGHT, OVERVIEW_PADDING, OVERVIEW_WIDTH } from "./layout";
+
+export { markerPixel, nearestPixel, overviewProjector, OVERVIEW_HEIGHT, OVERVIEW_WIDTH } from "./layout";
 
 /**
- * Overview image drawing, ported from Map Glass: black background, faint
- * decorative grid, the route as one thick white line, a ringed dot for the
- * position, a square for the destination, "N" with an up-pointing triangle.
- * OpenGlance adds a small ring on the next manoeuvre.
+ * Overview image drawing, ported from Map Glass: black background, the real
+ * streets around the route in grey (when they could be loaded), the route as
+ * one thick white line with a black edge so it stands clear of them, a ringed
+ * dot for the position, a square for the destination, "N" with an
+ * up-pointing triangle. OpenGlance adds a small ring on the next manoeuvre.
+ *
+ * The glasses convert images to 16 grey levels, so streets can be dimmer
+ * than the route without disappearing: major roads brighter and thicker,
+ * minor roads dim, footpaths faint.
  */
-
-/** Size of the overview image: the largest image container the G2 accepts. */
-export const OVERVIEW_WIDTH = 288;
-export const OVERVIEW_HEIGHT = 144;
 
 /** The slice of the 2D canvas API the map uses, so drawing can be checked against a recording fake in node. */
 export type MapContext = Pick<CanvasRenderingContext2D, "fillStyle" | "strokeStyle" | "lineWidth" | "lineCap" | "lineJoin" | "font" | "fillRect" | "beginPath" | "moveTo" | "lineTo" | "stroke" | "arc" | "fill" | "strokeRect" | "fillText">;
 export interface Segment { readonly from: PixelPoint; readonly to: PixelPoint; }
 
 /**
- * Decorative grid behind the route: slanted lines every 70 px, gently sloped
- * cross lines every 55 px. Drawn dim so it reads as texture, not as streets.
+ * The decorative grid Map Glass drew behind the route. No longer drawn — it
+ * looked like streets and was not; real streets replaced it — and kept only
+ * so the Map Glass history and its test stay readable.
  */
 export function gridLines(width: number, height: number): Segment[] {
   const lines: Segment[] = [];
@@ -32,11 +38,22 @@ export function northArrow(width: number): { readonly label: PixelPoint; readonl
   return { label: { x: width - 30, y: 24 }, triangle: [{ x: width - 30, y: 32 }, { x: width - 24, y: 44 }, { x: width - 36, y: 44 }] };
 }
 
-const PADDING = 28;
+const PADDING = OVERVIEW_PADDING;
+
+/** Stroke per road class: brightness and width on a 16-grey display. */
+export const STREET_STYLE: Readonly<Record<RoadClass, { readonly color: string; readonly width: number }>> = {
+  major: { color: "#a0a0a0", width: 3 },
+  minor: { color: "#606060", width: 2 },
+  path: { color: "#404040", width: 1 },
+};
+
+/** Faintest first, so a major road is never painted over by a footpath. */
+const STREET_ORDER: readonly RoadClass[] = ["path", "minor", "major"];
 
 /**
- * Draws grid, route, position marker, destination square, optional
- * next-manoeuvre ring and north arrow. An empty route draws only the background.
+ * Draws streets, route, position marker, destination square, optional
+ * next-manoeuvre ring and north arrow. An empty route draws only the
+ * background; no streets means the route alone, never a fake grid.
  */
 export function drawRoute(
   ctx: MapContext,
@@ -45,14 +62,35 @@ export function drawRoute(
   width: number,
   height: number,
   next: LatLng | null = null,
+  streets: readonly StreetSegment[] = [],
 ): void {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "#353535"; ctx.lineWidth = 2;
-  for (const line of gridLines(width, height)) { ctx.beginPath(); ctx.moveTo(line.from.x, line.from.y); ctx.lineTo(line.to.x, line.to.y); ctx.stroke(); }
 
   const pixels = project(points, width, height, PADDING);
+  if (pixels.length && streets.length) {
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const cls of STREET_ORDER) {
+      const style = STREET_STYLE[cls];
+      const own = streets.filter((segment) => segment.cls === cls);
+      if (!own.length) continue;
+      // One path per class: hundreds of tiny strokes cost far more than one.
+      ctx.strokeStyle = style.color; ctx.lineWidth = style.width;
+      ctx.beginPath();
+      for (const segment of own) { ctx.moveTo(segment.from.x, segment.from.y); ctx.lineTo(segment.to.x, segment.to.y); }
+      ctx.stroke();
+    }
+  }
+
   if (pixels.length) {
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 8; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    if (streets.length) {
+      // A black edge keeps the route readable where it runs along a street.
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 14;
+      ctx.beginPath();
+      pixels.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 8;
     ctx.beginPath();
     pixels.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
     ctx.stroke();
@@ -83,21 +121,11 @@ export async function renderRoutePng(
   next: LatLng | null = null,
   width = OVERVIEW_WIDTH,
   height = OVERVIEW_HEIGHT,
+  streets: readonly StreetSegment[] = [],
 ): Promise<Uint8Array> {
   const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("2d canvas unavailable");
-  drawRoute(ctx, points, position, width, height, next);
+  drawRoute(ctx, points, position, width, height, next, streets);
   const blob: Blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encode failed")), "image/png"));
   return new Uint8Array(await blob.arrayBuffer());
-}
-
-/** The pixel of the route point nearest `position`, measured the short way round the antimeridian. */
-export function nearestPixel(position: LatLng, geo: readonly LatLng[], pixels: readonly PixelPoint[]): PixelPoint | undefined {
-  let best = 0;
-  let distance = Number.POSITIVE_INFINITY;
-  geo.forEach((point, index) => {
-    const next = (point.lat - position.lat) ** 2 + (wrapLongitude(point.lon - position.lon) * Math.cos(position.lat * Math.PI / 180)) ** 2;
-    if (next < distance) { distance = next; best = index; }
-  });
-  return pixels[best];
 }

@@ -1,5 +1,6 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { joinCsv, localDateTime, numberCell, textCell, type CsvFormat } from "../csv";
 /**
  * Practice log.
  *
@@ -89,22 +90,40 @@ export function formatDuration(totalSecs: number, locale: Locale = "en"): string
   return t(locale, "u.s", { s: seconds });
 }
 
-/** Exports the log as CSV for a spreadsheet. */
-export function toCsv(sessions: readonly PracticeSession[]): string {
-  const rows = [["date", "item", "bpm", "seconds"].join(",")];
-  for (const session of sessions) {
-    rows.push([
-      new Date(session.startedAt).toISOString(),
-      csvField(session.item),
-      String(session.bpm),
-      String(durationSeconds(session)),
-    ].join(","));
+/**
+ * Exports the log as CSV for a spreadsheet, in one of two formats (see
+ * src/csv.ts). `standard` is unchanged: `date,item,bpm,seconds` with the start
+ * in ISO 8601 UTC. `excel-de` is for opening by double-click in German or
+ * Austrian Excel: the start in local time as `07.10.2026 14:05`, the duration
+ * also in minutes with a decimal comma, and the exact ISO time in a last column.
+ */
+export function toCsv(
+  sessions: readonly PracticeSession[],
+  format: CsvFormat = "standard",
+  locale: Locale = "en",
+): string {
+  if (format === "standard") {
+    return joinCsv([
+      ["date", "item", "bpm", "seconds"],
+      ...sessions.map((session) => [
+        new Date(session.startedAt).toISOString(),
+        textCell(session.item, format),
+        numberCell(session.bpm, format),
+        numberCell(durationSeconds(session), format),
+      ]),
+    ], format);
   }
-  return rows.join("\n") + "\n";
-}
-
-function csvField(value: string): string {
-  return /[",\n]/.test(value) ? '"' + value.split('"').join('""') + '"' : value;
+  return joinCsv([
+    t(locale, "x.csvHeader").split(";").map((name) => textCell(name, format)),
+    ...sessions.map((session) => [
+      localDateTime(session.startedAt),
+      textCell(session.item, format),
+      numberCell(session.bpm, format),
+      numberCell(durationSeconds(session), format),
+      numberCell(durationSeconds(session) / 60, format, 2),
+      new Date(session.startedAt).toISOString(),
+    ]),
+  ], format);
 }
 
 function startOfDay(timestamp: number): number {

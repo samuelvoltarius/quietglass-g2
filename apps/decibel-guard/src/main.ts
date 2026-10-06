@@ -6,12 +6,14 @@ import { accumulate, createDose, resetDose, type DoseState } from "./noise/dose"
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type NoiseView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, sendImage, updatePage } from "./glasses/render";
+import { DOSE_BAR, METER, doseKey, dosePercent, drawDoseBar, drawMeter, meterKey, meterLevel, type MeterState } from "./glasses/gauge";
+import { createImageLane } from "./glasses/lane";
+import { encodePng } from "./glasses/pixel";
 import { effectiveOffset, isCalibrated, load, save, type NoiseData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
 import { getLocale, setLocale, type Locale } from "./i18n";
-
-const PIXEL_ICON = ["..........", "...##.....", "..###...#.", "#####....#", "#####..#.#", "#####..#.#", "#####....#", "..###...#.", "...##.....", ".........."] as const;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -32,6 +34,9 @@ async function boot(): Promise<void> {
   let locale: Locale = getLocale();
   /** The last attempt to open the microphone failed; the glasses say what to do. */
   let micError = false;
+  /** Level as last drawn on the meter, in 3 dB steps; the hysteresis works against it. */
+  let meterDb: number | null = null;
+  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData));
 
   const displayLevel = (): number | null =>
     smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, effectiveOffset(data));
@@ -45,19 +50,36 @@ async function boot(): Promise<void> {
       micError,
     });
 
+  /**
+   * Asks the lane for the meter and the dose bar. Both keys are quantised, so
+   * most calls change nothing and send nothing; the lane is never awaited.
+   */
+  const requestImages = (): void => {
+    if (!pageReady || closed) return;
+    meterDb = listening ? meterLevel(meterDb, displayLevel()) : null;
+    const meter: MeterState = { listening, level: meterDb, criterionDb: data.dose.criterionDb };
+    lane.request(METER, meterKey(meter), () => encodePng(drawMeter(meter)));
+    const percent = dosePercent(dose.fraction);
+    lane.request(DOSE_BAR, doseKey(percent), () => encodePng(drawDoseBar(percent)));
+  };
+
   const drawOnce = async (): Promise<void> => {
     if (closed) return;
     const view = currentView();
-    if (sameView(lastView, view)) return;
-
-    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
-    if (result.ok) {
+    if (!pageReady || !sameView(lastView, view)) {
+      const created = !pageReady;
+      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+      if (!result.ok) {
+        pageReady = false;
+        console.warn("[decibelguard] draw failed:", result.reason);
+        return;
+      }
       pageReady = true;
       lastView = view;
-      return;
+      // A new page starts with blank images.
+      if (created) lane.invalidate();
     }
-    pageReady = false;
-    console.warn("[decibelguard] draw failed:", result.reason);
+    requestImages();
   };
 
   /**
@@ -117,6 +139,36 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  /** Measuring was on when the exit dialog opened; cancelling turns it back on. */
+  let resumeListening = false;
+
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => {
+      closed = true;
+      resumeListening = false;
+      clearInterval(tick);
+      lane.close();
+    },
+    onStayed: async () => {
+      if (!resumeListening) return;
+      resumeListening = false;
+      await startListening();
+    },
+  }, "decibelguard");
+
+  /**
+   * Double tap asks the system exit dialog. The microphone closes before it
+   * appears, so nothing is measured while the user decides; the dose so far is
+   * kept, and cancelling reopens the microphone.
+   */
+  const exitWithDialog = async (): Promise<void> => {
+    if (listening || opening) {
+      resumeListening = true;
+      await stopListening().catch((error: unknown) => { console.warn("[decibelguard] stop failed:", error); });
+    }
+    await requestExit();
+  };
+
   await draw();
 
   bridge.onEvenHubEvent((event) => {
@@ -153,11 +205,7 @@ async function boot(): Promise<void> {
         dose = resetDose();
         break;
       case "doubleClick":
-        closed = true;
-        clearInterval(tick);
-        void stopListening()
-          .then(() => bridge.shutDownPageContainer())
-          .catch((error: unknown) => { console.warn("[decibelguard] shutdown failed:", error); });
+        void exitWithDialog();
         return;
       default:
         return;

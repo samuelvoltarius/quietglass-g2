@@ -1,6 +1,7 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { clampBpm, DEFAULT_SETTINGS, type MetronomeSettings, type TimeSignature } from "../metronome/engine";
 import type { PracticeSession } from "../practice/log";
+import { isCsvFormat, type CsvFormat } from "../csv";
 
 /**
  * Everything Cadence stores stays in the Even app's per-app storage on the
@@ -16,6 +17,8 @@ export interface CadenceData {
   readonly activeItem: string;
   readonly sessions: readonly PracticeSession[];
   readonly invertScroll: boolean;
+  /** CSV format picked on the phone; absent means the default for the app language. */
+  readonly csvFormat?: CsvFormat;
 }
 
 const KEY = "quietglass.cadence.v1";
@@ -89,6 +92,7 @@ export function parseData(raw: string): CadenceData {
       activeItem: items.includes(activeItem) ? activeItem : (items[0] ?? ""),
       sessions,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
+      ...(isCsvFormat(value.csvFormat) ? { csvFormat: value.csvFormat } : {}),
     };
   } catch {
     return EMPTY_DATA;

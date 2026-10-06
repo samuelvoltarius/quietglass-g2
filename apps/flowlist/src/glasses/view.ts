@@ -1,6 +1,7 @@
 import type { Checklist } from "../checklist/model";
 import { currentStep, elapsedSeconds, isFinished, positionOf, progress, type RunState } from "../checklist/run";
-import { indexOfStep } from "../checklist/model";
+import { indexOfStep, needsConfirmation, requiredSteps } from "../checklist/model";
+import type { ProgressBarState } from "./progressbar";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 
@@ -37,6 +38,12 @@ const DEFAULT_WIDTH = 46;
 export const MAX_BODY_ROWS = 7;
 /** Characters the header holds on one line in the G2's proportional font. */
 export const HEADER_WIDTH = 46;
+/**
+ * The header text shares its row with the progress bar and keeps the left
+ * half (288 px), about 22 characters. The position ("3/7") always survives;
+ * a long section name gives way.
+ */
+export const HEADER_TEXT_WIDTH = 22;
 /** The footer is one line, like the header. */
 export const FOOTER_WIDTH = 46;
 /** Most branch options shown at once; the list scrolls with the highlight. */
@@ -54,7 +61,7 @@ export function buildView(
   // Never a dead end: say where a checklist comes from, and how to leave.
   if (list.steps.length === 0) {
     return {
-      header: truncate(list.title || "FlowList", HEADER_WIDTH),
+      header: truncate(list.title || "FlowList", HEADER_TEXT_WIDTH),
       body: [...wrap(t(locale, "g.empty.1"), width), ...wrap(t(locale, "g.empty.2"), width)],
       footer: t(locale, "g.empty.footer"),
     };
@@ -90,7 +97,7 @@ export function buildView(
   const body = [...head, ...shown, ...clampRows(extra, rows - shown.length, width)];
 
   return {
-    header: truncate(headerText(list, state, step.section), HEADER_WIDTH),
+    header: headerText(list, state, step.section),
     body,
     footer: footerText(list, state, now, locale),
   };
@@ -103,22 +110,36 @@ function finishedView(list: Checklist, state: RunState, now: number, width: numb
   body.push(t(locale, "g.took", { time: formatDuration(elapsedSeconds(state, now)) }));
   body.push("", t(locale, "g.otherList"));
   return {
-    header: truncate(list.title || "FlowList", HEADER_WIDTH),
+    header: truncate(list.title || "FlowList", HEADER_TEXT_WIDTH),
     body: clampRows(body.map((row) => truncate(row, width)), MAX_BODY_ROWS, width),
     footer: truncate(t(locale, "g.finished.footer"), FOOTER_WIDTH),
   };
 }
 
 function headerText(list: Checklist, state: RunState, section: string | undefined): string {
-  const position = positionOf(list, state);
+  const position = "  " + positionOf(list, state) + "/" + list.steps.length;
   const label = section || list.title || "FlowList";
-  return label + "  " + position + "/" + list.steps.length;
+  return truncate(label, Math.max(1, HEADER_TEXT_WIDTH - position.length)) + position;
 }
 
 /**
- * The gesture hint always wins the one footer line. Progress and time follow
- * when they fit; German hints are longer, so on a narrow line the percentage
- * goes first (the header already shows the position), then the time.
+ * What the progress bar shows: one segment per required step (the same
+ * steps the "done of total" count uses), in list order, with critical steps
+ * marked. Optional steps have no segment, as they never count as progress.
+ */
+export function progressBarFor(list: Checklist, state: RunState): ProgressBarState {
+  return {
+    segments: requiredSteps(list).map((step) => ({
+      status: state.status[step.id] === "done" ? "done" : step.id === state.currentId ? "current" : "open",
+      critical: needsConfirmation(step),
+    })),
+  };
+}
+
+/**
+ * The gesture hint always wins the one footer line; the elapsed time follows
+ * when it fits. Progress is no longer repeated here as a percentage: the bar
+ * in the header shows it, and the header keeps the exact position.
  */
 function footerText(list: Checklist, state: RunState, now: number, locale: Locale): string {
   const step = currentStep(list, state);
@@ -128,11 +149,9 @@ function footerText(list: Checklist, state: RunState, now: number, locale: Local
   else if (step?.kind === "optional") hint = t(locale, "g.hint.optional");
   else hint = t(locale, "g.hint.normal");
 
-  const percent = Math.round(progress(list, state).fraction * 100) + "%";
   const time = formatDuration(elapsedSeconds(state, now));
   const candidates = [
-    [hint, percent, time].join("  ·  "),
-    [hint, percent, time].join(" · "),
+    [hint, time].join("  ·  "),
     [hint, time].join(" · "),
   ];
   return candidates.find((line) => line.length <= FOOTER_WIDTH) ?? truncate(hint, FOOTER_WIDTH);

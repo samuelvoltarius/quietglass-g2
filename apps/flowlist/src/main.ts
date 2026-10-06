@@ -3,11 +3,14 @@ import { EMPTY_CHECKLIST, type Checklist } from "./checklist/model";
 import { startRun, type RunState } from "./checklist/run";
 import { dispatch } from "./input/dispatch";
 import { gestureFromEvent } from "./input/gestures";
-import { buildView, type FlowView } from "./glasses/view";
+import { buildView, progressBarFor, type FlowView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, sendProgressBar, updatePage } from "./glasses/render";
+import { drawProgressBar, sameProgressBar, type ProgressBarState } from "./glasses/progressbar";
+import { createImageSync } from "./glasses/image-sync";
 import { activeList, load, save, type FlowListData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
 import { getLocale, type Locale } from "./i18n";
 
 /** Redraw cadence for the elapsed-time readout while a run is open. */
@@ -36,14 +39,30 @@ async function boot(): Promise<void> {
       locale,
     });
 
+  /**
+   * The progress bar runs on its own lane: an image is a slow BLE transfer
+   * and must never hold up the step text. It changes only when a step is done
+   * or undone, so it is sent rarely.
+   */
+  const bar = createImageSync<ProgressBarState>(sameProgressBar, async (next) => {
+    if (closed) return false;
+    const result = await sendProgressBar(bridge, drawProgressBar(next));
+    if (!result.ok) console.warn("[flowlist] progress bar failed:", result.reason);
+    return result.ok;
+  });
+
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
+    if (pageReady) bar.request(progressBarFor(list, state));
     if (sameView(lastView, view)) return;
 
+    const created = !pageReady;
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
     if (result.ok) {
       pageReady = true;
       lastView = view;
+      // A new page starts with an empty image container.
+      if (created) { bar.reset(); bar.request(progressBarFor(list, state)); }
       return;
     }
     // Usually means the page is gone (relaunch, reconnect). Rebuild next time
@@ -96,13 +115,16 @@ async function boot(): Promise<void> {
 
   let clock: ReturnType<typeof setInterval> | undefined;
 
+  /**
+   * Double tap asks the system exit dialog. The run carries on while it is
+   * open; only a confirmed exit stops the clock and the drawing.
+   */
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => { closed = true; clearInterval(clock); },
+  }, "flowlist");
   const close = (): void => {
     if (closed) return;
-    closed = true;
-    clearInterval(clock);
-    bridge.shutDownPageContainer().catch((error: unknown) => {
-      console.warn("[flowlist] shutdown failed:", error);
-    });
+    void requestExit();
   };
 
   bridge.onEvenHubEvent((event) => {

@@ -1,5 +1,12 @@
 # ShiftClock — privacy
 
+## Kurzfassung (Deutsch)
+
+ShiftClock hat keinen Netzwerk-Code und nutzt keine Sensoren. Projekte und
+Arbeitszeiten bleiben im App-Speicher auf deinem Handy; ein CSV-Export geht nur
+über das Teilen-Menü deines Handys. Kein Konto, kein Tracking.
+„Protokoll löschen“ oder Deinstallieren entfernt alles.
+
 ## Short version
 
 ShiftClock has no network code and no account. Your hours stay on your phone.

@@ -165,7 +165,7 @@ describe("mock providers are clearly mock", () => {
   it("names itself mock and emits fixed text", async () => {
     vi.useFakeTimers();
     const seen: string[] = [];
-    const stt = createMockStt({ onTranscript: (t) => seen.push(t.text) });
+    const stt = createMockStt({ onTranscript: (t) => seen.push(t.text), locale: () => "en" });
     expect(stt.name).toBe("mock");
 
     await stt.start();

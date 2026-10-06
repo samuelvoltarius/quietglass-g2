@@ -150,17 +150,17 @@ describe("reconciling the two", () => {
 describe("wording", () => {
   it("says jetzt rather than counting below zero", () => {
     const stop = line(2).stops[0] as RideStop;
-    expect(etaLabel(stop, at(0))).toBe("jetzt");
-    expect(etaLabel(stop, at(5))).toBe("jetzt");
+    expect(etaLabel(stop, at(0), "de")).toBe("jetzt");
+    expect(etaLabel(stop, at(5), "de")).toBe("jetzt");
   });
 
   it("uses singular for one minute", () => {
-    expect(etaLabel(line(4).stops[3] as RideStop, at(2))).toBe("1 min");
+    expect(etaLabel(line(4).stops[3] as RideStop, at(2), "de")).toBe("1 min");
   });
 
   it("switches to hours on a long ride", () => {
     const stop = { ...(line(2).stops[0] as RideStop), expected: at(135) };
-    expect(etaLabel(stop, at(0))).toBe("2h 15m");
+    expect(etaLabel(stop, at(0), "de")).toBe("2h 15m");
   });
 });
 

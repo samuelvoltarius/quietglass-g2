@@ -15,14 +15,14 @@ const nodeProcess = (globalThis as unknown as { process: { on(event: string, lis
 function fakeBridge() {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
-  const shutdown = { calls: 0, fail: false };
+  const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
   const pages: string[][] = [];
   const bridge = {
     rebuildPageContainer: vi.fn(async () => true),
     createStartUpPageContainer: vi.fn(async (page: { textObject?: { content?: string }[] }) => { pages.push((page.textObject ?? []).map((part) => part.content ?? "")); return 0; }),
     textContainerUpgrade: vi.fn(async (update: { containerID?: number; content?: string }) => { if (update.containerID === 1) pages.push([]); pages.at(-1)?.push(update.content ?? ""); return true; }),
     updateImageRawData: vi.fn(async () => 0),
-    shutDownPageContainer: (): Promise<boolean> => { shutdown.calls += 1; return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(true); },
+    shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
@@ -64,8 +64,27 @@ describe("endurance polling loop", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("stops polling and shuts down on double tap even if shutdown rejects", async () => {
-    // Regression: `void bridge.shutDownPageContainer()` left a rejection unhandled.
+  it("asks for the system exit dialog and stops polling once the user confirms", async () => {
+    const fake = await boot();
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fake.shutdown.modes).toEqual([1]);
+    // Only the boot poll: the interval was cleared at the confirmed exit.
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps polling when the user cancels the exit dialog", async () => {
+    const fake = await boot();
+    fake.shutdown.confirm = false;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("keeps polling when the exit call rejects, without an unhandled rejection", async () => {
+    // Regression: `void bridge.shutDownPageContainer()` left a rejection unhandled. A rejected call shows no dialog, so the app stays.
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     nodeProcess.on("unhandledRejection", onUnhandled);
@@ -78,8 +97,7 @@ describe("endurance polling loop", () => {
     nodeProcess.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.calls).toBe(1);
-    // Only the boot poll and at most one interval poll before the double tap.
-    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
   });
 });
 

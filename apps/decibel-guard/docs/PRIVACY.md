@@ -1,8 +1,25 @@
 # DecibelGuard — privacy
 
+## Kurzfassung (Deutsch)
+
+DecibelGuard öffnet das Mikrofon der Brille nur nach deinem Tippen; solange
+es offen ist, zeigt die Brille **● MIC**. Aus jedem Tonblock wird nur ein
+Lautstärkewert berechnet, danach wird der Ton verworfen — nichts wird
+aufgenommen, gespeichert oder gesendet. Die App hat keinen Netzwerk-Code.
+Gespeichert sind nur Kalibrierung und Grenzwerte. Kein Tracking. Deinstallieren
+löscht alles.
+
 ## Short version
 
 No audio is recorded. No level history is kept. Nothing leaves the phone.
+
+## Permissions
+
+| Permission (`app.json`) | Why | Used for nothing else |
+|---|---|---|
+| `g2-microphone` | Measure the sound level after you tap to start | The audio is reduced to one number per block and discarded; nothing is recorded |
+
+`app.json` requests no network, location or camera permission.
 
 ## The microphone
 
@@ -44,6 +61,11 @@ to leak or hand over.
 - No account, login or device identifier.
 - No advertising or third-party SDKs.
 - No location.
+
+## Removing your data
+
+Uninstalling removes the calibration and thresholds. Level readings and the
+dose are never stored, so there is nothing else to delete.
 
 ## Third-party code
 

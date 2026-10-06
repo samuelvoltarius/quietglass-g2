@@ -2,6 +2,20 @@
 
 **Quietglass** · Your LUMEN moth, in view — so the thing that gets you outside is where you can see it.
 
+## Kurz auf Deutsch
+
+Lumen Glass bringt die Motte aus deinem selbst gehosteten LUMEN auf die
+Even Realities G2: Die Brille zeigt die Motte, die aktuelle Quest und wie
+lange es noch bis zur goldenen oder blauen Stunde dauert. Tippen auf den
+Bügel öffnet die Kamera am Handy, das Foto geht direkt an dein LUMEN und
+nirgendwo sonst hin.
+
+Die App gibt es auf Deutsch und Englisch. Sie folgt der Sprache deines
+Handys; umstellen kannst du sie oben auf der Handy-Seite — die Brille
+wechselt sofort mit. Was LUMEN selbst schreibt (Zustand der Motte, Quests),
+kommt so an, wie dein LUMEN es schickt.
+
+
 The glasses view now gives LUMEN its own monochrome pixel moth instead of relying on text alone.
 
 For a non-persistent simulator showcase without a running LUMEN server, open the development URL with `?demo=1`.
@@ -36,9 +50,9 @@ eingerollt — wartet. Er geht nicht weg.
 
 Finde ein wiederkehrendes Muster von oben
 (Acker, Parkplatz).
-VIDEO — shoot this on the camera · 30 min
+VIDEO — use the camera app · 30 min
 
-[----------] · golden in 46m · tap = photo
+[--------] · golden in 46m · tap = photo
 ```
 
 Five states, matching LUMEN's own thresholds. The wings tell you the state
@@ -84,12 +98,16 @@ than letting you shoot and have it rejected.
 2. **Let the browser talk to it** — see [examples/PATCH.md](examples/PATCH.md).
    Three lines of CORS in LUMEN, or run the included proxy.
 3. Enter the address in the phone app. The default is already LUMEN's own.
+   The session cookie for a closed LUMEN sits under **Advanced**.
+
+The app speaks German and English. It follows the phone's language, and you
+can switch it at the top of the phone page; the glasses change along at once.
 
 ```bash
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5200
 npm run build      # typecheck + production bundle
-npm test           # 49 unit tests
+npm test           # 73 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -127,6 +145,10 @@ service and no account.
 - Show the current theme ("Blaue Stunde") and the streak more prominently.
 - A gentle nudge when a good light window opens and the moth is low.
 - Accept the quest's `geraet` hint — LUMEN already says which camera it means.
+
+## Privacy
+
+What data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## License
 

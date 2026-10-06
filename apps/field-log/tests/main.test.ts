@@ -175,7 +175,7 @@ describe("fieldlog lifecycle", () => {
     expect(lastBody(fake)).toContain("First finding");
   });
 
-  it("regression: a failed shutdown on double tap is not an unhandled rejection", async () => {
+  it("regression: a failed exit call is not an unhandled rejection, asks once, and the app stays", async () => {
     const fake = fakeBridge(data());
     fake.bridge.shutDownPageContainer.mockRejectedValue(new Error("already closed"));
     await boot(fake);
@@ -183,21 +183,41 @@ describe("fieldlog lifecycle", () => {
     fake.emit(3);
     await sleep(20);
     expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1);
+    expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1);
+    const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    fake.emit(2); // a swipe still changes the severity
+    await vi.waitFor(() => expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn));
   });
 
-  it("regression: leaving while recording turns the microphone off and draws nothing more", async () => {
+  it("leaving while recording pauses the microphone for the system dialog and draws nothing more after confirm", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
     fake.emit(3);
-    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalled());
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+    await sleep(10);
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
     FakeSocket.instances[0]?.reply("too late");
     fake.emit(0);
     await sleep(30);
-    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false, false]);
     expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBe(drawn);
+  });
+
+  it("cancelling the exit dialog while recording turns the microphone back on and the dictation continues", async () => {
+    const fake = fakeBridge(data());
+    fake.bridge.shutDownPageContainer.mockResolvedValue(false);
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+    await vi.waitFor(() => expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false, true]));
+    fake.audio();
+    expect(FakeSocket.instances[0]?.sent.length).toBeGreaterThan(0);
+    FakeSocket.instances[0]?.reply("Finding after staying");
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Finding after staying"));
   });
 
   it("regression: rebuilds the page after a reconnect even when nothing changed", async () => {

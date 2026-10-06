@@ -10,15 +10,20 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { NoiseView } from "./view";
-import { renderPixelIcon, type PixelIcon } from "./pixel";
+import { DOSE_BAR, METER } from "./gauge";
+import type { ImageTarget } from "./lane";
 
 /**
  * Renders the noise readout onto the G2.
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
- * changes text without rebuilding the page — on real hardware a rebuild falls
- * back to a full page creation and costs seconds, discarding input meanwhile.
+ * Layout is fixed on the 576 x 288 display: header, a four-row body beside
+ * the level meter, the dose bar below the body, and the footer. The layout
+ * never changes, so after the page exists every text update goes through
+ * `textContainerUpgrade` — on real hardware a rebuild falls back to a full
+ * page creation and costs seconds, discarding input meanwhile.
+ *
+ * Images are not written here: they travel through the image lane
+ * (`lane.ts`) via `sendImage`, so a transfer never holds up the text.
  */
 
 export const SCREEN_WIDTH = 576;
@@ -33,7 +38,8 @@ interface ContainerSpec {
 
 const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
   header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
+  // Four rows; the dose bar sits below them.
+  body: { id: 2, name: "body", y: 36, height: 120 },
   footer: { id: 3, name: "footer", y: 252, height: 34 },
 };
 
@@ -43,16 +49,18 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: NoiseView, icon?: PixelIcon): CreateStartUpPageContainer {
+export function buildPage(view: NoiseView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: icon ? 4 : 3,
+    containerTotalNum: 5,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon)),
+      text(CONTAINER.body, view.body.join("\n"), 2, true, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
+    imageObject: [METER, DOSE_BAR].map((image, index) => new ImageContainerProperty({
+      containerID: image.id, containerName: image.name, xPosition: image.x, yPosition: image.y, width: image.width, height: image.height, zOrderIndex: 4 + index,
+    })),
   });
 }
 
@@ -82,8 +90,8 @@ function text(
  * though it is reported to always fail on hardware: the call itself registers
  * event routing, and skipping it leaves the app deaf to input.
  */
-export async function createPage(bridge: EvenAppBridge, view: NoiseView, icon?: PixelIcon): Promise<RenderResult> {
-  const page = buildPage(view, icon);
+export async function createPage(bridge: EvenAppBridge, view: NoiseView): Promise<RenderResult> {
+  const page = buildPage(view);
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
@@ -92,7 +100,7 @@ export async function createPage(bridge: EvenAppBridge, view: NoiseView, icon?: 
 
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
+    if (result === StartUpPageCreateResult.success) return { ok: true };
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -100,7 +108,7 @@ export async function createPage(bridge: EvenAppBridge, view: NoiseView, icon?: 
 }
 
 /** Fast path: change the text of the three containers in place. */
-export async function updatePage(bridge: EvenAppBridge, view: NoiseView, icon?: PixelIcon): Promise<RenderResult> {
+export async function updatePage(bridge: EvenAppBridge, view: NoiseView): Promise<RenderResult> {
   const updates: Array<[ContainerSpec, string]> = [
     [CONTAINER.header, view.header],
     [CONTAINER.body, view.body.join("\n")],
@@ -115,19 +123,16 @@ export async function updatePage(bridge: EvenAppBridge, view: NoiseView, icon?: 
         content,
       }));
     }
-    return updatePixel(bridge, icon);
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
 
-async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
-  if (!icon) return { ok: true };
-  try {
-    const imageData = await renderPixelIcon(icon);
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "pixel-icon", imageData }));
-    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
-  } catch (error) { return { ok: false, reason: errorMessage(error) }; }
+/** One image write; the lane decides when. */
+export async function sendImage(bridge: EvenAppBridge, target: ImageTarget, imageData: Uint8Array): Promise<boolean> {
+  const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: target.id, containerName: target.name, imageData }));
+  return result === ImageRawDataUpdateResult.success;
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

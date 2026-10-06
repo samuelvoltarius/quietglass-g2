@@ -1,30 +1,42 @@
 import { CreateStartUpPageContainer, ImageContainerProperty, ImageRawDataUpdate, ImageRawDataUpdateResult, RebuildPageContainer, StartUpPageCreateResult, TextContainerProperty, TextContainerUpgrade, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { CHART } from "../weather/chart";
+import { ICONS } from "../weather/icons";
+import type { ImageTarget } from "./lane";
 
-export interface TextView { readonly header: string; readonly body: readonly string[]; readonly footer: string; readonly imageData?: Uint8Array; }
+/**
+ * One fixed layout for every view: header, four body rows beside the icon
+ * column, the 12-hour chart below them with its numbers to its right, and the
+ * footer. The layout never changes, so swiping between views and refreshing
+ * are text updates only. Images are not written here: they go through the
+ * image lane (lane.ts) via `sendImage`, so a transfer never holds up the text.
+ */
+export interface TextView { readonly header: string; readonly body: readonly string[]; readonly side: readonly string[]; readonly footer: string; }
 export interface RenderResult { readonly ok: boolean; readonly reason?: string; }
 const parts = [
-  { id: 1, name: "header", y: 0, height: 34 },
-  { id: 2, name: "body", y: 36, height: 214 },
-  { id: 3, name: "footer", y: 252, height: 34 },
+  { id: 1, name: "header", x: 0, y: 0, width: 576, height: 34 },
+  { id: 2, name: "body", x: 104, y: 36, width: 472, height: 110 },
+  { id: 5, name: "chart-text", x: CHART.x + CHART.width + 4, y: CHART.y, width: 576 - CHART.x - CHART.width - 4, height: CHART.height },
+  { id: 3, name: "footer", x: 0, y: 252, width: 576, height: 34 },
 ] as const;
 
+const contents = (view: TextView): string[] => [view.header, view.body.join("\n"), view.side.join("\n"), view.footer];
+
 function page(view: TextView): CreateStartUpPageContainer {
-  const content = [view.header, view.body.join("\n"), view.footer];
+  const content = contents(view);
   return new CreateStartUpPageContainer({
-    containerTotalNum: view.imageData ? 4 : 3,
+    containerTotalNum: parts.length + 2,
     textObject: parts.map((part, index) => new TextContainerProperty({
-      containerID: part.id, containerName: part.name, xPosition: part.id === 2 && view.imageData ? 104 : 0, yPosition: part.y,
-      width: part.id === 2 && view.imageData ? 472 : 576, height: part.height, paddingLength: 4, zOrderIndex: index + 1,
-      isEventCapture: part.id === 2 ? 1 : 0, content: content[index] ?? "",
+      containerID: part.id, containerName: part.name, xPosition: part.x, yPosition: part.y, width: part.width, height: part.height,
+      paddingLength: 4, zOrderIndex: index + 1, isEventCapture: part.name === "body" ? 1 : 0, content: content[index] ?? "",
     })),
-    imageObject: view.imageData ? [new ImageContainerProperty({ containerID: 4, containerName: "weather-icons", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
+    imageObject: [ICONS, CHART].map((image, index) => new ImageContainerProperty({ containerID: image.id, containerName: image.name, xPosition: image.x, yPosition: image.y, width: image.width, height: image.height, zOrderIndex: parts.length + 1 + index })),
   });
 }
 
-async function updateImage(bridge: EvenAppBridge, view: TextView): Promise<RenderResult> {
-  if (!view.imageData) return { ok: true };
-  try { const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "weather-icons", imageData: view.imageData })); return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` }; }
-  catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
+/** One image write; the lane decides when. */
+export async function sendImage(bridge: EvenAppBridge, target: ImageTarget, imageData: Uint8Array): Promise<boolean> {
+  const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: target.id, containerName: target.name, imageData }));
+  return result === ImageRawDataUpdateResult.success;
 }
 
 export async function createTextPage(bridge: EvenAppBridge, view: TextView): Promise<RenderResult> {
@@ -32,18 +44,19 @@ export async function createTextPage(bridge: EvenAppBridge, view: TextView): Pro
   try { await bridge.rebuildPageContainer(new RebuildPageContainer({ ...next })); } catch { /* firmware path */ }
   try {
     const result = await bridge.createStartUpPageContainer(next);
-    return result === StartUpPageCreateResult.success ? updateImage(bridge, view) : { ok: false, reason: `create:${String(result)}` };
+    return result === StartUpPageCreateResult.success ? { ok: true } : { ok: false, reason: `create:${String(result)}` };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
 }
 
-export async function updateTextPage(bridge: EvenAppBridge, view: TextView): Promise<RenderResult> {
-  const content = [view.header, view.body.join("\n"), view.footer];
+/** Upgrades only the containers whose text changed since `previous`. */
+export async function updateTextPage(bridge: EvenAppBridge, view: TextView, previous?: TextView): Promise<RenderResult> {
+  const content = contents(view); const before = previous ? contents(previous) : [];
   try {
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index];
-      if (!part) continue;
+      if (!part || content[index] === before[index]) continue;
       await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, content: content[index] ?? "" }));
     }
-    return updateImage(bridge, view);
+    return { ok: true };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
 }

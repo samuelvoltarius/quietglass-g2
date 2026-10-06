@@ -14,21 +14,29 @@ export function wrapLongitude(delta: number): number {
   return ((((delta + 180) % 360) + 360) % 360) - 180;
 }
 
+/** A geographic box: south, west, north, east in degrees. */
+export interface BBox { readonly south: number; readonly west: number; readonly north: number; readonly east: number; }
+
+/** The fitted transform of one route into one viewport, reusable for anything else drawn on that map. */
+export interface Projector {
+  readonly toPixel: (point: LatLng) => PixelPoint;
+  /** The area the whole viewport shows, edges included; null when the route has no extent to scale by. */
+  readonly bounds: BBox | null;
+}
+
 /**
  * Fits the route into the viewport with one scale for both axes (equirectangular,
  * longitude shrunk by cos(lat)), centred, so turns keep their real angles and a
  * straight north–south or east–west route is not pinned to an edge.
  */
-export function project(points: readonly LatLng[], width: number, height: number, padding = 18): PixelPoint[] {
+export function fitProjection(points: readonly LatLng[], width: number, height: number, padding = 18): Projector | null {
   const first = points[0];
-  if (!first) return [];
-  const lons = points.map((point) => first.lon + wrapLongitude(point.lon - first.lon));
-  const lats = points.map((point) => point.lat);
+  if (!first) return null;
   // Loops rather than Math.min(...array): a long route has tens of thousands
   // of points, more than a spread call may pass as arguments.
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  for (let i = 0; i < points.length; i++) {
-    const lat = lats[i] ?? 0, lon = lons[i] ?? 0;
+  for (const point of points) {
+    const lat = point.lat, lon = first.lon + wrapLongitude(point.lon - first.lon);
     if (lat < minLat) minLat = lat;
     if (lat > maxLat) maxLat = lat;
     if (lon < minLon) minLon = lon;
@@ -46,10 +54,24 @@ export function project(points: readonly LatLng[], width: number, height: number
   const scale = Number.isFinite(fit) ? fit : 0;
   const left = padding + (innerWidth - spanX * scale) / 2;
   const bottom = height - padding - (innerHeight - spanY * scale) / 2;
-  return points.map((point, index) => ({
-    x: left + ((lons[index] ?? point.lon) - minLon) * kx * scale,
+  const toPixel = (point: LatLng): PixelPoint => ({
+    x: left + (first.lon + wrapLongitude(point.lon - first.lon) - minLon) * kx * scale,
     y: bottom - (point.lat - minLat) * scale,
-  }));
+  });
+  const lonScale = kx * scale;
+  const bounds = scale > 0 && lonScale > 1e-12 ? {
+    south: minLat + (bottom - height) / scale,
+    north: minLat + bottom / scale,
+    west: minLon + (0 - left) / lonScale,
+    east: minLon + (width - left) / lonScale,
+  } : null;
+  return { toPixel, bounds };
+}
+
+/** Projects the route itself; see {@link fitProjection}. */
+export function project(points: readonly LatLng[], width: number, height: number, padding = 18): PixelPoint[] {
+  const projector = fitProjection(points, width, height, padding);
+  return projector ? points.map(projector.toPixel) : [];
 }
 
 /**

@@ -8,6 +8,9 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, type LumenData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
+import { getLocale, setLocale, type Locale } from "./i18n";
+import { t } from "./messages";
 
 const PIXEL_ICON = ["#........#", "###....###", ".###..###.", "..######..", "...####...", "....##....", "...####...", "..##..##..", ".##....##.", "##......##"] as const;
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
@@ -19,6 +22,7 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: LumenData = await load(bridge);
+  let locale: Locale = getLocale();
   let status: LumenStatus | null = DEMO ? { moth: { light: 72, state: "wach", gesture: "circling in the light", streak: 6 }, quest: { id: 1, title: "Reflected Light", task: "Photograph a reflection that changes the scene.", medium: "foto", minutes: 15, checkable: null }, openQuests: 1, window: { kind: "golden", minutesAway: 24 } } : null;
   let phase: Phase = "idle";
   let result: { ok: boolean; text: string } | null = null;
@@ -39,7 +43,7 @@ async function boot(): Promise<void> {
     ...(data.token ? { token: data.token } : {}),
   });
 
-  const currentView = (): LumenView => buildView(status, { phase, result, error });
+  const currentView = (): LumenView => buildView(status, { phase, result, error, locale });
 
   const drawOnce = async (): Promise<void> => {
     if (closed) return;
@@ -66,7 +70,8 @@ async function boot(): Promise<void> {
   };
 
   const fetchAndShow = async (seq: number): Promise<void> => {
-    if (!data.baseUrl) { error = "No Lumen address set."; await draw(); return; }
+    // Stored in the canonical English wording; the view translates it.
+    if (!data.baseUrl) { error = t("en", "g.err.noAddress"); await draw(); return; }
     const outcome = await fetchStatus(options());
     // A newer request (e.g. after the address changed) owns the display now.
     if (seq !== refreshSeq || closed) return;
@@ -133,7 +138,8 @@ async function boot(): Promise<void> {
     phase = "result";
     result = outcome.error !== null
       ? { ok: false, text: outcome.error }
-      : { ok: true, text: "Sent. Lumen is looking at it." };
+      // The view words a success itself, in the current language.
+      : { ok: true, text: "" };
     await draw();
 
     // Refresh so the moth reflects what just happened.
@@ -146,6 +152,10 @@ async function boot(): Promise<void> {
     if (outcome.error !== null) { error = outcome.error; await draw(); return; }
     await refresh(true);
   };
+
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => { closed = true; clearTimeout(timer); },
+  }, "lumen");
 
   await draw();
   if (!DEMO) { await refresh(); schedule(); }
@@ -169,11 +179,8 @@ async function boot(): Promise<void> {
         void refresh();
         return;
       case "doubleClick":
-        closed = true;
-        clearTimeout(timer);
-        bridge.shutDownPageContainer().catch((shutdownError: unknown) => {
-          console.warn("[lumen] shutdown failed:", shutdownError);
-        });
+        // System exit dialog; polling continues until the user confirms.
+        void requestExit();
         return;
       default:
         return;
@@ -189,6 +196,12 @@ async function boot(): Promise<void> {
   });
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      void draw();
+    },
     getData: () => data,
     setData: async (next) => {
       data = next;

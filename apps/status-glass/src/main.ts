@@ -10,6 +10,8 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
@@ -33,6 +35,7 @@ async function boot(): Promise<void> {
   let cursor = 0;
   let lastView: StatusView | null = null;
   let pageReady = false;
+  let locale: Locale = getLocale();
 
   // The actions screen is a separate mode. Monitoring is something you glance
   // at; triggering something in your house is deliberate, so a stray tap on the
@@ -65,9 +68,10 @@ async function boot(): Promise<void> {
         pendingId: pendingActionId,
         result: actionResult,
         busy: actionBusy,
+        locale,
       });
     }
-    return buildView([...statuses.values()], { cursor }, Date.now());
+    return buildView([...statuses.values()], { cursor, locale }, Date.now());
   };
 
   const draw = async (): Promise<void> => {
@@ -132,16 +136,19 @@ async function boot(): Promise<void> {
     }
   };
 
-  /** Stops every timer and drops anything still in flight, then leaves. */
-  const close = (): void => {
-    closed = true;
-    for (const timer of timers.values()) clearTimeout(timer);
-    timers.clear();
-    if (tickTimer !== null) clearInterval(tickTimer);
-    void bridge.shutDownPageContainer().catch((thrown: unknown) => {
-      console.warn("[statusglass] shutdown failed:", thrown instanceof Error ? thrown.message : String(thrown));
-    });
-  };
+  /**
+   * Double tap asks the system exit dialog. Polling carries on while it is
+   * open; only a confirmed exit stops every timer and drops anything still in
+   * flight.
+   */
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => {
+      closed = true;
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+      if (tickTimer !== null) clearInterval(tickTimer);
+    },
+  }, "statusglass");
 
   const executeAction = async (sourceId: string, actionId: string, label: string): Promise<void> => {
     const config = data.sources.find((c) => c.id === sourceId);
@@ -223,7 +230,7 @@ async function boot(): Promise<void> {
           actionResult = null;
           break;
         case "doubleClick":
-          close();
+          void requestExit();
           return;
         default:
           return;
@@ -263,7 +270,7 @@ async function boot(): Promise<void> {
         }
         break;
       case "doubleClick":
-        close();
+        void requestExit();
         return;
       default:
         return;
@@ -282,6 +289,13 @@ async function boot(): Promise<void> {
   tickTimer = setInterval(() => { void draw(); }, 5000);
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      // The glasses follow straight away, not on the next poll.
+      void draw();
+    },
     getData: () => data,
     setData: async (next) => {
       data = next;

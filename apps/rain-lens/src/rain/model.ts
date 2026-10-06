@@ -66,6 +66,10 @@ export function dayName(iso: string, locale = "de-AT"): string { const date = ne
 /** Rows the 214 px body shows, and roughly the characters across it next to the 104 px icon column. */
 export const BODY_ROWS = 7;
 export const LINE_WIDTH = 38;
+/** Body rows above the 12-hour chart; every view and notice fits in these. */
+export const CHART_ROWS = 4;
+/** Characters across the narrow column right of the chart. */
+export const SIDE_WIDTH = 13;
 /** Cuts to the line budget with an ellipsis instead of letting the glasses wrap into a row that gets clipped. */
 export function fit(text: string, width: number = LINE_WIDTH): string { const chars = Array.from(text); return chars.length <= width ? text : chars.slice(0, Math.max(0, width - 1)).join("") + "…"; }
 /** Page lines plus an optional error row, each one row wide and seven rows at most, so the error is never pushed into an eighth row. */

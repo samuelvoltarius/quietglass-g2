@@ -14,6 +14,11 @@
 >    tippen zum Speichern. Halten macht ein Foto. Am Handy kannst du Notizen auch
 >    eintippen, Bereiche setzen und den Bericht exportieren.
 >
+> **Tabelle (CSV):** Neben dem CSV-Knopf wählst du das Format. „Für Excel (DE/AT)“
+> (Standard bei deutscher App-Sprache) öffnet sich per Doppelklick richtig im deutschen
+> Excel: Strichpunkt, Umlaute korrekt, Zeit wie `07.10.2026 14:05`, genaue Zeit (ISO, UTC)
+> in der letzten Spalte. „Standard-CSV“ nimmt Kommas und ISO-Zeit für andere Programme.
+>
 > **Erweitert (optional):** Notizen *sprechen* statt wählen geht nur mit einem eigenen
 > Whisper-Sprachserver in deinem Netzwerk – einzurichten am Handy unter „Erweitert“.
 > Für alles andere brauchst du ihn nicht.
@@ -82,12 +87,20 @@ phone, and the photo attaches to the entry you just made.
 | **Markdown + photos** | The same with images embedded — self-contained but large |
 | **CSV** | One row per entry, for a spreadsheet |
 
-Exports follow the app language (German or English). The CSV stays
-machine-readable: comma-separated, UTF-8, RFC 4180 quoting, time as ISO 8601 in
-UTC. Header and the type/photo columns are translated
-(`Zeit,Abschnitt,Art,Text,Foto` with `Notiz/Mangel/Wichtig` and `ja/nein`).
-There are no decimal numbers in it. German Excel expects `;` — use
-*Data → From Text/CSV* and pick comma as the separator.
+Exports follow the app language (German or English); header and the
+type/photo columns are translated (`Zeit,Abschnitt,Art,Text,Foto` with
+`Notiz/Mangel/Wichtig` and `ja/nein`). The CSV comes in two formats, picked next
+to the CSV button and remembered:
+
+- **For Excel (DE/AT)** — the default when the app is in German. Opens correctly
+  by double-click in German or Austrian Excel: `;` separator, CRLF, UTF-8 with
+  BOM (so umlauts show), time in local time as `07.10.2026 14:05`, plus the
+  exact time as ISO 8601 UTC in an extra last column.
+- **Standard CSV** — the default in English. Comma-separated, UTF-8 without BOM,
+  RFC 4180 quoting, time as ISO 8601 in UTC — for scripts and other programs.
+
+There are no decimal numbers in it. In both, text that starts with `=`, `+`,
+`-` or `@` gets a leading `'` so a spreadsheet does not run it as a formula.
 
 Photos are referenced rather than embedded by default: a report with a dozen
 inline base64 images is neither readable nor emailable.
@@ -166,6 +179,10 @@ stays under your control.
 - Location stamping per entry, using the SDK's `getAppLocation`.
 - PDF export with photo plates.
 - Re-usable inspection templates with predefined sections.
+
+## Privacy
+
+What data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## License
 

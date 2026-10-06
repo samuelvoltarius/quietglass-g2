@@ -116,3 +116,6 @@ pre.moth {
   border: 1px solid var(--line); border-radius: 10px;
   padding: 14px; margin: 0 0 12px; overflow-x: auto;
 }
+.card.compact label { margin-top: 0; }
+details { margin-top: 14px; }
+summary { cursor: pointer; font-size: 14px; color: var(--muted); }

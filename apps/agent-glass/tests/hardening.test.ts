@@ -61,7 +61,7 @@ describe("pairing and addresses never carry the token", () => {
   });
 
   it("does not reveal most of a short token", () => {
-    const shown = maskToken("abcd1234");
+    const shown = maskToken("abcd1234", "en");
     expect(shown).not.toContain("1234");
     expect(shown).toContain("8 characters");
   });
@@ -133,7 +133,7 @@ describe("speech never reads secrets or commands", () => {
 describe("the glasses view stays inside 7 rows of 46 characters", () => {
   const base: AgentState = { ...EMPTY_STATE, session: SESSION };
   const fits = (state: AgentState): void => {
-    const view = buildView(state, NOW);
+    const view = buildView(state, NOW, "en");
     expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
     for (const row of view.body) expect(row.length).toBeLessThanOrEqual(LINE_WIDTH);
   };
@@ -144,7 +144,7 @@ describe("the glasses view stays inside 7 rows of 46 characters", () => {
   });
 
   it("only blames CORS when the error is about Even Terminal", () => {
-    const view = buildView({ ...base, error: "Hermes bridge unreachable" }, NOW);
+    const view = buildView({ ...base, error: "Hermes bridge unreachable" }, NOW, "en");
     expect(view.body.join(" ")).not.toContain("--allow-cors");
   });
 

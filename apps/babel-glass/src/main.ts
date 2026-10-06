@@ -17,11 +17,15 @@ import {
   load, save, translationEnabled, usesMockStt, type BabelData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: BabelData = await load(bridge);
+  /** UI language of glasses and phone; independent of the caption languages. */
+  let locale: Locale = getLocale();
   let buffer: CaptionBuffer = createBuffer();
   let stt: SttProvider | null = null;
   let translator: TranslationProvider = createPassthroughTranslator();
@@ -31,6 +35,10 @@ async function boot(): Promise<void> {
   let lastView: CaptionView | null = null;
   let pageReady = false;
   let translateError: string | null = null;
+  /** Set once the user confirmed the exit dialog: nothing draws or listens again. */
+  let closed = false;
+  /** Captions were running when the exit dialog opened; cancel turns them back on. */
+  let resumeListening = false;
 
   const currentView = (): CaptionView =>
     buildView(buffer, {
@@ -43,9 +51,11 @@ async function boot(): Promise<void> {
       transliterateOriginal: data.transliterateOriginal,
       sourceLanguage: data.sourceLanguage,
       translateError,
+      locale,
     });
 
   const draw = async (): Promise<void> => {
+    if (closed) return;
     const view = currentView();
     if (sameView(lastView, view)) return;
 
@@ -95,12 +105,12 @@ async function boot(): Promise<void> {
    * explicit tap, and MIC stays on screen for as long as it is open.
    */
   const startListening = async (): Promise<void> => {
-    if (listening) return;
+    if (listening || closed) return;
 
     translator = buildTranslator();
     translateError = null;
     stt = usesMockStt(data)
-      ? createMockStt({ onTranscript, onStatus: (s) => { status = s; void draw(); } })
+      ? createMockStt({ onTranscript, onStatus: (s) => { status = s; void draw(); }, locale: () => locale })
       : createWebSocketStt({
           url: data.sttUrl,
           ...(data.sttToken ? { token: data.sttToken } : {}),
@@ -132,9 +142,31 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => { closed = true; resumeListening = false; },
+    onStayed: async () => {
+      if (!resumeListening) return;
+      resumeListening = false;
+      await startListening();
+    },
+  }, "babelglass");
+
+  /**
+   * The microphone closes before the system exit dialog appears, so nobody is
+   * listened to while the user decides. Cancelling reopens it.
+   */
+  const exitWithDialog = async (): Promise<void> => {
+    if (listening) {
+      resumeListening = true;
+      await stopListening().catch((error: unknown) => { console.warn("[babelglass] stop failed:", error); });
+    }
+    await requestExit();
+  };
+
   await draw();
 
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
     if (listening && pcm instanceof Uint8Array && pcm.length > 0) {
@@ -162,7 +194,7 @@ async function boot(): Promise<void> {
         offset = 0;
         break;
       case "doubleClick":
-        void stopListening().then(() => bridge.shutDownPageContainer());
+        void exitWithDialog();
         return;
       default:
         return;
@@ -171,13 +203,20 @@ async function boot(): Promise<void> {
   });
 
   bridge.onDeviceStatusChanged((deviceStatus) => {
-    if (deviceStatus?.connectType === "connected") {
+    if (deviceStatus?.connectType === "connected" && !closed) {
       pageReady = false;
       void draw();
     }
   });
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      // The glasses follow at once, not with the next caption.
+      void draw();
+    },
     getData: () => data,
     setData: async (next) => {
       const previous = data;

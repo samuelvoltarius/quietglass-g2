@@ -13,6 +13,7 @@ const base = {
   translating: false,
   offset: 0,
   mock: false,
+  locale: "en" as const,
 };
 
 const withLine = (text: string) => applyTranscript(createBuffer(), { text, final: true }, 1);
@@ -90,9 +91,9 @@ describe("modes", () => {
 
 describe("status labels", () => {
   it("names each state in plain words", () => {
-    expect(statusLabel("connecting")).toContain("connecting");
-    expect(statusLabel("error")).toContain("error");
-    expect(statusLabel("idle")).toBe("idle");
+    expect(statusLabel("connecting", "en")).toContain("connecting");
+    expect(statusLabel("error", "en")).toContain("error");
+    expect(statusLabel("idle", "en")).toBe("idle");
   });
 });
 
@@ -122,9 +123,9 @@ describe("configuration", () => {
   });
 
   it("never reveals a secret", () => {
-    expect(maskSecret("topsecret")).toBe("set (9 chars)");
-    expect(maskSecret("topsecret")).not.toContain("topsecret");
-    expect(maskSecret(undefined)).toBe("none");
+    expect(maskSecret("topsecret", "en")).toBe("set (9 chars)");
+    expect(maskSecret("topsecret", "en")).not.toContain("topsecret");
+    expect(maskSecret(undefined, "en")).toBe("none");
   });
 
   it("drops a stored URL that is not usable", () => {
@@ -196,4 +197,23 @@ describe("Cyrillic originals and German translations on the glasses", () => {
     expect(view.footer).toContain("translate: HTTP 400");
     expect(view.footer).toContain("MIC");
   });
+});
+
+describe("body fits the 214 px container", () => {
+  // Regression: lecture and caption-only modes sent up to 12 rows (6 captions × 2
+  // wrapped lines) into a body that shows 7, so the newest caption was clipped.
+  const long = "This sentence is long enough to wrap onto a second row on the glasses";
+  const many = () => {
+    let buffer = createBuffer();
+    for (let i = 1; i <= 8; i++) buffer = applyTranscript(buffer, { text: `${i} ${long}`, final: true }, i);
+    return buffer;
+  };
+
+  for (const mode of ["lecture", "captionOnly", "conversation", "travel"] as const) {
+    it(`${mode}: never more than 7 rows and keeps the newest caption`, () => {
+      const body = buildView(many(), { ...base, mode }).body;
+      expect(body.length).toBeLessThanOrEqual(7);
+      expect(body.join(" ")).toContain("8 This");
+    });
+  }
 });

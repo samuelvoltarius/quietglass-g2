@@ -1,4 +1,6 @@
 import type { AgentEvent } from "../terminal/types";
+import { locales, type Locale } from "../i18n";
+import { t } from "../messages";
 
 export interface SpeechPreferences {
   readonly spokenOutput: boolean;
@@ -34,6 +36,39 @@ export interface SpeechEngine {
   resume(): void;
 }
 
+/** The full tag the narrator speaks in when it follows the app language. */
+const UI_SPEECH_TAG: Readonly<Record<Locale, string>> = { de: "de-DE", en: "en-US" };
+
+/**
+ * What "Automatic" means for the narrator.
+ *
+ * The narrator's language is its own setting and never changes with the app
+ * language. Only while it is left on "auto" (the stored default, which this
+ * function never rewrites) does it follow along:
+ *
+ * - normally it speaks the phone language, regional variant included
+ *   (de-AT stays de-AT, it-IT stays it-IT) — exactly as before;
+ * - but when the phone is German or English and the app language was switched
+ *   to the other one on the phone page, it follows that choice, so the voice
+ *   and the screen agree.
+ */
+export function resolveSpeechLanguage(setting: string, uiLocale: Locale | undefined, deviceLanguage: string): string {
+  if (setting && setting !== "auto") return setting;
+  const device = deviceLanguage || "en-US";
+  if (!uiLocale) return device;
+  const base = device.slice(0, 2).toLowerCase() as Locale;
+  return locales.includes(base) && base !== uiLocale ? UI_SPEECH_TAG[uiLocale] : device;
+}
+
+/** Which catalogue the narrator's own phrases come from: German voices get German, every other voice English. */
+export function speechPhraseLocale(language: string): Locale {
+  return language.slice(0, 2).toLowerCase() === "de" ? "de" : "en";
+}
+
+function deviceLanguage(): string {
+  try { return globalThis.navigator?.language || "en-US"; } catch { return "en-US"; }
+}
+
 /** Browser speech synthesis routes through the phone's active audio output. */
 export function createBrowserSpeechEngine(): SpeechEngine {
   const synthesis = globalThis.speechSynthesis;
@@ -55,8 +90,7 @@ export function createBrowserSpeechEngine(): SpeechEngine {
     voices: () => synthesis.getVoices().map(({ name, lang }) => ({ name, lang })),
     speak: (request) => {
       const utterance = new Utterance(request.text);
-      utterance.lang = request.language === "auto"
-        ? (globalThis.navigator?.language || "en-US") : request.language;
+      utterance.lang = request.language === "auto" ? deviceLanguage() : request.language;
       utterance.rate = request.rate;
       const voice = synthesis.getVoices().find((candidate) =>
         request.voice ? candidate.name === request.voice : candidate.lang === utterance.lang);
@@ -81,36 +115,37 @@ export function createBrowserSpeechEngine(): SpeechEngine {
  * else so a key inside a fence, or a fence still being streamed, is dropped
  * whole rather than read line by line.
  */
-export function sanitizeForSpeech(input: string): string {
+export function sanitizeForSpeech(input: string, locale: Locale = "en"): string {
+  const omitted = (key: string): string => ` ${t(locale, key)} `;
   return input
     .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
-      " private key omitted ")
-    .replace(/```[\s\S]*?```/g, " Code block omitted. ")
+      omitted("s.privateKey"))
+    .replace(/```[\s\S]*?```/g, omitted("s.codeBlock"))
     // An opening fence whose end has not arrived yet: everything after it is code.
-    .replace(/```[\s\S]*$/g, " Code block omitted. ")
-    .replace(/`[^`\n]+`/g, " code omitted ")
+    .replace(/```[\s\S]*$/g, omitted("s.codeBlock"))
+    .replace(/`[^`\n]+`/g, omitted("s.code"))
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, " link omitted ")
-    .replace(/^\s*\$\s+\S.*$/gm, " command omitted ")
-    .replace(/\b(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp\d+)\s+AAAA[A-Za-z0-9+/=]+/g, " sensitive value omitted ")
-    .replace(/\b(?:Proxy-)?Authorization\s*:\s*(?:\w+\s+)?\S+/gi, " sensitive value omitted ")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, omitted("s.link"))
+    .replace(/^\s*\$\s+\S.*$/gm, omitted("s.command"))
+    .replace(/\b(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp\d+)\s+AAAA[A-Za-z0-9+/=]+/g, omitted("s.sensitive"))
+    .replace(/\b(?:Proxy-)?Authorization\s*:\s*(?:\w+\s+)?\S+/gi, omitted("s.sensitive"))
     .replace(/\b(?:Bearer|Basic)\s+([A-Za-z0-9._~+/=-]{8,})/g,
-      (whole, value: string) => (/\d/.test(value) ? " sensitive value omitted " : whole))
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?/g, " sensitive value omitted ")
+      (whole, value: string) => (/\d/.test(value) ? omitted("s.sensitive") : whole))
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?/g, omitted("s.sensitive"))
     // Environment assignments: `API_KEY=…`, `export TOKEN="…"`, `password: …`.
-    .replace(/\b(?:export\s+)?[A-Z][A-Z0-9_]{1,}=\S+/g, " setting omitted ")
+    .replace(/\b(?:export\s+)?[A-Z][A-Z0-9_]{1,}=\S+/g, omitted("s.setting"))
     .replace(/\b[\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credentials?)\s*[=:]\s*\S+/gi,
-      " sensitive value omitted ")
+      omitted("s.sensitive"))
     .replace(/\b(?:sk|ghp|gho|ghs|ghu|github_pat|glpat|npm|hf|xox[abeoprs]|xapp)[-_][A-Za-z0-9_-]{12,}\b/gi,
-      " sensitive value omitted ")
-    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, " sensitive value omitted ")
-    .replace(/\bAIza[0-9A-Za-z_-]{30,}/g, " sensitive value omitted ")
-    .replace(/\b[A-Fa-f0-9]{32,}\b/g, " sensitive value omitted ")
+      omitted("s.sensitive"))
+    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, omitted("s.sensitive"))
+    .replace(/\bAIza[0-9A-Za-z_-]{30,}/g, omitted("s.sensitive"))
+    .replace(/\b[A-Fa-f0-9]{32,}\b/g, omitted("s.sensitive"))
     // Long base64 / base64url runs with both letters and digits. Plain words
     // and paths without digits are left alone.
     .replace(/(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{32,}={0,2}/g,
-      (run) => (/[0-9]/.test(run) && /[A-Za-z]/.test(run) ? " sensitive value omitted " : run))
+      (run) => (/[0-9]/.test(run) && /[A-Za-z]/.test(run) ? omitted("s.sensitive") : run))
     .replace(/^\s{0,3}[#>*+-]+\s*/gm, "")
     .replace(/[*_~]/g, "")
     .replace(/\s+/g, " ")
@@ -125,6 +160,12 @@ function fenceCount(text: string): number {
 export class SentenceBuffer {
   #source = "";
   #pending = "";
+  readonly #locale: () => Locale;
+
+  /** `locale` picks the language of the "… omitted" labels. */
+  constructor(locale: () => Locale = () => "en") {
+    this.#locale = locale;
+  }
 
   reset(): void { this.#source = ""; this.#pending = ""; }
 
@@ -158,13 +199,13 @@ export class SentenceBuffer {
       // Never cut inside an open code fence: the first half would no longer
       // look like code and its contents would be read aloud.
       if (fenceCount(this.#pending.slice(0, end)) % 2 === 1) { from = end; continue; }
-      const clean = sanitizeForSpeech(this.#pending.slice(0, end));
+      const clean = sanitizeForSpeech(this.#pending.slice(0, end), this.#locale());
       if (clean) output.push(clean);
       this.#pending = this.#pending.slice(end);
       from = 0;
     }
     if (flushAll) {
-      const clean = sanitizeForSpeech(this.#pending);
+      const clean = sanitizeForSpeech(this.#pending, this.#locale());
       if (clean) output.push(clean);
       this.#pending = "";
     }
@@ -175,15 +216,32 @@ export class SentenceBuffer {
 export class AgentNarrator {
   readonly #engine: SpeechEngine;
   readonly #preferences: () => SpeechPreferences;
-  readonly #buffer = new SentenceBuffer();
+  readonly #uiLocale: (() => Locale) | undefined;
+  readonly #buffer = new SentenceBuffer(() => this.#phraseLocale());
   #armed = false;
   #phase: SpeechStatus = "off";
   #lastText = "";
   #queued = 0;
 
-  constructor(engine: SpeechEngine, preferences: () => SpeechPreferences) {
+  /**
+   * `uiLocale` is the app language; it only matters while the speech
+   * language is "auto" (see `resolveSpeechLanguage`).
+   */
+  constructor(engine: SpeechEngine, preferences: () => SpeechPreferences, uiLocale?: () => Locale) {
     this.#engine = engine;
     this.#preferences = preferences;
+    this.#uiLocale = uiLocale;
+  }
+
+  /** The tag actually handed to the speech engine. */
+  language(): string {
+    return resolveSpeechLanguage(this.#preferences().speechLanguage, this.#uiLocale?.(), deviceLanguage());
+  }
+
+  #phraseLocale(): Locale { return speechPhraseLocale(this.language()); }
+
+  #phrase(key: string, vars: Record<string, string | number> = {}): string {
+    return t(this.#phraseLocale(), key, vars);
   }
 
   status(): SpeechStatus {
@@ -199,7 +257,7 @@ export class AgentNarrator {
     if (!this.#engine.available) return false;
     this.#armed = true;
     this.#phase = "ready";
-    this.#say("Spoken output ready.");
+    this.#say(this.#phrase("s.ready"));
     return true;
   }
 
@@ -211,7 +269,7 @@ export class AgentNarrator {
     this.#buffer.reset();
   }
 
-  remember(text: string): void { this.#lastText = sanitizeForSpeech(text); }
+  remember(text: string): void { this.#lastText = sanitizeForSpeech(text, this.#phraseLocale()); }
 
   accept(event: AgentEvent): void {
     if (event.kind === "user_prompt") { this.#buffer.reset(); return; }
@@ -230,14 +288,14 @@ export class AgentNarrator {
       return;
     }
     if (event.kind === "permission_request") {
-      this.#say(`Permission required for ${event.tool ?? "a tool"}. Check the glasses.`);
+      this.#say(this.#phrase("s.permission", { tool: event.tool ?? this.#phrase("s.aTool") }));
       return;
     }
     if (event.kind === "user_question") {
-      this.#say("The agent has a question. Check the glasses.");
+      this.#say(this.#phrase("s.question"));
       return;
     }
-    if (event.kind === "error") this.#say("The agent reported an error. Check the glasses.");
+    if (event.kind === "error") this.#say(this.#phrase("s.error"));
   }
 
   replay(): void {
@@ -260,14 +318,14 @@ export class AgentNarrator {
   }
 
   #say(text: string): void {
-    const clean = sanitizeForSpeech(text);
+    const clean = sanitizeForSpeech(text, this.#phraseLocale());
     if (!clean || !this.#armed || !this.#preferences().spokenOutput) return;
     this.#lastText = clean;
     this.#queued += 1;
     const preferences = this.#preferences();
     this.#engine.speak({
       text: clean.slice(0, 800),
-      language: preferences.speechLanguage,
+      language: this.language(),
       voice: preferences.speechVoice,
       rate: preferences.speechRate,
       onStart: () => { this.#phase = "speaking"; },

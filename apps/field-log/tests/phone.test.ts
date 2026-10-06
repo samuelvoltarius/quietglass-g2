@@ -183,3 +183,55 @@ describe("phone page for beginners", () => {
     expect(page.root.innerHTML).toContain("Damaged");
   });
 });
+
+describe("CSV format choice", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  function mountLogged(locale: "de" | "en") {
+    const root = fakeRoot();
+    const anchor = { href: "", download: "", click: vi.fn() };
+    vi.stubGlobal("document", { getElementById: () => root, createElement: () => anchor });
+    const blobs: Array<{ parts: string[]; type: string }> = [];
+    vi.stubGlobal("Blob", class {
+      constructor(parts: string[], options: { type: string }) { blobs.push({ parts, type: options.type }); }
+    });
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:x", revokeObjectURL: () => undefined });
+    const inspection = addEntry(startInspection("i1", "Übergabe Top 3", 1_000_000), "Riss", "minor", 1_000_100);
+    let data: FieldLogData = { ...upsertInspection(EMPTY_DATA, inspection), activeId: "i1" };
+    mountPhoneUi({ getData: () => data, setData: async (next) => { data = next; }, locale: () => locale });
+    return { root, anchor, blobs, data: () => data };
+  }
+
+  it("offers both formats next to the CSV button, Excel preselected in German", () => {
+    const page = mountLogged("de");
+    const html = page.root.innerHTML;
+    expect(html).toContain("Für Excel (DE/AT)");
+    expect(html).toContain("Standard-CSV");
+    expect(html).toContain('<option value="excel-de" selected>');
+    expect(html.indexOf('id="csv-format"')).toBeLessThan(html.indexOf('id="csv"'));
+  });
+
+  it("preselects the standard CSV in English", () => {
+    expect(mountLogged("en").root.innerHTML).toContain('<option value="standard" selected>');
+  });
+
+  it("exports the Excel variant in German by default, with a plain file name", () => {
+    const page = mountLogged("de");
+    page.root.get("#csv").fire("click");
+    expect(page.anchor.download).toBe("uebergabe-top-3.excel.csv");
+    expect(page.anchor.click).toHaveBeenCalled();
+    expect(page.blobs[0]?.type).toBe("text/csv;charset=utf-8");
+    expect(page.blobs[0]?.parts[0]?.startsWith("﻿Zeit;Abschnitt;")).toBe(true);
+  });
+
+  it("remembers the choice and exports in it", () => {
+    const page = mountLogged("de");
+    page.root.get("#csv-format").value = "standard";
+    page.root.get("#csv-format").fire("change");
+    expect(page.data().csvFormat).toBe("standard");
+    expect(page.root.innerHTML).toContain('<option value="standard" selected>');
+    page.root.get("#csv").fire("click");
+    expect(page.anchor.download).toBe("uebergabe-top-3.csv");
+    expect(page.blobs[0]?.parts[0]?.startsWith("Zeit,Abschnitt,Art,Text,Foto\n")).toBe(true);
+  });
+});

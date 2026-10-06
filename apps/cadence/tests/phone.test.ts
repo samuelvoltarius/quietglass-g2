@@ -77,4 +77,68 @@ describe("phone page", () => {
     expect(dom.root.innerHTML).not.toContain("<img");
     expect(dom.root.innerHTML).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
   });
+
+  describe("CSV format choice", () => {
+    const logged: CadenceData = {
+      ...EMPTY_DATA,
+      items: ["Scales"],
+      activeItem: "Scales",
+      sessions: [{ id: "p1", item: "Scales", bpm: 100, startedAt: 1_000_000, endedAt: 1_090_000 }],
+    };
+
+    function mountWith(locale: "de" | "en") {
+      const dom = fakeRoot();
+      const anchor = { href: "", download: "", click: vi.fn() };
+      vi.stubGlobal("document", { getElementById: () => dom.root, createElement: () => anchor });
+      const blobs: Array<{ parts: string[]; type: string }> = [];
+      vi.stubGlobal("Blob", class {
+        constructor(parts: string[], options: { type: string }) { blobs.push({ parts, type: options.type }); }
+      });
+      vi.stubGlobal("URL", { createObjectURL: () => "blob:x", revokeObjectURL: () => undefined });
+      let store = logged;
+      const writes: CadenceData[] = [];
+      mountPhoneUi({
+        getData: () => store,
+        setData: async (next) => { store = next; writes.push(next); },
+        getLocale: () => locale,
+      });
+      return { dom, anchor, blobs, writes, store: () => store };
+    }
+
+    it("offers both formats next to the export button, Excel preselected in German", () => {
+      const { dom } = mountWith("de");
+      const html = dom.root.innerHTML;
+      expect(html).toContain("Für Excel (DE/AT)");
+      expect(html).toContain("Standard-CSV");
+      expect(html).toMatch(/value="excel-de" selected/);
+      expect(html.indexOf('id="csv-format"')).toBeLessThan(html.indexOf('id="export"'));
+    });
+
+    it("preselects the standard CSV in English", () => {
+      const { dom } = mountWith("en");
+      expect(dom.root.innerHTML).toMatch(/value="standard" selected/);
+      expect(dom.root.innerHTML).toContain("For Excel (DE/AT)");
+    });
+
+    it("exports the Excel variant in German by default", () => {
+      const { dom, anchor, blobs } = mountWith("de");
+      dom.byId("export").fire("click");
+      expect(anchor.download).toBe("cadence-practice-excel.csv");
+      expect(anchor.click).toHaveBeenCalled();
+      expect(blobs[0]?.type).toBe("text/csv;charset=utf-8");
+      expect(blobs[0]?.parts[0]?.startsWith("﻿Beginn;")).toBe(true);
+    });
+
+    it("remembers the choice and exports in it", async () => {
+      const { dom, anchor, blobs, writes, store } = mountWith("de");
+      dom.byId("csv-format").value = "standard";
+      dom.byId("csv-format").fire("change");
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+      expect(store().csvFormat).toBe("standard");
+      await vi.waitFor(() => expect(dom.root.innerHTML).toMatch(/value="standard" selected/));
+      dom.byId("export").fire("click");
+      expect(anchor.download).toBe("cadence-practice.csv");
+      expect(blobs[0]?.parts[0]?.startsWith("date,item,bpm,seconds\n")).toBe(true);
+    });
+  });
 });

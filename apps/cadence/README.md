@@ -19,6 +19,12 @@ Optional: Trag auf der Handy-Seite ein, was du übst — dann landet deine Übez
 im Übe-Tagebuch. Die App folgt der Sprache deines Handys (Deutsch oder
 Englisch); umstellen kannst du das auf der Handy-Seite unter „Sprache“.
 
+Das Tagebuch lässt sich als Tabelle (CSV) sichern. „Für Excel (DE/AT)“ (Standard
+bei deutscher App-Sprache) öffnet sich per Doppelklick richtig im deutschen Excel:
+Strichpunkt, Komma bei Zahlen (`1,50` Minuten), Datum wie `07.10.2026 14:05`, genaue
+Zeit (ISO, UTC) in der letzten Spalte. „Standard-CSV“ nimmt Komma, Dezimalpunkt und
+ISO-Zeit für andere Programme. Die Wahl steht neben dem Knopf und wird gemerkt.
+
 ---
 
 A dedicated pixel metronome marks the beat screen while the numeric tempo remains the primary information.
@@ -86,7 +92,14 @@ Sessions under 10 seconds are not recorded, and a best tempo needs at least 30
 seconds at that speed. A ten-second burst at 200 bpm is not a tempo you can
 play, so it does not go in the record.
 
-Export as CSV whenever you like.
+Export as CSV whenever you like, in one of two formats picked next to the button
+and remembered. **For Excel (DE/AT)** (the default in German) opens correctly by
+double-click in German or Austrian Excel: `;` separator, decimal comma (duration
+also in minutes, e.g. `1,50`), CRLF, UTF-8 with BOM, start as `07.10.2026 14:05`
+in local time and the exact start as ISO 8601 UTC in the last column.
+**Standard CSV** (the default in English) stays `date,item,bpm,seconds` with
+commas, decimal points and ISO 8601 UTC. Item names starting with `=`, `+`, `-`
+or `@` get a leading `'` so a spreadsheet does not run them as formulas.
 
 ## Controls
 

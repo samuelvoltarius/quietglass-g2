@@ -13,10 +13,12 @@
 > 3. Nochmal tippen stoppt. Weitere Projekte (Kunden, Aufträge) legst du am Handy
 >    an; dann wählst du mit Wischen und startest mit Tippen.
 >
-> Verlassen (doppeltippen) stoppt die Zeit **nicht**. Am Handy siehst du den Tag
-> und exportierst eine CSV-Tabelle.
+> Verlassen (doppeltippen) stoppt die Zeit **nicht**. Links auf der Brille füllt
+> sich ein **Tagesbalken** (0–10 Stunden, auf Wunsch mit Tagesziel). Am Handy
+> siehst du den Tag und exportierst eine Tabelle – standardmäßig so, dass sie
+> sich in deutschem Excel mit Doppelklick richtig öffnet.
 
-A compact pixel clock separates the running timer visually from project and history text.
+A day bar beside the text shows at a glance how much of the day is worked.
 
 For a non-persistent simulator showcase, open the development URL with `?demo=1`.
 
@@ -41,12 +43,30 @@ On glasses it is one gesture, and the elapsed time is already in front of you.
 ## What you see
 
 ```
-Client A
-
-    1:23
-
-today 4:15  ·  tap = stop
+        Client A
+ 10 ┌┐
+    ││   1:23
+  5 ├┤◀
+    ██   target 8 h · 3:45 to go
+  0 ██
+        today 4:15  ·  tap = stop
 ```
+
+![Day bar states](docs/graphic-preview.png)
+
+*The day bar in five states, drawn by the app's own function
+(`node tools/preview.mjs`): empty; 4 h recorded; 3 h recorded plus 1:20
+running with an 8 h target; target reached; past the 10 h scale.*
+
+The **day bar** on the left fills from the bottom: 0 to 10 hours, one pixel
+per five minutes. Recorded time is solid, the entry still running is striped
+and marked by a pointer, and an optional **daily target** (set on the phone)
+is a mark across the bar. With a target, the body also says how much is left.
+
+Every image is a Bluetooth transfer, so the bar moves in **five-minute steps**:
+while the clock runs it is resent at most every five minutes, and never while
+nothing changes. It runs on its own lane, so a slow image transfer never holds
+up the timer text, which still updates every second.
 
 The day total **includes the entry still running**, so the number on screen is
 what the day actually stands at — not what it stood at an hour ago.
@@ -90,22 +110,34 @@ The **R1 ring** works the same as the temple pads.
 ## Export
 
 CSV with date, project, start, end, seconds and **decimal hours** — the unit
-invoices use, so the file goes straight into a spreadsheet.
+invoices use, so the file goes straight into a spreadsheet. Next to the export
+button the phone asks, in plain words, what you will open it with; the choice
+is remembered.
 
-The format is the same in every language, so it stays machine-readable: comma
-between fields, UTF-8, RFC 4180 quoting, `date` as the local `YYYY-MM-DD`,
-`start`/`end` as ISO 8601 in UTC, and hours with a **decimal point** (`1.50`),
-even in German. Only the header row follows the app language
-(`Datum,Projekt,Beginn,Ende,Sekunden,Stunden`). German Excel expects `;` and a
-decimal comma — import via *Data → From Text/CSV* and choose comma as the
-separator and "English (US)" as the locale. The phone page itself shows German
-hours with a comma (`1,50 h`).
+| | **Excel (Deutschland/Österreich)** | **Other programs / English Excel** |
+|---|---|---|
+| Default when the app speaks | German | English |
+| Between fields | `;` | `,` |
+| Hours | decimal comma `1,50` | decimal point `1.50` |
+| Date | `07.10.2026` | `2026-10-07` (local) |
+| Start / end | `07.10.2026 14:05` (local) | ISO 8601 in UTC |
+| Line ends | CRLF | LF |
+| Encoding | UTF-8 **with** BOM | UTF-8 |
+
+The Excel variant opens correctly in German or Austrian Excel with a double
+click: the byte order mark makes Excel read umlauts as UTF-8 (without it,
+"Küche" becomes "KÃ¼che"), and seconds and hours arrive as numbers you can sum.
+Both variants quote a project name that holds the separator, a quote or a line
+break, and both defuse spreadsheet formulas: a project name starting with `=`,
+`+`, `-` or `@` gets a leading `'`. The guard applies to text only — numbers
+are written bare. Only the header row follows the app language
+(`Datum;Projekt;Beginn;Ende;Sekunden;Stunden`).
 
 ## Language
 
 German and English, following the phone's language (English otherwise), with a
 picker on the phone page. Every glasses string is tested against its row: 46
-characters in the header and footer, 38 beside the pixel icon.
+characters in the header and footer, 38 beside the day bar.
 
 ## Install
 
@@ -113,7 +145,7 @@ characters in the header and footer, 38 beside the pixel icon.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5194
 npm run build      # typecheck + production bundle
-npm test           # 85 unit tests
+npm test           # 129 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -142,6 +174,8 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 - Editing and deleting individual entries on the phone.
 - Optional idle detection: ask whether a long gap should be trimmed.
 - Weekly summary view.
+- Optional "remaining" label on the day bar itself, once checked on hardware
+  that the 4-bit gray levels read as intended outdoors.
 
 ## License
 

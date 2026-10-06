@@ -1,8 +1,8 @@
 import {
-  entriesOnDay, entrySeconds, formatClock, formatHours, secondsOnDay, startOfDay, toCsv,
-  totalsByProject,
+  CSV_FORMATS, defaultCsvFormat, entriesOnDay, entrySeconds, formatClock, formatHours, secondsOnDay, startOfDay, toCsv,
+  totalsByProject, type CsvFormat,
 } from "../tracking/clock";
-import { addProject, removeProject, type ClockData } from "../storage/persist";
+import { addProject, readTarget, removeProject, type ClockData } from "../storage/persist";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { defaultProject, t } from "../messages";
 
@@ -81,6 +81,16 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   return { refresh: () => render() };
 }
 
+/** The format the user picked, or the one that suits the app language. */
+export function csvFormatOf(data: ClockData, locale: Locale): CsvFormat {
+  return data.csvFormat ?? defaultCsvFormat(locale);
+}
+
+/** A target as typed: "7,5" in German, "7.5" in English. */
+function hoursText(locale: Locale, hours: number): string {
+  return locale === "de" ? String(hours).replace(".", ",") : String(hours);
+}
+
 /** Decimal hours as people read them: "1,50" in German, "1.50" in English. */
 function hoursFor(locale: Locale, seconds: number): string {
   const hours = formatHours(seconds);
@@ -147,6 +157,9 @@ function template(data: ClockData, notice: string, locale: Locale): string {
         ${today.map((e) => "<tr><td>" + escapeHtml(e.project) + "</td><td>" + timeOf(e.startedAt) +
             "</td><td>" + formatClock(entrySeconds(e)) + "</td></tr>").join("")}
       </table>`}
+    <label for="target">${L("p.target")}</label>
+    <input id="target" type="text" inputmode="decimal" value="${data.dailyTargetHours === null ? "" : hoursText(locale, data.dailyTargetHours)}" />
+    <p class="hint">${L("p.targetHint")}</p>
   </section>
 
   <section class="card">
@@ -156,6 +169,9 @@ function template(data: ClockData, notice: string, locale: Locale): string {
         ${totals.map((row) => "<tr><td>" + escapeHtml(row.project) + "</td><td>" +
             formatClock(row.seconds) + "</td><td>" + hoursFor(locale, row.seconds) + " h</td></tr>").join("")}
       </table>
+      <label for="csv-format">${L("p.csvFormat")}</label>
+      <select id="csv-format">${CSV_FORMATS.map((format) =>
+        `<option value="${format}"${format === csvFormatOf(data, locale) ? " selected" : ""}>${L("p.csv." + format)}</option>`).join("")}</select>
       <button id="export" type="button" class="secondary">${L("p.export")}</button>
       <p class="hint">${L("p.exportHint")}</p>
       <button id="clear" type="button" class="secondary">${L("p.clear")}</button>`}
@@ -205,7 +221,16 @@ function wire(
   });
 
   byId<HTMLButtonElement>("export")?.addEventListener("click", () => {
-    download("shiftclock.csv", toCsv(current().entries, locale), "text/csv");
+    download("shiftclock.csv", toCsv(current().entries, locale, csvFormatOf(current(), locale)), "text/csv;charset=utf-8");
+  });
+
+  byId<HTMLSelectElement>("csv-format")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    if (value === "excel-de" || value === "standard") commit({ ...current(), csvFormat: value });
+  });
+
+  byId<HTMLInputElement>("target")?.addEventListener("change", (event) => {
+    commit({ ...current(), dailyTargetHours: readTarget((event.target as HTMLInputElement).value) });
   });
 
   byId<HTMLButtonElement>("clear")?.addEventListener("click", () => {

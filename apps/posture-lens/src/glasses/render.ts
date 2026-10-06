@@ -10,7 +10,8 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { PostureView } from "./view";
-import { renderPixelIcon, type PixelIcon } from "./pixel";
+import { GAUGE } from "./gauge";
+import type { ImageTarget } from "./lane";
 
 /**
  * Renders the posture readout onto the G2.
@@ -19,6 +20,10 @@ import { renderPixelIcon, type PixelIcon } from "./pixel";
  * After the page exists, updates go through `textContainerUpgrade`, which
  * changes text without rebuilding the page — on real hardware a rebuild falls
  * back to a full page creation and costs seconds, discarding input meanwhile.
+ *
+ * The head gauge in the icon column is not written here: it travels through
+ * the image lane (`lane.ts`) via `sendImage`, so a transfer never holds up
+ * the text.
  */
 
 export const SCREEN_WIDTH = 576;
@@ -43,16 +48,16 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: PostureView, icon?: PixelIcon): CreateStartUpPageContainer {
+export function buildPage(view: PostureView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: icon ? 4 : 3,
+    containerTotalNum: 4,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon)),
+      text(CONTAINER.body, view.body.join("\n"), 2, true, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
+    imageObject: [new ImageContainerProperty({ containerID: GAUGE.id, containerName: GAUGE.name, xPosition: GAUGE.x, yPosition: GAUGE.y, width: GAUGE.width, height: GAUGE.height, zOrderIndex: 4 })],
   });
 }
 
@@ -66,9 +71,10 @@ function text(
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: compact ? 104 : 0,
+    // The body starts right of the head gauge.
+    xPosition: compact ? GAUGE.width + 8 : 0,
     yPosition: spec.y,
-    width: compact ? SCREEN_WIDTH - 104 : SCREEN_WIDTH,
+    width: compact ? SCREEN_WIDTH - GAUGE.width - 8 : SCREEN_WIDTH,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
@@ -82,8 +88,8 @@ function text(
  * though it is reported to always fail on hardware: the call itself registers
  * event routing, and skipping it leaves the app deaf to input.
  */
-export async function createPage(bridge: EvenAppBridge, view: PostureView, icon?: PixelIcon): Promise<RenderResult> {
-  const page = buildPage(view, icon);
+export async function createPage(bridge: EvenAppBridge, view: PostureView): Promise<RenderResult> {
+  const page = buildPage(view);
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
@@ -92,7 +98,7 @@ export async function createPage(bridge: EvenAppBridge, view: PostureView, icon?
 
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
+    if (result === StartUpPageCreateResult.success) return { ok: true };
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -100,7 +106,7 @@ export async function createPage(bridge: EvenAppBridge, view: PostureView, icon?
 }
 
 /** Fast path: change the text of the three containers in place. */
-export async function updatePage(bridge: EvenAppBridge, view: PostureView, icon?: PixelIcon): Promise<RenderResult> {
+export async function updatePage(bridge: EvenAppBridge, view: PostureView): Promise<RenderResult> {
   const updates: Array<[ContainerSpec, string]> = [
     [CONTAINER.header, view.header],
     [CONTAINER.body, view.body.join("\n")],
@@ -115,19 +121,16 @@ export async function updatePage(bridge: EvenAppBridge, view: PostureView, icon?
         content,
       }));
     }
-    return updatePixel(bridge, icon);
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
 
-async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
-  if (!icon) return { ok: true };
-  try {
-    const imageData = await renderPixelIcon(icon);
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "pixel-icon", imageData }));
-    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
-  } catch (error) { return { ok: false, reason: errorMessage(error) }; }
+/** One image write; the lane decides when. */
+export async function sendImage(bridge: EvenAppBridge, target: ImageTarget, imageData: Uint8Array): Promise<boolean> {
+  const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: target.id, containerName: target.name, imageData }));
+  return result === ImageRawDataUpdateResult.success;
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

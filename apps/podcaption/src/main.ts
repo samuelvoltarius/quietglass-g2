@@ -2,6 +2,7 @@ import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hu
 import { createTextPage, updateTextPage, type TextView } from "./glasses/text";
 import { getLocale, languageSelect, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent } from "./input/gestures";
+import { createExitRequest } from "./exit";
 import { messages } from "./messages";
 import { bridgeUrl, fetchText } from "./podcast/bridge";
 import { failureFor, type Failure } from "./podcast/errors";
@@ -18,10 +19,10 @@ async function boot(): Promise<void> {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   /** The first-run captions are a how-to in the user's language, not sample podcast text. */
   const demo = (): Caption[] => demoCaptions([t("demo1"), t("demo2"), t("demo3"), t("demo4")]);
-  let captions: Caption[] = demo(); let episode = t("demoTitle"); let cursor = 0; let source: Source = "DEMO"; let pageReady = false; let last = ""; let failure: Failure | null = null;
+  let captions: Caption[] = demo(); let episode = t("demoTitle"); let cursor = 0; let source: Source = "DEMO"; let pageReady = false; let last = ""; let failure: Failure | null = null; let closed = false;
   const errorText = (): string => failure ? t(failure.key, { status: failure.status ?? "" }) : "";
   const view = (): TextView => ({ header: `PODCAPTION  ${t(player.playing ? "tagPlay" : "tagPause")}  ${t(SOURCE_TAG[source])}`.slice(0, LINE_WIDTH), body: failure ? [...captionRows(episode, captions, cursor, BODY_ROWS - 1), errorRow(errorText())] : captionRows(episode, captions, cursor), footer: t("controls") });
-  const draw = async (): Promise<void> => { const next = view(); const sig = JSON.stringify(next); if (sig === last) return; const result = pageReady ? await updateTextPage(bridge, next) : await createTextPage(bridge, next); if (result.ok) { pageReady = true; last = sig; } else pageReady = false; };
+  const draw = async (): Promise<void> => { if (closed) return; const next = view(); const sig = JSON.stringify(next); if (sig === last) return; const result = pageReady ? await updateTextPage(bridge, next) : await createTextPage(bridge, next); if (result.ok) { pageReady = true; last = sig; } else pageReady = false; };
   // Errors reach the phone in full and the glasses as one cut-down row; the raw cause stays in the console.
   const fail = (cause: unknown): void => { console.warn("[podcaption]", cause); failure = failureFor(cause); last = ""; void draw(); renderPhone(); };
   const useCaptions = async (parsed: Caption[], title: string, nextSource: Source): Promise<void> => { player.stop(); captions = parsed; episode = title || t("transcript"); source = nextSource; cursor = 0; failure = null; last = ""; await draw(); renderPhone(); };
@@ -47,8 +48,10 @@ async function boot(): Promise<void> {
     document.querySelector("#use-paste")?.addEventListener("click", async () => { const text = document.querySelector<HTMLTextAreaElement>("#paste")?.value ?? ""; if (!text.trim()) { failure = { key: "errPasteEmpty" }; last = ""; void draw(); renderPhone(); return; } try { await useCaptions(readTranscript(text, text.trimStart().startsWith("{") ? "application/json" : "text/vtt"), titleFor(t("transcript")), "FILE"); } catch (cause) { fail(cause); } });
     document.querySelector("#connect")?.addEventListener("click", () => { const input = document.querySelector<HTMLInputElement>("#endpoint"); if (input) localStorage.setItem("podcaption.bridge", input.value.trim()); void loadFeed(); });
   };
+  // Double tap opens the system exit dialog; playback continues until the user confirms.
+  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; player.stop(); } }, "podcaption");
   await draw(); renderPhone();
-  bridge.onEvenHubEvent((event) => { const gesture = gestureFromEvent(event); if (!gesture) return; if (gesture.gesture === "doubleClick") { player.stop(); void bridge.shutDownPageContainer(); return; } if (gesture.gesture === "click") { toggle(); return; } if (gesture.gesture === "scrollDown") cursor = Math.max(0, Math.min(captions.length - 1, cursor + 1)); if (gesture.gesture === "scrollUp") cursor = Math.max(0, cursor - 1); player.resync(); last = ""; void draw(); renderLive(); });
-  bridge.onDeviceStatusChanged((status) => { if (status?.connectType === "connected") { pageReady = false; last = ""; void draw(); } });
+  bridge.onEvenHubEvent((event) => { if (closed) return; const gesture = gestureFromEvent(event); if (!gesture) return; if (gesture.gesture === "doubleClick") { void requestExit(); return; } if (gesture.gesture === "click") { toggle(); return; } if (gesture.gesture === "scrollDown") cursor = Math.max(0, Math.min(captions.length - 1, cursor + 1)); if (gesture.gesture === "scrollUp") cursor = Math.max(0, cursor - 1); player.resync(); last = ""; void draw(); renderLive(); });
+  bridge.onDeviceStatusChanged((status) => { if (status?.connectType === "connected" && !closed) { pageReady = false; last = ""; void draw(); } });
 }
 void boot().catch((error: unknown) => console.error("[podcaption]", error));

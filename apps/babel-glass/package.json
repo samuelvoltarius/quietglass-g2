@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/babel-glass",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quietglass Babel Glass — live captions and translation on your own server",
   "author": "Quietglass",
   "license": "MIT",

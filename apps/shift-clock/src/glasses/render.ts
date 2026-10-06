@@ -10,13 +10,14 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { ClockView } from "./view";
-import { renderPixelIcon, type PixelIcon } from "./pixel";
+import { encodeBitmap } from "./pixel";
+import { DAY_BAR_HEIGHT, DAY_BAR_WIDTH, type Bitmap } from "./daybar";
 
 /**
  * Renders the time tracker onto the G2.
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
+ * Layout is fixed at three stacked text containers on the 576 x 288 display,
+ * plus the day bar image beside the body. After the page exists, updates go through `textContainerUpgrade`, which
  * changes text without rebuilding the page — on real hardware a rebuild falls
  * back to a full page creation and costs seconds, discarding input meanwhile.
  */
@@ -43,16 +44,23 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: ClockView, icon?: PixelIcon): CreateStartUpPageContainer {
+/** The day bar sits where the pixel icon was: left of the body, below the header. */
+export const DAY_BAR = { id: 4, name: "day-bar", x: 0, y: 36 } as const;
+
+export function buildPage(view: ClockView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: icon ? 4 : 3,
+    containerTotalNum: 4,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon)),
+      text(CONTAINER.body, view.body.join("\n"), 2, true, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
+    // Image containers take 20-288 x 20-144 px; the bar uses 96 x 144.
+    imageObject: [new ImageContainerProperty({
+      containerID: DAY_BAR.id, containerName: DAY_BAR.name, xPosition: DAY_BAR.x, yPosition: DAY_BAR.y,
+      width: DAY_BAR_WIDTH, height: DAY_BAR_HEIGHT, zOrderIndex: 4,
+    })],
   });
 }
 
@@ -82,8 +90,8 @@ function text(
  * though it is reported to always fail on hardware: the call itself registers
  * event routing, and skipping it leaves the app deaf to input.
  */
-export async function createPage(bridge: EvenAppBridge, view: ClockView, icon?: PixelIcon): Promise<RenderResult> {
-  const page = buildPage(view, icon);
+export async function createPage(bridge: EvenAppBridge, view: ClockView): Promise<RenderResult> {
+  const page = buildPage(view);
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
@@ -92,7 +100,7 @@ export async function createPage(bridge: EvenAppBridge, view: ClockView, icon?: 
 
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
+    if (result === StartUpPageCreateResult.success) return { ok: true };
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -100,7 +108,7 @@ export async function createPage(bridge: EvenAppBridge, view: ClockView, icon?: 
 }
 
 /** Fast path: change the text of the three containers in place. */
-export async function updatePage(bridge: EvenAppBridge, view: ClockView, icon?: PixelIcon): Promise<RenderResult> {
+export async function updatePage(bridge: EvenAppBridge, view: ClockView): Promise<RenderResult> {
   const updates: Array<[ContainerSpec, string]> = [
     [CONTAINER.header, view.header],
     [CONTAINER.body, view.body.join("\n")],
@@ -115,17 +123,20 @@ export async function updatePage(bridge: EvenAppBridge, view: ClockView, icon?: 
         content,
       }));
     }
-    return updatePixel(bridge, icon);
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
 
-async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
-  if (!icon) return { ok: true };
+/**
+ * Sends the day bar. Separate from the text on purpose: an image is a slow
+ * BLE transfer, and the caller runs it on its own lane (see image-sync.ts).
+ */
+export async function sendDayBar(bridge: EvenAppBridge, bitmap: Bitmap): Promise<RenderResult> {
   try {
-    const imageData = await renderPixelIcon(icon);
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "pixel-icon", imageData }));
+    const imageData = await encodeBitmap(bitmap);
+    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: DAY_BAR.id, containerName: DAY_BAR.name, imageData }));
     return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
   } catch (error) { return { ok: false, reason: errorMessage(error) }; }
 }

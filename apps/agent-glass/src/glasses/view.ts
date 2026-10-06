@@ -1,4 +1,6 @@
 import type { AgentState } from "../terminal/types";
+import type { Locale } from "../i18n";
+import { localizeError, t } from "../messages";
 
 /**
  * What the glasses show while an agent works.
@@ -83,27 +85,28 @@ export function shortTitle(title: string, width = 40): string {
   return title.length <= width ? title : title.slice(0, width - 1) + "…";
 }
 
-export function buildView(state: AgentState, now: Date): AgentView {
+export function buildView(state: AgentState, now: Date, locale: Locale = "en"): AgentView {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   if (state.error) {
     // The CORS hint only helps against Even Terminal; under Hermes or OpenClaw
     // it would send the user looking in the wrong place. The error text comes
     // from the backend and can be arbitrarily long, so it is clipped to the
     // rows that are left.
     const hint = /Even Terminal/.test(state.error)
-      ? ["", "Is Even Terminal running with", "--allow-cors enabled?"] : [];
+      ? ["", x("g.corsHint1"), x("g.corsHint2")] : [];
     const room = BODY_ROWS - 1 - hint.length;
     return {
-      header: "Agent Glass",
-      body: ["", ...head(wrap(state.error), room), ...hint],
-      footer: "tap = retry",
+      header: x("g.title"),
+      body: ["", ...head(wrap(localizeError(state.error, locale)), room), ...hint],
+      footer: x("g.tapRetry"),
     };
   }
 
   if (!state.session) {
     return {
-      header: "Agent Glass",
-      body: ["", "No session selected."],
-      footer: "hold = choose session",
+      header: x("g.title"),
+      body: ["", x("g.noSession")],
+      footer: x("g.holdChoose"),
     };
   }
 
@@ -113,9 +116,12 @@ export function buildView(state: AgentState, now: Date): AgentView {
   if (state.pending) {
     const detail = wrap(state.pending.detail);
     return {
-      header: state.pending.kind === "permission" ? "Permission required" : "Question",
+      header: state.pending.kind === "permission" ? x("g.permission") : x("g.question"),
       body: [
-        clip(state.pending.title),
+        // Tool names are the agent's own identifiers and stay as they are;
+        // only the generic fallbacks from the event parser are translated.
+        clip(state.pending.title === "Question" ? x("g.question")
+          : state.pending.title === "Tool" ? x("g.tool") : state.pending.title),
         "",
         ...tail(detail, BODY_ROWS - 2),
       ],
@@ -127,8 +133,8 @@ export function buildView(state: AgentState, now: Date): AgentView {
       // where the answer has to be given beats offering a control that fails
       // in silence.
       footer: state.controllable
-        ? "up = allow · down = deny"
-        : "watch only — answer on computer",
+        ? x("g.decide")
+        : x("g.watchAnswer"),
     };
   }
 
@@ -141,12 +147,12 @@ export function buildView(state: AgentState, now: Date): AgentView {
   }
 
   const status = state.busy
-    ? `working · ${elapsed(state.startedAt, now)}`
-    : state.controllable ? "ready" : "watch only";
+    ? x("g.working", { time: elapsed(state.startedAt, now) })
+    : state.controllable ? x("g.ready") : x("g.watchOnly");
 
   const action = !state.controllable
-    ? "hold = switch session"
-    : state.busy ? "hold = interrupt" : "hold = switch session";
+    ? x("g.holdSwitch")
+    : state.busy ? x("g.holdInterrupt") : x("g.holdSwitch");
 
   return {
     header: shortTitle(state.session.title),
@@ -159,13 +165,14 @@ export function buildView(state: AgentState, now: Date): AgentView {
 export function sessionList(
   sessions: readonly { title: string; cwd: string; status: string }[],
   selected: number,
+  locale: Locale = "en",
 ): AgentView {
   if (sessions.length === 0) {
     return {
-      header: "Sessions",
-      body: ["", "Even Terminal reports no sessions.",
-        "", "Is an agent running there?"],
-      footer: "tap = back",
+      header: t(locale, "g.sessions"),
+      body: ["", t(locale, "g.noSessions"),
+        "", t(locale, "g.agentRunning")],
+      footer: t(locale, "g.tapBack"),
     };
   }
 
@@ -173,13 +180,13 @@ export function sessionList(
   const window = sessions.slice(Math.max(0, first), Math.max(0, first) + BODY_ROWS);
 
   return {
-    header: `Sessions (${sessions.length})`,
+    header: t(locale, "g.sessionsCount", { count: sessions.length }),
     body: window.map((session, offset) => {
       const index = Math.max(0, first) + offset;
       const cursor = index === selected ? ">" : " ";
       const busy = session.status && session.status !== "idle" ? " *" : "";
       return `${cursor} ${shortTitle(session.title, 38)}${busy}`.slice(0, LINE_WIDTH);
     }),
-    footer: "swipe = select · tap = open",
+    footer: t(locale, "g.selectOpen"),
   };
 }

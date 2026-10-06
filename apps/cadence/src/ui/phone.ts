@@ -5,6 +5,7 @@ import {
 import { addItem, removeItem, setSettings, type CadenceData } from "../storage/persist";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
+import { csvFormatFor } from "../csv";
 
 /**
  * The phone companion: tempo, time signature, the user's practice items and
@@ -44,6 +45,7 @@ function template(data: CadenceData, locale: Locale): string {
   const today = sessionsToday(data.sessions, Date.now());
   const totals = totalsByItem(data.sessions).slice(0, 6);
   const best = bestTempoByItem(data.sessions).slice(0, 6);
+  const csvFormat = csvFormatFor(data.csvFormat, locale);
   const next = data.activeItem
     ? x("p.nextReady", { item: escapeHtml(data.activeItem) })
     : x("p.nextFirst") + (data.items.length === 0 ? "</p><p class=\"hint\">" + x("p.nextItem") : "");
@@ -120,6 +122,12 @@ function template(data: CadenceData, locale: Locale): string {
                  "</td><td>" + (top ? x("p.bpm", { bpm: top.bpm }) : "—") + "</td></tr>";
         }).join("")}
       </table>
+      <label for="csv-format">${x("p.csvFormat")}</label>
+      <select id="csv-format">
+        <option value="excel-de" ${csvFormat === "excel-de" ? "selected" : ""}>${x("p.csvExcel")}</option>
+        <option value="standard" ${csvFormat === "standard" ? "selected" : ""}>${x("p.csvStandard")}</option>
+      </select>
+      <p class="hint">${x("p.csvHint")}</p>
       <button id="export" type="button" class="secondary">${x("p.export")}</button>
       <button id="clear" type="button" class="secondary">${x("p.clear")}</button>
     `}
@@ -189,8 +197,18 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): voi
     });
   });
 
+  byId<HTMLSelectElement>("csv-format")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    commit((data) => ({ ...data, csvFormat: value === "excel-de" ? "excel-de" : "standard" }));
+  });
+
   byId<HTMLButtonElement>("export")?.addEventListener("click", () => {
-    download("cadence-practice.csv", toCsv(ports.getData().sessions), "text/csv");
+    const locale = ports.getLocale?.() ?? "en";
+    const data = ports.getData();
+    const format = csvFormatFor(data.csvFormat, locale);
+    // Plain ASCII names; the Excel variant says so, so the two cannot be mixed up.
+    const name = format === "excel-de" ? "cadence-practice-excel.csv" : "cadence-practice.csv";
+    download(name, toCsv(data.sessions, format, locale), "text/csv;charset=utf-8");
   });
 
   byId<HTMLButtonElement>("clear")?.addEventListener("click", () => {

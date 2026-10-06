@@ -4,6 +4,16 @@
 
 Your position routes you and is never stored. No location history exists.
 
+## Permissions (as declared in `app.json`)
+
+| Permission | Why | What it touches |
+|---|---|---|
+| `location` | Route from where you are; measure how far the next turn is | Position from the phone, held in memory only — see *Location* |
+| `network` | Talk to the three map services below, or to your own servers instead | `valhalla1.openstreetmap.de` (routes, FOSSGIS e.V.), `photon.komoot.io` (place search, komoot), `overpass-api.de` with `overpass.private.coffee` as fallback (streets of the overview map, OpenStreetMap data). The `http://*` / `https://*` entries exist only so that servers *you* enter under Advanced can be reached. |
+
+No other permission is requested: no microphone, no camera, no album, no
+notifications.
+
 ## Location
 
 OpenGlance reads your position through the SDK's `getAppLocation` and
@@ -31,6 +41,17 @@ When you press **Search**, the words you typed and an area rounded to about
 one kilometre are sent to the **place-search server** — Photon by komoot
 (`photon.komoot.io`) unless you enter your own. Nothing is sent while you type.
 
+When you look at the **overview map** for a couple of seconds, the area
+around the route — a rectangle rounded to about 10 m, a bit larger than the
+picture — is sent once per route to the **street server**: the public
+Overpass API (`overpass-api.de`, run by FOSSGIS e.V.), or
+`overpass.private.coffee` if that one does not answer. That rectangle
+reveals roughly where the route is, not where you are within it, and it is
+not sent again for each GPS fix. Switch **Show real streets on the overview
+map** off under Advanced and nothing goes there; the overview then shows the
+route alone. Your browser engine sends its usual `Referer` and user agent
+with the request, as with any web request; OpenGlance adds nothing.
+
 Nothing else is sent, and nothing is sent anywhere else. With the demo route
 switched on, **nothing leaves the device at all**.
 
@@ -40,7 +61,7 @@ switched on, **nothing leaves the device at all**.
 |---|---|---|
 | Routing and search server addresses | Even app per-app storage, on the phone | No |
 | Saved places | same | Only the selected one, to the router |
-| Mode, glasses view and settings | same | No |
+| Mode, glasses view and settings (incl. the street-map switch) | same | No |
 | Language choice (only if changed) | WebView local storage | No |
 
 Written through `setLocalStorage()` under `quietglass.openglance.v1`.
@@ -67,4 +88,6 @@ cannot change that; it can only make sure the choice is yours and visible.
 ## Third-party code
 
 One runtime dependency: `@evenrealities/even_hub_sdk`, the official SDK.
-Map data © OpenStreetMap contributors (ODbL), via the routing and search servers.
+Map data © OpenStreetMap contributors (ODbL), via the routing, search and
+street servers. Street data is held in memory for the current route only and
+never stored.

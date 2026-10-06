@@ -10,6 +10,7 @@ export function sameView(a: NavView | null, b: NavView): boolean {
   return (
     a.header === b.header &&
     a.footer === b.footer &&
+    a.big === b.big &&
     a.body.length === b.body.length &&
     a.body.every((line, i) => line === b.body[i])
   );

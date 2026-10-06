@@ -4,7 +4,7 @@ import {
   MIN_ENTRY_SECONDS, nextEntryId, openSeconds, startOfDay, startProject, stop,
   secondsOnDay, STOPPED, toCsv, totalSeconds, totalsByProject, type TimeEntry,
 } from "../src/tracking/clock";
-import { parseData, EMPTY_DATA, addProject, removeProject } from "../src/storage/persist";
+import { parseData, EMPTY_DATA, addProject, readTarget, removeProject } from "../src/storage/persist";
 import { buildView } from "../src/glasses/view";
 
 const ids = () => {
@@ -155,6 +155,24 @@ describe("storage", () => {
       entries: [{ id: "bad", project: "A", startedAt: 100, endedAt: 50 }],
     }));
     expect(parsed.entries).toHaveLength(0);
+  });
+
+  it("keeps the daily target and the export format, and drops nonsense", () => {
+    const parsed = parseData(JSON.stringify({ dailyTargetHours: 7.5, csvFormat: "excel-de" }));
+    expect(parsed.dailyTargetHours).toBe(7.5);
+    expect(parsed.csvFormat).toBe("excel-de");
+    for (const bad of [0, -2, 30, {}, null, "acht"]) {
+      expect(parseData(JSON.stringify({ dailyTargetHours: bad })).dailyTargetHours).toBeNull();
+    }
+    expect(parseData(JSON.stringify({ csvFormat: "xlsx" })).csvFormat).toBeNull();
+    expect(parseData(JSON.stringify({})).csvFormat).toBeNull();
+  });
+
+  it("reads a typed target in either decimal style", () => {
+    expect(readTarget("7,5")).toBe(7.5);
+    expect(readTarget(" 8 ")).toBe(8);
+    expect(readTarget("0,1")).toBeNull();
+    expect(readTarget("")).toBeNull();
   });
 
   it("adds and removes projects without duplicates", () => {

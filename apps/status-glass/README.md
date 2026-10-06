@@ -4,6 +4,25 @@
 > dedicated Home Assistant adapter for dashboards and allow-listed controls;
 > the same app can also monitor NAS, servers, and other local services.
 
+## Kurz auf Deutsch
+
+Status Glass zeigt dir auf der G2, ob bei deinen Geräten und Diensten zu Hause
+alles läuft – NAS, Server, Home Assistant. Ist alles in Ordnung, siehst du nur
+eine Zeile. Gibt es ein Problem, steht das Wichtigste ganz oben.
+
+1. Auf der Handy-Seite eine Quelle hinzufügen (Name und Adresse).
+2. Brille aufsetzen: **Tippen** markiert ein Problem als gesehen, **Wischen**
+   blättert, **Halten** öffnet die Aktionen (z. B. Licht aus), **Doppeltippen**
+   beendet die App.
+
+Die App gibt es auf Deutsch und Englisch. Sie folgt der Sprache deines Handys;
+umstellen kannst du das auf der Handy-Seite unter „Sprache“ – die Brille
+wechselt sofort mit. Keine Cloud, kein Konto: Status Glass spricht nur mit den
+Quellen, die du einträgst.
+
+Available in German and English: the language follows the phone and can be
+switched on the phone page; the glasses follow immediately.
+
 Use `?demo=1` on the development URL to render non-persistent sample service metrics for screenshots and layout testing.
 
 **Quietglass** · Homelab and service monitoring over a protocol anyone can implement.
@@ -189,6 +208,10 @@ node examples/home-assistant-adapter.mjs   # or your own Home Assistant
 - The WebSocket transport, for sources that would rather push.
 - Persisted acknowledgements with an expiry.
 - A Home Assistant example mapping entities onto the protocol.
+
+## Privacy
+
+What data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## License
 

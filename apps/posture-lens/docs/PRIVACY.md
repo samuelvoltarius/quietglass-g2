@@ -1,5 +1,12 @@
 # PostureLens — privacy
 
+## Kurzfassung (Deutsch)
+
+PostureLens nutzt nur den Bewegungssensor (IMU) der Brille, hat keinen
+Netzwerk-Code und speichert keinen Verlauf deiner Haltung. Gespeichert sind nur
+die kalibrierte Ausgangslage und deine Einstellungen. Kein Mikrofon, keine
+Kamera, kein Standort, kein Tracking. Deinstallieren löscht alles.
+
 ## Short version
 
 PostureLens has no network code, and it keeps no history of how you sat.

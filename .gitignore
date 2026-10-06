@@ -11,3 +11,4 @@ dist/
 .playwright-cli/
 __pycache__/
 *.pyc
+release/

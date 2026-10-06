@@ -1,9 +1,23 @@
 # Status Glass — privacy
 
+## Kurzfassung (Deutsch)
+
+Status Glass fragt nur die Statusquellen ab, die du selbst einträgst. Es gibt
+keinen Quietglass-Server, kein Konto und kein Tracking. Gespeichert sind nur
+Quellen-Adressen, Tokens und das Abfrageintervall; Messwerte nur im
+Arbeitsspeicher. Kein Mikrofon, keine Kamera, kein Standort. Deinstallieren
+löscht alles.
+
 ## Short version
 
 Status Glass talks only to the servers you configure. There is no vendor
 service, no account and no telemetry.
+
+## Permissions
+
+| Permission (`app.json`) | Why | Used for nothing else |
+|---|---|---|
+| `network` (`http`, `https`) | Poll the status sources you add | No other host is contacted |
 
 ## What is stored
 

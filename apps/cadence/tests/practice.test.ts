@@ -6,6 +6,7 @@ import {
 import { parseData, EMPTY_DATA, addItem, removeItem } from "../src/storage/persist";
 import { buildView, beatRow, signatureLabel } from "../src/glasses/view";
 import { createState, start, type MetronomeSettings } from "../src/metronome/engine";
+import { csvFormatFor, defaultCsvFormat, numberCell, textCell } from "../src/csv";
 
 const session = (over: Partial<PracticeSession> = {}): PracticeSession => ({
   id: "p1", item: "Scales", bpm: 100, startedAt: 1_000_000, endedAt: 1_060_000, ...over,
@@ -80,6 +81,72 @@ describe("CSV export", () => {
   it("quotes fields containing a comma or quote", () => {
     const csv = toCsv([session({ item: 'Bar 34, "slow"' })]);
     expect(csv).toContain('"Bar 34, ""slow"""');
+  });
+});
+
+describe("CSV export for Excel (DE/AT)", () => {
+  // 7 Oct 2026, 14:05 local time, practised for 90 s.
+  const at = new Date(2026, 9, 7, 14, 5).getTime();
+  const excel = (over: Partial<PracticeSession> = {}, locale: "de" | "en" = "de"): string =>
+    toCsv([session({ startedAt: at, endedAt: at + 90_000, ...over })], "excel-de", locale);
+
+  it("starts with a UTF-8 BOM and ends every row with CRLF", () => {
+    const csv = excel();
+    expect(csv.startsWith("﻿")).toBe(true);
+    expect(csv.endsWith("\r\n")).toBe(true);
+    expect(csv.split("\r\n")).toHaveLength(3);
+    expect(csv.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/);
+  });
+
+  it("separates with semicolons, local date, decimal comma, exact time last", () => {
+    const [header, row] = excel().slice(1).split("\r\n");
+    expect(header).toBe("Beginn;Eintrag;Tempo (Schläge/Min);Dauer (Sekunden);Dauer (Minuten);Beginn (ISO, UTC)");
+    expect(row).toBe("07.10.2026 14:05;Scales;100;90;1,50;" + new Date(at).toISOString());
+  });
+
+  it("keeps umlauts and translates the header for English", () => {
+    expect(excel({ item: "Übung für Körper" })).toContain(";Übung für Körper;");
+    expect(excel({}, "en").slice(1).split("\r\n")[0])
+      .toBe("Start;Item;Tempo (bpm);Duration (seconds);Duration (minutes);Start (ISO, UTC)");
+  });
+
+  it("quotes semicolons, quotes and line breaks, but not a plain comma", () => {
+    expect(excel({ item: 'Takt 34; "langsam"' })).toContain(';"Takt 34; ""langsam""";');
+    expect(excel({ item: "first\nsecond" })).toContain(';"first\nsecond";');
+    expect(excel({ item: "a\rb" })).toContain(';"a\rb";');
+    expect(excel({ item: "Bar 34, slow" })).toContain(";Bar 34, slow;");
+  });
+
+  it("defuses a formula in the item but leaves numbers alone", () => {
+    for (const item of ["=1+1", "+cmd", "-2", "@SUM(A1)"]) {
+      expect(excel({ item })).toContain(";'" + item + ";");
+    }
+    expect(numberCell(-1.5, "excel-de", 2)).toBe("-1,50");
+    expect(numberCell(-1.5, "standard", 2)).toBe("-1.50");
+    expect(textCell("-1,50", "excel-de")).toBe("'-1,50");
+  });
+
+  it("the standard export defuses formulas too and stays comma, LF, no BOM", () => {
+    const csv = toCsv([session({ item: "=HYPERLINK(1)" })]);
+    expect(csv.startsWith("date,item,bpm,seconds\n")).toBe(true);
+    expect(csv).toContain(",'=HYPERLINK(1),");
+    expect(csv).not.toContain("\r");
+    expect(csv).not.toContain("﻿");
+  });
+
+  it("defaults to Excel for German and standard for English, unless the user chose", () => {
+    expect(defaultCsvFormat("de")).toBe("excel-de");
+    expect(defaultCsvFormat("en")).toBe("standard");
+    expect(csvFormatFor(undefined, "de")).toBe("excel-de");
+    expect(csvFormatFor("standard", "de")).toBe("standard");
+    expect(csvFormatFor("excel-de", "en")).toBe("excel-de");
+  });
+
+  it("keeps the choice in storage and ignores nonsense", () => {
+    expect(parseData(JSON.stringify({ csvFormat: "standard" })).csvFormat).toBe("standard");
+    expect(parseData(JSON.stringify({ csvFormat: "excel-de" })).csvFormat).toBe("excel-de");
+    expect(parseData(JSON.stringify({ csvFormat: "xlsx" })).csvFormat).toBeUndefined();
+    expect(parseData(JSON.stringify({})).csvFormat).toBeUndefined();
   });
 });
 

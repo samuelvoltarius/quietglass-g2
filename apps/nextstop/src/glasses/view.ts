@@ -2,6 +2,8 @@ import type { Departure, Stop } from "../transit/types";
 import { delayMinutes, minutesUntil } from "../transit/types";
 import type { RideProgress } from "../ride/tracker";
 import { etaLabel } from "../ride/tracker";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * What the glasses show.
@@ -65,13 +67,13 @@ export function certainty(departure: Departure): string {
 }
 
 /** Waiting time as a passenger reads it off a board. */
-export function waitLabel(departure: Departure): string {
-  if (departure.cancelled) return "fällt aus";
-  if (departure.inMinutes <= 0) return "jetzt";
+export function waitLabel(departure: Departure, locale: Locale): string {
+  if (departure.cancelled) return t(locale, "g.cancelled");
+  if (departure.inMinutes <= 0) return t(locale, "g.now");
   if (departure.inMinutes >= 60) {
-    return `${Math.floor(departure.inMinutes / 60)}h${departure.inMinutes % 60}`;
+    return t(locale, "g.hoursCompact", { hours: Math.floor(departure.inMinutes / 60), minutes: departure.inMinutes % 60 });
   }
-  return `${departure.inMinutes} min`;
+  return t(locale, "g.minutes", { minutes: departure.inMinutes });
 }
 
 /**
@@ -131,6 +133,7 @@ export function departureBoard(
   stop: Stop,
   fetched: readonly Departure[],
   metresAway: number | null,
+  locale: Locale,
   selected = 0,
   now?: Date,
 ): StopView {
@@ -147,12 +150,12 @@ export function departureBoard(
       header,
       body: [
         "",
-        "Keine Abfahrten in der nächsten Stunde.",
+        t(locale, "g.emptyBoard1"),
         "",
-        "Betriebsschluss, oder diese Haltestelle",
-        "wird gerade nicht bedient.",
+        t(locale, "g.emptyBoard2"),
+        t(locale, "g.emptyBoard3"),
       ],
-      footer: "halten = andere Haltestelle",
+      footer: t(locale, "g.footerEmptyBoard"),
     };
   }
 
@@ -165,18 +168,7 @@ export function departureBoard(
 
   const rows = window.map((departure, offset) => {
     const isSelected = Math.max(0, first) + offset === selected;
-    const cursor = isSelected ? CURSOR : " ";
-    // Destination is the field that can be arbitrarily long, so it is the one
-    // that gives way; the line number and the time never truncate. Its room
-    // is what is left once both are placed — a fixed length let a long line
-    // name push the waiting time off the end of the row.
-    const mark = certainty(departure);
-    const track = departure.track ? ` ${departure.track}` : "";
-    const head = `${cursor} ${departure.line}  `;
-    const tail = ` · ${waitLabel(departure)} ${mark}${track}`;
-    const room = Math.min(22, LINE_WIDTH - head.length - tail.length);
-    const to = room > 0 ? departure.headsign.slice(0, room) : "";
-    return `${head}${to}${tail}`.slice(0, LINE_WIDTH);
+    return departureRow(departure, isSelected, locale);
   });
 
   return {
@@ -184,20 +176,63 @@ export function departureBoard(
     body: rows,
     // Saying where the numbers come from is not decoration. Without it a
     // board of pure timetable times is indistinguishable from a live one.
-    footer: anyLive
-      ? "tippen = verfolgen · ● live  ~ Fahrplan"
-      : "tippen = verfolgen · nur Fahrplan",
+    footer: t(locale, anyLive ? "g.footerBoardLive" : "g.footerBoardPlanned"),
   };
 }
 
+/**
+ * One departure as one row, read left to right in the order a passenger asks:
+ * how long, which line, where to.
+ *
+ *   `> 4 min ●  O-Bus 6  Itzling West · A`
+ *
+ * The waiting time comes first because it is what the glance is for, and at
+ * the left edge it is the one thing that never moves. It stays text: the font
+ * cannot be made larger, and an image per row would cost a BLE transfer every
+ * minute for every departure on the board. The certainty mark stays glued to
+ * the time it qualifies. Destination is the field that can be arbitrarily
+ * long, so it is shortened ("Hbf", "Str.") and then gives way; the time, the
+ * line and the platform never truncate.
+ */
+export function departureRow(departure: Departure, selected: boolean, locale: Locale): string {
+  const cursor = selected ? CURSOR : " ";
+  // "fällt aus" / "cancelled" already says it; an extra "X" would only add noise.
+  const mark = departure.cancelled ? "" : ` ${certainty(departure)}`;
+  const head = `${cursor} ${waitLabel(departure, locale)}${mark}  ${departure.line}  `;
+  const tail = departure.track ? ` · ${departure.track}` : "";
+  // Its room is what is left once the rest is placed — a fixed length let a
+  // long line name push the platform off the end of the row.
+  const room = Math.min(24, LINE_WIDTH - head.length - tail.length);
+  const to = room > 0 ? fit(shortHeadsign(departure.headsign), room) : "";
+  return `${head}${to}${tail}`.slice(0, LINE_WIDTH);
+}
+
+/**
+ * A destination as short as it can be without guessing: the stand in
+ * brackets goes, and the words every Austrian and German board abbreviates
+ * the same way are abbreviated. Nothing is dropped that could change which
+ * place is meant (a town prefix is kept: "Bad Ischl" and "Bad Goisern").
+ */
+export function shortHeadsign(headsign: string): string {
+  return headsign
+    .replace(/\s*\([^()]*\)\s*$/, "")
+    .replace(/Hauptbahnhof(?!\p{L})/gu, "Hbf")
+    .replace(/(?<!\p{L})Bahnhof(?!\p{L})/gu, "Bf")
+    .replace(/(?:Straße|Strasse)(?!\p{L})/gu, "Str.")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** The ride: where am I, and when do I get off. */
-export function ridingView(progress: RideProgress, now: Date, line: string, headsign: string): StopView {
+export function ridingView(
+  progress: RideProgress, now: Date, line: string, headsign: string, locale: Locale,
+): StopView {
   const header = fit(`${line} → ${headsign}`);
   if (progress.finished) {
     return {
       header,
-      body: ["", fit(`Endstation ${rideStopName(progress.next.stop.name)}.`), "", "Die Fahrt ist zu Ende."],
-      footer: "tippen = zurück zur Haltestelle",
+      body: ["", fit(t(locale, "g.terminus", { stop: rideStopName(progress.next.stop.name) })), "", t(locale, "g.rideOver")],
+      footer: t(locale, "g.footerRideOver"),
     };
   }
 
@@ -209,22 +244,22 @@ export function ridingView(progress: RideProgress, now: Date, line: string, head
   // will not halt there; a countdown to it would have someone stand up for
   // nothing and then miss where they can actually get off.
   const eta = progress.next.cancelled
-    ? "fällt aus"
-    : progress.arriving ? "gleich" : etaLabel(progress.next, now);
+    ? t(locale, "g.cancelled")
+    : progress.arriving ? t(locale, "g.arriving") : etaLabel(progress.next, now, locale);
   body.push(`${CURSOR} ${rideStopName(progress.next.stop.name)} · ${eta}`);
 
   for (const stop of progress.upcoming.slice(0, BODY_ROWS - 3)) {
     const mark = stop.cancelled ? "X" : " ";
-    body.push(`${mark} ${rideStopName(stop.stop.name)} · ${etaLabel(stop, now)}`);
+    body.push(`${mark} ${rideStopName(stop.stop.name)} · ${etaLabel(stop, now, locale)}`);
   }
 
   const remaining = progress.upcoming.length;
   const terminus = progress.upcoming[remaining - 1] ?? progress.next;
   body.push("");
   body.push(remaining === 0
-    ? "letzter Halt"
-    : `noch ${remaining} ${remaining === 1 ? "Halt" : "Halte"}`
-      + ` · Ziel ${etaLabel(terminus, now)}`);
+    ? t(locale, "g.lastStop")
+    : t(locale, remaining === 1 ? "g.stopsLeftOne" : "g.stopsLeftMany",
+      { count: remaining, eta: etaLabel(terminus, now, locale) }));
 
   return {
     header,
@@ -233,26 +268,27 @@ export function ridingView(progress: RideProgress, now: Date, line: string, head
     // on the clock it is an estimate, and after a long hold-up it can be
     // several stops optimistic. The passenger is entitled to know which.
     footer: progress.basis === "gps"
-      ? `GPS${progress.metresToNext === undefined ? "" : ` · ${Math.round(progress.metresToNext)} m`}`
-        + " · tippen = zurück"
-      : "nach Fahrplan geschätzt · tippen = zurück",
+      ? progress.metresToNext === undefined
+        ? t(locale, "g.footerGps")
+        : t(locale, "g.footerGpsDistance", { metres: Math.round(progress.metresToNext) })
+      : t(locale, "g.footerClock"),
   };
 }
 
 /** Something went wrong, said plainly rather than as a blank screen. */
-export function errorView(message: string, hint: string): StopView {
+export function errorView(message: string, hint: string, locale: Locale): StopView {
   return {
     header: "NextStop",
     body: ["", ...wrap(message), "", ...wrap(hint)].slice(0, BODY_ROWS),
-    footer: "tippen = nochmal versuchen",
+    footer: t(locale, "g.footerRetry"),
   };
 }
 
 /** Shown while the first request is in flight, so the screen is never blank. */
-export function loadingView(what: string, hint = ""): StopView {
+export function loadingView(what: string, hint: string, locale: Locale): StopView {
   return {
     header: "NextStop",
     body: ["", ...wrap(what), ...(hint ? ["", ...wrap(hint)] : [])].slice(0, BODY_ROWS),
-    footer: "doppeltippen = beenden",
+    footer: t(locale, "g.footerExit"),
   };
 }

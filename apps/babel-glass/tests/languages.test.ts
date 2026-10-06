@@ -15,7 +15,7 @@ describe("language list", () => {
     expect(languageOptions("auto", true)).toContain('value="auto" selected');
     expect(languageOptions("de", false)).not.toContain('value="auto"');
     expect(languageOptions("de", false)).toContain('value="de" selected');
-    expect(languageOptions("be", true)).toContain("Belarusian — Беларуская");
+    expect(languageOptions("be", true, "en")).toContain("Belarusian — Беларуская");
   });
 
   it("selects the custom option for codes not in the list", () => {
@@ -136,7 +136,7 @@ describe("phone form", () => {
   it("rejects bad URLs and a missing model", () => {
     const bad = applyForm(EMPTY_DATA, form({ provider: "openai", llmUrl: "ws://nope" }));
     expect(bad.ok).toBe(false);
-    const noModel = applyForm(EMPTY_DATA, form({ provider: "openai", llmUrl: "http://h/v1" }));
+    const noModel = applyForm(EMPTY_DATA, form({ provider: "openai", llmUrl: "http://h/v1" }), "en");
     expect(noModel.ok === false && noModel.errors.join(" ")).toContain("model");
   });
 
@@ -214,7 +214,7 @@ describe("phone UI wiring", () => {
   it("saves the form and persists provider, languages and transliteration", async () => {
     let stored: BabelData = { ...EMPTY_DATA };
     const root = fakeRoot();
-    mountPhoneUiInto(root, { getData: () => stored, setData: async (next) => { stored = next; } });
+    mountPhoneUiInto(root, { getData: () => stored, setData: async (next) => { stored = next; }, getLocale: () => "en" });
     Object.assign(root.el("provider"), { value: "openai" });
     Object.assign(root.el("llm-url"), { value: "http://spark:8000/v1" });
     Object.assign(root.el("llm-model"), { value: "Qwen/Qwen2.5-7B-Instruct" });

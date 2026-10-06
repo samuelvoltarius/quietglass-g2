@@ -6,9 +6,12 @@ import { MODE_PRESETS, type CaptionMode } from "../glasses/view";
 import {
   AUTO, CUSTOM, LANGUAGES, readLanguageChoice, selectValueFor,
 } from "../text/languages";
+import { languageSelect, type Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
- * The phone companion: providers, languages and mode.
+ * The phone companion: UI language, caption languages, mode and — under
+ * "Advanced" — the servers.
  *
  * Credentials are write-only here — once saved, the field reports only that a
  * secret is set and how long it is.
@@ -17,19 +20,13 @@ import {
 export interface PhoneUiPorts {
   readonly getData: () => BabelData;
   readonly setData: (data: BabelData) => Promise<void>;
+  /** UI language; English when the host does not provide one. */
+  readonly getLocale?: () => Locale;
+  /** The user picked another UI language: the host persists it and redraws the glasses. */
+  readonly setLocale?: (locale: Locale) => void;
 }
 
-const MODE_LABELS: Readonly<Record<CaptionMode, string>> = {
-  conversation: "Conversation — few lines, both languages",
-  lecture: "Lecture — more history, translation only",
-  travel: "Travel — short and large",
-  captionOnly: "Caption only — no translation",
-};
-
-const PROVIDER_LABELS: Readonly<Record<TranslateProvider, string>> = {
-  libretranslate: "LibreTranslate-compatible (/translate)",
-  openai: "OpenAI-compatible LLM (vLLM, Ollama, LM Studio, llama.cpp)",
-};
+const PROVIDERS: readonly TranslateProvider[] = ["libretranslate", "openai"];
 
 /** Minimal DOM surface the UI needs; lets tests drive it without a browser. */
 export interface UiRoot {
@@ -44,151 +41,148 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
 export function mountPhoneUiInto(root: UiRoot, ports: PhoneUiPorts): void {
   const render = (notice = ""): void => {
-    root.innerHTML = template(ports.getData(), notice);
+    const locale = ports.getLocale?.() ?? "en";
+    try {
+      const html = globalThis.document?.documentElement;
+      if (html) html.lang = locale;
+    } catch { /* no document outside the WebView */ }
+    root.innerHTML = template(ports.getData(), notice, locale);
     wire(root, ports, render);
   };
   render();
 }
 
-export function languageOptions(selected: string, allowAuto: boolean): string {
+/** A language as listed in the pickers: its name in the UI language, plus its own name. */
+function languageLabel(code: string, native: string, locale: Locale): string {
+  const name = t(locale, "l." + code);
+  return name === native ? name : name + " — " + native;
+}
+
+export function languageOptions(selected: string, allowAuto: boolean, locale: Locale = "en"): string {
   const value = selectValueFor(selected, allowAuto);
   const options = [
-    ...(allowAuto ? [{ code: AUTO, label: "Detect automatically" }] : []),
-    ...LANGUAGES.map((l) => ({
-      code: l.code,
-      label: l.name === l.native ? l.name : l.name + " — " + l.native,
-    })),
-    { code: CUSTOM, label: "Other (enter code)…" },
+    ...(allowAuto ? [{ code: AUTO, label: t(locale, "p.auto") }] : []),
+    ...LANGUAGES.map((l) => ({ code: l.code, label: languageLabel(l.code, l.native, locale) })),
+    { code: CUSTOM, label: t(locale, "p.custom") },
   ];
   return options.map((o) =>
     '<option value="' + escapeHtml(o.code) + '"' + (o.code === value ? " selected" : "") + ">" +
     escapeHtml(o.label) + "</option>").join("");
 }
 
-function languageField(id: string, label: string, code: string, allowAuto: boolean, hint: string): string {
+function languageField(
+  id: string, label: string, code: string, allowAuto: boolean, hint: string, locale: Locale,
+): string {
   const isCustom = selectValueFor(code, allowAuto) === CUSTOM;
   return `
     <label for="${id}">${label}</label>
-    <select id="${id}">${languageOptions(code, allowAuto)}</select>
+    <select id="${id}">${languageOptions(code, allowAuto, locale)}</select>
     <input id="${id}-custom" type="text" ${isCustom ? "" : "hidden"}
-      value="${isCustom ? escapeHtml(code) : ""}" placeholder="${hint}" aria-label="${label} code" />`;
+      value="${isCustom ? escapeHtml(code) : ""}" placeholder="${escapeHtml(hint)}" aria-label="${escapeHtml(t(locale, "p.codeLabel", { label }))}" />`;
 }
 
-function template(data: BabelData, notice: string): string {
+function template(data: BabelData, notice: string, locale: Locale): string {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const secret = (value: string | undefined): string => escapeHtml(maskSecret(value, locale));
   const openai = data.translateProvider === "openai";
+  // A server section carrying a warning stays open, so the warning is seen.
+  const sttOpen = isPlainHttp(data.sttUrl) ? " open" : "";
+  const trOpen = isPlainHttp(data.translateUrl) || isPlainHttp(data.llmUrl) ? " open" : "";
   return `
   <header class="brand">
     <span class="brand-mark">Quietglass</span>
     <h1>Babel Glass</h1>
   </header>
 
+  <section class="card compact">${languageSelect(locale)}</section>
+
   <p id="notice" class="notice" ${notice ? "" : "hidden"}>${escapeHtml(notice)}</p>
 
   ${usesMockStt(data) ? `
   <section class="card">
-    <h2>Using the mock recogniser</h2>
-    <p class="hint">
-      No speech server is configured, so Babel Glass emits fixed placeholder
-      text and the glasses show <strong>MOCK</strong>. It exists so the app can
-      be tried without a server — it does not transcribe anything.
-    </p>
+    <h2>${x("p.mockTitle")}</h2>
+    <p class="hint">${x("p.mockBody", { mock: x("g.mock") })}</p>
   </section>` : ""}
 
   <section class="card">
-    <h2>Speech recognition</h2>
-    <label for="stt">Server (WebSocket)</label>
-    <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="wss://your-host:9000/asr" />
-    <p class="hint">
-      Leave empty to use the mock. Point this at your own
-      <code>faster-whisper</code> or WhisperX server — see the README for the
-      wire format, which is about a dozen lines of Python.
-    </p>
-    ${isPlainHttp(data.sttUrl) ? '<p class="hint"><small class="warn">unencrypted ws:// — audio travels in the clear</small></p>' : ""}
+    <h2>${x("p.sttTitle")}</h2>
+    ${languageField("source", x("p.source"), data.sourceLanguage, true, x("p.codeHintSource"), locale)}
+    <p class="hint">${x("p.sourceHint")}</p>
 
-    <label for="stt-token">Token (optional) — <em>${escapeHtml(maskSecret(data.sttToken))}</em></label>
-    <input id="stt-token" type="password" placeholder="sent in the handshake" />
+    <details class="advanced"${sttOpen}>
+      <summary>${x("p.advanced")}</summary>
+      <label for="stt">${x("p.sttServer")}</label>
+      <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="wss://your-host:9000/asr" />
+      <p class="hint">${x("p.sttServerHint")}</p>
+      ${isPlainHttp(data.sttUrl) ? `<p class="hint"><small class="warn">${x("p.warnWs")}</small></p>` : ""}
 
-    ${languageField("source", "Spoken language", data.sourceLanguage, true, "e.g. be, ru, de-AT")}
-    <p class="hint">
-      For Belarusian choose it explicitly — automatic detection often reports
-      Belarusian speech as Russian.
-    </p>
+      <label for="stt-token">${x("p.sttToken")} — <em>${secret(data.sttToken)}</em></label>
+      <input id="stt-token" type="password" placeholder="${escapeHtml(x("p.sttTokenPlaceholder"))}" />
+    </details>
   </section>
 
   <section class="card">
-    <h2>Translation</h2>
-    <label for="provider">Translation server</label>
-    <select id="provider">
-      ${(Object.keys(PROVIDER_LABELS) as TranslateProvider[]).map((p) =>
-        '<option value="' + p + '"' + (p === data.translateProvider ? " selected" : "") + ">" +
-        escapeHtml(PROVIDER_LABELS[p]) + "</option>").join("")}
-    </select>
+    <h2>${x("p.trTitle")}</h2>
+    ${languageField("target", x("p.target"), data.targetLanguage, false, x("p.codeHintTarget"), locale)}
 
-    <div id="libre-fields" ${openai ? "hidden" : ""}>
-      <label for="translate">Endpoint</label>
-      <input id="translate" type="text" value="${escapeHtml(data.translateUrl)}" placeholder="https://your-host:5000/translate" />
-      <p class="hint">
-        LibreTranslate, or the NLLB server in <code>examples/translate-server.py</code>
-        (needed for Belarusian — LibreTranslate has no Belarusian model).
-      </p>
-      ${isPlainHttp(data.translateUrl) ? '<p class="hint"><small class="warn">unencrypted http://</small></p>' : ""}
-      <label for="translate-key">API key (optional) — <em>${escapeHtml(maskSecret(data.translateKey))}</em></label>
-      <input id="translate-key" type="password" placeholder="sent in the request body" />
-    </div>
+    <label class="check"><input id="translit" type="checkbox" ${data.transliterateOriginal ? "checked" : ""} /> ${x("p.translit")}</label>
+    <p class="hint">${x("p.translitHint")}</p>
 
-    <div id="llm-fields" ${openai ? "" : "hidden"}>
-      <label for="llm-url">Server base URL</label>
-      <input id="llm-url" type="text" value="${escapeHtml(data.llmUrl)}" placeholder="http://your-host:11434/v1" />
-      <label for="llm-model">Model</label>
-      <input id="llm-model" type="text" value="${escapeHtml(data.llmModel)}" placeholder="qwen2.5:7b-instruct" />
-      ${isPlainHttp(data.llmUrl) ? '<p class="hint"><small class="warn">unencrypted http://</small></p>' : ""}
-      <label for="llm-key">Bearer token (optional) — <em>${escapeHtml(maskSecret(data.llmKey))}</em></label>
-      <input id="llm-key" type="password" placeholder="sent as Authorization: Bearer" />
-    </div>
+    <p class="hint">${x("p.trState", { state: translationEnabled(data) ? x("p.on") : x("p.off") })}</p>
 
-    ${languageField("target", "Translate into", data.targetLanguage, false, "e.g. de, en")}
+    <details class="advanced"${trOpen}>
+      <summary>${x("p.advanced")}</summary>
+      <label for="provider">${x("p.trServer")}</label>
+      <select id="provider">
+        ${PROVIDERS.map((p) =>
+          '<option value="' + p + '"' + (p === data.translateProvider ? " selected" : "") + ">" +
+          escapeHtml(x("p.provider." + p)) + "</option>").join("")}
+      </select>
 
-    <label class="check"><input id="translit" type="checkbox" ${data.transliterateOriginal ? "checked" : ""} /> Show original as Latin transliteration</label>
-    <p class="hint">
-      Shows Russian, Belarusian or Ukrainian on the glasses in Latin letters
-      (Privet, kak dela?) — for if the glasses font cannot draw Cyrillic.
-      The translation is never changed.
-    </p>
+      <div id="libre-fields" ${openai ? "hidden" : ""}>
+        <label for="translate">${x("p.endpoint")}</label>
+        <input id="translate" type="text" value="${escapeHtml(data.translateUrl)}" placeholder="https://your-host:5000/translate" />
+        <p class="hint">${x("p.endpointHint")}</p>
+        ${isPlainHttp(data.translateUrl) ? `<p class="hint"><small class="warn">${x("p.warnHttp")}</small></p>` : ""}
+        <label for="translate-key">${x("p.apiKey")} — <em>${secret(data.translateKey)}</em></label>
+        <input id="translate-key" type="password" placeholder="${escapeHtml(x("p.apiKeyPlaceholder"))}" />
+      </div>
 
-    <p class="hint">
-      Translation is currently <strong>${translationEnabled(data) ? "on" : "off"}</strong>.
-    </p>
+      <div id="llm-fields" ${openai ? "" : "hidden"}>
+        <label for="llm-url">${x("p.llmUrl")}</label>
+        <input id="llm-url" type="text" value="${escapeHtml(data.llmUrl)}" placeholder="http://your-host:11434/v1" />
+        <label for="llm-model">${x("p.llmModel")}</label>
+        <input id="llm-model" type="text" value="${escapeHtml(data.llmModel)}" placeholder="qwen2.5:7b-instruct" />
+        ${isPlainHttp(data.llmUrl) ? `<p class="hint"><small class="warn">${x("p.warnHttp")}</small></p>` : ""}
+        <label for="llm-key">${x("p.llmKey")} — <em>${secret(data.llmKey)}</em></label>
+        <input id="llm-key" type="password" placeholder="${escapeHtml(x("p.llmKeyPlaceholder"))}" />
+      </div>
+    </details>
   </section>
 
   <section class="card">
-    <h2>Mode</h2>
+    <h2>${x("p.modeTitle")}</h2>
     <select id="mode">
       ${(Object.keys(MODE_PRESETS) as CaptionMode[]).map((mode) =>
         '<option value="' + mode + '"' + (mode === data.mode ? " selected" : "") + ">" +
-        escapeHtml(MODE_LABELS[mode]) + "</option>").join("")}
+        escapeHtml(x("p.mode." + mode)) + "</option>").join("")}
     </select>
-    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> Invert swipe direction</label>
-    <button id="save" type="button">Save</button>
+    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
+    <button id="save" type="button">${x("p.save")}</button>
   </section>
 
   <section class="card">
-    <h2>Controls on the glasses</h2>
+    <h2>${x("p.controlsTitle")}</h2>
     <table class="keys">
-      <tr><td>Tap</td><td>Start / stop captioning</td></tr>
-      <tr><td>Swipe</td><td>Scroll back through what was said</td></tr>
-      <tr><td>Hold</td><td>Clear the transcript</td></tr>
-      <tr><td>Double tap</td><td>Leave — stops the microphone</td></tr>
+      <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
+      <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
+      <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
+      <tr><td>${x("p.double")}</td><td>${x("p.doubleDo")}</td></tr>
     </table>
-    <p class="hint">
-      Captioning never starts by itself, and while the microphone is open the
-      glasses show <strong>● MIC</strong> at all times.
-    </p>
+    <p class="hint">${x("p.controlsHint", { mic: x("g.mic") })}</p>
   </section>
 
-  <footer class="hint">
-    Audio is streamed only to the server you configure and is never stored.
-    The transcript lives in memory for the session and is discarded when you close the app.
-  </footer>`;
+  <footer class="hint">${x("p.footer")}</footer>`;
 }
 
 /** Raw field values as read from the form. */
@@ -212,8 +206,8 @@ export type FormResult =
   | { readonly ok: true; readonly data: BabelData }
   | { readonly ok: false; readonly errors: readonly string[] };
 
-/** Validates the form and merges it into the stored settings. Pure. */
-export function applyForm(current: BabelData, form: FormValues): FormResult {
+/** Validates the form and merges it into the stored settings. Pure; errors come in `locale`. */
+export function applyForm(current: BabelData, form: FormValues, locale: Locale = "en"): FormResult {
   const sttUrl = form.sttUrl.trim();
   const translateUrl = form.translateUrl.trim();
   const llmUrl = form.llmUrl.trim();
@@ -223,12 +217,12 @@ export function applyForm(current: BabelData, form: FormValues): FormResult {
   const errors = [
     ...validateWsUrl(sttUrl).errors,
     ...validateHttpUrl(translateUrl).errors,
-    ...validateHttpUrl(llmUrl, "LLM server URL").errors,
+    ...validateHttpUrl(llmUrl, "llm").errors,
   ];
   if (translateProvider === "openai" && llmUrl && !llmModel) {
-    errors.push("Enter the model name the LLM server should use.");
+    errors.push("e.model");
   }
-  if (errors.length > 0) return { ok: false, errors };
+  if (errors.length > 0) return { ok: false, errors: errors.map((key) => t(locale, key)) };
 
   const keep = <K extends "sttToken" | "translateKey" | "llmKey">(key: K, typed: string) =>
     // An empty field means "leave the stored secret alone", not "clear it".
@@ -263,6 +257,12 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
     void ports.setData({ ...ports.getData(), ...change });
   };
 
+  byId<HTMLSelectElement>("language")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    ports.setLocale?.(value === "de" ? "de" : "en");
+    render();
+  });
+
   byId<HTMLSelectElement>("mode")?.addEventListener("change", (event) => {
     commit({ mode: (event.target as HTMLSelectElement).value as CaptionMode });
   });
@@ -287,6 +287,7 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
   }
 
   byId<HTMLButtonElement>("save")?.addEventListener("click", () => {
+    const locale = ports.getLocale?.() ?? "en";
     const result = applyForm(ports.getData(), {
       sttUrl: value("stt"),
       sttToken: value("stt-token"),
@@ -301,14 +302,14 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
       target: value("target"),
       targetCustom: value("target-custom"),
       transliterate: byId<HTMLInputElement>("translit")?.checked ?? false,
-    });
+    }, locale);
     if (!result.ok) {
       // Report in place: re-rendering would throw away what was typed.
       const notice = byId<HTMLElement>("notice");
       if (notice) { notice.textContent = result.errors.join(" "); notice.hidden = false; }
       return;
     }
-    void ports.setData(result.data).then(() => render("Saved."));
+    void ports.setData(result.data).then(() => render(t(locale, "p.saved")));
   });
 }
 

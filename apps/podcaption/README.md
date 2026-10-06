@@ -28,3 +28,7 @@ npm run sim
 ```
 
 Die Bridge akzeptiert ausschließlich Transkript-URLs, die im konfigurierten Feed vorkommen. Noch nicht auf echter G2-Hardware geprüft.
+
+## Datenschutz
+
+Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).

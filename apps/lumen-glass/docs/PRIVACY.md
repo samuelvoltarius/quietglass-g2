@@ -1,8 +1,25 @@
 # Lumen Glass — privacy
 
+## Kurzfassung (Deutsch)
+
+Lumen Glass spricht nur mit deinem eigenen LUMEN-Server unter der Adresse, die
+du einträgst. Fotos nimmst du bewusst mit der Handykamera auf; sie gehen an
+LUMEN und werden von der App nicht gespeichert. Gespeichert sind nur die
+LUMEN-Adresse und ggf. ein Sitzungs-Cookie. Kein Konto, kein Tracking.
+Deinstallieren löscht alles.
+
 ## Short version
 
 Talks to your LUMEN and to nothing else.
+
+## Permissions
+
+| Permission (`app.json`) | Why | Used for nothing else |
+|---|---|---|
+| `network` (`http`, `https`) | Reach your LUMEN at the address you enter | No other host is contacted |
+
+Photos use the SDK's user-initiated camera picker, which needs no permission
+entry; the glasses have no camera.
 
 ## What is stored
 
@@ -43,6 +60,11 @@ Making LUMEN send CORS headers does not grant anyone access to it. It only
 tells the browser which page may read an answer it already received. Keep the
 origin list specific rather than opening it to everything; the patch notes
 explain why.
+
+## Removing your data
+
+Clear the address and session cookie in the phone app to forget your LUMEN.
+Uninstalling removes everything.
 
 ## Third-party code
 

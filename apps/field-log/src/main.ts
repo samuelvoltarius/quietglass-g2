@@ -11,6 +11,7 @@ import {
   activeInspection, hasSpeechServer, load, nextInspectionId, save, upsertInspection, usesMockStt, type FieldLogData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { createExitRequest } from "./exit";
 import { getLocale, type Locale } from "./i18n";
 import { autoTitle, quickNotes, t } from "./messages";
 
@@ -41,7 +42,7 @@ async function boot(): Promise<void> {
   let status: SttStatus = "idle";
   let lastView: LogView | null = null;
   let pageReady = false;
-  /** Set once the user leaves; nothing may be drawn on a closed page. */
+  /** Set once the user confirms the exit dialog; nothing may be drawn on a closed page. */
   let closed = false;
   /** True while the speech server and microphone are being opened. */
   let starting = false;
@@ -261,15 +262,42 @@ async function boot(): Promise<void> {
 
   let clock: ReturnType<typeof setInterval> | undefined;
 
-  /** Leaving: microphone and speech connection off first, then the page. */
-  const close = (): void => {
+  /** The microphone was paused for the exit dialog and comes back if the user stays. */
+  let micPausedForExit = false;
+
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: async () => {
+      closed = true;
+      micPausedForExit = false;
+      clearInterval(clock);
+      await stopMic().catch((error: unknown) => { console.warn("[fieldlog] stopping the microphone failed:", error); });
+    },
+    onStayed: async () => {
+      if (!micPausedForExit) return;
+      micPausedForExit = false;
+      if (phase !== "recording") return;
+      // The speech connection stayed open, so the dictation simply continues.
+      const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
+      if (!ok) {
+        console.warn("[fieldlog] microphone was refused");
+        await endRecording();
+        await draw();
+      }
+    },
+  }, "fieldlog");
+
+  /**
+   * Double tap asks the system exit dialog. The microphone goes off before
+   * the dialog appears, so nothing is heard while the user decides; cancelling
+   * turns it back on and the dictation carries on.
+   */
+  const close = async (): Promise<void> => {
     if (closed) return;
-    closed = true;
-    clearInterval(clock);
-    stopMic()
-      .catch((error: unknown) => { console.warn("[fieldlog] stopping the microphone failed:", error); })
-      .then(() => bridge.shutDownPageContainer())
-      .catch((error: unknown) => { console.warn("[fieldlog] shutdown failed:", error); });
+    if (phase === "recording" && !micPausedForExit) {
+      micPausedForExit = true;
+      await bridge.audioControl(false).catch(() => undefined);
+    }
+    await requestExit();
   };
 
   bridge.onEvenHubEvent((event) => {
@@ -329,7 +357,7 @@ async function boot(): Promise<void> {
         break;
 
       case "doubleClick":
-        close();
+        void close();
         return;
 
       default:

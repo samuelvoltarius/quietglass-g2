@@ -1,5 +1,7 @@
 import type { Ride, RideStop } from "../transit/types";
 import { metresBetween } from "../transit/types";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Working out where along a ride you currently are.
@@ -166,10 +168,9 @@ export function trackRide(
  * "jetzt" rather than "0 min", and an overdue stop stays "jetzt" instead of
  * counting into negative numbers, which would read as an error.
  */
-export function etaLabel(stop: RideStop, now: Date): string {
+export function etaLabel(stop: RideStop, now: Date, locale: Locale): string {
   const minutes = Math.round((stop.expected.getTime() - now.getTime()) / 60000);
-  if (minutes <= 0) return "jetzt";
-  if (minutes === 1) return "1 min";
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (minutes <= 0) return t(locale, "g.now");
+  if (minutes < 60) return t(locale, "g.minutes", { minutes });
+  return t(locale, "g.hoursMinutes", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
 }

@@ -1,5 +1,13 @@
 # FlowList — privacy
 
+## Kurzfassung (Deutsch)
+
+FlowList hat keinen Netzwerk-Code und fordert keine Berechtigungen an. Deine
+Checklisten und Einstellungen bleiben im App-Speicher auf deinem Handy; der
+Fortschritt eines Durchgangs nur im Arbeitsspeicher. Export nur über das
+Teilen-Menü deines Handys. Kein Konto, kein Tracking. Deinstallieren löscht
+alles.
+
 ## Short version
 
 FlowList contains no network code. It cannot send your checklists anywhere,

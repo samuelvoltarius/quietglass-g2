@@ -2,6 +2,7 @@ import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { Inspection, Severity } from "../log/entries";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { isCsvFormat, type CsvFormat } from "../csv";
 
 /**
  * Inspections live in the Even app's per-app storage on the phone.
@@ -24,6 +25,8 @@ export interface FieldLogData {
   readonly invertScroll: boolean;
   /** The user's own quick notes; empty means the defaults in the app language. */
   readonly quickNotes: readonly string[];
+  /** CSV format picked on the phone; absent means the default for the app language. */
+  readonly csvFormat?: CsvFormat;
 }
 
 const KEY = "quietglass.fieldlog.v1";
@@ -150,6 +153,7 @@ export function parseData(raw: string): FieldLogData {
       quickNotes: Array.isArray(value.quickNotes)
         ? value.quickNotes.filter((note): note is string => typeof note === "string" && note.trim() !== "")
         : [],
+      ...(isCsvFormat(value.csvFormat) ? { csvFormat: value.csvFormat } : {}),
     };
   } catch {
     return EMPTY_DATA;

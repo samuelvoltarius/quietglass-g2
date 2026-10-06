@@ -9,11 +9,11 @@ export const messages: Messages = {
   de: {
     // Glasses
     "g.title": "PostureLens",
-    "g.first1": "Setz dich gerade hin und tippe einmal,",
-    "g.first2": "um deine Haltung zu speichern.",
+    "g.first1": "Setz dich gerade hin und",
+    "g.first2": "tippe einmal zum Speichern.",
     "g.firstFooter": "Tippen = Haltung speichern",
-    "g.saved1": "Gespeichert. Ich melde mich, wenn du",
-    "g.saved2": "länger nach vorne geneigt sitzt.",
+    "g.saved1": "Gespeichert. Ich melde mich, wenn",
+    "g.saved2": "du zu lange vorgebeugt sitzt.",
     "g.sensorOff1": "Kein Bewegungssensor erreichbar.",
     "g.sensorOff2": "Setz die Brille auf und",
     "g.sensorOff3": "öffne die App neu.",

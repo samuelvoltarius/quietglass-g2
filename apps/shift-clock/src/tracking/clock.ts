@@ -172,39 +172,73 @@ export function formatHours(totalSecs: number): string {
 }
 
 /**
- * CSV for a spreadsheet or an invoice. Machine-readable in every language:
- * comma-separated, UTF-8, RFC 4180 quoting, start/end as ISO 8601 in UTC, the
- * date as the local YYYY-MM-DD, and hours with a decimal point ("1.50"). Only
- * the header row follows the app language.
+ * The two export formats.
+ *
+ * - `standard`: machine-readable in every language — comma-separated, UTF-8,
+ *   RFC 4180 quoting, start/end as ISO 8601 in UTC, the date as the local
+ *   YYYY-MM-DD and hours with a decimal point ("1.50").
+ * - `excel-de`: what German and Austrian Excel opens correctly with a double
+ *   click — semicolon-separated, CRLF line ends, a UTF-8 byte order mark (or
+ *   Excel reads "Küche" as "KÃ¼che"), local dates and times as
+ *   "07.10.2026 14:05" and hours with a decimal comma ("1,50").
+ *
+ * Only the header row follows the app language in both.
  */
-export function toCsv(entries: readonly TimeEntry[], locale: Locale = "en"): string {
-  const rows = [t(locale, "x.csvHeader")];
+export type CsvFormat = "excel-de" | "standard";
+export const CSV_FORMATS: readonly CsvFormat[] = ["excel-de", "standard"];
+
+/** German-speaking users most likely open the file in German Excel. */
+export function defaultCsvFormat(locale: Locale): CsvFormat {
+  return locale === "de" ? "excel-de" : "standard";
+}
+
+const BOM = "\uFEFF";
+
+export function toCsv(entries: readonly TimeEntry[], locale: Locale = "en", format: CsvFormat = "standard"): string {
+  const excel = format === "excel-de";
+  const separator = excel ? ";" : ",";
+  const newline = excel ? "\r\n" : "\n";
+  const rows = [t(locale, "x.csvHeader").split(",").join(separator)];
   for (const entry of entries) {
     const start = new Date(entry.startedAt);
-    rows.push([
-      // The day the work belongs to is the local one; the ISO times stay UTC.
-      localDate(start),
-      csvField(entry.project),
-      start.toISOString(),
-      new Date(entry.endedAt).toISOString(),
-      String(entrySeconds(entry)),
-      formatHours(entrySeconds(entry)),
-    ].join(","));
+    const end = new Date(entry.endedAt);
+    const seconds = entrySeconds(entry);
+    // Numbers are written bare: they are never text a spreadsheet could run.
+    rows.push((excel
+      ? [localDateDe(start), csvText(entry.project, separator), localDateTimeDe(start), localDateTimeDe(end),
+        String(seconds), formatHours(seconds).replace(".", ",")]
+      : [
+        // The day the work belongs to is the local one; the ISO times stay UTC.
+        localDate(start), csvText(entry.project, separator), start.toISOString(), end.toISOString(),
+        String(seconds), formatHours(seconds)]
+    ).join(separator));
   }
-  return rows.join("\n") + "\n";
+  return (excel ? BOM : "") + rows.join(newline) + newline;
 }
 
 /**
- * Quotes a field when it holds a separator, a quote or a line break, and
- * defuses spreadsheet formulas: a project name starting with `=`, `+`, `-` or
- * `@` would otherwise be evaluated when the export is opened.
+ * A text field: quoted when it holds the separator, a quote or a line break,
+ * and defused against spreadsheet formulas — a project name starting with
+ * `=`, `+`, `-` or `@` would otherwise be evaluated when the export is opened.
  */
-function csvField(value: string): string {
+function csvText(value: string, separator: string): string {
   const safe = /^[=+\-@\t\r]/.test(value) ? "'" + value : value;
-  return /[",\r\n]/.test(safe) ? '"' + safe.split('"').join('""') + '"' : safe;
+  const special = separator === ";" ? /[";\r\n]/ : /[",\r\n]/;
+  return special.test(safe) ? '"' + safe.split('"').join('""') + '"' : safe;
 }
 
+const pad = (n: number): string => String(n).padStart(2, "0");
+
 function localDate(date: Date): string {
-  const pad = (n: number): string => String(n).padStart(2, "0");
   return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
+}
+
+/** "07.10.2026", which German Excel reads as a date. */
+function localDateDe(date: Date): string {
+  return pad(date.getDate()) + "." + pad(date.getMonth() + 1) + "." + date.getFullYear();
+}
+
+/** "07.10.2026 14:05", which German Excel reads as a date and time. */
+function localDateTimeDe(date: Date): string {
+  return localDateDe(date) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
 }

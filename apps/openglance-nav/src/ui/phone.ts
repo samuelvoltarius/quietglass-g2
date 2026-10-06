@@ -197,12 +197,15 @@ function template(
     <button id="save-url" type="button">${t("p.saveServers")}</button>
     <label class="check"><input id="demo" type="checkbox"${data.demo ? " checked" : ""} /> ${t("p.demo")}</label>
     <label class="check"><input id="invert" type="checkbox"${data.invertScroll ? " checked" : ""} /> ${t("p.invertSwipe")}</label>
+    <label class="check"><input id="streets" type="checkbox"${data.streets ? " checked" : ""} /> ${t("p.streets")}</label>
+    <p class="hint">${escapeHtml(t("p.streetsHint"))}</p>
     ${languageSelect(locale)}
   </details>
 
   <footer class="hint">
     <p>${t("p.attribution")}</p>
     <p>${escapeHtml(t("p.routedBy", { provider: routerName }))} · ${escapeHtml(t("p.searchBy", { provider: searchName }))}</p>
+    ${data.streets && !usesMockRouter(data) ? `<p>${escapeHtml(t("p.streetsBy"))}</p>` : ""}
     <p>${escapeHtml(t("p.privacy"))}</p>
   </footer>`;
 }
@@ -241,6 +244,10 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
 
   byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
     commit({ ...data, invertScroll: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
+  byId<HTMLInputElement>("streets")?.addEventListener("change", (event) => {
+    commit({ ...data, streets: Boolean((event.target as HTMLInputElement).checked) });
   });
 
   byId<HTMLSelectElement>("language")?.addEventListener("change", (event) => {

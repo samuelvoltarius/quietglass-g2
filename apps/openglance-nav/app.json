@@ -9,10 +9,12 @@
   "permissions": [
     {
       "name": "network",
-      "desc": "Calculate routes with the free OpenStreetMap routing server of FOSSGIS e.V. and search places with Photon (komoot), or with your own servers if you set them up.",
+      "desc": "Calculate routes with the free OpenStreetMap routing server of FOSSGIS e.V., search places with Photon (komoot), and load the streets of the overview map from OpenStreetMap via the public Overpass API (overpass-api.de), or use your own servers if you set them up.",
       "whitelist": [
         "https://valhalla1.openstreetmap.de",
         "https://photon.komoot.io",
+        "https://overpass-api.de",
+        "https://overpass.private.coffee",
         "http://*",
         "https://*"
       ]

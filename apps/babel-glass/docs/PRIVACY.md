@@ -1,8 +1,25 @@
 # Babel Glass — privacy
 
+## Kurzfassung (Deutsch)
+
+Babel Glass hört nur zu, wenn du auf der Brille tippst; solange das Mikrofon
+offen ist, zeigt die Brille **● MIC**. Der Ton geht ausschließlich an den
+Spracherkennungs-Server, den du selbst einträgst, fertige Sätze an den
+Übersetzungs-Server deiner Wahl. Ohne Server läuft ein Demo-Modus, bei dem kein
+Ton das Handy verlässt. Ton und Mitschrift werden nie gespeichert; gespeichert
+sind nur deine Einstellungen. Kein Konto, kein Tracking. Deinstallieren löscht
+alles.
+
 ## Short version
 
 Audio goes only to the server you configure. Nothing is stored.
+
+## Permissions
+
+| Permission (`app.json`) | Why | Used for nothing else |
+|---|---|---|
+| `g2-microphone` | Hear speech while captions are switched on | Never on launch, never in the background; always shown as **● MIC** |
+| `network` (`http`, `https`, `ws`, `wss`) | Reach the speech and translation servers you enter | No other host is contacted |
 
 ## The microphone
 
@@ -65,6 +82,12 @@ and always showing a visible indicator that the microphone is live.
 - No analytics, telemetry or crash reporting.
 - No account, login or device identifier.
 - No advertising or third-party SDKs.
+
+## Removing your data
+
+Clear the server addresses and tokens in the phone app to forget them. The
+transcript is never stored, so there is nothing else to delete. Uninstalling
+removes everything.
 
 ## Third-party code
 

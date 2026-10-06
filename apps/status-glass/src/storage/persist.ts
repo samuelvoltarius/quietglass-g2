@@ -1,4 +1,6 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import type { Locale } from "../i18n";
+import { t } from "../messages";
 
 /**
  * Source configuration, stored in the Even app's per-app storage on the phone.
@@ -70,25 +72,25 @@ export interface UrlCheck {
  * without certificates — refusing it would just push people to disable checks
  * elsewhere. The phone UI warns about it instead.
  */
-export function validateUrl(url: string): UrlCheck {
+export function validateUrl(url: string, locale: Locale = "en"): UrlCheck {
   const errors: string[] = [];
   const trimmed = url.trim();
   if (!trimmed) {
-    errors.push("URL is required.");
+    errors.push(t(locale, "v.urlRequired"));
     return { valid: false, errors };
   }
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      errors.push("URL must start with http:// or https://.");
+      errors.push(t(locale, "v.urlScheme"));
     }
     // A password in the URL is shown in full on the sources list and refused
     // by fetch outright ("unreachable"); it belongs in the token field.
     if (parsed.username || parsed.password) {
-      errors.push("Put credentials in the token field, not in the URL.");
+      errors.push(t(locale, "v.urlCredentials"));
     }
   } catch {
-    errors.push("URL is not valid.");
+    errors.push(t(locale, "v.urlInvalid"));
   }
   return { valid: errors.length === 0, errors };
 }
@@ -136,7 +138,7 @@ export function parseData(raw: string): StatusData {
 }
 
 /** Shows that a token exists without revealing it. */
-export function maskToken(token: string | undefined): string {
-  if (!token) return "none";
-  return "set (" + token.length + " chars)";
+export function maskToken(token: string | undefined, locale: Locale = "en"): string {
+  if (!token) return t(locale, "p.tokenNone");
+  return t(locale, "p.tokenSet", { count: token.length });
 }

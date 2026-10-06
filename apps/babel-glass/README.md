@@ -5,6 +5,26 @@
 Speech appears as text in your field of view, optionally translated. The
 difference from everything else on the G2: **the recogniser is yours.**
 
+## Kurz auf Deutsch
+
+Babel Glass zeigt dir, was um dich herum gesprochen wird, als Untertitel auf
+der Brille — auf Wunsch gleich übersetzt (z. B. Russisch oder Belarussisch →
+Deutsch). Die Spracherkennung läuft auf **deinem eigenen** Server, nicht in
+einer fremden Cloud. Ohne Server zeigt die App feste Demo-Sätze.
+
+**So geht's:** Einmal auf den Bügel tippen startet die Untertitel, nochmal
+tippen stoppt sie. Wischen blättert zurück, Halten löscht die Mitschrift,
+Doppeltippen beendet die App. Solange das Mikrofon offen ist, steht
+**● MIKRO** auf der Brille.
+
+Die App gibt es auf Deutsch und Englisch; sie folgt der Sprache deines
+Handys. Umstellen kannst du das oben auf der Handy-Seite unter „Sprache“ —
+die Brille wechselt sofort mit. Die Server trägst du auf der Handy-Seite
+unter „Erweitert: Server“ ein.
+
+The app is available in German and English: it follows the phone language
+and can be switched at the top of the phone page.
+
 ---
 
 ![On the glasses](docs/screenshot.png)

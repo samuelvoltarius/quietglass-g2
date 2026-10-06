@@ -51,6 +51,7 @@ describe("the phone settings page", () => {
       isSeeded: () => false,
       getStops: () => [],
       refresh: () => undefined,
+      getLocale: () => "de",
     });
   });
 

@@ -10,6 +10,8 @@ import { AgentNarrator, createBrowserSpeechEngine } from "./speech/narrator";
 import { createBackend, describeBackendError, type AgentBackend } from "./providers/backend";
 import { DecisionGate } from "./input/decision";
 import { decisionOnScreen, routeGesture } from "./input/route";
+import { createExitRequest } from "./exit";
+import { getLocale, setLocale, type Locale } from "./i18n";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const DEMO_SESSION: Session = {
@@ -67,7 +69,9 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let settings: Settings = await load(bridge);
-  const narrator = new AgentNarrator(createBrowserSpeechEngine(), () => settings);
+  /** App language for glasses and phone; the narrator keeps its own setting. */
+  let locale: Locale = getLocale();
+  const narrator = new AgentNarrator(createBrowserSpeechEngine(), () => settings, () => locale);
 
   // A stored token always wins; the URL only helps the very first run.
   const seeded = pairingFromUrl(globalThis.location?.search ?? "");
@@ -98,7 +102,7 @@ async function boot(): Promise<void> {
   let generation = 0;
   /** The stream-gap message currently shown, cleared by the next live event. */
   let streamGap: string | null = null;
-  /** Set by a double tap: nothing may draw on, or listen for, the glasses again. */
+  /** Set once the user confirms the exit dialog: nothing may draw on, or listen for, the glasses again. */
   let closed = false;
   const gate = new DecisionGate();
 
@@ -108,7 +112,7 @@ async function boot(): Promise<void> {
   const backend = (): AgentBackend => activeBackend;
 
   const currentView = (): AgentView =>
-    screen === "sessions" ? sessionList(sessions, selected) : buildView(state, new Date());
+    screen === "sessions" ? sessionList(sessions, selected, locale) : buildView(state, new Date(), locale);
 
   const draw = async (): Promise<void> => {
     if (closed) return;
@@ -283,6 +287,18 @@ async function boot(): Promise<void> {
   // The elapsed counter moves with the clock even when no event arrives.
   const ticker = setInterval(() => { void draw(); }, 1000);
 
+  const requestExit = createExitRequest(bridge, {
+    onConfirmed: () => {
+      closed = true;
+      generation += 1;
+      clearInterval(ticker);
+      stopStream?.();
+      stopStream = null;
+      activeBackend.dispose();
+      narrator.stop();
+    },
+  }, "agent-glass");
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: false });
@@ -339,14 +355,8 @@ async function boot(): Promise<void> {
         return;
 
       case "exit":
-        closed = true;
-        generation += 1;
-        clearInterval(ticker);
-        stopStream?.();
-        stopStream = null;
-        activeBackend.dispose();
-        narrator.stop();
-        void bridge.shutDownPageContainer();
+        // System exit dialog; the stream and narration keep going until the user confirms.
+        void requestExit();
         return;
 
       default:
@@ -360,6 +370,13 @@ async function boot(): Promise<void> {
   });
 
   mountPhoneUi({
+    getLocale: () => locale,
+    setLocale: (next) => {
+      locale = next;
+      setLocale(next);
+      // The glasses follow at once, not on the next tick or event.
+      void draw();
+    },
     getSettings: () => settings,
     setSettings: async (next) => {
       const reconnect = next.provider !== settings.provider

@@ -1,8 +1,12 @@
 # Quietglass — applications for Even Realities G2
 
-Sixteen apps for the [Even Realities G2](https://www.evenrealities.com) smart
-glasses, built on the official Even Hub SDK. The ready-to-use apps follow the
-phone's language in German and English (NextStop: German only).
+Eighteen apps for the [Even Realities G2](https://www.evenrealities.com) smart
+glasses, built on the official Even Hub SDK. Every app speaks German and
+English and follows the phone's language; you can switch it on the phone.
+
+> **Kurz auf Deutsch:** 18 kostenlose Apps für die Even Realities G2, alle auf
+> Deutsch und Englisch. Zehn laufen sofort ohne Einrichtung, acht verbinden sich
+> mit einem eigenen Server. Keine Konten, keine API-Schlüssel, kein Abo.
 
 They come in two groups:
 
@@ -31,30 +35,32 @@ See the native-resolution simulator captures in the [screenshot gallery](docs/GA
 
 | App | What it does | Tests |
 |---|---|---|
-| [**FlowList**](apps/flowlist) | Hands-free checklists with branching and critical steps that ask twice. Ships with example lists. | 122 |
-| [**PostureLens**](apps/posture-lens) | Private posture reminder: save your upright position with one tap; it warns only after your head stays forward too long. No camera, no history. | 67 |
-| [**DecibelGuard**](apps/decibel-guard) | Noise dose over time. Computes a level and discards the audio; stores no history. | 78 |
-| [**Cadence**](apps/cadence) | Visual metronome and practice log. The G2 has no speaker, so the beat is visible. | 83 |
-| [**ShiftClock**](apps/shift-clock) | One-tap time tracking onto projects, split correctly at midnight, CSV export. | 85 |
-| [**FieldLog**](apps/field-log) | Walk an inspection hands-free: quick notes, photos from the phone, report export. Dictation is an optional extra (own speech server). | 104 |
-| [**RainLens**](apps/rain-lens) | Weather now, by the hour and for 3 days. Uses your location or a place you type. Data: [Open-Meteo](https://open-meteo.com). | 87 |
-| [**NextStop**](apps/nextstop) | Departures at the stop you are standing at, and the next stop while riding. Works worldwide via [Transitous](https://transitous.org); live Austrian delays (ÖBB) are an optional extra. | 103 |
-| [**OpenGlance**](apps/openglance-nav) | Turn-by-turn navigation with a route overview. Search a place by name; walking, cycling or driving. Routing: [FOSSGIS Valhalla](https://valhalla1.openstreetmap.de), search: [Photon](https://photon.komoot.io), map data © OpenStreetMap contributors. | 166 |
-| [**PodCaption**](apps/podcaption) | Podcast captions from a subtitle file or pasted text. Reading a podcast's RSS transcript is an optional extra. | 82 |
+| [**FlowList**](apps/flowlist) | Hands-free checklists with branching and critical steps that ask twice. Ships with example lists. | 141 |
+| [**PostureLens**](apps/posture-lens) | Private posture reminder: save your upright position with one tap; it warns only after your head stays forward too long. No camera, no history. | 87 |
+| [**DecibelGuard**](apps/decibel-guard) | Noise dose over time. Computes a level and discards the audio; stores no history. | 109 |
+| [**Cadence**](apps/cadence) | Visual metronome and practice log. The G2 has no speaker, so the beat is visible. | 102 |
+| [**ShiftClock**](apps/shift-clock) | One-tap time tracking onto projects, split correctly at midnight, CSV export. | 135 |
+| [**FieldLog**](apps/field-log) | Walk an inspection hands-free: quick notes, photos from the phone, report export. Dictation is an optional extra (own speech server). | 121 |
+| [**RainLens**](apps/rain-lens) | Weather now, by the hour and for 3 days. Uses your location or a place you type. Data: [Open-Meteo](https://open-meteo.com). | 121 |
+| [**NextStop**](apps/nextstop) | Departures at the stop you are standing at, and the next stop while riding. Works worldwide via [Transitous](https://transitous.org); live Austrian delays (ÖBB) are an optional extra. | 133 |
+| [**OpenGlance**](apps/openglance-nav) | Turn-by-turn navigation with a route overview. Search a place by name; walking, cycling or driving. Routing: [FOSSGIS Valhalla](https://valhalla1.openstreetmap.de), search: [Photon](https://photon.komoot.io), map data © OpenStreetMap contributors. | 216 |
+| [**PodCaption**](apps/podcaption) | Podcast captions from a subtitle file or pasted text. Reading a podcast's RSS transcript is an optional extra. | 90 |
 
 ## Self-hosted — for your own server
 
 | App | What it does | You run | Tests |
 |---|---|---|---|
-| [**Babel Glass**](apps/babel-glass) | Live captions and translation — including **Belarusian**, which the G2's built-in Translate does not offer, and Russian into German. | [`whisper-server.py`](apps/babel-glass/examples/whisper-server.py) plus an LLM (vLLM, Ollama) or [`translate-server.py`](apps/babel-glass/examples/translate-server.py) (NLLB) | 142 |
-| [**Status Glass + Home Assistant**](apps/status-glass#home-assistant) | Home Assistant dashboard and allow-listed controls, plus homelab monitoring. The HA token stays in the adapter. | [`home-assistant-adapter.mjs`](apps/status-glass/examples/home-assistant-adapter.mjs) or [`reference-server.mjs`](apps/status-glass/examples/reference-server.mjs) | 103 |
-| [**Agent Glass**](apps/agent-glass) | Use Claude Code, Codex, Hermes or OpenClaw from the G2, with headphone speech and swipe permission decisions. **Proof of concept.** | Even Terminal, Hermes bridge or OpenClaw gateway | 94 |
-| [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. | A LUMEN server | 53 |
-| [**Endurance HUD**](apps/endurance-hud) | Live running and cycling metrics from Garmin Connect IQ, a bike computer or any JSON source. | [`telemetry-bridge.mjs`](apps/endurance-hud/examples/telemetry-bridge.mjs) | 44 |
-| [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions with live prices and open P/L; no trading. | [`market-bridge.mjs`](apps/market-glance/examples/market-bridge.mjs) | 65 |
+| [**Babel Glass**](apps/babel-glass) | Live captions and translation — including **Belarusian**, which the G2's built-in Translate does not offer, and Russian into German. | [`whisper-server.py`](apps/babel-glass/examples/whisper-server.py) plus an LLM (vLLM, Ollama) or [`translate-server.py`](apps/babel-glass/examples/translate-server.py) (NLLB) | 181 |
+| [**Status Glass + Home Assistant**](apps/status-glass#home-assistant) | Home Assistant dashboard and allow-listed controls, plus homelab monitoring. The HA token stays in the adapter. | [`home-assistant-adapter.mjs`](apps/status-glass/examples/home-assistant-adapter.mjs) or [`reference-server.mjs`](apps/status-glass/examples/reference-server.mjs) | 129 |
+| [**Agent Glass**](apps/agent-glass) | Use Claude Code, Codex, Hermes or OpenClaw from the G2, with headphone speech and swipe permission decisions. **Proof of concept.** | Even Terminal, Hermes bridge or OpenClaw gateway | 120 |
+| [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. | A LUMEN server | 73 |
+| [**Endurance HUD**](apps/endurance-hud) | Live running and cycling metrics from Garmin Connect IQ, a bike computer or any JSON source. | [`telemetry-bridge.mjs`](apps/endurance-hud/examples/telemetry-bridge.mjs) | 51 |
+| [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions with live prices and open P/L; no trading. | [`market-bridge.mjs`](apps/market-glance/examples/market-bridge.mjs) | 72 |
+| [**Shoot Day**](apps/shoot-day) | A film shoot on your glasses: take log by voice, teleprompter for the scene, today's schedule with what's on now and next, and the packing list. | [`shoot-day-server.mjs`](apps/shoot-day/examples/shoot-day-server.mjs) with a web terminal; optional [MCP server](apps/shoot-day/examples/dreh_mcp.py) for agents | 108 |
+| [**Klipper Glance**](apps/klipper-glance) | Your 3D printer at a glance: progress, layer, time left and temperatures; pause, resume or cancel with a confirming second tap. | [`klipper-bridge.mjs`](apps/klipper-glance/examples/klipper-bridge.mjs) for Moonraker/Klipper | 57 |
 
 ```
-1478 tests · 16 builds · every app confirmed rendering in the Even Hub simulator
+2046 tests · 18 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
@@ -65,9 +71,12 @@ community reports, it is labelled as such.
 
 Apps use real monochrome G2 image containers where a symbol makes the screen
 faster to understand: PostureLens, DecibelGuard, Cadence, ShiftClock,
-OpenGlance (arrow and route overview), Lumen Glass, RainLens and Endurance HUD.
+OpenGlance (turn arrow, distance bar and a route overview with real streets),
+FlowList (step progress), Lumen Glass, RainLens (12-hour rain and temperature
+chart) and Endurance HUD.
 Text-critical apps — Babel Glass, PodCaption, FlowList, FieldLog, NextStop,
-Agent Glass, Status Glass and Market Glance — keep the full width for words,
+Agent Glass, Status Glass, Market Glance, Shoot Day and Klipper Glance — keep
+the full width for words,
 rows or safety-critical values.
 
 The simulator draws Latin text with umlauts, Cyrillic (incl. Belarusian `ў`
@@ -97,7 +106,7 @@ Applied by every app, carried as its own copy:
   swipe, long press — with the R1 ring reported as a distinct source and a
   user-toggleable swipe inversion.
 - **Pure logic, thin SDK adapter.** Everything testable imports no SDK types.
-  That is where all 1478 tests live.
+  That is where all 2046 tests live.
 - **Redraw suppression.** The display is written only when the view changed.
 - **Privacy-first defaults.** No permission is declared unless used. Apps that
   open the microphone show an indicator that cannot be hidden. Apps that could

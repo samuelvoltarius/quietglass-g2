@@ -16,6 +16,12 @@ export interface NavView {
   readonly header: string;
   readonly body: readonly string[];
   readonly footer: string;
+  /**
+   * Distance to the turn for the large pixel digits of the turn card, when
+   * the card is in use and there is a turn to show; the body then leaves
+   * the distance out instead of repeating it in small text.
+   */
+  readonly big?: string;
 }
 
 /** Arrows chosen to be unmistakable at a glance in monochrome. */
@@ -66,6 +72,8 @@ export interface ViewOptions {
   readonly destination?: string | null;
   /** Which glasses layout the text is for; "turns" when omitted. */
   readonly layout?: GlassLayout;
+  /** The turn card shows the distance in large digits (turn layout only). */
+  readonly bigDistance?: boolean;
 }
 
 export function buildView(
@@ -80,6 +88,7 @@ export function buildView(
     // Beside the pixel arrow a line holds 36 characters; the overview text runs full width.
     body: fitLines(view.body, overview ? OVERVIEW_ROWS : MAX_ROWS, overview ? LINE_WIDTH : ROAD_WIDTH),
     footer: clip(view.footer, LINE_WIDTH),
+    ...(view.big !== undefined ? { big: view.big } : {}),
   };
 }
 
@@ -123,8 +132,10 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
   const distance = formatDistance(progress.distanceToManeuver, options.locale ?? "en");
 
   const body: string[] = [];
-  // The arrow and the distance on one line: this is the line a driver reads.
-  body.push(arrow + "  " + distance);
+  // With the turn card the distance is drawn large beside the pixel arrow;
+  // otherwise arrow and distance share one line: the line a driver reads.
+  const big = options.bigDistance === true && options.layout !== "overview";
+  if (!big) body.push(arrow + "  " + distance);
 
   // Beside the pixel arrow there is room for 36 characters; the overview
   // text runs the full width.
@@ -140,6 +151,7 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
     header: "",
     body,
     footer: statusFooter(options, progress, now),
+    ...(big ? { big: distance } : {}),
   };
 }
 

@@ -4,6 +4,7 @@ import {
 } from "../tracking/clock";
 import type { Locale } from "../i18n";
 import { defaultProject, t } from "../messages";
+import { dayBarState, type DayBarState } from "./daybar";
 
 /**
  * What the glasses show.
@@ -40,6 +41,8 @@ export interface ViewOptions {
   readonly selecting?: string | null;
   readonly projects?: readonly string[];
   readonly locale?: Locale;
+  /** Daily target in hours, shown as a body row and on the day bar. */
+  readonly targetHours?: number | null;
 }
 
 export function buildView(
@@ -74,15 +77,17 @@ export function buildView(
 
   const today = startOfDay(now);
   const todaySeconds = secondsOnDay(entries, today);
+  const target = targetRow(options.targetHours ?? null, todaySeconds + openSecondsOnDay(state, today, now), locale);
 
   if (!isRunning(state)) {
     // With a single project the tap starts it directly; say which one.
     const only = projects.length === 1 ? projects[0] : undefined;
     return {
       header: "ShiftClock",
-      body: only === undefined
-        ? [L("g.stopped")]
-        : [L("g.stopped"), truncate(L("g.project", { project: only }), BODY_WIDTH)],
+      body: [
+        ...(only === undefined ? [L("g.stopped")] : [L("g.stopped"), truncate(L("g.project", { project: only }), BODY_WIDTH)]),
+        ...target,
+      ],
       footer: L(only === undefined ? "g.f.stoppedMany" : "g.f.stoppedOne", { total: formatClock(todaySeconds) }),
     };
   }
@@ -90,12 +95,44 @@ export function buildView(
   const running = openSeconds(state, now);
   return {
     header: truncate(state.project ?? "", HEADER_WIDTH),
-    body: [formatClock(running)],
+    body: [formatClock(running), ...target],
     // The day total includes the entry still running, so the number on screen
     // is what the day actually stands at — not what it stood at an hour ago.
     // Only today's part counts: a shift begun last night is split at midnight.
     footer: L("g.f.running", { total: formatClock(todaySeconds + openSecondsOnDay(state, today, now)) }),
   };
+}
+
+/**
+ * What the day bar shows: today's recorded time, the part of the running
+ * entry that falls on today, and the target. Quantized in `dayBarState`, so
+ * the image only changes every five minutes of tracked time.
+ */
+export function dayBarFor(
+  state: ClockState,
+  entries: readonly TimeEntry[],
+  targetHours: number | null,
+  now = Date.now(),
+): DayBarState {
+  const today = startOfDay(now);
+  return dayBarState(secondsOnDay(entries, today), openSecondsOnDay(state, today, now), isRunning(state), targetHours);
+}
+
+/** An empty row, then how far the target is — only when a target is set. */
+function targetRow(targetHours: number | null, todaySeconds: number, locale: Locale): string[] {
+  if (targetHours === null || targetHours <= 0) return [];
+  const target = formatTargetHours(targetHours, locale);
+  const left = targetHours * 3600 - todaySeconds;
+  const row = left > 0
+    ? t(locale, "g.target", { target, left: formatClock(left) })
+    : t(locale, "g.targetReached", { target });
+  return ["", truncate(row, BODY_WIDTH)];
+}
+
+/** "8", "7,5" / "7.5": hours as the language writes them, no trailing zeros. */
+export function formatTargetHours(hours: number, locale: Locale): string {
+  const text = String(Math.round(hours * 100) / 100);
+  return locale === "de" ? text.replace(".", ",") : text;
 }
 
 /**

@@ -4,6 +4,8 @@ import {
 } from "../storage/persist";
 import type { SpeechStatus, SpeechVoiceChoice } from "../speech/narrator";
 import type { BackendCapabilities } from "../providers/backend";
+import { languageSelect, type Locale } from "../i18n";
+import { localizeError, t } from "../messages";
 
 /**
  * The phone side: where Even Terminal is, and the token to reach it.
@@ -28,16 +30,15 @@ export interface PhoneUiPorts {
   disableSpeech(): Promise<void>;
   toggleSpeechPause(): void;
   replaySpeech(): void;
+  /** App language (glasses and phone). Missing means English. */
+  getLocale?(): Locale;
+  /** Called when the language is changed on this page; the caller persists it and redraws the glasses. */
+  setLocale?(locale: Locale): void;
 }
 
-const SPEECH_STATUS: Readonly<Record<SpeechStatus, string>> = {
-  off: "Off",
-  "needs-activation": "Tap once to activate",
-  ready: "Ready for AirPods / headphones",
-  speaking: "Speaking",
-  paused: "Paused",
-  unavailable: "Not available in this phone WebView",
-};
+function speechStatusText(status: SpeechStatus, locale: Locale): string {
+  return t(locale, `p.speech.${status}`);
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -45,26 +46,41 @@ function escapeHtml(value: string): string {
   })[character] ?? character);
 }
 
+/** Product names; not translated. */
 function providerName(provider: ProviderKind): string {
   if (provider === "hermes") return "Hermes EvenHub Bridge";
   if (provider === "openclaw") return "OpenClaw Gateway";
   return "Even Terminal";
 }
 
-function providerHint(provider: ProviderKind): string {
-  if (provider === "hermes") {
-    return "Use the existing hermes-evenhub-bridge WebSocket address and EVENHUB_BRIDGE_TOKEN.";
-  }
-  if (provider === "openclaw") {
-    return "Use the existing OpenClaw gateway root (normally port 18789) and its gateway token.";
-  }
-  return "Paste the complete Even Terminal pairing URL, or enter its HTTP address and token separately.";
+function providerHint(provider: ProviderKind, locale: Locale): string {
+  if (provider === "hermes") return t(locale, "p.hintHermes");
+  if (provider === "openclaw") return t(locale, "p.hintOpenclaw");
+  return t(locale, "p.hintTerminal");
 }
 
-function setupHint(provider: ProviderKind): string {
-  if (provider === "hermes") return "Expose hermes-evenhub-bridge as ws:// or wss://. Tailscale Serve is recommended.";
-  if (provider === "openclaw") return "Enable OpenClaw's chatCompletions endpoint and allow the Even App origin at the gateway or reverse proxy.";
-  return "Start Even Terminal with: even-terminal start --tailscale --allow-cors";
+function setupHint(provider: ProviderKind, locale: Locale): string {
+  if (provider === "hermes") return t(locale, "p.setupHermes");
+  if (provider === "openclaw") return t(locale, "p.setupOpenclaw");
+  return t(locale, "p.setupTerminal");
+}
+
+/** The one-line connection summary, shared by the full render and the 1 s refresh. */
+function statusLine(settings: Settings, state: AgentState, sessions: readonly Session[], locale: Locale): string {
+  const lines = [
+    t(locale, "p.statusProvider", { name: providerName(settings.provider) }),
+    t(locale, "p.statusAddress", { url: settings.baseUrl }),
+    t(locale, "p.statusToken", { token: maskToken(settings.token, locale) }),
+    sessions.length > 0
+      ? t(locale, "p.statusSessions", { count: sessions.length, title: state.session?.title ?? t(locale, "p.statusNone") })
+      : t(locale, "p.statusNoSessions"),
+  ];
+  if (state.error) lines.push(t(locale, "p.statusError", { error: localizeError(state.error, locale) }));
+  return lines.join(" · ");
+}
+
+function enableLabel(status: SpeechStatus, active: boolean, locale: Locale): string {
+  return t(locale, active ? "p.disable" : status === "needs-activation" ? "p.activate" : "p.enable");
 }
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
@@ -72,6 +88,9 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   if (!root) return;
 
   const render = (): void => {
+    const locale = ports.getLocale?.() ?? "en";
+    if (document.documentElement) document.documentElement.lang = locale;
+    const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
     const settings = ports.getSettings();
     const state = ports.getState();
     const sessions = ports.getSessions();
@@ -80,137 +99,126 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const voices = ports.getSpeechVoices();
     const speechActive = speechStatus === "ready" || speechStatus === "speaking" || speechStatus === "paused";
     const voiceOptions = [
-      `<option value="">System voice</option>`,
+      `<option value="">${x("p.systemVoice")}</option>`,
       ...voices.map((voice) => `<option value="${escapeHtml(voice.name)}"${voice.name === settings.speechVoice ? " selected" : ""}>${escapeHtml(voice.name)} · ${escapeHtml(voice.lang)}</option>`),
     ].join("");
+    // Language names are written in their own language and stay as they are.
+    const speechOption = (value: string, label: string): string =>
+      `<option value="${value}"${settings.speechLanguage === value ? " selected" : ""}>${label}</option>`;
 
     root.innerHTML = `
       <div class="brand"><span class="brand-mark">Quietglass</span> Agent Glass</div>
 
+      <div class="card">${languageSelect(locale)}</div>
+
       <div class="card">
-        <span class="eyebrow">AGENT BACKEND</span>
-        <h2>Connection</h2>
-        <label for="provider">Provider</label>
+        <span class="eyebrow">${x("p.backendEyebrow")}</span>
+        <h2>${x("p.connection")}</h2>
+        <label for="provider">${x("p.provider")}</label>
         <select id="provider">
           <option value="even-terminal"${settings.provider === "even-terminal" ? " selected" : ""}>Claude / Codex · Even Terminal</option>
           <option value="hermes"${settings.provider === "hermes" ? " selected" : ""}>Hermes · EvenHub Bridge</option>
           <option value="openclaw"${settings.provider === "openclaw" ? " selected" : ""}>OpenClaw · Gateway</option>
         </select>
-        <label for="address">Server address</label>
+        <label for="address">${x("p.address")}</label>
         <input id="address" type="text" inputmode="url" spellcheck="false"
                value="${escapeHtml(settings.baseUrl)}" />
-        <label for="token">Bearer / bridge token</label>
+        <label for="token">${x("p.token")}</label>
         <input id="token" type="password" autocomplete="off"
-               placeholder="Leave empty to keep ${escapeHtml(maskToken(settings.token))}" />
-        <button id="apply" type="button">Save and connect</button>
-        <p class="hint">${providerHint(settings.provider)}</p>
+               placeholder="${escapeHtml(x("p.tokenKeep", { token: maskToken(settings.token, locale) }))}" />
+        <button id="apply" type="button">${x("p.apply")}</button>
+        <p class="hint">${escapeHtml(providerHint(settings.provider, locale))}</p>
       </div>
 
       <div class="card">
-        <label>Live status</label>
+        <label>${x("p.liveStatus")}</label>
         <p class="hint" id="conn"></p>
         <div class="button-row">
-          <button id="refresh" type="button">Reload sessions</button>
-          ${capabilities.createSession ? '<button id="new-session" class="secondary" type="button">New Hermes session</button>' : ""}
+          <button id="refresh" type="button">${x("p.reload")}</button>
+          ${capabilities.createSession ? `<button id="new-session" class="secondary" type="button">${x("p.newHermes")}</button>` : ""}
         </div>
       </div>
 
       <div class="card">
-        <span class="eyebrow">SEND TO ACTIVE SESSION</span>
-        <h2>Prompt agent</h2>
-        <textarea id="prompt" rows="3" placeholder="Ask the active agent…"></textarea>
-        <button id="send-prompt" type="button"${state.session ? "" : " disabled"}>Send prompt</button>
-        <p class="hint">
-          Hermes and OpenClaw use the gateways already present in your G2 setup.
-          Tool approvals only appear when the selected backend exposes a real permission event.
-        </p>
+        <span class="eyebrow">${x("p.sendEyebrow")}</span>
+        <h2>${x("p.promptTitle")}</h2>
+        <textarea id="prompt" rows="3" placeholder="${escapeHtml(x("p.promptPlaceholder"))}"></textarea>
+        <button id="send-prompt" type="button"${state.session ? "" : " disabled"}>${x("p.send")}</button>
+        <p class="hint">${x("p.promptHint")}</p>
       </div>
 
       <div class="card speech-card">
         <div class="card-title-row">
           <div>
-            <span class="eyebrow">PHONE AUDIO</span>
-            <h2>Spoken output</h2>
+            <span class="eyebrow">${x("p.audioEyebrow")}</span>
+            <h2>${x("p.spoken")}</h2>
           </div>
-          <span class="status-chip ${speechStatus}">${SPEECH_STATUS[speechStatus]}</span>
+          <span class="status-chip ${speechStatus}">${speechStatusText(speechStatus, locale)}</span>
         </div>
-        <p class="hint">
-          Reads completed agent sentences through the phone's current audio
-          route — including AirPods and Bluetooth headphones. Code, links,
-          permission commands and token-looking values are omitted.
-        </p>
+        <p class="hint">${x("p.spokenHint")}</p>
         <div class="button-row">
           <button id="speech-enable" type="button"${speechStatus === "unavailable" ? " disabled" : ""}>
-            ${speechActive ? "Disable" : speechStatus === "needs-activation" ? "Activate audio" : "Enable spoken output"}
+            ${enableLabel(speechStatus, speechActive, locale)}
           </button>
           <button id="speech-pause" class="secondary" type="button"${speechActive ? "" : " disabled"}>
-            ${speechStatus === "paused" ? "Resume" : "Pause"}
+            ${x(speechStatus === "paused" ? "p.resume" : "p.pause")}
           </button>
-          <button id="speech-replay" class="secondary" type="button"${speechActive ? "" : " disabled"}>Replay</button>
+          <button id="speech-replay" class="secondary" type="button"${speechActive ? "" : " disabled"}>${x("p.replay")}</button>
         </div>
 
-        <label for="speech-language">Language</label>
+        <label for="speech-language">${x("p.speechLanguage")}</label>
         <select id="speech-language">
-          <option value="auto"${settings.speechLanguage === "auto" ? " selected" : ""}>Automatic</option>
-          <option value="en-US"${settings.speechLanguage === "en-US" ? " selected" : ""}>English (US)</option>
-          <option value="en-GB"${settings.speechLanguage === "en-GB" ? " selected" : ""}>English (UK)</option>
-          <option value="de-DE"${settings.speechLanguage === "de-DE" ? " selected" : ""}>Deutsch</option>
-          <option value="fr-FR"${settings.speechLanguage === "fr-FR" ? " selected" : ""}>Français</option>
-          <option value="es-ES"${settings.speechLanguage === "es-ES" ? " selected" : ""}>Español</option>
-          <option value="it-IT"${settings.speechLanguage === "it-IT" ? " selected" : ""}>Italiano</option>
+          ${speechOption("auto", x("p.speechAuto"))}
+          ${speechOption("en-US", "English (US)")}
+          ${speechOption("en-GB", "English (UK)")}
+          ${speechOption("de-DE", "Deutsch")}
+          ${speechOption("fr-FR", "Français")}
+          ${speechOption("es-ES", "Español")}
+          ${speechOption("it-IT", "Italiano")}
         </select>
 
-        <label for="speech-voice">Voice</label>
+        <label for="speech-voice">${x("p.voice")}</label>
         <select id="speech-voice">${voiceOptions}</select>
 
-        <label for="speech-rate">Speed · ${settings.speechRate.toFixed(1)}×</label>
+        <label for="speech-rate">${x("p.speed", { rate: settings.speechRate.toFixed(1) })}</label>
         <input id="speech-rate" type="range" min="0.7" max="1.5" step="0.1" value="${settings.speechRate}" />
-        <p class="hint privacy-note">
-          Uses the phone's system speech engine. Spoken output must be activated
-          once after opening the app. Background playback while the phone is
-          locked depends on the Even App and is not yet guaranteed.
-        </p>
+        <p class="hint privacy-note">${x("p.speechNote")}</p>
       </div>
 
       <div class="card">
-        <label>Server startup</label>
-        <p class="hint">${escapeHtml(setupHint(settings.provider))}</p>
+        <label>${x("p.startup")}</label>
+        <p class="hint">${escapeHtml(setupHint(settings.provider, locale))}</p>
       </div>
 
       <div class="card keys">
-        <label>Controls</label>
+        <label>${x("p.controls")}</label>
         ${capabilities.decisions ? `
           <p class="hint">
-            <strong>Swipe up</strong> — allow tool<br />
-            <strong>Swipe down</strong> — deny<br />
-            <strong>Hold</strong> — interrupt, or open the session list<br />
-            <strong>Double tap</strong> — leave Agent Glass
+            <strong>${x("p.swipeUp")}</strong> — ${x("p.swipeUpDo")}<br />
+            <strong>${x("p.swipeDown")}</strong> — ${x("p.swipeDownDo")}<br />
+            <strong>${x("p.hold")}</strong> — ${x("p.holdDo")}<br />
+            <strong>${x("p.double")}</strong> — ${x("p.doubleDo")}
           </p>
-          <p class="hint">Neither allow nor deny uses a plain tap, so an accidental touch can never approve a command.</p>
+          <p class="hint">${x("p.safeTap")}</p>
         ` : `
           <p class="hint">
-            <strong>Tap</strong> — replay the latest spoken answer<br />
-            <strong>Hold</strong> — interrupt, or open the session list<br />
-            <strong>Double tap</strong> — leave Agent Glass
+            <strong>${x("p.tap")}</strong> — ${x("p.tapDo")}<br />
+            <strong>${x("p.hold")}</strong> — ${x("p.holdDo")}<br />
+            <strong>${x("p.double")}</strong> — ${x("p.doubleDo")}
           </p>
-          <p class="hint">This backend does not expose remote permission decisions, so Agent Glass never invents an approval control.</p>
+          <p class="hint">${x("p.noDecisions")}</p>
         `}
       </div>
     `;
 
     const conn = root.querySelector<HTMLElement>("#conn");
-    if (conn) {
-      const lines = [
-        `Provider: ${providerName(settings.provider)}`,
-        `Address: ${settings.baseUrl}`,
-        `Token: ${maskToken(settings.token)}`,
-        sessions.length > 0
-          ? `${sessions.length} sessions · active: ${state.session?.title ?? "none"}`
-          : "No sessions loaded.",
-      ];
-      if (state.error) lines.push(`Error: ${state.error}`);
-      conn.textContent = lines.join(" · ");
-    }
+    if (conn) conn.textContent = statusLine(settings, state, sessions, locale);
+
+    root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
+      const value = (event.target as HTMLSelectElement).value;
+      ports.setLocale?.(value === "de" ? "de" : "en");
+      render();
+    });
 
     root.querySelector<HTMLButtonElement>("#apply")?.addEventListener("click", () => {
       const provider = root.querySelector<HTMLSelectElement>("#provider")?.value as ProviderKind;
@@ -221,7 +229,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
       // One path for every provider: a pasted `?token=` is lifted into the
       // token field instead of being kept (and shown) as part of the address.
-      const result = normalizeAddress(value, provider);
+      const result = normalizeAddress(value, provider, locale);
       if (!result.ok) {
         address?.setCustomValidity(result.error);
         address?.reportValidity();
@@ -279,34 +287,21 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   };
 
   const updateDynamicStatus = (): void => {
-    const settings = ports.getSettings();
-    const state = ports.getState();
-    const sessions = ports.getSessions();
+    const locale = ports.getLocale?.() ?? "en";
     const conn = root.querySelector<HTMLElement>("#conn");
-    if (conn) {
-      const lines = [
-        `Provider: ${providerName(settings.provider)}`,
-        `Address: ${settings.baseUrl}`,
-        `Token: ${maskToken(settings.token)}`,
-        sessions.length > 0
-          ? `${sessions.length} sessions · active: ${state.session?.title ?? "none"}`
-          : "No sessions loaded.",
-      ];
-      if (state.error) lines.push(`Error: ${state.error}`);
-      conn.textContent = lines.join(" · ");
-    }
+    if (conn) conn.textContent = statusLine(ports.getSettings(), ports.getState(), ports.getSessions(), locale);
 
     const status = ports.getSpeechStatus();
     const active = status === "ready" || status === "speaking" || status === "paused";
     const chip = root.querySelector<HTMLElement>(".status-chip");
-    if (chip) { chip.className = `status-chip ${status}`; chip.textContent = SPEECH_STATUS[status]; }
+    if (chip) { chip.className = `status-chip ${status}`; chip.textContent = speechStatusText(status, locale); }
     const enable = root.querySelector<HTMLButtonElement>("#speech-enable");
     if (enable) {
       enable.disabled = status === "unavailable";
-      enable.textContent = active ? "Disable" : status === "needs-activation" ? "Activate audio" : "Enable spoken output";
+      enable.textContent = enableLabel(status, active, locale);
     }
     const pause = root.querySelector<HTMLButtonElement>("#speech-pause");
-    if (pause) { pause.disabled = !active; pause.textContent = status === "paused" ? "Resume" : "Pause"; }
+    if (pause) { pause.disabled = !active; pause.textContent = t(locale, status === "paused" ? "p.resume" : "p.pause"); }
     const replay = root.querySelector<HTMLButtonElement>("#speech-replay");
     if (replay) replay.disabled = !active;
   };
