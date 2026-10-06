@@ -9,3 +9,5 @@ dist/
 *.ehpk
 .verify/
 .playwright-cli/
+__pycache__/
+*.pyc
