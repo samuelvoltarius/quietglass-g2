@@ -10,9 +10,11 @@ export interface DayWeather { readonly date: string; readonly minimum: number; r
 export interface WeatherForecast { readonly current: CurrentWeather; readonly hourly: readonly HourWeather[]; readonly daily: readonly DayWeather[]; readonly source: "live" | "demo"; }
 
 type NumericRecord = Record<string, unknown>;
-function finite(record: NumericRecord, key: string): number { const value = Number(record[key]); if (!Number.isFinite(value)) throw new Error(`forecast field ${key} is missing`); return value; }
+// Open-Meteo sends null for values a model does not cover; Number(null) is 0, so only real numbers count.
+function toNumber(value: unknown): number { return typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN; }
+function finite(record: NumericRecord, key: string): number { const value = toNumber(record[key]); if (!Number.isFinite(value)) throw new Error(`forecast field ${key} is missing`); return value; }
 function strings(value: unknown): readonly string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
-function numbers(value: unknown): readonly number[] { return Array.isArray(value) ? value.map(Number) : []; }
+function numbers(value: unknown): readonly number[] { return Array.isArray(value) ? value.map(toNumber) : []; }
 
 export function parseOpenMeteo(value: unknown): WeatherForecast {
   const root = value as { current?: NumericRecord; hourly?: NumericRecord; daily?: NumericRecord };
@@ -47,7 +49,7 @@ export function parseOpenMeteo(value: unknown): WeatherForecast {
 export function demoWeather(now = new Date()): WeatherForecast {
   const hour = new Date(now); hour.setMinutes(0, 0, 0);
   const hourly = Array.from({ length: 12 }, (_, index): HourWeather => ({ time: new Date(hour.valueOf() + index * 3_600_000).toISOString(), temperature: 14 + Math.sin(index / 3) * 3, precipitationProbability: [15, 20, 35, 60, 75, 55, 30, 20, 10, 10, 5, 5][index] ?? 0, precipitation: [0, 0, 0, 0.4, 1.2, 0.6, 0.1, 0, 0, 0, 0, 0][index] ?? 0, weatherCode: [2, 2, 3, 61, 63, 61, 3, 2, 1, 1, 0, 0][index] ?? 0, windSpeed: 12 + index }));
-  const daily = Array.from({ length: 3 }, (_, index): DayWeather => { const date = new Date(now.valueOf() + index * 86_400_000).toISOString().slice(0, 10); return { date, minimum: 8 + index, maximum: 18 + index, precipitationProbability: [75, 25, 10][index] ?? 0, weatherCode: [61, 2, 1][index] ?? 0, sunrise: `${date}T07:08`, sunset: `${date}T18:42` }; });
+  const daily = Array.from({ length: 3 }, (_, index): DayWeather => { const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index); const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`; return { date, minimum: 8 + index, maximum: 18 + index, precipitationProbability: [75, 25, 10][index] ?? 0, weatherCode: [61, 2, 1][index] ?? 0, sunrise: `${date}T07:08`, sunset: `${date}T18:42` }; });
   return { source: "demo", current: { time: now.toISOString(), temperature: 14.8, feelsLike: 13.6, humidity: 72, precipitation: 0, weatherCode: 2, cloudCover: 55, windSpeed: 14, windDirection: 245, windGusts: 24, isDay: true }, hourly, daily };
 }
 

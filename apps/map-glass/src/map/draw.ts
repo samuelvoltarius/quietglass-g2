@@ -1,4 +1,4 @@
-import { project, type GeoPoint, type RouteMap } from "./model";
+import { project, wrapLongitude, type GeoPoint, type RouteMap } from "./model";
 export async function renderRoutePng(route: RouteMap, position: GeoPoint | null, width = 576, height = 224): Promise<Uint8Array> {
   const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height; const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("2d canvas unavailable");
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
@@ -9,4 +9,4 @@ export async function renderRoutePng(route: RouteMap, position: GeoPoint | null,
   ctx.fillStyle = "#fff"; ctx.font = "bold 18px sans-serif"; ctx.fillText(`N`, width - 30, 24); ctx.beginPath(); ctx.moveTo(width - 24, 34); ctx.lineTo(width - 30, 44); ctx.lineTo(width - 36, 34); ctx.fill();
   const blob: Blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encode failed")), "image/png")); return new Uint8Array(await blob.arrayBuffer());
 }
-function nearestPixel(position: GeoPoint, geo: readonly GeoPoint[], pixels: readonly { x: number; y: number }[]): { x: number; y: number } | undefined { let best = 0; let distance = Number.POSITIVE_INFINITY; geo.forEach((point, index) => { const next = (point.lat - position.lat) ** 2 + (point.lon - position.lon) ** 2; if (next < distance) { distance = next; best = index; } }); return pixels[best]; }
+export function nearestPixel(position: GeoPoint, geo: readonly GeoPoint[], pixels: readonly { x: number; y: number }[]): { x: number; y: number } | undefined { let best = 0; let distance = Number.POSITIVE_INFINITY; geo.forEach((point, index) => { const next = (point.lat - position.lat) ** 2 + (wrapLongitude(point.lon - position.lon) * Math.cos(position.lat * Math.PI / 180)) ** 2; if (next < distance) { distance = next; best = index; } }); return pixels[best]; }
