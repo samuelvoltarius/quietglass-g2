@@ -8,7 +8,10 @@ import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
  * shown in full on the phone, and never rendered on the glasses.
  */
 
+export type ProviderKind = "even-terminal" | "hermes" | "openclaw";
+
 export interface Settings {
+  readonly provider: ProviderKind;
   /** e.g. http://100.95.218.17:3456 */
   readonly baseUrl: string;
   readonly token: string;
@@ -26,6 +29,7 @@ export interface Settings {
 const KEY = "quietglass.agentglass.v1";
 
 export const DEFAULT_SETTINGS: Settings = {
+  provider: "even-terminal",
   baseUrl: "http://127.0.0.1:3456",
   token: "",
   sessionId: "",
@@ -47,9 +51,12 @@ export function parseSettings(raw: string): Settings {
   if (!raw) return DEFAULT_SETTINGS;
   try {
     const value = JSON.parse(raw) as Partial<Settings>;
+    const provider = parseProvider(value.provider);
+    const candidateUrl = String(value.baseUrl ?? "").trim();
     return {
-      baseUrl: validateUrl(String(value.baseUrl ?? "")).valid
-        ? String(value.baseUrl).trim() : DEFAULT_SETTINGS.baseUrl,
+      provider,
+      baseUrl: validateProviderUrl(candidateUrl, provider).valid
+        ? candidateUrl : defaultUrlForProvider(provider),
       token: typeof value.token === "string" ? value.token.trim() : "",
       sessionId: typeof value.sessionId === "string" ? value.sessionId : "",
       spokenOutput: value.spokenOutput === true,
@@ -75,13 +82,37 @@ export function validateUrl(url: string): UrlCheck {
   if (!trimmed) return { valid: false, error: "Address is required." };
   try {
     const parsed = new URL(trimmed);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { valid: false, error: "Address must start with http:// or https://." };
+    if (!["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
+      return { valid: false, error: "Address must start with http://, https://, ws:// or wss://." };
     }
     return { valid: true };
   } catch {
     return { valid: false, error: "This is not a valid address." };
   }
+}
+
+export function validateProviderUrl(url: string, provider: ProviderKind): UrlCheck {
+  const base = validateUrl(url);
+  if (!base.valid) return base;
+  const protocol = new URL(url.trim()).protocol;
+  const valid = provider === "hermes"
+    ? protocol === "ws:" || protocol === "wss:"
+    : protocol === "http:" || protocol === "https:";
+  if (valid) return { valid: true };
+  return { valid: false, error: provider === "hermes"
+    ? "Hermes bridge addresses must start with ws:// or wss://."
+    : "This provider address must start with http:// or https://." };
+}
+
+export function parseProvider(value: unknown): ProviderKind {
+  return value === "hermes" || value === "openclaw" || value === "even-terminal"
+    ? value : "even-terminal";
+}
+
+export function defaultUrlForProvider(provider: ProviderKind): string {
+  if (provider === "hermes") return "ws://127.0.0.1:8765";
+  if (provider === "openclaw") return "http://127.0.0.1:18789";
+  return "http://127.0.0.1:3456";
 }
 
 /**

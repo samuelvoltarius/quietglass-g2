@@ -44,7 +44,7 @@ main { max-width: 640px; margin: 0 auto; }
 label { display: block; margin: 12px 0 6px; font-size: 14px; color: var(--muted); }
 label.check { display: flex; align-items: center; gap: 8px; color: var(--text); }
 
-input[type="text"], textarea, select {
+input[type="text"], input[type="password"], textarea, select {
   width: 100%; padding: 10px 12px;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--line); border-radius: 10px;

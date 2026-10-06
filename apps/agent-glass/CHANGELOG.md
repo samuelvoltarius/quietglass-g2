@@ -1,12 +1,28 @@
 # Changelog
 
+## [0.4.0] — 2026-10-05
+
+- Added a real backend selector for Even Terminal, Hermes and OpenClaw.
+- Integrated the existing `hermes-evenhub-bridge` WebSocket contract for
+  sessions, history, streamed answers, tool activity, interruption and new
+  session creation.
+- Integrated the existing OpenClaw `/v1/chat/completions` gateway with its
+  bearer token, conversation context, health check and interrupt support.
+- Added a phone prompt composer so Hermes and OpenClaw can be used directly
+  instead of merely watched.
+- Keeps permission controls capability-driven: only Even Terminal shows
+  allow/deny actions because the existing Hermes and OpenClaw gateways do not
+  expose an external permission-decision event.
+- Added provider protocol tests and network permissions for configured HTTP,
+  HTTPS and WebSocket gateways.
+
 ## [0.3.0] — 2026-10-05
 
 - Added opt-in spoken output through the phone's current audio route, including
   AirPods and Bluetooth headphones on iOS and Android.
 - Added language, installed system voice, and speech-speed controls.
 - Buffers streamed tokens into completed sentences before speaking.
-- Omits code blocks, inline code, URLs, commands, and token-looking values from
+- Omits code blocks, inline code, URLs, permission commands, and token-looking values from
   spoken output; permission prompts use a generic alert instead of reading the
   command aloud.
 - Added pause, resume, replay, and a one-tap activation flow required by phone

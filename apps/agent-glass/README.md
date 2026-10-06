@@ -2,9 +2,10 @@
 
 **Quietglass** · Watch and steer a coding agent without returning to your desk.
 
-Agent Glass connects the Even G2 to Even Terminal, streams the active coding
-session to the glasses, and surfaces permission requests where you can answer
-them deliberately.
+Agent Glass connects the Even G2 to Even Terminal, the existing Hermes
+EvenHub bridge, or the existing OpenClaw gateway. It streams the active agent
+to the glasses and, where the backend exposes real permission events, surfaces
+those decisions for a deliberate answer.
 
 It can also read completed agent sentences through the phone's current audio
 route, including AirPods and Bluetooth headphones. Spoken output is opt-in and
@@ -46,7 +47,7 @@ up = allow · down = deny
 Neither answer uses a plain tap, so an accidental touch cannot approve a
 command.
 
-## Important limitation
+## Important limitations
 
 Even Terminal can read existing Claude Code sessions from disk, but it can
 only control sessions that it started itself. Agent Glass checks this for each
@@ -55,6 +56,13 @@ that would silently fail.
 
 Free-text questions must still be answered on the computer. Binary permission
 requests can be allowed or denied from the glasses.
+
+Hermes and OpenClaw do not currently expose that same external permission
+decision contract. Hermes supports prompts, replies, history, tool activity,
+new sessions and interruption through its WebSocket bridge. OpenClaw supports
+prompts, replies, in-app conversation context and request interruption through
+its proven OpenAI-compatible endpoint. Neither displays a misleading
+allow/deny control.
 
 ## Controls
 
@@ -92,16 +100,21 @@ promised by this version.
 |---|---|---|
 | **Claude Code** | Yes | Sessions, streaming text and permission decisions through Even Terminal |
 | **Codex** | Yes | Sessions, streaming text and permission decisions through Even Terminal |
-| **Hermes** | Adapter required | No compatible Even Terminal session/event endpoint has been connected yet |
-| **OpenClaw** | Adapter required | Its OpenAI-compatible chat endpoint alone does not expose terminal sessions and permission events |
+| **Hermes** | Yes | Existing `hermes-evenhub-bridge`: sessions, history, streamed replies, tools, new sessions and interruption |
+| **OpenClaw** | Yes | Existing gateway: health check, conversation context, replies and local request interruption |
 
 During the review, [cc-g2](https://github.com/wmoto-ai/cc-g2) was identified as
-the earlier agent app. It already implements hook-based Claude Code, Codex CLI
-and Copilot CLI flows. Those hooks are a useful basis for a future Agent Glass
-backend, but they do not currently make Hermes or OpenClaw drop-in Even
-Terminal providers.
+the earlier agent app. It implements hook-based Claude Code, Codex CLI and
+Copilot CLI flows. Agent Glass keeps Even Terminal for those coding sessions
+and now adds the existing Hermes and OpenClaw gateway protocols alongside it.
 
 ## Setup
+
+Choose the backend in the phone view, enter its address and token, then tap
+**Save and connect**. The phone view also contains a prompt composer. When a
+backend has only one session, Agent Glass opens it automatically.
+
+### Claude Code or Codex — Even Terminal
 
 Start Even Terminal with CORS enabled. Keep it on a private network such as
 Tailscale or your local LAN.
@@ -116,6 +129,35 @@ phone view. The app extracts the server address and token automatically.
 `even-terminal claude` is a client, not the server. All HTTP endpoints live
 under `/api`, and `--allow-cors` is required because the app and terminal use
 different origins.
+
+### Hermes — existing EvenHub bridge
+
+Use the WebSocket bridge already present in the G2 agent setup:
+
+```text
+wss://<node>.<tailnet>.ts.net:8443
+EVENHUB_BRIDGE_TOKEN
+```
+
+Agent Glass uses the bridge's existing `hello`, `sessions.*`, `history`,
+`assistant.*`, `tool.*`, `text` and `stop` messages. No new Hermes gateway is
+required. A local development address such as `ws://127.0.0.1:8765` only works
+when it is reachable from the phone; Tailscale Serve is recommended for a real
+device.
+
+### OpenClaw — existing gateway
+
+Use the existing OpenClaw gateway root and token, normally:
+
+```text
+http://<reachable-host>:18789
+```
+
+The gateway must have `gateway.http.endpoints.chatCompletions.enabled=true`.
+Agent Glass checks `/healthz` and sends the same proven request used by the
+existing local G2 assistant to `/v1/chat/completions` with model `openclaw`.
+The configured OpenClaw agent continues to choose its own primary model and
+fallbacks.
 
 ## Develop and test
 
