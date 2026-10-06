@@ -2,12 +2,10 @@ import {
   AudioInputSource, waitForEvenAppBridge, type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import {
-  createMockStt, createWebSocketStt, type SttProvider, type SttStatus,
+  createMockStt, createWebSocketStt, type SttProvider, type SttStatus, type Transcript,
 } from "./stt/provider";
-import {
-  createHttpTranslator, createMockTranslator, createPassthroughTranslator,
-  type TranslationProvider,
-} from "./translate/provider";
+import { createPassthroughTranslator, type TranslationProvider } from "./translate/provider";
+import { selectTranslator, translationRequestFor } from "./translate/select";
 import {
   applyTranscript, applyTranslation, clearBuffer, createBuffer, type CaptionBuffer,
 } from "./captions/buffer";
@@ -32,6 +30,7 @@ async function boot(): Promise<void> {
   let offset = 0;
   let lastView: CaptionView | null = null;
   let pageReady = false;
+  let translateError: string | null = null;
 
   const currentView = (): CaptionView =>
     buildView(buffer, {
@@ -41,6 +40,9 @@ async function boot(): Promise<void> {
       translating: translationEnabled(data),
       offset,
       mock: usesMockStt(data),
+      transliterateOriginal: data.transliterateOriginal,
+      sourceLanguage: data.sourceLanguage,
+      translateError,
     });
 
   const draw = async (): Promise<void> => {
@@ -57,33 +59,33 @@ async function boot(): Promise<void> {
     console.warn("[babelglass] draw failed:", result.reason);
   };
 
-  const buildTranslator = (): TranslationProvider => {
-    if (!translationEnabled(data)) return createPassthroughTranslator();
-    if (usesMockStt(data) && !data.translateUrl) return createMockTranslator();
-    return createHttpTranslator({
-      url: data.translateUrl,
-      ...(data.translateKey ? { apiKey: data.translateKey } : {}),
+  const buildTranslator = (): TranslationProvider => selectTranslator(data);
+
+  const translateLine = (text: string, detected: string | undefined): void => {
+    if (!translationEnabled(data)) return;
+    const request = translationRequestFor(data, translator, text, detected);
+    // Already in the target language: nothing to translate, show as is.
+    if (!request) return;
+    void translator.translate(request).then((result) => {
+      if (result.error) {
+        translateError = result.error;
+        console.warn("[babelglass] translation failed:", result.error);
+        void draw();
+        return;
+      }
+      translateError = null;
+      if (result.text) buffer = applyTranslation(buffer, text, result.text);
+      void draw();
     });
   };
 
-  const translateLine = (text: string): void => {
-    if (!translationEnabled(data)) return;
-    void translator
-      .translate({ text, from: data.sourceLanguage, to: data.targetLanguage })
-      .then((result) => {
-        if (result.error || !result.text) return;
-        buffer = applyTranslation(buffer, text, result.text);
-        void draw();
-      });
-  };
-
-  const onTranscript = (transcript: { text: string; final: boolean }): void => {
+  const onTranscript = (transcript: Transcript): void => {
     buffer = applyTranscript(buffer, transcript, Date.now());
     // New speech pulls the view back to the live edge; reading history while
     // someone is talking is not what the user meant to do.
     if (transcript.final) {
       offset = 0;
-      translateLine(transcript.text.trim());
+      translateLine(transcript.text.trim(), transcript.language);
     }
     void draw();
   };
@@ -96,6 +98,7 @@ async function boot(): Promise<void> {
     if (listening) return;
 
     translator = buildTranslator();
+    translateError = null;
     stt = usesMockStt(data)
       ? createMockStt({ onTranscript, onStatus: (s) => { status = s; void draw(); } })
       : createWebSocketStt({
@@ -177,12 +180,25 @@ async function boot(): Promise<void> {
   mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
+      const previous = data;
       data = next;
       await save(bridge, next);
       translator = buildTranslator();
+      translateError = null;
+      // The recogniser receives its language once, in the start frame, so a
+      // changed server or language only takes effect on a fresh connection.
+      if (listening && sttSettingsChanged(previous, next)) {
+        await stopListening();
+        await startListening();
+        return;
+      }
       await draw();
     },
   });
+}
+
+function sttSettingsChanged(a: BabelData, b: BabelData): boolean {
+  return a.sttUrl !== b.sttUrl || a.sttToken !== b.sttToken || a.sourceLanguage !== b.sourceLanguage;
 }
 
 void boot().catch((error: unknown) => {

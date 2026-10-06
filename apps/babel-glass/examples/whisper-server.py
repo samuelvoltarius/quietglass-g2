@@ -10,6 +10,14 @@ afternoon, not a project.
     python whisper-server.py                    # ws://0.0.0.0:9000
     MODEL=small DEVICE=cuda python whisper-server.py
 
+Russian / Belarusian: use a large multilingual model and set the language in
+the app ("be" or "ru") rather than "auto" — auto-detection often reports
+Belarusian speech as Russian.
+
+    MODEL=large-v3 DEVICE=cuda COMPUTE=float16 python whisper-server.py
+
+(`distil-*` models are English-only; do not use them for Russian/Belarusian.)
+
 Wire format
 -----------
 Client sends one JSON frame:   {"type":"start","language":"auto",
@@ -17,6 +25,9 @@ Client sends one JSON frame:   {"type":"start","language":"auto",
 then binary frames of raw 16 kHz signed 16-bit mono PCM.
 
 Server replies with JSON:      {"text":"...","final":true|false,"language":"en"}
+
+`language` in the reply is the language the text was transcribed as: the
+requested one when it was fixed, otherwise Whisper's detection.
 
 Partial results (final=false) may be revised; Babel Glass replaces the pending
 line rather than appending, so sending them freely is safe.
@@ -42,9 +53,26 @@ SAMPLE_RATE = 16000
 
 print(f"loading {MODEL_NAME} on {DEVICE} ({COMPUTE})…")
 model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE)
+SUPPORTED = set(getattr(model, "supported_languages", None) or [])
 print(f"Babel Glass speech server on ws://{HOST}:{PORT}")
 if not TOKEN:
     print("No TOKEN set: this server is unauthenticated.")
+
+
+def whisper_language(requested):
+    """Maps the app's language to a Whisper code, or None for auto-detect.
+
+    The app sends BCP-47 ("be", "de-AT"); Whisper wants the bare ISO 639-1
+    code. An unknown code would make transcribe() raise and drop the
+    connection, so it falls back to auto-detection with a warning instead.
+    """
+    if not isinstance(requested, str) or requested.strip().lower() in ("", "auto"):
+        return None
+    code = requested.strip().lower().replace("_", "-").split("-")[0]
+    if SUPPORTED and code not in SUPPORTED:
+        print(f"language {requested!r} is not supported by {MODEL_NAME}; auto-detecting")
+        return None
+    return code
 
 
 async def handle(websocket):
@@ -55,13 +83,16 @@ async def handle(websocket):
     try:
         async for message in websocket:
             if isinstance(message, str):
-                frame = json.loads(message)
-                if frame.get("type") == "start":
+                try:
+                    frame = json.loads(message)
+                except ValueError:
+                    continue
+                if isinstance(frame, dict) and frame.get("type") == "start":
                     if TOKEN and frame.get("token") != TOKEN:
                         await websocket.close(code=1008, reason="unauthorized")
                         return
-                    requested = frame.get("language", "auto")
-                    language = None if requested in ("auto", "", None) else requested
+                    language = whisper_language(frame.get("language", "auto"))
+                    print(f"client started, language={language or 'auto'}")
                 continue
 
             buffer.extend(message)
@@ -74,18 +105,21 @@ async def handle(websocket):
             # s16le -> float32 in [-1, 1], which is what the model expects.
             audio = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
 
-            segments, info = await asyncio.to_thread(
-                lambda: model.transcribe(audio, language=language, vad_filter=True)
-            )
-            text = " ".join(segment.text.strip() for segment in segments).strip()
+            def run(audio=audio, language=language):
+                segments, info = model.transcribe(audio, language=language, vad_filter=True)
+                # segments is a lazy generator: consume it here, in the worker
+                # thread, not on the event loop.
+                return " ".join(s.text.strip() for s in segments).strip(), info
+
+            text, info = await asyncio.to_thread(run)
             if not text:
                 continue
 
             await websocket.send(json.dumps({
                 "text": text,
                 "final": True,
-                "language": getattr(info, "language", None) or language or "auto",
-            }))
+                "language": language or getattr(info, "language", None) or "auto",
+            }, ensure_ascii=False))
     except websockets.ConnectionClosed:
         pass
 

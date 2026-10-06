@@ -1,5 +1,8 @@
-import { isFollowingLive, visibleLines, wrap, type CaptionBuffer } from "../captions/buffer";
+import {
+  isFollowingLive, visibleLines, wrap, type CaptionBuffer, type CaptionLine,
+} from "../captions/buffer";
 import type { SttStatus } from "../stt/provider";
+import { transliterate } from "../text/translit";
 
 /**
  * What the glasses show.
@@ -48,6 +51,24 @@ export interface ViewOptions {
   readonly offset: number;
   /** True when the provider in use is a mock. */
   readonly mock: boolean;
+  /**
+   * Show the original (never the translation) in Latin letters, for when the
+   * display font cannot draw Cyrillic.
+   */
+  readonly transliterateOriginal?: boolean;
+  /** Configured source language; picks the transliteration table. */
+  readonly sourceLanguage?: string;
+  /** Last translation failure, shown so a broken backend is not silent. */
+  readonly translateError?: string | null;
+}
+
+/** The original caption as it should appear on the glasses. */
+export function originalText(line: CaptionLine, options: ViewOptions): string {
+  if (!options.transliterateOriginal) return line.text;
+  const configured = options.sourceLanguage && options.sourceLanguage !== "auto"
+    ? options.sourceLanguage
+    : undefined;
+  return transliterate(line.text, configured ?? line.language);
 }
 
 export function buildView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
@@ -65,15 +86,16 @@ export function buildView(buffer: CaptionBuffer, options: ViewOptions): CaptionV
   const body: string[] = [];
 
   for (const line of lines) {
+    const original = originalText(line, options);
     const primary = options.translating && line.translated !== undefined
       ? line.translated
-      : line.text;
+      : original;
     body.push(...wrap(primary, preset.width));
 
     // In conversation and travel modes the original is kept below the
     // translation, because checking a single word is the common need.
     if (options.translating && preset.showOriginal && line.translated !== undefined) {
-      body.push(...wrap("  " + line.text, preset.width));
+      body.push(...wrap("  " + original, preset.width));
     }
   }
 
@@ -95,6 +117,9 @@ function footerText(
 
   if (options.mock) parts.push("MOCK");
   if (options.status !== "ready") parts.push(statusLabel(options.status));
+  if (options.translating && options.translateError) {
+    parts.push("translate: " + options.translateError);
+  }
   if (!isFollowingLive(buffer, rows, options.offset)) parts.push("history");
 
   parts.push("tap = stop");

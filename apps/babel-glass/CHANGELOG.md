@@ -3,6 +3,43 @@
 All notable changes to Babel Glass are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- OpenAI-compatible translation provider (vLLM, Ollama, LM Studio, llama.cpp
+  server): strict prompt, temperature 0.1, timeout, optional bearer token,
+  cleanup of quotes, preambles and reasoning blocks. Selectable next to
+  LibreTranslate in the phone app; both configurations are kept.
+- examples/translate-server.py: LibreTranslate-compatible server on Meta
+  NLLB-200, covering Belarusian, which Argos/LibreTranslate does not.
+- Language selects with Russian, Belarusian, Ukrainian, German, English and
+  more, "auto" for the spoken language and a custom-code escape hatch.
+  Free-text codes stored by 0.1.0 are normalised on load.
+- "Show original as Latin transliteration" (Russian, Belarusian, Ukrainian;
+  ASCII output), applied to the original line on the glasses only.
+- With the spoken language on "auto", Whisper's detected language is passed
+  to providers that need a concrete source (the LLM prompt).
+- Translation failures are shown on the glasses (`translate: HTTP 400`)
+  instead of being dropped silently.
+- Captions already in the target language are not sent for translation.
+
+### Fixed
+- Phone app: changing the mode and then the swipe setting (or the reverse)
+  silently reverted the first change, because each handler merged into the
+  settings captured at render time.
+- Phone app: a validation error re-rendered the form and discarded what had
+  been typed.
+- Wrapping counted UTF-16 units, so decomposed umlauts (u + U+0308) counted
+  twice. Captions and translations are now NFC-normalised and wrapped by
+  displayed characters.
+- Changing the speech server or spoken language while listening had no effect
+  until captioning was restarted; the connection is now reopened.
+- whisper-server.py: Whisper's lazy segment generator was consumed on the
+  event loop, blocking every connection while decoding; a region-tagged or
+  unsupported language ("be-BY") made transcription raise and dropped the
+  connection; a malformed text frame closed it. Replies keep non-ASCII text
+  unescaped.
+
 ## [0.1.0] — 2026-09-25
 
 First release.

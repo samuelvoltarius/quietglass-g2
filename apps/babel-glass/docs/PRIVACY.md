@@ -34,9 +34,13 @@ Holding the temple pad clears the transcript immediately.
 
 | Data | Where | Leaves the device |
 |---|---|---|
-| Server URLs | Even app per-app storage, on the phone | No |
+| Server URLs, LLM model name | Even app per-app storage, on the phone | No |
 | Tokens / API keys | same | Only to that server |
-| Languages and mode | same | No |
+| Languages, mode, display options | same | No |
+
+Finished captions are sent to the translation server you select
+(LibreTranslate-compatible or an OpenAI-compatible LLM server) and nowhere
+else.
 
 Written through `setLocalStorage()` under `quietglass.babelglass.v1`.
 

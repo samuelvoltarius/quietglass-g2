@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  applyTranscript, applyTranslation, createBuffer, isFollowingLive, visibleLines, wrap,
+  applyTranscript, applyTranslation, createBuffer, displayWidth, isFollowingLive, visibleLines, wrap,
 } from "../src/captions/buffer";
 import { parseTranscript, reconnectDelay, createMockStt } from "../src/stt/provider";
 import {
@@ -216,5 +216,43 @@ describe("HTTP translator", () => {
   it("passes text through when translation is off", async () => {
     const result = await createPassthroughTranslator().translate({ text: "same", from: "en", to: "de" });
     expect(result.text).toBe("same");
+  });
+});
+
+describe("display width with Cyrillic and umlauts", () => {
+  it("counts each Cyrillic letter, umlaut and ß as one character", () => {
+    expect(displayWidth("Привет")).toBe(6);
+    expect(displayWidth("Прывітанне ўсім")).toBe(15);
+    expect(displayWidth("Grüße")).toBe(5);
+    expect(displayWidth("ÄÖÜäöüß")).toBe(7);
+  });
+
+  it("does not count combining marks", () => {
+    expect(displayWidth("Grüße")).toBe(5);
+    expect(displayWidth("Й")).toBe(1);
+    expect(displayWidth("Й")).toBe(1);
+  });
+
+  it("wraps Cyrillic and German at the same character width", () => {
+    expect(wrap("Добры дзень як справы", 11)).toEqual(["Добры дзень", "як справы"]);
+    expect(wrap("Schöne Grüße aus Weißrussland", 12)).toEqual(["Schöne Grüße", "aus", "Weißrussland"]);
+  });
+
+  it("wraps decomposed umlauts as one character each (regression)", () => {
+    // Each "Grüße" with u + U+0308 is 6 UTF-16 units; the pair is 11
+    // characters on screen and must stay on one 11-wide row.
+    expect(wrap("Grüße Grüße", 11)).toEqual(["Grüße Grüße"]);
+  });
+
+  it("stores captions NFC-normalised and still attaches translations sent in NFD", () => {
+    let buffer = applyTranscript(createBuffer(), final("Grüße"), 1);
+    expect(buffer.lines[0]?.text).toBe("Grüße");
+    buffer = applyTranslation(buffer, "Grüße", "Grüße!");
+    expect(buffer.lines[0]?.translated).toBe("Grüße!");
+  });
+
+  it("keeps the recogniser's language on the line", () => {
+    const buffer = applyTranscript(createBuffer(), { text: "Прывітанне", final: true, language: "be" }, 1);
+    expect(buffer.lines[0]?.language).toBe("be");
   });
 });

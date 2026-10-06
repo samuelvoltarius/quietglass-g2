@@ -24,33 +24,33 @@ See all twenty native-resolution simulator captures in the [screenshot gallery](
 
 | App | What it does | Tests |
 |---|---|---|
-| [**PromptFlow**](apps/promptflow) | Teleprompter. Pacing counted in words read, not lines scrolled, so speed stays honest however the text wraps. | 90 |
+| [**PromptFlow**](apps/promptflow) | Teleprompter. Pacing counted in words read, not lines scrolled, so speed stays honest however the text wraps. | 92 |
 | [**FlowList**](apps/flowlist) | Hands-free checklists with branching, critical steps that ask twice, and a shareable pack format. | 79 |
 | [**PostureLens**](apps/posture-lens) | Private posture reminder: calibrate your upright position once; it warns only after your head stays forward too long. No camera and no history. | 48 |
 | [**DecibelGuard**](apps/decibel-guard) | Noise dose over time. Computes a level and discards the audio; stores no history at all. | 58 |
 | [**FieldLog**](apps/field-log) | Walk an inspection hands-free: speak the defect, attach a photo, export the report. | 44 |
 | [**Cadence**](apps/cadence) | Visual metronome and practice log. The G2 has no speaker, so the beat is visible. | 62 |
 | [**ShiftClock**](apps/shift-clock) | Hands-free time tracking onto projects, CSV export with decimal hours. | 40 |
-| [**Babel Glass**](apps/babel-glass) | Live captions and translation against **your own** Whisper. | 64 |
+| [**Babel Glass**](apps/babel-glass) | Live captions and translation against **your own** Whisper — including Russian and Belarusian into German via a self-hosted LLM or NLLB. | 142 |
 | [**OpenGlance**](apps/openglance-nav) | Turn-by-turn on OpenStreetMap data via Valhalla. No Mapbox, no key. | 69 |
 | [**Status Glass + Home Assistant**](apps/status-glass#home-assistant) | Home Assistant dashboard and allow-listed controls, plus generic homelab monitoring. The HA token stays in the local adapter. | 87 |
 | [**Lumen Glass**](apps/lumen-glass) | Your [LUMEN](apps/lumen-glass) moth, the quest, and the minutes to golden hour. Photo from the phone, straight back to LUMEN. | 49 |
 | [**NextStop**](apps/nextstop) | Departures at the stop you are standing at, and the next stop while riding. Two keyless backends: ÖBB for live Austrian delays, Transitous/MOTIS for everywhere else. | 70 |
 | [**Agent Glass**](apps/agent-glass) | Watch or hear Claude Code and Codex, with AirPods/headphone speech and swipe permission decisions through Even Terminal. **Proof of concept** — see its README. | 46 |
-| [**RainLens**](apps/rain-lens) | Full Open-Meteo weather: current conditions, wind, rain, hourly outlook, and 3-day forecast. | 3 |
-| [**Dayline**](apps/dayline) | Calendar and reminders with direct `.ics` file import; the local bridge is optional. | 3 |
-| [**PodCaption**](apps/podcaption) | Podcast captions from a local VTT/SRT/JSON/text file or Podcasting 2.0 RSS transcripts. | 3 |
-| [**Companion**](apps/companion) | Push-to-talk personal assistant with a user-configurable local endpoint and explicit microphone control. | 3 |
-| [**Map Glass**](apps/map-glass) | Visual routing from the phone's live position to saved destination coordinates through OSRM. | 3 |
-| [**Endurance HUD**](apps/endurance-hud) | Live running and cycling metrics from Garmin Connect IQ, a bike computer, Cloudflare, or any JSON telemetry source. | 3 |
-| [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions; account secrets remain in the local bridge and no trading actions exist. | 3 |
+| [**RainLens**](apps/rain-lens) | Full Open-Meteo weather: current conditions, wind, rain, hourly outlook, and 3-day forecast. | 46 |
+| [**Dayline**](apps/dayline) | Calendar and reminders with direct `.ics` file import; the local bridge is optional. | 67 |
+| [**PodCaption**](apps/podcaption) | Podcast captions from a local VTT/SRT/JSON/text file or Podcasting 2.0 RSS transcripts. | 58 |
+| [**Companion**](apps/companion) | Push-to-talk personal assistant with a user-configurable local endpoint and explicit microphone control. | 44 |
+| [**Map Glass**](apps/map-glass) | Visual routing from the phone's live position to saved destination coordinates through OSRM. | 68 |
+| [**Endurance HUD**](apps/endurance-hud) | Live running and cycling metrics from Garmin Connect IQ, a bike computer, Cloudflare, or any JSON telemetry source. | 44 |
+| [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions; account secrets remain in the local bridge and no trading actions exist. | 65 |
 
 ### Pixel-first glance UI
 
 Ten apps use real monochrome G2 image containers where a symbol makes the screen faster to understand: PostureLens, DecibelGuard, Cadence, ShiftClock, OpenGlance, Lumen Glass, RainLens, Dayline, Map Glass, and Endurance HUD. RainLens switches weather symbols, Endurance HUD switches between running and cycling, and Map Glass draws the route itself. Text-critical apps such as PromptFlow, Babel Glass, PodCaption, FlowList, FieldLog, NextStop, Agent Glass, Companion, Status Glass, and Market Glance deliberately keep the full width for words, rows, or safety-critical values.
 
 ```
-829 tests · 20 builds · every app confirmed rendering in the Even Hub simulator
+1278 tests · 20 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
@@ -101,7 +101,7 @@ Applied by every app, carried as its own copy:
   swipe, long press — with the R1 ring reported as a distinct source and a
   user-toggleable swipe inversion.
 - **Pure logic, thin SDK adapter.** Everything testable imports no SDK types.
-  That is where all 829 tests live.
+  That is where all 1278 tests live.
 - **Redraw suppression.** The display is written only when the view changed.
 - **Privacy-first defaults.** No permission is declared unless used. Apps that
   open the microphone show an indicator that cannot be hidden. Apps that could

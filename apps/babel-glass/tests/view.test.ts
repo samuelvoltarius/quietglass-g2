@@ -139,3 +139,61 @@ describe("configuration", () => {
     expect(parseData(JSON.stringify({ mode: "hyperspeed" })).mode).toBe("conversation");
   });
 });
+
+describe("Cyrillic originals and German translations on the glasses", () => {
+  const translated = (original: string, translation: string, language?: string) => {
+    const buffer = applyTranscript(createBuffer(), { text: original, final: true, ...(language ? { language } : {}) }, 1);
+    return applyTranslation(buffer, original, translation);
+  };
+
+  it("keeps umlauts and ß in the translation exactly", () => {
+    const body = buildView(translated("Привет", "Schöne Grüße, äöü ÄÖÜ ß"), { ...base, translating: true }).body;
+    expect(body[0]).toBe("Schöne Grüße, äöü ÄÖÜ ß");
+  });
+
+  it("shows Cyrillic unchanged when transliteration is off", () => {
+    const body = buildView(translated("Добры дзень", "Guten Tag", "be"), { ...base, translating: true }).body;
+    expect(body).toEqual(["Guten Tag", "Добры дзень"]);
+  });
+
+  it("transliterates only the original line, never the translation", () => {
+    const body = buildView(translated("Добры дзень, Мінск", "Guten Tag, Minsk – schön", "be"), {
+      ...base, translating: true, transliterateOriginal: true, sourceLanguage: "be",
+    }).body;
+    expect(body).toEqual(["Guten Tag, Minsk – schön", "Dobry dzen', Minsk"]);
+  });
+
+  it("uses the configured language's table over Whisper's label", () => {
+    // Whisper said "ru", the user fixed "be": г must become h.
+    const body = buildView(translated("Гродна", "Grodno", "ru"), {
+      ...base, translating: true, transliterateOriginal: true, sourceLanguage: "be",
+    }).body;
+    expect(body[1]).toBe("Hrodna");
+  });
+
+  it("uses the detected language with source auto", () => {
+    const body = buildView(translated("Город", "Stadt", "ru"), {
+      ...base, translating: true, transliterateOriginal: true, sourceLanguage: "auto",
+    }).body;
+    expect(body[1]).toBe("Gorod");
+  });
+
+  it("transliterates the original while its translation is pending, and in caption-only mode", () => {
+    const line = applyTranscript(createBuffer(), { text: "Привет", final: true, language: "ru" }, 1);
+    expect(buildView(line, { ...base, translating: true, transliterateOriginal: true }).body[0]).toBe("Privet");
+    expect(buildView(line, { ...base, mode: "captionOnly", transliterateOriginal: true }).body[0]).toBe("Privet");
+  });
+
+  it("wraps Cyrillic by characters, not bytes", () => {
+    // 44 Cyrillic characters are 88 UTF-8 bytes but must still fit one row.
+    const word = "ж".repeat(20);
+    const text = word + " " + "ш".repeat(23);   // 20 + 1 + 23 = 44
+    expect(buildView(withLine(text), base).body).toEqual([text]);
+  });
+
+  it("surfaces a translation failure in the footer", () => {
+    const view = buildView(withLine("Привет"), { ...base, translating: true, translateError: "HTTP 400" });
+    expect(view.footer).toContain("translate: HTTP 400");
+    expect(view.footer).toContain("MIC");
+  });
+});

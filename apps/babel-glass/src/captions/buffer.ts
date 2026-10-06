@@ -12,6 +12,8 @@ import type { Transcript } from "../stt/provider";
 export interface CaptionLine {
   readonly text: string;
   readonly at: number;
+  /** Language the recogniser reported for this line, if any. */
+  readonly language?: string;
   /** Translation of `text`, when translation is on and has arrived. */
   readonly translated?: string;
 }
@@ -46,18 +48,24 @@ export function applyTranscript(
   now: number,
   options: BufferOptions = {},
 ): CaptionBuffer {
-  const text = transcript.text.trim();
+  // NFC so that a decomposed "u + combining diaeresis" from a server becomes
+  // one "ü": one character on screen, one character for wrapping.
+  const text = transcript.text.normalize("NFC").trim();
   if (!text) {
     return transcript.final ? { ...buffer, pending: null } : buffer;
   }
 
+  const line: CaptionLine = transcript.language
+    ? { text, at: now, language: transcript.language }
+    : { text, at: now };
+
   if (!transcript.final) {
-    return { ...buffer, pending: { text, at: now } };
+    return { ...buffer, pending: line };
   }
 
   const keep = options.keep ?? DEFAULT_KEEP;
   return {
-    lines: [...buffer.lines, { text, at: now }].slice(-keep),
+    lines: [...buffer.lines, line].slice(-keep),
     pending: null,
   };
 }
@@ -68,10 +76,12 @@ export function applyTranslation(
   sourceText: string,
   translated: string,
 ): CaptionBuffer {
+  // Lines are stored NFC-normalised and trimmed; match the same way.
+  const source = sourceText.normalize("NFC").trim();
   for (let i = buffer.lines.length - 1; i >= 0; i--) {
     const line = buffer.lines[i];
-    if (line && line.text === sourceText) {
-      const updated: CaptionLine = { ...line, translated };
+    if (line && line.text === source) {
+      const updated: CaptionLine = { ...line, translated: translated.normalize("NFC") };
       return {
         ...buffer,
         lines: [...buffer.lines.slice(0, i), updated, ...buffer.lines.slice(i + 1)],
@@ -109,6 +119,18 @@ export function isFollowingLive(buffer: CaptionBuffer, rows: number, offset: num
   return offset <= 0 || total <= rows;
 }
 
+/**
+ * Characters as they appear on screen: code points, not UTF-16 units, and
+ * combining marks do not count. Cyrillic, umlauts and ß are one each.
+ */
+export function displayWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    if (!/\p{M}/u.test(ch)) width++;
+  }
+  return width;
+}
+
 /** Wraps a caption to the display width, longest-fitting lines first. */
 export function wrap(text: string, maxWidth: number): string[] {
   const words = text.split(/\s+/).filter(Boolean);
@@ -119,7 +141,7 @@ export function wrap(text: string, maxWidth: number): string[] {
   let current = "";
   for (const word of words) {
     const candidate = current === "" ? word : current + " " + word;
-    if (candidate.length <= maxWidth) {
+    if (displayWidth(candidate) <= maxWidth) {
       current = candidate;
     } else {
       if (current !== "") lines.push(current);
