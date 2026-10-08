@@ -1,0 +1,27 @@
+{
+  "package_id": "glass.quiet.xaventrahud",
+  "edition": "202601",
+  "name": "Xaventra HUD",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Read the status feed from the Xaventra server you enter in the phone app, and send your yes/no answers and voice recordings to it. No other server is contacted.",
+      "whitelist": [
+        "http://*",
+        "https://*"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Optional voice control: hold to speak. Audio is recorded only while you hold, for at most 15 seconds, and goes only to your own Xaventra server for transcription."
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en"
+  ]
+}

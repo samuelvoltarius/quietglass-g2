@@ -67,6 +67,7 @@ Namen deines Servers im Tailscale-Netz ein.
 | [Agent Glass](#agent-glass) | **ja**: Server deines KI-Agenten |
 | [Shoot Day](#shoot-day) | **ja**: eigener Server |
 | [Klipper Glance](#klipper-glance) | **ja**: Bridge für den Drucker |
+| [Xaventra HUD](#xaventra-hud) | **ja**: dein Xaventra-Rechner (Even-G2-Dienst) |
 | [Status Glass](#status-glass) | **ja**: eine Statusquelle |
 | [Lumen Glass](#lumen-glass) | **ja**: dein LUMEN |
 | [PodCaption](#podcaption) | nein (Datei oder Text); Feed-Bridge optional – *noch nicht im Store* |
@@ -406,6 +407,42 @@ Dann **Speichern und verbinden**.
 **So prüfst du, dass es läuft:** Unter „Drucker“ steht Zustand, Prozent und
 Dateiname; darunter, ob Steuern erlaubt ist. „Bridge erreichbar, Drucker
 offline“ heißt: Die Bridge läuft, der Drucker ist aus.
+
+### Xaventra HUD
+
+Zeigt auf der Brille, woran dein eigener Xaventra-Agent arbeitet, und beantwortet
+seine Rückfragen: **Tippen = Ja**, **Doppeltippen = Nein**, **Wischen = nächste
+Frage**. Aktionen, die nach außen wirken (drucken, schalten, senden), brauchen
+einen **zweiten Tap**. **Halten = sprechen**: die Aufnahme geht an deinen
+Xaventra-Rechner, der sie mit seiner eigenen Spracherkennung versteht.
+
+**Was du brauchst:** eine Xaventra-Installation mit eingeschaltetem
+Even-G2-Dienst (`channels.evenG2.enabled`, Token `NOVA_EVEN_G2_TOKEN`, Standard-Port
+`18790`, hört nur auf `127.0.0.1`). Für Sprache muss dein Xaventra den Sprach-Endpunkt
+`POST /hud/voice` haben. Die Einrichtung auf der Xaventra-Seite steht in dessen
+`docs/EVEN_G2.md`.
+
+Per https im Tailnet erreichbar machen:
+
+```bash
+tailscale serve --bg --https=8790 http://127.0.0.1:18790
+```
+
+(Nimm einen Port, der bei dir frei ist. **Niemals** `tailscale serve reset` –
+das löscht alle deine anderen Freigaben.)
+
+**Am Handy eintragen:**
+
+| Feld in der App | Was rein | Beispiel |
+|---|---|---|
+| Adresse des Xaventra-Endpunkts | die https-Adresse | `https://<dein-rechner>.<dein-tailnet>.ts.net:8790` |
+| Token (NOVA_EVEN_G2_TOKEN) | der Token deines Xaventra-Dienstes | – |
+
+Dann **Speichern und verbinden**.
+
+**So prüfst du, dass es läuft:** Unter „Verbindung“ steht „Verbunden.“, auf der
+Brille steht oben „Xaventra · Uhrzeit“ (bei Problemen „(offline)“). „Token
+abgelehnt (401)“ heißt: Der Token stimmt nicht mit `NOVA_EVEN_G2_TOKEN` überein.
 
 ### Status Glass
 

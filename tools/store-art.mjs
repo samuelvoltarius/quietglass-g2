@@ -241,6 +241,25 @@ const APPS = {
       "......##....",
     ],
   },
+  "xaventra-hud": {
+    name: "Xaventra HUD",
+    tagline: ["Xaventra on your glasses: status and quick yes/no", "Xaventra auf der Brille: Status und schnelles Ja/Nein"],
+    // A bold X on the 12x12 grid; the app has no other pixel art.
+    icon: [
+      "##........##",
+      "###......###",
+      ".###....###.",
+      "..###..###..",
+      "...######...",
+      "....####....",
+      "....####....",
+      "...######...",
+      "..###..###..",
+      ".###....###.",
+      "###......###",
+      "##........##",
+    ],
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,26 @@
+{
+  "category": "AI",
+  "tagline": "Xaventra on your glasses: status and quick yes/no",
+  "about": "Xaventra HUD puts your self-hosted Xaventra agent on your glasses: what it is working on, its open questions as cards, and voice control.\n\n• Status: see what Xaventra is doing right now\n• Questions: tap = yes, double tap = no, swipe = next card\n• Actions that reach outside (printing, switching, sending) need a second tap to confirm\n• Voice: hold to speak, release to send; yes/no answers the open card, anything else goes to the agent and its reply appears on the glasses\n\nHow to start:\n1) Enable the Even G2 service in Xaventra and make it reachable over HTTPS inside your tailnet (tailscale serve).\n2) In the Even app enter the endpoint address and the token.\n3) On the glasses: tap, double tap, swipe, or hold and speak.\n\nRequires your own Xaventra installation; voice needs a Xaventra version with the voice endpoint and its speech recognition. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking.\n\n— Deutsch —\n\nXaventra HUD bringt deinen selbst gehosteten Xaventra-Agenten auf die Brille: woran er arbeitet, offene Rückfragen als Karten und Sprachsteuerung.\n\n• Status: sieh, was Xaventra gerade tut\n• Fragen: Tippen = Ja, Doppeltippen = Nein, Wischen = nächste Karte\n• Aktionen nach außen (drucken, schalten, senden) brauchen einen zweiten Tap zur Bestätigung\n• Sprache: halten und sprechen, beim Loslassen wird gesendet; Ja/Nein beantwortet die offene Karte, alles andere geht an den Agenten und seine Antwort erscheint auf der Brille\n\nSo startest du:\n1) In Xaventra den Even-G2-Dienst einschalten und im Tailnet per https erreichbar machen (tailscale serve).\n2) In der Even-App Adresse des Endpunkts und Token eintragen.\n3) Auf der Brille: tippen, doppeltippen, wischen oder halten und sprechen.\n\nBraucht eine eigene Xaventra-Installation; Sprache braucht eine Xaventra-Version mit Sprach-Endpunkt und Spracherkennung. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "xaventra",
+    "ai agent",
+    "self-hosted",
+    "voice control",
+    "approvals"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Reads the status feed from your own Xaventra server and sends your yes/no answers and voice recordings to it. No other server is contacted.",
+      "why_de": "Liest den Status von deinem eigenen Xaventra-Server und sendet deine Ja/Nein-Antworten und Aufnahmen dorthin. Kein anderer Server."
+    },
+    {
+      "name": "g2-microphone",
+      "why_en": "Voice control only while you hold, at most 15 s, shown as ● MIC. Audio goes only to your own Xaventra server.",
+      "why_de": "Sprachsteuerung nur, solange du hältst, höchstens 15 s, angezeigt als ● MIC. Der Ton geht nur an deinen Xaventra-Server."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/xaventra-hud/docs/PRIVACY.md",
+  "screenshot": "release/xaventra-hud/screenshot.png"
+}

@@ -4,8 +4,8 @@ Eighteen apps for the [Even Realities G2](https://www.evenrealities.com) smart
 glasses, built on the official Even Hub SDK. Every app speaks German and
 English and follows the phone's language; you can switch it on the phone.
 
-> **Kurz auf Deutsch:** 18 kostenlose Apps für die Even Realities G2, alle auf
-> Deutsch und Englisch. Zehn laufen sofort ohne Einrichtung, acht verbinden sich
+> **Kurz auf Deutsch:** 19 kostenlose Apps für die Even Realities G2, alle auf
+> Deutsch und Englisch. Zehn laufen sofort ohne Einrichtung, neun verbinden sich
 > mit einem eigenen Server. Keine Konten, keine API-Schlüssel, kein Abo.
 
 They come in two groups:
@@ -60,9 +60,10 @@ Einrichtung (Deutsch, Schritt für Schritt, pro App): [docs/SETUP.md](docs/SETUP
 | [**Market Glance**](apps/market-glance) | Read-only Polymarket and Kalshi positions with live prices and open P/L; no trading. | [`market-bridge.mjs`](apps/market-glance/examples/market-bridge.mjs) | 72 |
 | [**Shoot Day**](apps/shoot-day) | A film shoot on your glasses: take log by voice, teleprompter for the scene, today's schedule with what's on now and next, and the packing list. | [`shoot-day-server.mjs`](apps/shoot-day/examples/shoot-day-server.mjs) with a web terminal; optional [MCP server](apps/shoot-day/examples/dreh_mcp.py) for agents | 108 |
 | [**Klipper Glance**](apps/klipper-glance) | Your 3D printer at a glance: progress, layer, time left and temperatures; pause, resume or cancel with a confirming second tap. | [`klipper-bridge.mjs`](apps/klipper-glance/examples/klipper-bridge.mjs) for Moonraker/Klipper | 57 |
+| [**Xaventra HUD**](apps/xaventra-hud) | Your self-hosted Xaventra agent on the glasses: status, open questions answered with tap or double tap (a confirming second tap for actions that reach outside), and voice by holding to speak. | The Even G2 endpoint of a Xaventra daemon (`/hud`, `/hud/answer`, `/hud/voice`) | 66 |
 
 ```
-2046 tests · 18 builds · every app confirmed rendering in the Even Hub simulator
+2112 tests · 19 builds · every app confirmed rendering in the Even Hub simulator
 ```
 
 **Nothing here has been verified on physical G2 hardware yet.** Each README
@@ -77,7 +78,7 @@ OpenGlance (turn arrow, distance bar and a route overview with real streets),
 FlowList (step progress), Lumen Glass, RainLens (12-hour rain and temperature
 chart) and Endurance HUD.
 Text-critical apps — Babel Glass, PodCaption, FlowList, FieldLog, NextStop,
-Agent Glass, Status Glass, Market Glance, Shoot Day and Klipper Glance — keep
+Agent Glass, Status Glass, Market Glance, Shoot Day, Klipper Glance and Xaventra HUD — keep
 the full width for words,
 rows or safety-critical values.
 
