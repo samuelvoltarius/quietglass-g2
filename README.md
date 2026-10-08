@@ -31,6 +31,8 @@ copying, so no app can break another.
 
 See the native-resolution simulator captures in the [screenshot gallery](docs/GALLERY.md).
 
+Einrichtung (Deutsch, Schritt für Schritt, pro App): [docs/SETUP.md](docs/SETUP.md)
+
 ## Ready to use — no setup
 
 | App | What it does | Tests |
