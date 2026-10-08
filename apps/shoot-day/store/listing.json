@@ -1,0 +1,26 @@
+{
+  "category": "Productivity",
+  "tagline": "Takes, script, schedule and packing list.",
+  "about": "Shoot Day puts your film shoot on your glasses: take log, teleprompter, schedule and packing list, served from your own computer.\n\n• Takes: log OK/NG per shot, with a note\n• Teleprompter with adjustable speed\n• Schedule shows what is on now and next\n• Packing list, also by voice: \"gimbal packed\", \"what's missing?\"\n\nHow to start:\n1) Run the included Shoot Day server and make it reachable over HTTPS (e.g. tailscale serve).\n2) Enter the address in the Even app.\n3) On the glasses: swipe to choose a module, tap to open.\n\nRequires your own server: the Shoot Day server (Node.js); voice commands also need a Whisper-compatible speech service. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking.\n\n— Deutsch —\n\nShoot Day ist dein Drehtag auf der Brille: Take-Protokoll, Teleprompter, Tagesplan und Packliste, direkt von deinem eigenen Rechner.\n\n• Takes: OK/NG pro Shot mitschreiben, mit Notiz\n• Teleprompter mit einstellbarem Tempo\n• Tagesplan zeigt, was jetzt läuft und was gleich kommt\n• Packliste, auch per Sprache: „Gimbal eingepackt“, „Was fehlt noch?“\n\nSo startest du:\n1) Den mitgelieferten Server starten und über https erreichbar machen (z. B. tailscale serve).\n2) Die Adresse in der Even-App eintragen.\n3) Auf der Brille: Wischen wählt ein Modul, Tippen öffnet es.\n\nBraucht einen eigenen Server: den Shoot-Day-Server (Node.js); Sprachbefehle brauchen zusätzlich eine Whisper-kompatible Spracherkennung. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "filmmaking",
+    "video production",
+    "teleprompter",
+    "shot list",
+    "self-hosted"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Loads shot list, script, schedule and packing list from your own Shoot Day server and logs takes there. No other server is contacted.",
+      "why_de": "Lädt Shotlist, Text, Tagesplan und Packliste von deinem eigenen Shoot-Day-Server und speichert Takes dort. Kein anderer Server."
+    },
+    {
+      "name": "g2-microphone",
+      "why_en": "Optional voice commands only while you hold or after you pick Speak, at most 15 s, shown as ● MIC. Audio goes only to your own server.",
+      "why_de": "Optionale Sprachbefehle nur, solange du hältst oder nach „Sprechen“, höchstens 15 s, angezeigt als ● MIC. Der Ton geht nur an deinen Server."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/shoot-day/docs/PRIVACY.md",
+  "screenshot": "release/shoot-day/screenshot.png"
+}

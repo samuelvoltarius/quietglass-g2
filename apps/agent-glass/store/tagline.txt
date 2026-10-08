@@ -1,2 +1,2 @@
-Watch and answer your coding agent from your glasses.
-Deinen Coding-Agenten auf der Brille verfolgen und steuern.
+Watch and answer your coding agent on glasses.
+Deinen Coding-Agenten auf der Brille steuern.

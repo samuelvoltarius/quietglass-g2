@@ -1,0 +1,26 @@
+{
+  "category": "Productivity",
+  "tagline": "Hands-free inspection notes with photos.",
+  "about": "FieldLog is your hands-free notepad for walk-throughs: flat handovers, vehicle returns, site checks. Pick a note on the glasses, add a photo from your phone, export a report.\n\n• Quick notes like Damaged, Missing or Not working, editable on the phone\n• Severity and sections, so the report groups itself\n• Hold to attach a photo from the phone camera\n• Export as Markdown or CSV (also Excel-ready for DE/AT)\n\nHow to start:\n1) Open FieldLog and tap the temple: an inspection starts.\n2) Tap again, swipe to a quick note, tap to save.\n3) Export the report on the phone.\n\nOptional: dictate notes via your own speech server. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking. Entries and photos stay on your phone until you export them.\n\n— Deutsch —\n\nFieldLog ist dein Notizblock für Rundgänge: Wohnungsübergabe, Auto-Rückgabe, Kontrolle auf der Baustelle. Notiz an der Brille wählen, Foto mit dem Handy, Bericht exportieren.\n\n• Schnellnotizen wie „Beschädigt“ oder „Fehlt“, am Handy anpassbar\n• Schweregrad und Bereiche, der Bericht ordnet sich selbst\n• Halten hängt ein Foto von der Handykamera an\n• Export als Markdown oder CSV (auch passend für Excel DE/AT)\n\nSo startest du:\n1) FieldLog öffnen und an die Brille tippen: Ein Rundgang startet.\n2) Nochmal tippen, Notiz per Wischen wählen, tippen speichert.\n3) Bericht am Handy exportieren.\n\nOptional: Notizen diktieren über deinen eigenen Sprachserver. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking. Einträge und Fotos bleiben auf deinem Handy, bis du sie exportierst.",
+  "tags": [
+    "inspection",
+    "notes",
+    "checklist",
+    "report",
+    "hands-free"
+  ],
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "why_en": "Optional: dictate one note after you tap, shown as ● MIC. Only used if you set up your own speech server; audio is never stored.",
+      "why_de": "Optional: eine Notiz diktieren, nachdem du tippst, angezeigt als ● MIC. Nur mit eigenem Sprachserver; der Ton wird nie gespeichert."
+    },
+    {
+      "name": "network",
+      "why_en": "Optional: sends dictation to the speech server you enter in the phone app. Without a server, nothing is sent.",
+      "why_de": "Optional: schickt Diktate an den Sprachserver, den du in der Handy-App einträgst. Ohne Server wird nichts gesendet."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/field-log/docs/PRIVACY.md",
+  "screenshot": "release/field-log/screenshot.png"
+}

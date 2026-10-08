@@ -1,2 +1,2 @@
-Sound level and daily noise dose. Nothing is recorded.
-Lautstärke und Lärmdosis im Blick. Nichts wird aufgenommen.
+Sound level and noise dose. Nothing recorded.
+Lautstärke und Lärmdosis. Keine Aufnahme.

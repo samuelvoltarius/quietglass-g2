@@ -1,0 +1,21 @@
+{
+  "category": "AI",
+  "tagline": "Watch and answer your coding agent on glasses.",
+  "about": "Agent Glass shows on your glasses what your coding agent is doing, and lets you answer its permission requests without going back to your desk.\n\n• Live view of the latest reply and the running tool\n• Claude Code and Codex via Even Terminal: swipe up to allow, down to deny\n• Also works with Hermes and OpenClaw gateways\n• Hold to interrupt; optional read-aloud via phone headphones\n\nHow to start:\n1) Start Even Terminal on your computer with CORS enabled.\n2) Open Agent Glass in the Even app and paste the pairing address.\n3) Tap Save and connect.\n\nRequires your own server: Even Terminal, a Hermes bridge or an OpenClaw gateway on your computer. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking.\n\n— Deutsch —\n\nAgent Glass zeigt dir auf der Brille, was dein Coding-Agent gerade tut, und du beantwortest seine Freigaben, ohne zum Schreibtisch zu gehen.\n\n• Live-Ansicht der neuesten Antwort und des laufenden Werkzeugs\n• Claude Code und Codex über Even Terminal: nach oben wischen erlaubt, nach unten lehnt ab\n• Funktioniert auch mit Hermes und OpenClaw\n• Halten unterbricht; auf Wunsch liest das Handy vor\n\nSo startest du:\n1) Even Terminal auf deinem Rechner mit CORS starten.\n2) Agent Glass in der Even-App öffnen, Pairing-Adresse einfügen.\n3) „Speichern und verbinden“ tippen.\n\nBraucht einen eigenen Server: Even Terminal, eine Hermes-Bridge oder ein OpenClaw-Gateway auf deinem Rechner. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "coding agent",
+    "claude code",
+    "codex",
+    "developer",
+    "remote control"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Connects only to the Even Terminal, Hermes or OpenClaw address you enter. The whitelist is broad because that address is yours to choose.",
+      "why_de": "Verbindet sich nur mit der Even-Terminal-, Hermes- oder OpenClaw-Adresse, die du einträgst. Die Freigabe ist breit, weil du die Adresse selbst wählst."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/agent-glass/docs/PRIVACY.md",
+  "screenshot": "release/agent-glass/screenshot.png"
+}

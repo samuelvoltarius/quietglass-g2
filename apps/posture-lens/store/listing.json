@@ -1,0 +1,15 @@
+{
+  "category": "Health",
+  "tagline": "A quiet nudge when your head drifts forward.",
+  "about": "PostureLens uses the glasses' motion sensor to notice when your head has leaned forward for too long, and quietly reminds you to sit up.\n\n• Measures against your own upright posture, not a fixed angle\n• Warns only after a lean held for about a minute, then stays quiet for a while\n• Nearly empty display while you sit well\n• No camera, no recording\n\nHow to start:\n1) Open PostureLens and put on your glasses.\n2) Sit upright and tap once to save your posture.\n3) Just work. The glasses speak up if you lean forward too long.\n\nNot a medical device. Free. No account, no tracking, no network. No posture history is stored.\n\n— Deutsch —\n\nPostureLens merkt über den Bewegungssensor der Brille, wenn dein Kopf zu lange nach vorne geneigt ist, und erinnert dich leise daran, dich aufzurichten.\n\n• Misst gegen deine eigene aufrechte Haltung, nicht gegen einen festen Winkel\n• Warnt erst nach etwa einer Minute Vorneigen und ist danach eine Weile still\n• Fast leere Anzeige, solange du gut sitzt\n• Keine Kamera, keine Aufzeichnung\n\nSo startest du:\n1) PostureLens öffnen und die Brille aufsetzen.\n2) Gerade hinsetzen und einmal tippen: Deine Haltung ist gespeichert.\n3) Einfach arbeiten. Sitzt du zu lange vorgeneigt, meldet sich die Brille.\n\nKein Medizinprodukt. Kostenlos. Kein Konto, kein Tracking, kein Netz. Kein Haltungsverlauf wird gespeichert.",
+  "tags": [
+    "posture",
+    "desk work",
+    "ergonomics",
+    "wellness",
+    "reminder"
+  ],
+  "permissions": [],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/posture-lens/docs/PRIVACY.md",
+  "screenshot": "release/posture-lens/screenshot.png"
+}

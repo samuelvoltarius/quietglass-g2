@@ -1,0 +1,21 @@
+{
+  "category": "Health",
+  "tagline": "Sound level and noise dose. Nothing recorded.",
+  "about": "DecibelGuard tracks how much noise you are exposed to today and warns you before it gets too much for your hearing, already at half of the daily limit.\n\n• Live sound level and daily noise dose\n• Warnings at halfway and when the daily dose is reached\n• EU (3 dB) and OSHA (5 dB) rules\n• Optional calibration against a real sound level meter\n\nHow to start:\n1) Open DecibelGuard and put on your glasses.\n2) Tap once: measuring starts and ● MIC is shown.\n3) Carry on. Tap again to stop.\n\nAn indicator, not a certified sound level meter.\n\nFree. No account, no tracking. No audio is recorded, and the app has no network code.\n\n— Deutsch —\n\nDecibelGuard zählt mit, wie viel Lärm du heute abbekommst, und warnt dich, bevor es deinem Gehör zu viel wird, schon bei der Hälfte des Tageslimits.\n\n• Aktuelle Lautstärke und Lärmdosis des Tages\n• Warnung bei der Hälfte und wenn die Tagesdosis erreicht ist\n• Regeln nach EU (3 dB) und OSHA (5 dB)\n• Optional mit einem echten Messgerät abgleichen\n\nSo startest du:\n1) DecibelGuard öffnen und die Brille aufsetzen.\n2) Einmal tippen: Die Messung startet, ● MIC wird angezeigt.\n3) Einfach weitermachen. Nochmal tippen beendet.\n\nEine Orientierung, kein geeichtes Messgerät.\n\nKostenlos. Kein Konto, kein Tracking. Es wird kein Ton aufgenommen, und die App hat keinen Netzwerk-Code.",
+  "tags": [
+    "hearing",
+    "noise",
+    "decibel",
+    "sound level",
+    "health"
+  ],
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "why_en": "Measures the sound level after you tap. Each audio block becomes one number and is discarded at once; nothing is recorded or sent.",
+      "why_de": "Misst die Lautstärke, nachdem du tippst. Jeder Tonblock wird zu einer Zahl und sofort verworfen; nichts wird aufgenommen oder gesendet."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/decibel-guard/docs/PRIVACY.md",
+  "screenshot": "release/decibel-guard/screenshot.png"
+}

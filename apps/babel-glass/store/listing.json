@@ -1,0 +1,26 @@
+{
+  "category": "AI",
+  "tagline": "Live captions and translation in your view.",
+  "about": "Babel Glass shows speech around you as live captions on your glasses, optionally translated. Speech recognition runs on your own server, not in someone else's cloud.\n\n• Modes: conversation, lecture, travel, caption only\n• Translation via LibreTranslate or a local LLM (e.g. Ollama)\n• Microphone opens only on your tap, always shown as ● MIC\n• Audio and transcript are never stored\n\nHow to start:\n1) Run a speech server (a faster-whisper example is included).\n2) Enter its address in the phone app.\n3) Tap the temple to start captions, tap again to stop.\n\nRequires your own server: a speech recognition server, optionally a translation server. Without one you only see demo text. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking.\n\n— Deutsch —\n\nBabel Glass zeigt Gesprochenes um dich herum als Live-Untertitel auf der Brille, auf Wunsch übersetzt. Die Spracherkennung läuft auf deinem eigenen Server, nicht in einer fremden Cloud.\n\n• Modi: Gespräch, Vortrag, Reise, nur Untertitel\n• Übersetzung über LibreTranslate oder ein lokales LLM (z. B. Ollama)\n• Mikrofon nur nach deinem Tippen, immer mit ● MIC angezeigt\n• Ton und Mitschrift werden nie gespeichert\n\nSo startest du:\n1) Sprachserver starten (Beispiel mit faster-whisper liegt bei).\n2) Seine Adresse in der Handy-App eintragen.\n3) Auf den Bügel tippen startet, nochmal tippen stoppt.\n\nBraucht einen eigenen Server: Spracherkennung, optional ein Übersetzungsserver. Ohne siehst du nur Demo-Text. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "captions",
+    "translation",
+    "speech",
+    "accessibility",
+    "self-hosted"
+  ],
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "why_en": "Hears speech only after you tap to start captions; ● MIC is shown the whole time. Audio goes only to your own speech server and is never stored.",
+      "why_de": "Hört erst zu, wenn du zum Starten tippst; solange steht ● MIC auf der Brille. Der Ton geht nur an deinen eigenen Sprachserver und wird nie gespeichert."
+    },
+    {
+      "name": "network",
+      "why_en": "Reaches the speech and translation servers you enter in the phone app. No other host is contacted.",
+      "why_de": "Erreicht die Sprach- und Übersetzungsserver, die du in der Handy-App einträgst. Kein anderer Server wird kontaktiert."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/babel-glass/docs/PRIVACY.md",
+  "screenshot": "release/babel-glass/screenshot.png"
+}

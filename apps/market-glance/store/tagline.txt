@@ -1,2 +1,2 @@
-Read-only Polymarket and Kalshi positions at a glance.
+Read-only Polymarket and Kalshi positions.
 Polymarket- und Kalshi-Positionen auf einen Blick.

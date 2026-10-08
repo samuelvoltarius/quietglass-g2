@@ -1,2 +1,2 @@
 Your servers' health and alerts on your glasses.
-Zustand und Warnungen deiner Server auf der Brille.
+Zustand und Warnungen deiner Server im Blick.

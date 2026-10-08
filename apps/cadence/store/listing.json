@@ -1,0 +1,15 @@
+{
+  "category": "Music",
+  "tagline": "A visual metronome and practice log for musicians.",
+  "about": "Cadence is a metronome you can see: the beat appears as a row of dots on your glasses, so your ears stay free for your instrument. It can also log what you practised.\n\n• Beat dots; the whole row lights up on the downbeat\n• Downbeat-only mode for fast tempos\n• Practice log: what, how fast, how long, with CSV export\n• Works with the R1 ring as well as the temple pads\n\nHow to start:\n1) Open Cadence and put on your glasses.\n2) Tap the temple: the beat starts (100 bpm, 4/4).\n3) Swipe to change the tempo, tap to pause.\n\nFree. No account, no tracking, no server. Everything stays on your phone.\n\n— Deutsch —\n\nCadence ist ein Metronom zum Anschauen: Die Brille zeigt dir den Takt als Punkte-Reihe, deine Ohren bleiben frei fürs Instrument. Auf Wunsch schreibt es mit, was du geübt hast.\n\n• Takt-Punkte; auf der Eins leuchtet die ganze Reihe\n• Nur-Eins-Modus für schnelle Tempi\n• Übe-Tagebuch: was, wie schnell, wie lange, mit CSV-Export\n• Funktioniert mit dem R1-Ring genauso wie mit den Bügeln\n\nSo startest du:\n1) Cadence öffnen und die Brille aufsetzen.\n2) Auf den Bügel tippen: Der Takt läuft (100 bpm, 4/4).\n3) Wischen ändert das Tempo, Tippen pausiert.\n\nKostenlos. Kein Konto, kein Tracking, kein Server. Alles bleibt auf deinem Handy.",
+  "tags": [
+    "metronome",
+    "practice",
+    "musician",
+    "tempo",
+    "practice log"
+  ],
+  "permissions": [],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/cadence/docs/PRIVACY.md",
+  "screenshot": "release/cadence/screenshot.png"
+}

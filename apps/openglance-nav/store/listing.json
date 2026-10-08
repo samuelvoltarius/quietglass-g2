@@ -1,0 +1,26 @@
+{
+  "category": "Travel",
+  "tagline": "Turn-by-turn navigation on OpenStreetMap.",
+  "about": "OpenGlance gives you turn-by-turn navigation on your glasses, based on OpenStreetMap. No API key, nothing to host.\n\n• Big pixel arrow, distance to the turn and an approach bar\n• On foot, by bike or by car; car mode shows only what matters\n• Overview map with the real streets around your route\n• Automatic rerouting when you leave the route\n\nHow to start:\n1) Search your destination on the phone and tap Go here.\n2) Choose on foot, bike or car.\n3) Tap the side of your glasses.\n\nUses the free public servers of FOSSGIS e.V., komoot Photon and Overpass. Your own servers are optional. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nDo not rely on it as your only navigation. Free. No account, no tracking. Your position is never stored.\n\n— Deutsch —\n\nOpenGlance navigiert dich Abbiegung für Abbiegung auf der Brille, mit OpenStreetMap-Daten. Kein API-Schlüssel, nichts zu hosten.\n\n• Großer Pixelpfeil, Entfernung zur Abbiegung und Annäherungsbalken\n• Zu Fuß, mit Rad oder Auto; im Auto nur das Nötigste\n• Übersichtskarte mit den echten Straßen um deine Route\n• Neue Route automatisch, wenn du abweichst\n\nSo startest du:\n1) Am Handy dein Ziel suchen und auswählen.\n2) Zu Fuß, Rad oder Auto wählen.\n3) Seitlich auf die Brille tippen.\n\nNutzt die freien öffentlichen Server von FOSSGIS e.V., komoot Photon und Overpass. Eigene Server sind optional. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nVerlass dich nicht allein darauf. Kostenlos. Kein Konto, kein Tracking. Dein Standort wird nie gespeichert.",
+  "tags": [
+    "navigation",
+    "openstreetmap",
+    "walking",
+    "cycling",
+    "maps"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Calculates routes via FOSSGIS (OpenStreetMap), searches places via komoot Photon and loads overview streets via Overpass, or uses your own servers.",
+      "why_de": "Berechnet Routen über FOSSGIS (OpenStreetMap), sucht Orte über komoot Photon und lädt Straßen über Overpass, oder nutzt deine eigenen Server."
+    },
+    {
+      "name": "location",
+      "why_en": "Routes from where you are and measures the distance to the next turn. Your position is never stored.",
+      "why_de": "Berechnet die Route von deinem Standort und misst die Entfernung zur nächsten Abbiegung. Dein Standort wird nie gespeichert."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/openglance-nav/docs/PRIVACY.md",
+  "screenshot": "release/openglance-nav/screenshot.png"
+}

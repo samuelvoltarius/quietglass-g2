@@ -1,0 +1,15 @@
+{
+  "category": "Productivity",
+  "tagline": "Step-by-step checklists, one step at a time.",
+  "about": "FlowList shows a checklist on your glasses, one step at a time. A tap ticks off the current step, ideal when both hands are busy.\n\n• Critical steps marked (!) ask for a second tap\n• Optional steps, branching and detail text on demand\n• Write lists as plain text on the phone, share them as a file\n• Two example lists to start right away\n\nHow to start:\n1) Open FlowList: the example list \"Leaving the house\" is ready.\n2) Tap the temple to tick off the first step.\n3) Add your own list on the phone, one step per line.\n\nSwipe up = back, swipe down = skip an optional step, hold = details.\n\nFree. No account, no tracking, no network. Your lists stay on your phone.\n\n— Deutsch —\n\nFlowList zeigt dir eine Checkliste auf der Brille, immer nur den aktuellen Schritt. Ein Tippen hakt ihn ab, ideal wenn beide Hände beschäftigt sind.\n\n• Kritische Schritte mit (!) brauchen ein zweites Tippen\n• Optionale Schritte, Verzweigungen und Zusatzinfos\n• Listen als einfachen Text am Handy schreiben, als Datei teilen\n• Zwei Beispiel-Listen zum sofortigen Loslegen\n\nSo startest du:\n1) FlowList öffnen: Die Beispiel-Liste „Haus verlassen“ ist schon da.\n2) Seitlich auf die Brille tippen hakt den ersten Schritt ab.\n3) Eigene Liste am Handy anlegen, ein Schritt pro Zeile.\n\nNach oben wischen = zurück, nach unten = optionalen Schritt auslassen, halten = Zusatzinfo.\n\nKostenlos. Kein Konto, kein Tracking, kein Internet. Deine Listen bleiben auf dem Handy.",
+  "tags": [
+    "checklist",
+    "workflow",
+    "hands-free",
+    "tasks",
+    "offline"
+  ],
+  "permissions": [],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/flowlist/docs/PRIVACY.md",
+  "screenshot": "release/flowlist/screenshot.png"
+}

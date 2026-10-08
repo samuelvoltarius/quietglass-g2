@@ -1,0 +1,21 @@
+{
+  "category": "Health",
+  "tagline": "Live pace, power and heart rate on the move.",
+  "about": "Endurance HUD shows live workout data on your glasses while you run or ride: pace or speed, power, heart rate, cadence, distance and time.\n\n• Separate run and bike views\n• Clear STALE marker when no fresh data arrives\n• The bridge accepts simple JSON from a source you choose, e.g. a Garmin data field or your own sensor gateway\n• English, German, French, Spanish and Italian\n\nHow to start:\n1) Start the included telemetry bridge.\n2) Feed your live data into it.\n3) Open the app: tap refreshes, swipe switches run and bike.\n\nRequires your own server: the small bridge program from the repo, reachable at 127.0.0.1:8792. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nNot a medical device. Free. No account, no tracking, no workout history stored.\n\n— Deutsch —\n\nEndurance HUD zeigt dir beim Laufen oder Radfahren Live-Werte auf der Brille: Pace oder Tempo, Leistung, Puls, Kadenz, Distanz und Zeit.\n\n• Eigene Ansichten für Lauf und Rad\n• Deutliche STALE-Anzeige, wenn keine frischen Werte kommen\n• Die Bridge nimmt einfaches JSON aus einer Quelle deiner Wahl an, z. B. Garmin-Datenfeld oder eigenes Sensor-Gateway\n• Deutsch, Englisch, Französisch, Spanisch, Italienisch\n\nSo startest du:\n1) Die mitgelieferte Bridge starten.\n2) Deine Live-Daten an sie schicken.\n3) App öffnen: Tippen aktualisiert, Wischen wechselt Lauf und Rad.\n\nBraucht einen eigenen Server: das kleine Bridge-Programm aus dem Repo, erreichbar unter 127.0.0.1:8792. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKein Medizinprodukt. Kostenlos. Kein Konto, kein Tracking, kein Trainingsverlauf.",
+  "tags": [
+    "running",
+    "cycling",
+    "heart rate",
+    "fitness",
+    "workout"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Reads live workout values from your own bridge at 127.0.0.1:8792. No other host is allowed.",
+      "why_de": "Liest Live-Trainingswerte von deiner eigenen Bridge unter 127.0.0.1:8792. Andere Server sind nicht erlaubt."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/endurance-hud/docs/PRIVACY.md",
+  "screenshot": "release/endurance-hud/screenshot.png"
+}

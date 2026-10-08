@@ -1,0 +1,21 @@
+{
+  "category": "Utilities",
+  "tagline": "Your 3D printer's progress at a glance.",
+  "about": "Klipper Glance shows what your Klipper 3D printer is doing: file, progress, layer, time left, nozzle and bed temperatures.\n\n• Progress bar, layer and remaining time at a glance\n• Clear stale marker when readings are old\n• Optional pause, resume and cancel, if allowed on the bridge; every command needs two taps\n• The bridge finds your printer on the network by itself\n\nHow to start:\n1) Run the included bridge on a computer in your printer's network.\n2) Make it reachable over HTTPS (e.g. tailscale serve).\n3) Enter the address in the Even app.\n\nRequires your own server: the Klipper Glance bridge (Node.js) for your Moonraker printer. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking.\n\n— Deutsch —\n\nKlipper Glance zeigt auf der Brille, was dein Klipper-3D-Drucker gerade macht: Datei, Fortschritt, Schicht, Restzeit, Düse und Bett.\n\n• Fortschrittsbalken, Schicht und Restzeit auf einen Blick\n• Deutliche Markierung, wenn Werte veraltet sind\n• Optional pausieren, weiterdrucken, abbrechen, wenn die Bridge es erlaubt; jeder Befehl braucht zwei Tipper\n• Die Bridge findet den Drucker im Netz selbst\n\nSo startest du:\n1) Die mitgelieferte Bridge auf einem Rechner im Drucker-Netz starten.\n2) Über https erreichbar machen (z. B. tailscale serve).\n3) Die Adresse in der Even-App eintragen.\n\nBraucht einen eigenen Server: die Klipper-Glance-Bridge (Node.js) für deinen Moonraker-Drucker. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "3d printing",
+    "klipper",
+    "moonraker",
+    "maker",
+    "self-hosted"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Reads printer status from the bridge you run and sends pause, resume or cancel only after you confirm twice. No other server is contacted.",
+      "why_de": "Liest den Druckerstatus von deiner eigenen Bridge und schickt Pause, Weiter oder Abbruch nur nach zweifacher Bestätigung. Kein anderer Server."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/klipper-glance/docs/PRIVACY.md",
+  "screenshot": "release/klipper-glance/screenshot.png"
+}

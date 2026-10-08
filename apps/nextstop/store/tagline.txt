@@ -1,2 +1,2 @@
 Departures nearby and your next stop while riding.
-Abfahrten in der Nähe und die nächste Station unterwegs.
+Abfahrten in der Nähe, nächste Station unterwegs.

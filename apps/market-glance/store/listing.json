@@ -1,0 +1,21 @@
+{
+  "category": "Utilities",
+  "tagline": "Read-only Polymarket and Kalshi positions.",
+  "about": "Market Glance shows your open Polymarket and Kalshi positions with price and profit/loss on your glasses. Strictly read-only: there is no buy, sell or order gesture.\n\n• Polymarket via your public wallet address only\n• Kalshi optional; your keys stay in the bridge, never on the glasses\n• Clear STALE and error markers\n• English, German, French, Spanish and Italian\n\nHow to start:\n1) Set your wallet address (and optional Kalshi key) for the included bridge.\n2) Start the bridge.\n3) Open the app. Without setup it shows a clearly marked demo.\n\nRequires your own server: the included market bridge, reachable at 127.0.0.1:8793. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nInformation only, not financial advice. Free. No account, no tracking.\n\n— Deutsch —\n\nMarket Glance zeigt deine offenen Polymarket- und Kalshi-Positionen mit Preis und Gewinn/Verlust auf der Brille. Nur lesend: Es gibt keine Geste zum Kaufen, Verkaufen oder Ordern.\n\n• Polymarket nur über deine öffentliche Wallet-Adresse\n• Kalshi optional; deine Schlüssel bleiben in der Bridge, nie auf der Brille\n• Deutliche STALE- und Fehleranzeige\n• Deutsch, Englisch, Französisch, Spanisch, Italienisch\n\nSo startest du:\n1) Wallet-Adresse (und optional Kalshi-Schlüssel) für die Bridge setzen.\n2) Die Bridge starten.\n3) App öffnen. Ohne Einrichtung läuft eine markierte Demo.\n\nBraucht einen eigenen Server: die mitgelieferte Bridge, erreichbar unter 127.0.0.1:8793. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nNur Information, keine Finanzberatung. Kostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "prediction markets",
+    "polymarket",
+    "kalshi",
+    "portfolio",
+    "read-only"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Reads positions from your own read-only bridge at 127.0.0.1:8793. No other host is allowed, and the app cannot trade.",
+      "why_de": "Liest Positionen von deiner eigenen Bridge unter 127.0.0.1:8793. Andere Server sind nicht erlaubt, und die App kann nicht handeln."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/market-glance/docs/PRIVACY.md",
+  "screenshot": "release/market-glance/screenshot.png"
+}

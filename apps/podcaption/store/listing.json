@@ -1,0 +1,21 @@
+{
+  "category": "Music",
+  "tagline": "Podcast captions in time, right in your view.",
+  "about": "PodCaption shows a podcast episode's captions in time on your glasses, handy if you are hard of hearing or want to read along quietly.\n\n• Opens WebVTT, SRT, JSON or text files, or pasted text\n• Follows the timestamps; untimed text moves on every 4 seconds\n• Optional: transcripts from an RSS feed\n• English, German, French, Spanish and Italian\n\nHow to start:\n1) Open PodCaption and pick a caption file on the phone, or paste text.\n2) Play the episode in your podcast app as usual.\n3) On the glasses: tap = play/pause, swipe = scroll.\n\nOptional: feeds need the included bridge, reachable at 127.0.0.1:8789. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking, no microphone.\n\n— Deutsch —\n\nPodCaption zeigt die Untertitel einer Podcast-Folge im Takt auf der Brille, praktisch wenn du schlecht hörst oder leise mitlesen willst.\n\n• Öffnet WebVTT-, SRT-, JSON- oder Textdateien oder eingefügten Text\n• Folgt den Zeitstempeln; Text ohne Zeiten läuft im 4-Sekunden-Takt\n• Optional: Transkripte aus einem RSS-Feed\n• Deutsch, Englisch, Französisch, Spanisch, Italienisch\n\nSo startest du:\n1) PodCaption öffnen und am Handy eine Untertiteldatei wählen oder Text einfügen.\n2) Die Folge wie gewohnt in deiner Podcast-App abspielen.\n3) Auf der Brille: Tippen = Start/Pause, Wischen = blättern.\n\nOptional: Feeds brauchen die mitgelieferte Bridge, erreichbar unter 127.0.0.1:8789. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking, kein Mikrofon.",
+  "tags": [
+    "podcast",
+    "captions",
+    "subtitles",
+    "accessibility",
+    "transcript"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Optional: reads a podcast feed and its transcript through your own bridge at 127.0.0.1:8789. Opening a file needs no network.",
+      "why_de": "Optional: liest einen Podcast-Feed und sein Transkript über deine eigene Bridge unter 127.0.0.1:8789. Eine Datei öffnen braucht kein Netz."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/podcaption/docs/PRIVACY.md",
+  "screenshot": "release/podcaption/screenshot.png"
+}

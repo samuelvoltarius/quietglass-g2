@@ -1,0 +1,15 @@
+{
+  "category": "Productivity",
+  "tagline": "One-tap time tracking for projects and shifts.",
+  "about": "ShiftClock tracks your working time with one tap on your glasses: start, stop, done. The running time and the day total stay in view.\n\n• Day bar from 0 to 10 hours, with an optional daily target\n• Switch projects in one move, without gaps\n• Leaving the app never stops the clock; a crash loses nothing\n• CSV export with decimal hours, also Excel-ready for DE/AT\n\nHow to start:\n1) Open ShiftClock: the project \"Work\" is ready.\n2) Tap the temple and the clock runs. Tap again to stop.\n3) Add more projects on the phone; swipe to choose, tap to start.\n\nFree. No account, no tracking, no network. Your hours stay on your phone.\n\n— Deutsch —\n\nShiftClock misst deine Arbeitszeit mit einem Tippen an der Brille: starten, stoppen, fertig. Laufende Zeit und Tagessumme hast du im Blickfeld.\n\n• Tagesbalken von 0 bis 10 Stunden, auf Wunsch mit Tagesziel\n• Projekt wechseln in einem Schritt, ohne Lücke\n• Verlassen stoppt die Zeit nie; auch ein Absturz verliert nichts\n• CSV-Export mit Dezimalstunden, auch passend für Excel DE/AT\n\nSo startest du:\n1) ShiftClock öffnen: Das Projekt „Arbeit“ ist schon angelegt.\n2) An die Brille tippen, die Zeit läuft. Nochmal tippen stoppt.\n3) Weitere Projekte am Handy anlegen; wischen wählt, tippen startet.\n\nKostenlos. Kein Konto, kein Tracking, kein Internet. Deine Zeiten bleiben auf dem Handy.",
+  "tags": [
+    "time tracking",
+    "timesheet",
+    "work hours",
+    "projects",
+    "offline"
+  ],
+  "permissions": [],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/shift-clock/docs/PRIVACY.md",
+  "screenshot": "release/shift-clock/screenshot.png"
+}

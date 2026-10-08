@@ -1,0 +1,26 @@
+{
+  "category": "Utilities",
+  "tagline": "Rain chance, forecast and wind at a glance.",
+  "about": "RainLens shows the weather on your glasses: now, the next hours and three days ahead.\n\n• Temperature, feels-like, rain chance, wind and gusts\n• Next 12 hours and a 3-day forecast with sunrise and sunset\n• Your location, or any place you search by name\n• English, German, French, Spanish and Italian\n\nHow to start:\n1) Open RainLens in the Even app.\n2) Allow location, or type a place on the phone.\n3) On the glasses: tap refreshes, swipe switches views.\n\nWeather data by Open-Meteo.com (CC BY 4.0). Model forecasts, not official warnings.\n\nFree. No account, no key, no tracking. Your current position is never stored.\n\n— Deutsch —\n\nRainLens zeigt dir das Wetter auf der Brille: jetzt, die nächsten Stunden und drei Tage.\n\n• Temperatur, gefühlte Temperatur, Regenrisiko, Wind und Böen\n• Nächste 12 Stunden und Drei-Tage-Prognose mit Sonnenauf- und -untergang\n• Dein Standort oder ein Ort per Namenssuche\n• Deutsch, Englisch, Französisch, Spanisch, Italienisch\n\nSo startest du:\n1) RainLens in der Even-App öffnen.\n2) Standort erlauben oder am Handy einen Ort eintippen.\n3) Auf der Brille: Tippen lädt neu, Wischen wechselt die Ansicht.\n\nWetterdaten von Open-Meteo.com (CC BY 4.0). Modellprognosen, keine amtlichen Warnungen.\n\nKostenlos. Kein Konto, kein Schlüssel, kein Tracking. Dein aktueller Standort wird nie gespeichert.",
+  "tags": [
+    "weather",
+    "rain",
+    "forecast",
+    "wind",
+    "open-meteo"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Loads the forecast from Open-Meteo and looks up place names you type. No other host is allowed.",
+      "why_de": "Lädt die Vorhersage von Open-Meteo und sucht Ortsnamen, die du eintippst. Andere Server sind nicht erlaubt."
+    },
+    {
+      "name": "location",
+      "why_en": "Optional: shows the weather where you are. Used once per refresh and never stored. You can type a place instead.",
+      "why_de": "Optional: zeigt das Wetter, wo du gerade bist. Wird pro Aktualisierung einmal genutzt und nie gespeichert. Du kannst auch einen Ort eintippen."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/rain-lens/docs/PRIVACY.md",
+  "screenshot": "release/rain-lens/screenshot.png"
+}

@@ -1,0 +1,21 @@
+{
+  "category": "Utilities",
+  "tagline": "Your servers' health and alerts on your glasses.",
+  "about": "Status Glass shows on your glasses whether your devices and services at home are running: NAS, servers, Home Assistant. All fine: one line. A problem: the worst one on top.\n\n• Reads any source that speaks a tiny JSON format\n• Unreachable sources show as unknown, never as OK\n• Optional actions like \"lights off\" on a separate screen, with confirmation\n• Home Assistant adapter included; your HA token never reaches the glasses\n\nHow to start:\n1) Run a status source (reference server or Home Assistant adapter).\n2) Add it on the phone page with name and address.\n3) On the glasses: tap acknowledges, swipe scrolls, hold opens actions.\n\nRequires your own server: at least one status source you run. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking.\n\n— Deutsch —\n\nStatus Glass zeigt dir auf der Brille, ob deine Geräte und Dienste zu Hause laufen: NAS, Server, Home Assistant. Alles gut: eine Zeile. Ein Problem: das Wichtigste ganz oben.\n\n• Liest jede Quelle, die ein kleines JSON-Format spricht\n• Nicht erreichbare Quellen gelten als unbekannt, nie als OK\n• Optionale Aktionen wie „Licht aus“ auf eigenem Bildschirm, mit Bestätigung\n• Home-Assistant-Adapter dabei; dein HA-Token erreicht nie die Brille\n\nSo startest du:\n1) Eine Statusquelle starten (Referenzserver oder Home-Assistant-Adapter).\n2) Auf der Handy-Seite mit Name und Adresse hinzufügen.\n3) Auf der Brille: Tippen bestätigt, Wischen blättert, Halten öffnet Aktionen.\n\nBraucht einen eigenen Server: mindestens eine Statusquelle, die du betreibst. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking.",
+  "tags": [
+    "homelab",
+    "monitoring",
+    "home assistant",
+    "server",
+    "alerts"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Polls only the status sources you add in the phone app. No other host is contacted.",
+      "why_de": "Fragt nur die Statusquellen ab, die du in der Handy-App hinzufügst. Kein anderer Server wird kontaktiert."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/status-glass/docs/PRIVACY.md",
+  "screenshot": "release/status-glass/screenshot.png"
+}

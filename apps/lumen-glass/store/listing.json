@@ -1,0 +1,21 @@
+{
+  "category": "Lifestyle",
+  "tagline": "Your LUMEN moth in view: quests, light and photos.",
+  "about": "Lumen Glass brings the moth from your self-hosted LUMEN onto your glasses: its state, the current quest and how long until golden or blue hour.\n\n• The moth's state at a glance, as a pixel image\n• Current quest; video quests are clearly flagged\n• Tap to take a photo with your phone and send it straight to LUMEN\n• Hold for a new quest, swipe to refresh\n\nHow to start:\n1) Run your LUMEN server and allow the app to reach it (CORS, see guide).\n2) Enter its address in the phone app.\n3) Put on your glasses and tap to take a photo.\n\nRequires your own server: a running LUMEN instance. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking. Photos go only to your LUMEN.\n\n— Deutsch —\n\nLumen Glass bringt die Motte aus deinem selbst gehosteten LUMEN auf die Brille: ihren Zustand, die aktuelle Quest und wie lange es noch bis zur goldenen oder blauen Stunde dauert.\n\n• Zustand der Motte auf einen Blick, als Pixelbild\n• Aktuelle Quest; Video-Quests sind deutlich markiert\n• Tippen öffnet die Handykamera, das Foto geht direkt an LUMEN\n• Halten holt eine neue Quest, Wischen aktualisiert\n\nSo startest du:\n1) LUMEN-Server starten und für die App freigeben (CORS, siehe Anleitung).\n2) Seine Adresse in der Handy-App eintragen.\n3) Brille aufsetzen und zum Fotografieren tippen.\n\nBraucht einen eigenen Server: ein laufendes LUMEN. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking. Fotos gehen nur an dein LUMEN.",
+  "tags": [
+    "photography",
+    "golden hour",
+    "motivation",
+    "quests",
+    "self-hosted"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Reaches your own LUMEN server at the address you enter, to show the moth and send your photos. No other host is contacted.",
+      "why_de": "Erreicht deinen eigenen LUMEN-Server unter der Adresse, die du einträgst, um die Motte zu zeigen und Fotos zu senden. Kein anderer Server."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/lumen-glass/docs/PRIVACY.md",
+  "screenshot": "release/lumen-glass/screenshot.png"
+}

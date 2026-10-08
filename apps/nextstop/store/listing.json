@@ -1,0 +1,26 @@
+{
+  "category": "Travel",
+  "tagline": "Departures nearby and your next stop while riding.",
+  "about": "NextStop shows what leaves from the stop next to you and, while you ride, which stop comes next.\n\n• Departures of the nearest stop, with live delays where available\n• Timetable-only times are marked (~) instead of passing as live\n• Ride mode: upcoming stops and stops remaining\n• Many countries via Transitous; optional ÖBB live data in Austria\n\nHow to start:\n1) Open NextStop in the Even app.\n2) Allow location: the nearest stop's departures appear.\n3) Swipe to pick a departure, tap to ride along, hold for the next stop nearby.\n\nOptional: your own MOTIS server, or the ÖBB add-on on a computer in your Wi-Fi. Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking. Your location is never stored.\n\n— Deutsch —\n\nNextStop zeigt auf der Brille, was an der Haltestelle neben dir abfährt, und während der Fahrt, welcher Halt als Nächstes kommt.\n\n• Abfahrten der nächsten Haltestelle, mit Verspätung, wo verfügbar\n• Reine Fahrplanzeiten sind mit ~ markiert statt als live ausgegeben\n• Mitfahren: kommende Halte und wie viele noch fehlen\n• Viele Länder über Transitous; optional ÖBB-Echtzeit in Österreich\n\nSo startest du:\n1) NextStop in der Even-App öffnen.\n2) Standort erlauben: Die Abfahrten der nächsten Haltestelle erscheinen.\n3) Wischen wählt, Tippen fährt mit, Halten springt zur nächsten Haltestelle.\n\nOptional: eigener MOTIS-Server oder das ÖBB-Zusatzprogramm auf einem Rechner in deinem WLAN. Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking. Dein Standort wird nie gespeichert.",
+  "tags": [
+    "public transport",
+    "departures",
+    "bus",
+    "train",
+    "transit"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Loads stops and departures from Transitous, or from your own MOTIS server or ÖBB add-on if you set one up.",
+      "why_de": "Lädt Haltestellen und Abfahrten von Transitous oder, wenn eingerichtet, von deinem eigenen MOTIS-Server oder ÖBB-Zusatzprogramm."
+    },
+    {
+      "name": "location",
+      "why_en": "Finds the stops near you and the next stop while you ride. Your position is sent only to the chosen service and never stored.",
+      "why_de": "Findet Haltestellen in deiner Nähe und den nächsten Halt während der Fahrt. Die Position geht nur an den gewählten Dienst und wird nie gespeichert."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/nextstop/docs/PRIVACY.md",
+  "screenshot": "release/nextstop/screenshot.png"
+}
