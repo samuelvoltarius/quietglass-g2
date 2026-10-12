@@ -112,7 +112,22 @@ export function createHomeAssistant({ url, token, devices, fetchImpl = globalThi
     return { ok: true, status: 200 };
   }
 
-  return { refresh, toggle, devices: () => snapshot, status: () => ({ lastOk, lastError }) };
+  /** Read-only: the first notify.mobile_app_* service, or null. */
+  async function findNotifyService() {
+    const list = await ha("/api/services");
+    const notify = (Array.isArray(list) ? list : []).find((entry) => entry?.domain === "notify");
+    const names = Object.keys(notify?.services ?? {}).filter((name) => name.startsWith("mobile_app_"));
+    return names.length > 0 ? `notify.${names[0]}` : null;
+  }
+
+  async function notify(service, title, message) {
+    const [domain, name] = String(service).split(".");
+    if (domain !== "notify" || !name) return false;
+    await ha(`/api/services/notify/${name}`, { method: "POST", body: JSON.stringify({ title: String(title).slice(0, 80), message: String(message).slice(0, 240) }) });
+    return true;
+  }
+
+  return { refresh, toggle, findNotifyService, notify, devices: () => snapshot, status: () => ({ lastOk, lastError }) };
 }
 
 // ----------------------------------------------------------------- Moonraker

@@ -3,6 +3,9 @@ import {
   ImageContainerProperty,
   ImageRawDataUpdate,
   ImageRawDataUpdateResult,
+  MenuContainerProperty,
+  MenuItemProperty,
+  RebuildPageContainer,
   TextContainerProperty,
   TextContainerUpgrade,
   StartUpPageCreateResult,
@@ -10,6 +13,7 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import type { ScreenView } from "./screen";
 import { renderPixelIcon, type PixelIcon } from "./pixel";
+import type { MenuSpec } from "../hub/model";
 
 /**
  * Renders a view onto the G2.
@@ -19,9 +23,11 @@ import { renderPixelIcon, type PixelIcon } from "./pixel";
  * exists, updates go through `textContainerUpgrade`, which
  * changes text without rebuilding the page — on real hardware a rebuild falls
  * back to a full page creation and costs seconds, discarding input meanwhile.
- * Menus are therefore drawn as text with a `>` marker, not as list containers.
+ * Lists are drawn as text with a `>` marker; the page actions live in the native
+ * contextual menu (`menuObject`), which is re-supplied on every rebuild.
  */
 
+const NL = String.fromCharCode(10);
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
 
@@ -44,13 +50,22 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: ScreenView): CreateStartUpPageContainer {
-  return new CreateStartUpPageContainer({
+/** Native contextual menu for the page; the SDK validates count, ids and the 32-byte labels. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({
+    menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })),
+  });
+}
+
+function pageParts(view: ScreenView, menu: MenuSpec | null) {
+  const menuObject = buildMenu(menu);
+  return {
     containerTotalNum: 4,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, true),
+      text(CONTAINER.body, view.body.join(NL), 2, true, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
     imageObject: [new ImageContainerProperty({
@@ -62,7 +77,12 @@ export function buildPage(view: ScreenView): CreateStartUpPageContainer {
       height: 144,
       zOrderIndex: 4,
     })],
-  });
+    ...(menuObject === undefined ? {} : { menuObject }),
+  };
+}
+
+export function buildPage(view: ScreenView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer(pageParts(view, menu));
 }
 
 function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, compact = false): TextContainerProperty {
@@ -81,11 +101,12 @@ function text(spec: ContainerSpec, content: string, zOrderIndex: number, capture
 }
 
 /** Creates the startup page. The caller must invoke this exactly once. */
-export async function createPage(bridge: EvenAppBridge, view: ScreenView, icon: PixelIcon): Promise<RenderResult> {
-  const page = buildPage(view);
+export async function createPage(bridge: EvenAppBridge, view: ScreenView, icon: PixelIcon, menu: MenuSpec | null = null): Promise<RenderResult> {
+  const page = buildPage(view, menu);
+  sentLength.clear();
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
+    if (result === StartUpPageCreateResult.success) { renderStats.creates += 1; lastIconKey = ""; return updatePixel(bridge, icon); }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -110,21 +131,50 @@ function guarded(specId: number, content: string): { content: string; contentLen
   return { content: text, contentLength: length };
 }
 
-export async function updatePage(bridge: EvenAppBridge, view: ScreenView, icon: PixelIcon): Promise<RenderResult> {
-  const updates: Array<[ContainerSpec, string]> = [
-    [CONTAINER.header, view.header],
-    [CONTAINER.body, view.body.join("\n")],
-    [CONTAINER.footer, view.footer],
+/**
+ * The menu changed (another page): the only reason for a rebuild. The new
+ * `menuObject` is supplied again because a rebuild without it clears the menu.
+ * On hardware a rebuild may fail; the text still updates through the fast path.
+ */
+export async function rebuildPage(bridge: EvenAppBridge, view: ScreenView, icon: PixelIcon, menu: MenuSpec | null): Promise<RenderResult> {
+  try {
+    renderStats.rebuilds += 1;
+    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu)));
+    // A refused rebuild leaves the old page (and its text lengths) in place.
+    if (!ok) return { ok: false, reason: "rebuild refused" };
+    lastIconKey = "";
+    sentLength.clear();
+    return updatePixel(bridge, icon);
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/** Counters for tests and diagnostics: how often the page was built vs. patched. */
+export const renderStats = { creates: 0, rebuilds: 0, upgrades: 0, images: 0 };
+
+let lastIconKey = "";
+const iconKey = (icon: PixelIcon): string => icon.join("/");
+
+/** Only the containers whose text changed are written; the icon only when it changed. */
+export async function updatePage(bridge: EvenAppBridge, view: ScreenView, icon: PixelIcon, previous: ScreenView | null = null): Promise<RenderResult> {
+  const updates: Array<[ContainerSpec, string, string | undefined]> = [
+    [CONTAINER.header, view.header, previous?.header],
+    [CONTAINER.body, view.body.join(NL), previous?.body.join(NL)],
+    [CONTAINER.footer, view.footer, previous?.footer],
   ];
 
   try {
-    for (const [spec, content] of updates) {
+    for (const [spec, content, before] of updates) {
+      if (before !== undefined && before === content) continue;
+      renderStats.upgrades += 1;
       await bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
       }));
     }
+    if (iconKey(icon) === lastIconKey) return { ok: true };
     return updatePixel(bridge, icon);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -134,11 +184,13 @@ export async function updatePage(bridge: EvenAppBridge, view: ScreenView, icon: 
 async function updatePixel(bridge: EvenAppBridge, icon: PixelIcon): Promise<RenderResult> {
   try {
     const imageData = await renderPixelIcon(icon);
+    renderStats.images += 1;
     const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
       containerID: 4,
       containerName: "pixel-icon",
       imageData,
     }));
+    if (result === ImageRawDataUpdateResult.success) lastIconKey = iconKey(icon);
     return result === ImageRawDataUpdateResult.success
       ? { ok: true }
       : { ok: false, reason: `image:${String(result)}` };

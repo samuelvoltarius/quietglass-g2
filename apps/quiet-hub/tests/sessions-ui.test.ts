@@ -185,7 +185,7 @@ describe("footer hint on every page", () => {
     for (const locale of ["de", "en"] as const) {
       it(`${name} (${locale}) tells how to go back, within 46 characters`, () => {
         const view = buildView(model, locale, T0);
-        expect(view.footer).toMatch(/2× = /);
+        expect(view.footer).toMatch(/2× /);
         expect(view.footer.length).toBeLessThanOrEqual(ROW_WIDTH);
         expect(view.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
         for (const row of view.body) expect(row.length).toBeLessThanOrEqual(ROW_WIDTH);

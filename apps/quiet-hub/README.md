@@ -20,9 +20,26 @@ merges, because those already share the "your own server" shape.
 
 ## Screenshots
 
-| Overview | Agent | Alerts |
+Simulator captures at the native 576 x 288 resolution (`?demo=1`, scenes via `&scene=card|busy|long|empty|alerts`).
+
+| Overview | Agent list | Sessions |
 | --- | --- | --- |
-| ![Overview](docs/s0_overview.png) | ![Agent](docs/s1_agent_v2.png) | ![Alerts](docs/s4_alerts.png) |
+| ![Overview](docs/v05_overview.png) | ![Agents](docs/v05_agent_list.png) | ![Sessions](docs/v05_sessions.png) |
+
+| Permission card | Long answer (page 1/3) | Tool line while running |
+| --- | --- | --- |
+| ![Card](docs/v05_permission_card.png) | ![Answer](docs/v05_answer_page.png) | ![Tool](docs/v05_tool_line.png) |
+
+| Voice: recording | Voice: confirm | Alerts |
+| --- | --- | --- |
+| ![Recording](docs/v05_voice_recording.png) | ![Confirm](docs/v05_voice_confirm.png) | ![Alerts](docs/v05_alerts.png) |
+
+| Busy agent on the overview | Nothing set up yet | English |
+| --- | --- | --- |
+| ![Busy](docs/v05_overview_busy.png) | ![Empty](docs/v05_overview_empty.png) | ![English](docs/v05_overview_en.png) |
+
+The contextual menu is drawn by the glasses OS on top of the page, so the
+simulator capture endpoint does not show it.
 
 The phone companion includes QR setup, manual connection settings, language
 choice, notification behaviour and a concise control reference:
@@ -31,20 +48,54 @@ choice, notification behaviour and a concise control reference:
 
 ## Controls (Even QA compliant)
 
-Quiet Hub starts on a real root overview. The controls follow Even's review
-contract:
+Quiet Hub starts on a real root overview. Every page also has a **native
+contextual menu** (tap, then hold: the glasses OS draws it) with that page's
+actions; the gestures stay as shortcuts. Every action answers with a short line
+in the footer, and every page keeps a one-line gesture hint there.
+
+| Input | Glasses (touchpad) | R1 ring |
+| --- | --- | --- |
+| Swipe up/down | select / turn the page of a long answer | same |
+| Tap | open, run, **send** a confirmed voice note, **allow** a card | same |
+| Double tap | back (a running agent: **stop**); a card: **deny**; voice confirm: **discard**; **Overview: Even's native exit dialog** | **page picker** (never exits) |
+| Hold | speak into the open session (max 18 s) | - |
+| Tap + hold | page menu (below) | - |
+
+Page menus (at most 6 verbs, re-supplied on every rebuild; a page change is the
+only reason to rebuild, everything else is `textContainerUpgrade`):
+
+| Page | Menu |
+| --- | --- |
+| Overview | Open Agent / Home / Printer / Alerts, Refresh, Help |
+| Agent | Stop, New session, Switch agent, To Overview, Help (card pending: Allow, Deny, Help) |
+| Home | Switch device, Refresh, To Overview, Help |
+| Printer | Pause / Resume, Cancel print, Refresh, To Overview, Help |
+| Alerts | Mark all read, To Overview, Help |
+
+Risky actions from the menu (device, printer) still need the confirming tap.
+The **Help** entry shows the control sheet; any gesture closes it.
 
 - **Double tap on Overview** opens `shutDownPageContainer(1)`, the native
   system exit-confirmation dialog. It never silently exits and never substitutes
   a custom dialog.
-- **Swipe up/down** moves the selection in the current menu or page.
-- **Single tap** opens the selected overview entry or runs the selected action.
-- **Double tap on an internal page** returns to Overview; Home and Printer
-  require a second single tap before a risky action is sent.
-- **Hold on Agent** records from the G2 microphone for the selected agent; releasing sends the note.
-- **Permission card** (Claude/Codex asks): tap allows, double tap denies.
+- **Voice** (hold on the Agent page): `● Aufnahme …` while recording; on release
+  the transcript is shown as `Verstanden: …` and **tap sends, double tap
+  discards**. "Send immediately" is a phone setting and off by default.
+- **R1 ring** (event source 2): swipe selects, tap acts like the glasses; a
+  double tap opens the **page picker** (waiting permission cards first, then the
+  pages) so the ring can never end the app by accident.
+- **Long answers** are split into pages of six rows; swipe turns the page, the
+  last page is the question list, a tap on a text page jumps to it. Tool calls
+  are one line (`» Bash: npm test`).
+- **Permission card**: who asks, `Tool: Bash`, the command, and
+  `Tippen = erlauben · 2× = ablehnen`.
+- Input is read defensively: a missing `eventType` is a CLICK, a missing
+  `currentSelectItemIndex` is 0, one swipe (a burst of scroll events) counts
+  once (300 ms cooldown), selections live in the app state.
+- Opening the app from the glasses launcher (`glassesMenu`) lands on the
+  Overview; from the phone app menu it resumes the last page.
 
-Lifecycle events 4–7 are handled explicitly. State is persisted before
+Lifecycle events 4-7 are handled explicitly. State is persisted before
 backgrounding, microphone/timers/subscriptions are released only after a real
 system or abnormal exit, and reconnect never calls the one-shot startup-page
 API a second time.
@@ -53,12 +104,16 @@ API a second time.
 
 | Page | What it shows | Tap action |
 | --- | --- | --- |
-| **Agent** | All connected agents (online dot), saved questions, streaming answer, permission cards | Open an agent / ask / allow (double tap: deny or stop) |
+| **Overview** | Online agents with dots (`●` idle, `*` busy, `!` waiting, `○` offline), unread alerts, lights on, printer progress, what needs you | Open the selected page |
+| **Agent** | Agents -> sessions -> session; streaming answer in pages, tool line, permission cards | Open / ask / allow (double tap: deny or stop) |
 | **Zuhause** | Home Assistant devices with state | Switch an allow-listed device |
 | **Drucker** | Job, progress, layer, time left, temperatures | Pause, resume, cancel |
 | **Meldungen** | Finished/waiting/error events from any agent (with the agent id) | Mark as read |
 
-The Overview is a real menu: swipe to select and tap to open. On internal
+The Overview is a real menu: swipe to select and tap to open. Nothing has to
+be set up for it: agents appear by themselves as soon as a relay connects, and an
+empty page says in one line what is missing. The header is a fixed status line:
+`page · connection · unread · busy agents · waiting`. On internal
 pages, swipe selects and tap acts. Home and printer changes are armed by one
 tap and executed by a second tap within four seconds. Double tap always goes
 back, except on Overview where it opens Even's native exit dialog.
@@ -71,7 +126,7 @@ One process, one token. The glasses see these endpoints and nothing else:
 GET  /report                 the whole HubReport (agents + approvals + home + printer + inbox)
 GET  /agents                 every agent with online/busy/answer
 POST /agent/ask              {agentId, question, wait?}   (wait:false = answer streams into /report)
-POST /agent/voice?agentId=   WAV body (or JSON base64) -> Whisper -> ask
+POST /agent/voice?agentId=   WAV body (or JSON base64) -> Whisper -> ask (ask=0: transcript only)
 POST /agent/approve          {cardId, decision: allow|deny}
 POST /agent/cancel           {agentId}                    (real stop, see Sessions)
 GET  /agent/sessions?agentId=                              (session list of an agent)
@@ -203,8 +258,9 @@ on the overview.
 
 Voice: hold the touchpad on the open session (max 18 s). The G2 microphone
 (16 kHz, 16 bit, mono) becomes a WAV, the daemon transcribes it with the
-Whisper endpoint (`WHISPER_URL`), shows `gehört: …` and sends the text into the
-selected session. Tap ends and sends, double tap discards a recording. Errors
+Whisper endpoint (`WHISPER_URL`) and shows `Verstanden: …`; a tap sends the text
+into the selected session, a double tap discards it. While recording, tap ends
+and double tap discards the recording. Errors
 are spelled out on the glasses (`Mikrofon nicht freigegeben`,
 `Spracherkennung nicht erreichbar`, `Nichts verstanden`).
 
@@ -233,8 +289,9 @@ with `HUB_TOKEN` and `QUIET_HUB_URL` set in the environment of those sessions.
 
 Hold on the Agent page: the glasses record, the daemon sends the WAV to
 `WHISPER_URL` (OpenAI-compatible, default `http://127.0.0.1:8017/v1/audio/transcriptions`)
-and asks the **selected** agent with the transcript. The footer shows what was
-heard.
+and returns the transcript (`POST /agent/voice?ask=0` = transcribe only); the
+glasses show it and ask the **selected** agent after your tap. Without `ask=0`
+(older apps, or "send immediately" on the phone) the daemon asks right away.
 
 ## Home Assistant
 
@@ -253,6 +310,15 @@ HA_DEVICES=light.office=Büro Licht,switch.printer_plug=Drucker Steckdose,sensor
 `lock`, `media_player`, `script`, `scene` can be switched (sensors are
 read-only). Switching needs the second tap on the glasses. The token never
 leaves the daemon.
+
+### Phone mirror (optional)
+
+When Home Assistant is configured, **waiting / done / error** events and a
+**finished print** are also sent to HA's notify service, so the phone
+notification can be mirrored to the glasses by the Even app. `HA_NOTIFY_SERVICE`
+(e.g. `notify.mobile_app_pixel`) pins the service; otherwise the daemon finds
+the first `notify.mobile_app_*` through a read-only `GET /api/services`. No
+service found = nothing is sent. `HA_NOTIFY=off` disables it.
 
 ## Printer (Moonraker)
 

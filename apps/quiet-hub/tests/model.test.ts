@@ -111,7 +111,7 @@ describe("decide", () => {
   it("long press reports a refresh and never acts outside the agent page", () => {
     const onHome = { ...model(), screen: "home" as const };
     const outcome = decide(onHome, "longPress", T0);
-    expect(outcome.effect).toBeUndefined();
+    expect(outcome.effect).toEqual({ kind: "refresh" });
     expect(outcome.model.message?.text).toBe("aktualisiert");
   });
 });

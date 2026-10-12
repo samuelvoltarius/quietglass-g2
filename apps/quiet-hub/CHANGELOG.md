@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.0
+
+A clearer hub: everything on one overview, a native menu per page, confirmed voice.
+
+- **Overview shows everything, no setup.** Online agents with dots (`●` idle,
+  `*` busy, `!` waiting, `○` offline), unread alerts, lights on, printer progress
+  and what needs you right now. Agents appear from the relays by themselves;
+  every empty page says in one line what is missing. No phantom agent when none
+  is connected.
+- **Fixed status line** (header, updated in place): page, connection, unread,
+  busy agents, waiting cards.
+- **Native contextual menu** per page (<= 6 verbs, <= 32 bytes, ids non-zero,
+  re-supplied on every rebuild): Agent *Stop / New session / Switch agent*,
+  Alerts *Mark all read*, Home, Printer, card *Allow / Deny*, Help. Gestures stay
+  as shortcuts; risky menu actions keep the confirming tap.
+- **Voice with confirmation.** `● Aufnahme …` -> release -> `Verstanden: …` ->
+  tap sends, double tap discards. "Send immediately" is a phone setting (off by
+  default). Daemon: `POST /agent/voice?ask=0` transcribes only (older apps keep
+  the old behaviour).
+- **Feedback and help.** Every action answers in the footer (sent, allowed,
+  denied, stopped, new session, ...); a help sheet lists the controls.
+- **R1 ring.** Ring double tap opens a page picker (never exits), swipe selects.
+- **Long answers in pages** (six rows; swipe turns, last page = questions),
+  tool calls as one line, permission cards with tool and command.
+- **Robust input.** Missing `eventType` = CLICK, missing
+  `currentSelectItemIndex` = 0, 300 ms scroll cooldown, selections kept in state.
+- **Fewer BLE writes.** Only changed containers are upgraded, the icon only when
+  it changes, a rebuild only when the menu (page) changes.
+- **Fast entry.** Launching from the glasses menu opens the Overview.
+- **Daemon: phone mirror.** waiting/done/error events and finished prints go to
+  Home Assistant's `notify.mobile_app_*` (auto-detected, read-only; pin with
+  `HA_NOTIFY_SERVICE`, off with `HA_NOTIFY=off`). `/report` approvals now carry
+  the `tool`. Relay protocol unchanged.
+- Screenshot scenes for the simulator: `?demo=1&scene=card|busy|long|empty|alerts`.
+
 ## 0.4.0
 
 Real session control for every agent, a real Stop, and a way back from every page.

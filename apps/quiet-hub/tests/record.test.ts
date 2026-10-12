@@ -83,7 +83,7 @@ describe("hold-to-speak", () => {
     const model = agentModel();
     const recording = decide(model, "longPress", 1000).model;
     const view = buildView(recording, "de", 1100);
-    expect(view.footer).toContain("sprich");
+    expect(view.footer).toContain("Aufnahme");
   });
 
   it("long press on the home page stays a refresh", () => {
@@ -91,7 +91,7 @@ describe("hold-to-speak", () => {
     const onHome = { ...model, screen: "home" as const };
     const out = decide(onHome, "longPress", 1100);
     expect(out.model.recording).toBe(false);
-    expect(out.effect).toBeUndefined();
+    expect(out.effect).toEqual({ kind: "refresh" });
   });
 
   it("release without recording does nothing", () => {

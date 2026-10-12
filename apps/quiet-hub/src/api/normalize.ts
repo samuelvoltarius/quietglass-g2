@@ -21,7 +21,7 @@ export function normalizeReport(raw: HubReport): HubReport {
   };
   return {
     ...raw,
-    agents: Array.isArray(raw.agents) && raw.agents.length > 0 ? raw.agents : [legacy],
+    agents: Array.isArray(raw.agents) ? raw.agents : [legacy],
     approvals: Array.isArray(raw.approvals) ? raw.approvals : [],
   };
 }

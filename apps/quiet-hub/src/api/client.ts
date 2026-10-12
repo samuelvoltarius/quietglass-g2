@@ -45,9 +45,10 @@ export function createClient(options: ClientOptions): HubApi {
     ask: async (question, agentId) => {
       await call("/agent/ask", { method: "POST", body: JSON.stringify({ question, agentId, wait: false }) });
     },
-    voice: async (wav, agentId) => {
-      const query = `?wait=0${agentId !== undefined ? `&agentId=${encodeURIComponent(agentId)}` : ""}`;
-      return call<{ question: string }>(`/agent/voice${query}`, {
+    voice: async (wav, agentId, ask = true) => {
+      // ask=0: the daemon only transcribes; the wearer confirms on the glasses first.
+      const query = `?wait=0${ask ? "" : "&ask=0"}${agentId !== undefined ? `&agentId=${encodeURIComponent(agentId)}` : ""}`;
+      return call<{ question: string; asked?: boolean; accepted?: boolean }>(`/agent/voice${query}`, {
         method: "POST",
         headers: { "Content-Type": "audio/wav" },
         body: new Blob([wav.slice().buffer], { type: "audio/wav" }),

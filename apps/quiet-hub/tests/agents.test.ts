@@ -118,7 +118,7 @@ describe("approval cards", () => {
 
   it("shows the pending count on the overview", () => {
     const root = { ...withCard(), screen: "root" as const };
-    expect(buildView(root, "de", T0).body[0]).toContain("1 Freigabe");
+    expect(buildView(root, "de", T0).body[0]).toContain("1 wartet");
   });
 });
 

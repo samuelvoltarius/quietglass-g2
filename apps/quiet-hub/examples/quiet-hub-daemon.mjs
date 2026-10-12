@@ -96,6 +96,7 @@ export function createHub(options = {}) {
     };
     state.events = [event, ...state.events].slice(0, 50);
     saveEvents();
+    void notifyPhone(`${event.provider}: ${status === "waiting" ? "wartet" : status === "error" ? "Fehler" : "fertig"}`, event.title);
     return event;
   }
 
@@ -173,10 +174,48 @@ export function createHub(options = {}) {
   const moon = moonUrl ? createMoonraker({ url: moonUrl, fetchImpl }) : null;
   let printerDemo = { job: "DEMO esp32_gehaeuse.stl", state: "printing", layer: 148, layers: 205, progress: 72, etaMin: 41, nozzleC: 210, bedC: 60, selected: 0, demo: true };
 
+  // ------------------------------------------------------------- phone mirror (optional)
+  // Waiting / done / error events and a finished print are also sent to Home
+  // Assistant's notify service, so the phone notification can be mirrored to the
+  // glasses. HA_NOTIFY_SERVICE=notify.mobile_app_x pins it; otherwise the first
+  // notify.mobile_app_* service is found read-only via GET /api/services.
+  // HA_NOTIFY=off disables it; without a service nothing is sent.
+  const notifyMode = String(options.haNotify ?? env.HA_NOTIFY ?? "auto");
+  let notifyService = options.haNotifyService ?? env.HA_NOTIFY_SERVICE ?? null;
+  let notifyDetected = notifyService !== null && notifyService !== "";
+  let lastNotify = { key: "", at: 0 };
+  async function notifyPhone(title, message) {
+    if (!ha || notifyMode === "off") return false;
+    try {
+      if (!notifyDetected) {
+        notifyService = await ha.findNotifyService();
+        notifyDetected = true;
+        log("phone notify service:", notifyService ?? "none (mirroring off)");
+      }
+      if (!notifyService) return false;
+      const key = `${title}|${message}`;
+      if (lastNotify.key === key && now() - lastNotify.at < 5000) return false;
+      lastNotify = { key, at: now() };
+      return await ha.notify(notifyService, title, message);
+    } catch (error) {
+      log("phone notify failed:", String(error?.message ?? error).slice(0, 100));
+      return false;
+    }
+  }
+  let lastPrinterState = null;
+  function watchPrinter() {
+    if (!moon) return;
+    const current = moon.printer();
+    const was = lastPrinterState;
+    lastPrinterState = current.state;
+    if (current.offline) return;
+    if (was === "printing" && current.state === "ready") void notifyPhone("Quiet Hub", "Druck fertig");
+  }
+
   const timers = [];
   function startBackground() {
     if (ha) { void ha.refresh(); timers.push(setInterval(() => void ha.refresh(), 10_000)); }
-    if (moon) { void moon.refresh(); timers.push(setInterval(() => void moon.refresh(), 5_000)); }
+    if (moon) { void moon.refresh().then(watchPrinter); timers.push(setInterval(() => void moon.refresh().then(watchPrinter), options.moonPollMs ?? 5_000)); }
     timers.push(setInterval(sweep, 10_000));
     for (const t of timers) t.unref?.();
   }
@@ -470,7 +509,7 @@ export function createHub(options = {}) {
         suggestions: main?.suggestions ?? [],
       },
       agents: list,
-      approvals: [...approvals.values()].map(({ id, agentId, title, detail, createdAt, expiresAt, suggestions: options_ }) => ({ id, agentId, title, detail, createdAt, expiresAt, suggestions: options_ ?? [] })),
+      approvals: [...approvals.values()].map(({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: options_ }) => ({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: options_ ?? [] })),
       home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
       printer: moon ? moon.printer() : printerDemo,
       inbox: { events: state.events, selected: 0 },
@@ -599,6 +638,11 @@ export function createHub(options = {}) {
       }
       if (question === "") { sendJson(res, 422, { error: "nichts verstanden" }); return; }
       log("heard:", question.slice(0, 80));
+      // ask=0: transcribe only, the glasses show "heard: ..." and the wearer confirms before it is sent.
+      if (url.searchParams.get("ask") === "0" || body.ask === false) {
+        sendJson(res, 200, { question, asked: false, agentId: target });
+        return;
+      }
       const started = startAsk(target, question);
       if (!started.job) { sendJson(res, started.status, { error: started.error, question }); return; }
       const wait = url.searchParams.get("wait") !== "0" && body.wait !== false && url.searchParams.get("wait") !== "false";

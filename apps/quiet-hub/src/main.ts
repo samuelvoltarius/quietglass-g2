@@ -1,14 +1,15 @@
 import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { createClient, ApiError } from "./api/client";
-import { createDemoApi, demoReport } from "./api/demo";
+import { createDemoApi, DEMO_SCENES, demoReport, type DemoScene } from "./api/demo";
 import type { HubApi, HubReport } from "./api/types";
 import { getLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
-import { gestureFromEvent, type Gesture } from "./input/gestures";
-import { buildView, createModel, decide, mergeReport, MESSAGE_MS, SCREENS, withSessions, type Effect, type HubModel, type Screen } from "./hub/model";
+import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
+import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { pixelIconFor } from "./glasses/icons";
 import type { ScreenView } from "./glasses/screen";
 import { buildWav } from "./audio/wav";
@@ -16,28 +17,17 @@ import { mountPhoneUi, type AppSettings } from "./ui/phone";
 import { decodeQr, parseSetupQr } from "./setup/qr";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
+const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
+const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) ?? "default";
 const POLL_MS = 5000;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
 const RETRY_MS = 5000;
-const BUILD = "0.4.0";
+const BUILD = "0.5.0";
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
 export const MAX_RECORD_MS = 18_000;
 /** Less audio than this is a mis-press (16 kHz, 16 bit, mono = 32 bytes per ms). */
 const MIN_RECORD_BYTES = 32 * 400;
-
-/** Map the shared gesture vocabulary onto the hub's page language. */
-function hubGesture(gesture: Gesture): "click" | "doubleClick" | "scrollUp" | "scrollDown" | "longPress" | "longPressRelease" | null {
-  switch (gesture) {
-    case "click": return "click";
-    case "doubleClick": return "doubleClick";
-    case "scrollUp": return "scrollUp";
-    case "scrollDown": return "scrollDown";
-    case "longPress": return "longPress";
-    case "longPressRelease": return "longPressRelease";
-    default: return null;
-  }
-}
 
 async function boot(): Promise<void> {
   console.info(`[quiethub] v${BUILD} boot`);
@@ -65,12 +55,14 @@ async function boot(): Promise<void> {
       // Some host WebViews do not permit history mutation; setup still worked.
     }
   }
-  let api: HubApi = DEMO ? createDemoApi(locale) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
+  let api: HubApi = DEMO ? createDemoApi(locale, DEMO_SCENE) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
 
   let model: HubModel = createModel(await firstReport(api, locale));
   const savedUi = await loadUiState(bridge);
-  if (savedUi !== null && SCREENS.includes(savedUi.screen)) model = { ...model, screen: savedUi.screen };
+  let launchSource: "appMenu" | "glassesMenu" | null = null;
+  if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, Math.min(savedUi.rootSelected ?? 0, 3)) };
   let lastView: ScreenView | null = null;
+  let menuKey = "";
   let pageCreated = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
@@ -141,9 +133,24 @@ async function boot(): Promise<void> {
 
   const drawOnce = async (): Promise<void> => {
     const view = buildView(model, locale, Date.now());
-    if (sameView(lastView, view)) return;
+    const menu = menuFor(model, locale);
+    if (sameView(lastView, view) && menu.key === menuKey) return;
     const icon = pixelIconFor(model);
-    const result = pageCreated ? await updatePage(bridge, view, icon) : await createPage(bridge, view, icon);
+    let result;
+    if (!pageCreated) {
+      result = await createPage(bridge, view, icon, menu);
+      if (result.ok) menuKey = menu.key;
+    } else if (menu.key !== menuKey) {
+      // Another page = another menu: the only reason to rebuild. menuObject is re-supplied.
+      menuKey = menu.key;
+      result = await rebuildPage(bridge, view, icon, menu);
+      if (!result.ok) {
+        console.warn("[quiethub] menu rebuild failed:", result.reason);
+        result = await updatePage(bridge, view, icon, lastView);
+      }
+    } else {
+      result = await updatePage(bridge, view, icon, lastView);
+    }
     if (result.ok) {
       pageCreated = true;
       lastView = view;
@@ -239,25 +246,21 @@ async function boot(): Promise<void> {
       if (effect.kind === "recordStop") {
         await stopMic();
         const wav = buildWav(micChunks);
+        const fail = (key: string): void => { model = withVoiceFailed(model, tr(messages, locale, key), Date.now()); };
         if (wav.length <= 44) {
-          model = {
-            ...model,
-            message: { text: tr(messages, locale, "voice.empty"), until: Date.now() + MESSAGE_MS },
-          };
+          fail("voice.empty");
         } else if (wav.length - 44 < MIN_RECORD_BYTES) {
-          model = { ...model, message: { text: tr(messages, locale, "voice.short"), until: Date.now() + MESSAGE_MS } };
+          fail("voice.short");
         } else {
           try {
-            const heard = await api.voice(wav, effect.agentId);
-            model = {
-              ...model,
-              message: { text: tr(messages, locale, "voice.heard", { text: heard.question }), until: Date.now() + MESSAGE_MS },
-            };
+            const heard = await api.voice(wav, effect.agentId, settings.voiceAutoSend);
+            // An older daemon asks right away (accepted, no `asked` flag): then there is nothing to confirm.
+            const asked = heard.asked === true || (heard.asked === undefined && heard.accepted === true);
+            model = withVoiceHeard(model, effect.agentId, heard.question, asked, Date.now(), locale);
           } catch (error) {
             // Each failure gets its own words: the wearer must know what to fix.
             const status = error instanceof ApiError ? error.status : undefined;
-            const key = status === 502 ? "voice.stt" : status === 422 ? "voice.unclear" : status === 503 ? "agent.offline" : status === 409 ? "agent.busy" : status === undefined ? "voice.stt" : "voice.failed";
-            model = { ...model, message: { text: tr(messages, locale, key), until: Date.now() + MESSAGE_MS } };
+            fail(status === 502 ? "voice.stt" : status === 422 ? "voice.unclear" : status === 503 ? "agent.offline" : status === 409 ? "agent.busy" : status === undefined ? "voice.stt" : "voice.failed");
             console.warn("[quiethub] voice failed:", error);
           }
         }
@@ -271,6 +274,10 @@ async function boot(): Promise<void> {
         await api.newSession(effect.agentId);
       } else if (effect.kind === "selectSession") {
         await api.selectSession(effect.agentId, effect.sessionId, effect.title);
+      } else if (effect.kind === "refresh") {
+        // Nothing to send: the report fetch below is the refresh.
+      } else if (effect.kind === "readAll") {
+        for (const id of effect.ids) await api.readEvent(id);
       } else if (effect.kind === "readEvent") {
         await api.readEvent(effect.id);
       } else if (effect.kind === "toggle") {
@@ -291,20 +298,29 @@ async function boot(): Promise<void> {
   };
 
   // ---- input -------------------------------------------------------------
-  const onGesture = (gesture: Gesture): void => {
-    const mapped = hubGesture(gesture);
-    if (mapped === null) return;
-    const outcome = decide(model, mapped, Date.now());
+  const apply = (outcome: { model: HubModel; effect?: Effect | undefined }): void => {
     model = outcome.model;
-    saveUiState(bridge, model.screen);
+    saveUiState(bridge, model);
     void draw();
     refreshPhone();
     void runEffect(outcome.effect);
   };
+  const onGesture = (gesture: Gesture, source: InputSource = "unknown"): void => {
+    const mapped = hubGesture(gesture, source);
+    if (mapped === null) return;
+    apply(decide(model, mapped, Date.now(), locale));
+  };
+  const onMenu = (itemId: number): void => apply(applyMenu(model, itemId, Date.now(), locale));
 
   let unsubscribeEvents: () => void = () => undefined;
   let unsubscribeDevice: () => void = () => undefined;
   const handle = (event: unknown): void => {
+    // Native contextual menu: arrives on its own event, whatever container captures input.
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      onMenu(menuId);
+      return;
+    }
     const systemType = (event as { sysEvent?: { eventType?: number } }).sysEvent?.eventType;
     if (systemType === 4) {
       lastView = null;
@@ -312,7 +328,7 @@ async function boot(): Promise<void> {
       return;
     }
     if (systemType === 5) {
-      saveUiState(bridge, model.screen);
+      saveUiState(bridge, model);
       return;
     }
     if (systemType === 6 || systemType === 7) {
@@ -320,7 +336,7 @@ async function boot(): Promise<void> {
       if (pollTimer !== null) clearTimeout(pollTimer);
       clearRecordTimer();
       if (micActive) void bridge.audioControl(false).catch(() => false);
-      saveUiState(bridge, model.screen);
+      saveUiState(bridge, model);
       unsubscribeEvents();
       unsubscribeDevice();
       return;
@@ -335,9 +351,18 @@ async function boot(): Promise<void> {
       return;
     }
     const gesture = gestureFromEvent(event, { invertScroll: settings.invertScroll });
-    if (gesture !== null) onGesture(gesture.gesture);
+    if (gesture !== null) onGesture(gesture.gesture, gesture.source);
   };
   unsubscribeEvents = bridge.onEvenHubEvent(handle as never);
+  // Launched from the glasses menu: land on the Overview, whatever page was open last.
+  bridge.onLaunchSource((source) => {
+    launchSource = source;
+    if (source === "glassesMenu") {
+      model = { ...model, screen: startScreen(source, null), confirm: null, help: false, picker: null };
+      void draw();
+    }
+  });
+  void launchSource;
 
   // Reconnect: the page died with the link; forget the last view so even an
   // identical view forces a full re-render. iOS WebView gives no reliable
@@ -384,7 +409,7 @@ async function boot(): Promise<void> {
         const asset = await bridge.captureImageFromCamera().catch(() => null);
         if (asset === null || asset.base64 === "") throw new Error("Kamera abgebrochen");
         const value = await decodeQr(asset.base64, asset.mimeType || "image/jpeg");
-        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll };
+        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend };
       },
     });
   }
@@ -410,7 +435,7 @@ async function loadSettings(bridge: EvenAppBridge): Promise<AppSettings> {
   } catch {
     // No storage: start unconfigured.
   }
-  return { serverUrl: "", token: "", autoOpenNotifications: true, invertScroll: false };
+  return { serverUrl: "", token: "", autoOpenNotifications: true, invertScroll: false, voiceAutoSend: false };
 }
 
 function normalizeSettings(value: Partial<AppSettings>): AppSettings {
@@ -419,6 +444,7 @@ function normalizeSettings(value: Partial<AppSettings>): AppSettings {
     token: typeof value.token === "string" ? value.token : "",
     autoOpenNotifications: value.autoOpenNotifications !== false,
     invertScroll: value.invertScroll === true,
+    voiceAutoSend: value.voiceAutoSend === true,
   };
 }
 
@@ -436,18 +462,18 @@ function saveSettings(bridge: EvenAppBridge, settings: AppSettings): void {
     .catch(() => console.warn("[quiethub] settings persistence failed"));
 }
 
-async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen } | null> {
+async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen; rootSelected?: number } | null> {
   try {
     const raw = await bridge.getLocalStorage("quiethub.ui");
-    if (raw !== null && raw !== undefined && raw !== "") return JSON.parse(raw) as { screen: Screen };
+    if (raw !== null && raw !== undefined && raw !== "") return JSON.parse(raw) as { screen: Screen; rootSelected?: number };
   } catch {
     // A cold start simply falls back to the mandatory root page.
   }
   return null;
 }
 
-function saveUiState(bridge: EvenAppBridge, screen: Screen): void {
-  void bridge.setLocalStorage("quiethub.ui", JSON.stringify({ screen }))
+function saveUiState(bridge: EvenAppBridge, model: HubModel): void {
+  void bridge.setLocalStorage("quiethub.ui", JSON.stringify({ screen: model.screen, rootSelected: model.rootSelected }))
     .then((ok) => { if (!ok) console.warn("[quiethub] UI state was not persisted"); })
     .catch(() => console.warn("[quiethub] UI state persistence failed"));
 }

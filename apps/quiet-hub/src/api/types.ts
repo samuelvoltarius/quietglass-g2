@@ -76,6 +76,8 @@ export interface Approval {
   readonly agentId: string;
   /** Tool plus short command or file, e.g. "Bash: npm test". */
   readonly title: string;
+  /** Tool name only ("Bash", "Edit"); older daemons omit it. */
+  readonly tool?: string;
   readonly detail: string | null;
   readonly createdAt: string;
   readonly expiresAt: number;
@@ -154,7 +156,7 @@ export interface HubApi {
   /** Starts a question; the answer streams into the next reports. */
   ask(question: string, agentId?: string): Promise<void>;
   /** WAV bytes from the glasses → transcript (self-hosted Whisper) → asked. */
-  voice(wav: Uint8Array, agentId?: string): Promise<{ question: string }>;
+  voice(wav: Uint8Array, agentId?: string, ask?: boolean): Promise<{ question: string; asked?: boolean; accepted?: boolean }>;
   approve(cardId: string, decision: "allow" | "deny"): Promise<void>;
   /** Real stop: the agent is interrupted, not just forgotten. */
   cancel(agentId: string): Promise<void>;

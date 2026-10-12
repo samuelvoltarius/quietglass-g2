@@ -161,3 +161,27 @@ function readNumberField(record: Record<string, unknown>, ...keys: string[]): nu
   }
   return undefined;
 }
+
+/**
+ * Item chosen in the native contextual menu. Menu clicks come in a
+ * `menuItemClickEvent` of their own and never through the capture container.
+ * Zero is reserved for "no item" (itemID is never 0 in our menus).
+ */
+export function menuItemIdFromEvent(event: unknown): number | null {
+  if (!event || typeof event !== "object") return null;
+  const payload = pickRecord(event as Record<string, unknown>, "menuItemClickEvent");
+  if (payload === null) return null;
+  const id = readNumberField(payload, "itemID", "itemId", "Item_ID", "item_id");
+  return id !== undefined && id > 0 ? id : null;
+}
+
+/**
+ * Selected row of a list container. proto3 omits row 0, so a missing
+ * `currentSelectItemIndex` is 0, never "unknown".
+ */
+export function listIndexFromEvent(event: unknown): number {
+  if (!event || typeof event !== "object") return 0;
+  const payload = pickRecord(event as Record<string, unknown>, "listEvent");
+  if (payload === null) return 0;
+  return readNumberField(payload, "currentSelectItemIndex", "current_select_item_index") ?? 0;
+}

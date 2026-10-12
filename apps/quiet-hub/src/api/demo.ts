@@ -74,7 +74,44 @@ function demoAgents(strings: DemoStrings): AgentInfo[] {
   ];
 }
 
-export function demoReport(locale: Locale = "de"): HubReport {
+/** Screenshot scenes: `?demo=1&scene=card|busy|long|empty|alerts`. */
+export type DemoScene = "default" | "card" | "busy" | "long" | "empty" | "alerts";
+export const DEMO_SCENES: readonly DemoScene[] = ["default", "card", "busy", "long", "empty", "alerts"];
+
+export function demoReport(locale: Locale = "de", scene: DemoScene = "default"): HubReport {
+  const report = baseDemoReport(locale);
+  const de = locale === "de";
+  const patchAgent = (id: string, patch: Partial<AgentInfo>) => report.agents.map((a) => (a.id === id ? { ...a, ...patch } : a));
+  if (scene === "card") {
+    return { ...report, agents: patchAgent("claude-win", { busy: true, activity: "Bash: npm test" }), approvals: [{
+      id: "card-1", agentId: "claude-win", tool: "Bash", title: "Bash: npm test -- --run src/hub", detail: "npm test -- --run src/hub",
+      createdAt: new Date(0).toISOString(), expiresAt: Date.now() + 120_000, suggestions: de ? ["Ja, einmal", "Nein", "Immer erlauben"] : ["Yes, once", "No", "Always allow"],
+    }] };
+  }
+  if (scene === "busy") {
+    return { ...report, agents: patchAgent("claude-win", { busy: true, activity: "Edit: src/hub/model.ts", lastQuestion: de ? "Baue das Menü" : "Build the menu", answer: de ? "Ich lese zuerst model.ts und passe dann die Menüaktionen an." : "I read model.ts first and then adapt the menu actions." }) };
+  }
+  if (scene === "long") {
+    const text = de
+      ? "Das Release 0.5.0 bringt eine klarere Übersicht mit Statuszeile, ein natives Kontextmenü pro Seite, die Sitzungsauswahl für jeden Agenten und eine Bestätigung nach der Spracheingabe. Lange Antworten werden in Seiten geteilt: wischen blättert, am Ende folgen die Fragen. Werkzeugaufrufe erscheinen als eine Zeile. Freigaben zeigen Werkzeug und Befehl und werden mit Tippen erlaubt oder mit Doppeltippen abgelehnt. Der Ring öffnet mit Doppeltippen die Seitenwahl."
+      : "Release 0.5.0 brings a clearer overview with a status line, a native contextual menu per page, a session picker for every agent and a confirmation after voice input. Long answers are split into pages: swiping turns the page, the questions follow at the end. Tool calls show as one line. Approvals show tool and command and are allowed with a tap or denied with a double tap. The ring opens the page picker with a double tap.";
+    return { ...report, agents: patchAgent("hermes-spark", { answer: text, lastQuestion: de ? "Was ist neu?" : "What is new?" }) };
+  }
+  if (scene === "empty") {
+    return { ...report, agents: [], agent: { ...report.agent, provider: "Hermes", suggestions: [] }, home: { selected: 0, devices: [] }, printer: { ...report.printer, job: null, state: "ready", progress: 0 }, inbox: { selected: 0, events: [] } };
+  }
+  if (scene === "alerts") {
+    const mk = (id: string, provider: string, status: "done" | "waiting" | "error", title: string, detail: string | null, read: boolean) => ({ id, provider, status, title, detail, createdAt: new Date(0).toISOString(), read });
+    return { ...report, inbox: { selected: 0, events: [
+      mk("a1", "claude-win", "error", de ? "Build fehlgeschlagen" : "Build failed", de ? "tsc: 2 Fehler in model.ts" : "tsc: 2 errors in model.ts", false),
+      mk("a2", "codex-win", "done", de ? "Repository-Check fertig" : "Repository check complete", de ? "Tests bestanden" : "Tests passed", false),
+      mk("a3", "hermes-spark", "waiting", de ? "Freigabe: Bash: ls" : "Approval: Bash: ls", null, true),
+    ] } };
+  }
+  return report;
+}
+
+function baseDemoReport(locale: Locale): HubReport {
   const strings = STRINGS[locale];
   const agents = demoAgents(strings);
   return {
@@ -122,9 +159,9 @@ export function demoReport(locale: Locale = "de"): HubReport {
 }
 
 /** A demo api whose state moves: asking answers, toggles flip. */
-export function createDemoApi(locale: Locale = "de"): HubApi {
+export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default"): HubApi {
   const strings = STRINGS[locale];
-  let report = demoReport(locale);
+  let report = demoReport(locale, scene);
   const answerFor = (agentId: string, answer: string, question: string): void => {
     report = {
       ...report,
@@ -136,10 +173,11 @@ export function createDemoApi(locale: Locale = "de"): HubApi {
     ask: async (question: string, agentId = "hermes-spark") => {
       answerFor(agentId, strings.answers[question] ?? strings.fallback, question);
     },
-    voice: async (_wav, agentId = "hermes-spark") => {
+    voice: async (_wav, agentId = "hermes-spark", ask = true) => {
       const question = strings.questions[1] ?? "";
+      if (!ask) return { question, asked: false };
       answerFor(agentId, strings.answers[question] ?? strings.fallback, question);
-      return { question };
+      return { question, asked: true };
     },
     approve: async (cardId) => {
       report = { ...report, approvals: report.approvals.filter((card) => card.id !== cardId) };

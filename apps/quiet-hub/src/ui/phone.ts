@@ -8,6 +8,8 @@ export interface AppSettings {
   readonly autoOpenNotifications: boolean;
   /** Real G2 hardware may report swipes the other way round than the simulator. */
   readonly invertScroll: boolean;
+  /** Send a voice note without the "Verstanden: …" confirmation tap. Off by default. */
+  readonly voiceAutoSend: boolean;
 }
 
 export interface PhoneState {
@@ -27,10 +29,10 @@ const copy = {
     agentsOnline: "Agenten online", connected: "Verbunden", disconnected: "Nicht verbunden", devices: "Geräte", notifications: "Meldungen",
     setup: "Einrichtung", scan: "▦ QR-Code vom Pi scannen", scanHint: "Öffnet die Handykamera. Server und Token werden aus dem QR-Code übernommen.", manual: "oder manuell",
     server: "Server-Adresse", token: "Zugangs-Token", save: "Speichern & Verbindung testen",
-    display: "Anzeige", language: "Sprache", auto: "Neue Agenten-Meldung automatisch öffnen (nur auf der Übersicht)", invert: "Wischrichtung umkehren (falls oben/unten vertauscht ist)",
+    display: "Anzeige", language: "Sprache", auto: "Neue Agenten-Meldung automatisch öffnen (nur auf der Übersicht)", invert: "Wischrichtung umkehren (falls oben/unten vertauscht ist)", voiceAuto: "Sprachnotiz sofort senden (sonst: Tippen bestätigt „Verstanden: …“)",
     agents: "Hermes, OpenClaw, Codex und Claude melden Fertig/Wartet/Fehler über denselben Hub.",
     controls: "Brillensteuerung", swipe: "Wischen", select: "Eintrag wählen", tap: "Tippen", open: "Öffnen oder ausführen",
-    double: "Doppeltipp", back: "Zurück; läuft ein Agent: Stopp; Übersicht: beenden", hold: "Halten", speak: "In die Sitzung sprechen (max. 18 s)",
+    double: "Doppeltipp", back: "Zurück; läuft ein Agent: Stopp; Übersicht: beenden", hold: "Halten", speak: "In die Sitzung sprechen (max. 18 s), dann Tippen = senden, 2× = verwerfen", menuKey: "Tippen + Halten", menu: "Menü der Seite (Stoppen, Neue Sitzung, Alle gelesen …)", ring: "R1-Ring", ringDo: "2× tippen = Seitenwahl, Wischen = wählen",
     private: "Konfiguration bleibt auf diesem Gerät.", checking: "Verbindung wird geprüft …", camera: "Kamera wird geöffnet …",
     saved: "✓ Verbunden und gespeichert", failed: "Verbindung fehlgeschlagen – Daten sind gespeichert",
     scanned: "✓ QR-Code erkannt und verbunden", unreachable: "QR erkannt, Server aber nicht erreichbar", scanFailed: "QR-Code konnte nicht gelesen werden",
@@ -39,10 +41,10 @@ const copy = {
     agentsOnline: "agents online", connected: "Connected", disconnected: "Not connected", devices: "devices", notifications: "notifications",
     setup: "Setup", scan: "▦ Scan QR code from Pi", scanHint: "Opens the phone camera and imports the server and access token.", manual: "or enter manually",
     server: "Server address", token: "Access token", save: "Save & test connection",
-    display: "Display", language: "Language", auto: "Open new agent notifications automatically (overview only)", invert: "Reverse swipe direction (if up/down feels swapped)",
+    display: "Display", language: "Language", auto: "Open new agent notifications automatically (overview only)", invert: "Reverse swipe direction (if up/down feels swapped)", voiceAuto: "Send voice notes immediately (otherwise a tap confirms \"Understood: …\")",
     agents: "Hermes, OpenClaw, Codex and Claude report Done/Waiting/Error through the same hub.",
     controls: "Glasses controls", swipe: "Swipe", select: "Select item", tap: "Tap", open: "Open or execute",
-    double: "Double tap", back: "Back; stops a running agent; exit on overview", hold: "Hold", speak: "Speak into the session (max 18 s)",
+    double: "Double tap", back: "Back; stops a running agent; exit on overview", hold: "Hold", speak: "Speak into the session (max 18 s), then tap = send, 2x = discard", menuKey: "Tap + hold", menu: "Page menu (Stop, New session, Mark all read …)", ring: "R1 ring", ringDo: "double tap = page picker, swipe = select",
     private: "Configuration stays on this device.", checking: "Testing connection …", camera: "Opening camera …",
     saved: "✓ Connected and saved", failed: "Connection failed – settings were saved",
     scanned: "✓ QR code imported and connected", unreachable: "QR imported, but server is unreachable", scanFailed: "QR code could not be read",
@@ -62,6 +64,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     token: (root.querySelector("#token") as HTMLInputElement | null)?.value.trim() ?? "",
     autoOpenNotifications: (root.querySelector("#auto-open") as HTMLInputElement | null)?.checked ?? true,
     invertScroll: (root.querySelector("#invert-scroll") as HTMLInputElement | null)?.checked ?? false,
+    voiceAutoSend: (root.querySelector("#voice-auto") as HTMLInputElement | null)?.checked ?? false,
   });
 
   const render = (): void => {
@@ -92,11 +95,12 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
         ${languageSelect(locale)}
         <label class="check"><input id="auto-open" type="checkbox" ${settings.autoOpenNotifications ? "checked" : ""} /> ${c.auto}</label>
         <label class="check"><input id="invert-scroll" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${c.invert}</label>
+        <label class="check"><input id="voice-auto" type="checkbox" ${settings.voiceAutoSend ? "checked" : ""} /> ${c.voiceAuto}</label>
         <p class="hint">${c.agents}</p>
       </section>
       <section class="card">
         <h2>${c.controls}</h2>
-        <table class="keys"><tr><td>${c.swipe}</td><td>${c.select}</td></tr><tr><td>${c.tap}</td><td>${c.open}</td></tr><tr><td>${c.double}</td><td>${c.back}</td></tr><tr><td>${c.hold}</td><td>${c.speak}</td></tr></table>
+        <table class="keys"><tr><td>${c.swipe}</td><td>${c.select}</td></tr><tr><td>${c.tap}</td><td>${c.open}</td></tr><tr><td>${c.double}</td><td>${c.back}</td></tr><tr><td>${c.hold}</td><td>${c.speak}</td></tr><tr><td>${c.menuKey}</td><td>${c.menu}</td></tr><tr><td>${c.ring}</td><td>${c.ringDo}</td></tr></table>
       </section>
       <footer class="hint">Quiet Hub ${esc(model.screen)} · ${c.private}</footer>
     `;
@@ -104,6 +108,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     root.querySelector("#language")?.addEventListener("change", (event) => handlers.onLocale((event.target as HTMLSelectElement).value as Locale));
     root.querySelector("#auto-open")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#invert-scroll")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
+    root.querySelector("#voice-auto")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#save")?.addEventListener("click", async () => {
       const next = readForm();
       busy = true; notice = c.checking; render();
