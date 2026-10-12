@@ -56,7 +56,7 @@ export function createHub(options = {}) {
     whisperLang: options.whisperLang ?? env.WHISPER_LANG ?? "de",
     vllmUrl: options.vllmUrl ?? env.VLLM_URL ?? "http://127.0.0.1:8000/v1",
     vllmModel: options.vllmModel ?? env.VLLM_MODEL ?? "qwen",
-    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 6000),
+    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 15000),
     suggestions: options.suggestions ?? (env.VLLM_URL !== "off"),
     lang: options.lang ?? env.HUB_LANG ?? "de",
   };
@@ -98,7 +98,8 @@ export function createHub(options = {}) {
     };
     state.events = [event, ...state.events].slice(0, 50);
     saveEvents();
-    void notifyPhone(`${event.provider}: ${status === "waiting" ? "wartet" : status === "error" ? "Fehler" : "fertig"}`, event.title);
+    // Only things that need the user go to the phone; answers are on the glasses already.
+    if (status === "waiting") void notifyPhone(`${event.provider}: wartet`, event.title);
     return event;
   }
 
@@ -177,7 +178,7 @@ export function createHub(options = {}) {
   let printerDemo = { job: "DEMO esp32_gehaeuse.stl", state: "printing", layer: 148, layers: 205, progress: 72, etaMin: 41, nozzleC: 210, bedC: 60, selected: 0, demo: true };
 
   // ------------------------------------------------------------- phone mirror (optional)
-  // Waiting / done / error events and a finished print are also sent to Home
+  // Waiting events (approvals) and a finished print are also sent to Home
   // Assistant's notify service, so the phone notification can be mirrored to the
   // glasses. HA_NOTIFY_SERVICE=notify.mobile_app_x pins it; otherwise the first
   // notify.mobile_app_* service is found read-only via GET /api/services.
@@ -442,8 +443,8 @@ export function createHub(options = {}) {
         ? `Ein Agent bittet um Freigabe: "${text(subject, 300)}"\nNenne 3 sehr kurze Antwortoptionen des Nutzers (je höchstens 32 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`
         : `An agent asks for permission: "${text(subject, 300)}"\nGive 3 very short reply options for the user (each at most 32 characters, English). Only a JSON array of strings, nothing else.`)
       : (de
-        ? `Frage: "${text(subject, 300)}"\nAntwort: "${text(answer, 700)}"\nNenne 3 sehr kurze Folgefragen des Nutzers darauf (je höchstens 32 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`
-        : `Question: "${text(subject, 300)}"\nAnswer: "${text(answer, 700)}"\nGive 3 very short follow-up replies of the user (each at most 32 characters, English). Only a JSON array of strings, nothing else.`);
+        ? `Du schlägst Antworten vor, die der Nutzer per Datenbrille mit einem Tipp an seinen KI-Agenten zurückschickt.\nNutzer: "${text(subject, 300)}"\nAgent: "${text(answer, 1200)}"\nGib 3 verschiedene, konkrete nächste Nachrichten des Nutzers an den Agenten, die das Gespräch sinnvoll weiterführen: z. B. den Vorschlag des Agenten umsetzen lassen, gezielt zu einem genannten Detail nachhaken, oder eine passende nächste Aufgabe. Bezieh dich auf konkrete Inhalte der Antwort. Keine Floskeln wie "Danke", "Ok", "Erzähl mehr", keine Wiederholung der Frage. Du-Form, Deutsch, je höchstens 28 Zeichen. Nur ein JSON-Array von 3 Strings.`
+        : `You suggest replies the user sends back to their AI agent with one tap on smart glasses.\nUser: "${text(subject, 300)}"\nAgent: "${text(answer, 1200)}"\nGive 3 different, concrete next messages from the user that move the conversation forward: e.g. have the agent carry out what it proposed, dig into a specific detail it mentioned, or a fitting next task. Refer to concrete content of the answer. No filler like "Thanks", "Ok", "Tell me more", don't repeat the question. English, each at most 28 characters. Only a JSON array of 3 strings.`);
     try {
       const res = await fetchImpl(`${cfg.vllmUrl}/chat/completions`, {
         method: "POST",
@@ -452,7 +453,7 @@ export function createHub(options = {}) {
         body: JSON.stringify({
           model: cfg.vllmModel,
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.3,
+          temperature: 0.5,
           chat_template_kwargs: { enable_thinking: false },
           max_tokens: 120,
         }),
@@ -464,7 +465,7 @@ export function createHub(options = {}) {
       const end = raw.lastIndexOf("]");
       if (start < 0 || end <= start) throw new Error("vllm returned no JSON array");
       const list = JSON.parse(raw.slice(start, end + 1));
-      const clean = (Array.isArray(list) ? list : []).map((item) => String(item).trim()).filter((item) => item !== "" && item.length <= 32).slice(0, 3);
+      const clean = (Array.isArray(list) ? list : []).map((item) => String(item).trim()).filter((item) => item !== "" && Buffer.byteLength(item) <= 32).slice(0, 3);
       log(`suggestions (${kind}): vLLM ${cfg.vllmModel} ok, ${clean.length} in ${now() - started} ms`);
       return clean;
     } catch (error) {
