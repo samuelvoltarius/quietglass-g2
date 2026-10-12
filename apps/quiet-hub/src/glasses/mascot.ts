@@ -51,6 +51,36 @@ function face(eye: Eye, mouth: keyof typeof MOUTHS): PixelIcon {
   ];
 }
 
+/** The writing on the notebook page, one frame per step (8 inner columns). */
+const WRITING = ["........", "##......", "##.#....", "##.###..", "##.###.#", "##.###.#"] as const;
+/** Pupils looking down at the pen as it moves right. */
+const WRITING_EYES: readonly Eye[] = [
+  ["......", "......", ".##...", ".##..."],
+  ["......", "......", ".##...", ".##..."],
+  ["......", "......", "..##..", "..##.."],
+  ["......", "......", "..##..", "..##.."],
+  ["......", "......", "...##.", "...##."],
+  ["......", "......", "...##.", "...##."],
+];
+
+/** A small open notebook below the glasses, with the line being written. */
+function notebook(line: string): string[] {
+  return ["....##########....", `....#${line}#....`, "....##########...."];
+}
+
+/**
+ * Listening: the head turned so one ear faces you — one lens with an eye on
+ * the left, a big ear on the right and sound waves pulsing into it.
+ */
+function ear(step: number): PixelIcon {
+  const shell = [".####.", "#....#", "#.##.#", "#.#..#", "#..#.#", ".#..#.", "..##.."];
+  const waves = step % 2 === 0 ? ["..", "..", "#.", "#.", "..", "..", ".."] : ["..", ".#", "#.", "#.", ".#", "..", ".."];
+  const eye: Eye = ["......", "...##.", "...##.", "......"];
+  const lens = [".######.", `#${eye[0]}#`, `#${eye[1]}#`, `#${eye[2]}#`, `#${eye[3]}#`, ".######.", "........"];
+  const rows = lens.map((left, i) => `${left}${i === 2 ? "#" : "."}${shell[i]}.${waves[i].slice(0, 1)}${waves[i].slice(1)}`.slice(0, 18));
+  return [...rows, "..................", ".................."];
+}
+
 /** How long one step of an animation lasts. Redraw at least this often to see it. */
 export const MASCOT_STEP_MS = 500;
 
@@ -58,9 +88,10 @@ export function mascotFrame(mood: Mood, now: number): PixelIcon {
   const step = Math.floor(now / MASCOT_STEP_MS);
   switch (mood) {
     case "working": {
-      // Look left, centre, right, centre — one position per second.
-      const look = ["left", "center", "right", "center"][Math.floor(step / 2) % 4] ?? "center";
-      return face(EYES[look]!, "flat");
+      // Head down over a notebook: a line of writing grows dash by dash and
+      // the eyes follow the pen from left to right, then a fresh line starts.
+      const frame = step % WRITING.length;
+      return [...face(WRITING_EYES[frame]!, "none").slice(0, 6), ...notebook(WRITING[frame]!)];
     }
     case "happy":
       return face(EYES.happy!, "smile");
@@ -71,7 +102,7 @@ export function mascotFrame(mood: Mood, now: number): PixelIcon {
     case "asleep":
       return face(EYES.closed!, "none");
     case "listening":
-      return face(EYES.up!, "open");
+      return ear(step);
     case "idle":
     default:
       // A short blink every five seconds.
