@@ -17,6 +17,7 @@
  *   HUB_TOKEN=... node quiet-hub-relay.mjs --hub http://127.0.0.1:8787
  *
  * Token: env HUB_TOKEN (preferred), --token-file <path>, or --token <value>.
+ * Not needed for an https hub behind `tailscale serve` that allows this machine's Tailscale login.
  * The token is never printed and never written to disk by the relay.
  *
  * relay.json:
@@ -261,8 +262,9 @@ export function parseArgs(argv, env = process.env) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.hub || !args.token) {
-    console.error("usage: node quiet-hub-relay.mjs --hub <url> [--config relay.json]  (token via env HUB_TOKEN or --token-file)");
+  // Through `tailscale serve` (https) the hub knows us by our Tailscale login; a token is only needed on plain http.
+  if (!args.hub || (!args.token && !args.hub.startsWith("https://"))) {
+    console.error("usage: node quiet-hub-relay.mjs --hub <url> [--config relay.json]  (token via env HUB_TOKEN or --token-file; optional for an https hub behind tailscale serve)");
     process.exit(2);
   }
   if (!existsSync(args.config)) { console.error(`config not found: ${args.config}`); process.exit(2); }
