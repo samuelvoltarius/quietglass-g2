@@ -2,6 +2,8 @@
 
 **Quietglass** · Watch and steer a coding agent without returning to your desk.
 
+> **Mehrere Agenten oder ein eigener Server?** Nimm [Quiet Hub](../quiet-hub/): alle Hermes-, Claude- und Codex-Agenten auf mehreren Rechnern, dazu Home Assistant und Drucker. Agent Glass bleibt die einfache Variante ohne eigenen Server. / *Several agents or your own server? Use Quiet Hub; Agent Glass stays the simple option without a server.*
+
 > **Auf Deutsch, kurz:** Agent Glass zeigt dir auf der Brille, was dein
 > Coding-Agent (Claude/Codex über Even Terminal, Hermes oder OpenClaw) gerade
 > tut. Fragt er nach einer Freigabe, erscheint die Frage im Blickfeld:
