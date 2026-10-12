@@ -11,7 +11,7 @@ import { createImageSync } from "./glasses/image-sync";
 import { activeList, load, save, type FlowListData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, type Locale } from "./i18n";
+import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 
 /** Redraw cadence for the elapsed-time readout while a run is open. */
 const CLOCK_MS = 1000;
@@ -19,7 +19,8 @@ const CLOCK_MS = 1000;
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
+  setLocale(locale);
   let data: FlowListData = await load(bridge, locale);
   let list: Checklist = activeList(data) ?? EMPTY_CHECKLIST;
   let state: RunState = startRun(list);
@@ -170,6 +171,7 @@ async function boot(): Promise<void> {
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
+      rememberLocale(bridge, next);
       void draw();
     },
   });
