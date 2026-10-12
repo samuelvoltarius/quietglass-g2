@@ -10,10 +10,39 @@
 import { normalizeReport } from "./normalize";
 import type { HubApi, HubReport, SessionList } from "./types";
 
+export type ApiErrorKind = "network" | "timeout" | "http";
+
 export class ApiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly kind: ApiErrorKind = status === undefined ? "network" : "http") {
     super(message);
     this.name = "ApiError";
+  }
+}
+
+/** Why the hub cannot be used - the exact reason the wearer and the phone page show. */
+export type LinkProblem = "unreachable" | "unauthorized" | "timeout" | "error" | "insecure";
+
+/** An https page (the installed Even Hub app) may not call an http:// server: mixed content is blocked silently. */
+export function insecureServer(serverUrl: string, pageProtocol: string | undefined): boolean {
+  return pageProtocol === "https:" && /^http:\/\//i.test(serverUrl.trim());
+}
+
+export function classifyError(error: unknown): LinkProblem {
+  if (error instanceof ApiError) {
+    if (error.kind === "timeout") return "timeout";
+    if (error.status === 401 || error.status === 403) return "unauthorized";
+    if (error.kind === "network") return "unreachable";
+  }
+  return "error";
+}
+
+/** Host part of the server URL (never the token), "" when unset or unparsable. */
+export function serverHost(url: string): string {
+  if (url.trim() === "") return "";
+  try {
+    return new URL(url).host;
+  } catch {
+    return url.replace(/^https?:\/\//, "").split("/")[0] ?? "";
   }
 }
 
@@ -21,20 +50,29 @@ export interface ClientOptions {
   readonly baseUrl: string;
   readonly token?: string;
   readonly fetchImpl?: typeof fetch;
+  /** Abort a request after this long (default 8 s; voice uploads get more). */
+  readonly timeoutMs?: number;
 }
 
 export function createClient(options: ClientOptions): HubApi {
   const base = options.baseUrl.replace(/\/+$/, "");
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const timeoutMs = options.timeoutMs ?? 8000;
 
   const call = async <T>(path: string, init?: RequestInit): Promise<T> => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (options.token !== undefined && options.token !== "") headers.Authorization = `Bearer ${options.token}`;
     let response: Response;
+    const controller = new AbortController();
+    const limit = path.startsWith("/agent/voice") ? Math.max(timeoutMs, 30_000) : timeoutMs;
+    const timer = setTimeout(() => controller.abort(), limit);
     try {
-      response = await fetchImpl(`${base}${path}`, { ...init, headers: { ...headers, ...(init?.headers ?? {}) } });
+      response = await fetchImpl(`${base}${path}`, { ...init, signal: controller.signal, headers: { ...headers, ...(init?.headers ?? {}) } });
     } catch (error) {
+      if (controller.signal.aborted) throw new ApiError("timeout", undefined, "timeout");
       throw new ApiError(error instanceof Error ? error.message : "network error");
+    } finally {
+      clearTimeout(timer);
     }
     if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
     return (await response.json()) as T;

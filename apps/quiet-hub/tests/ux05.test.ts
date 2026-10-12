@@ -59,8 +59,8 @@ describe("overview shows everything at a glance", () => {
     expect(buildView(model("home", empty), "de", T0).body[0]).toContain("HA_DEVICES");
     expect(buildView(model("inbox", empty), "en", T0).body.join(" ")).toContain("No alerts yet");
     const demo = { ...demoReport(), home: { ...demoReport().home, demo: true }, printer: { ...demoReport().printer, demo: true } };
-    expect(buildView(model("root", demo), "de", T0).body[1]).toContain("Demo");
-    expect(buildView(model("root", demo), "de", T0).body[2]).toContain("Demo");
+    expect(buildView(model("root", demo), "de", T0).body[1]).toContain("nicht eingerichtet");
+    expect(buildView(model("root", demo), "de", T0).body[2]).toContain("nicht eingerichtet");
   });
 
   it("agents come from the report alone — an empty list stays empty (no phantom agent)", () => {

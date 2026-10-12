@@ -390,6 +390,25 @@ Scanning it opens Quiet Hub and stores the daemon address plus token through the
 SDK's persistent storage. Credentials are encoded in the URL fragment so they
 are not sent to the Vite HTTP server.
 
+**Pairing must use the https URLs.** The installed Even Hub app runs on an
+https origin, so the browser blocks an `http://` daemon as mixed content (the app
+now says "Server muss https sein" instead of failing silently). `npm run pi:start`
+reads `tailscale serve status --json` and puts the Tailscale HTTPS names in the QR
+(the https port proxying to `127.0.0.1:8787` is the server, the one proxying to
+`:5210` the app, e.g. `https://<pi>.<tailnet>.ts.net:8443`). Without those
+mappings it falls back to `http://` with a printed warning - fine for the
+simulator or a desktop browser, not for the installed app. The script never
+changes your `tailscale serve` setup.
+
+The Overview never shows demo data when the daemon cannot be reached: it says
+"Nicht verbunden", the exact reason (server missing, unreachable, wrong token,
+timeout, not https) and the server host, retries by itself (2, 5, 10, then every
+30 s) and on a tap. Demo data exists only behind `?demo=1`. The phone page shows
+the same status, last success/error and a "Verbindung testen" button. The daemon
+writes one access line per request (time, client IP, method, path, status, ms;
+no tokens, relay heartbeats skipped) to the journal:
+`journalctl --user -u quiet-hub-daemon -f | grep '\[access\]'`.
+
 The phone settings page can also scan that same QR later with the native phone
 camera, accepts manual server/token entry, tests the connection, switches
 German/English, and controls whether new agent events open automatically.

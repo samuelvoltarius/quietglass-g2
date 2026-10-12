@@ -12,15 +12,44 @@ export interface AppSettings {
   readonly voiceAutoSend: boolean;
 }
 
+export type ConnProblem = "missing" | "unreachable" | "unauthorized" | "timeout" | "error" | "insecure";
+
+/** What the phone page shows about the link to the hub. */
+export interface ConnView {
+  readonly configured: boolean;
+  readonly connected: boolean;
+  /** Server host only, never the token. */
+  readonly host: string;
+  readonly lastOkAt: number | null;
+  readonly problem: ConnProblem | null;
+  readonly lastErrorAt: number | null;
+  readonly fails: number;
+}
+
+export interface SettingsResult {
+  readonly ok: boolean;
+  /** The SDK key-value store returned the written value on read-back. */
+  readonly persisted: boolean;
+  readonly problem: ConnProblem | null;
+}
+
+export interface TestResult {
+  readonly ok: boolean;
+  readonly problem: ConnProblem | null;
+  readonly ms: number;
+}
+
 export interface PhoneState {
   readonly model: HubModel;
   readonly locale: Locale;
   readonly settings: AppSettings;
+  readonly conn: ConnView;
 }
 
 export interface PhoneHandlers {
   readonly onLocale: (locale: Locale) => void;
-  readonly onSettings: (settings: AppSettings) => Promise<boolean>;
+  readonly onSettings: (settings: AppSettings) => Promise<SettingsResult>;
+  readonly onTest: (settings: AppSettings) => Promise<TestResult>;
   readonly onScanQr: () => Promise<AppSettings>;
 }
 
@@ -36,6 +65,11 @@ const copy = {
     private: "Konfiguration bleibt auf diesem Gerät.", checking: "Verbindung wird geprüft …", camera: "Kamera wird geöffnet …",
     saved: "✓ Verbunden und gespeichert", failed: "Verbindung fehlgeschlagen – Daten sind gespeichert",
     scanned: "✓ QR-Code erkannt und verbunden", unreachable: "QR erkannt, Server aber nicht erreichbar", scanFailed: "QR-Code konnte nicht gelesen werden",
+    test: "Verbindung testen", testing: "Teste …", testOk: "✓ Verbindung ok", notSaved: "⚠ Konnte nicht dauerhaft gespeichert werden",
+    notConnectedServer: "Nicht verbunden · Server fehlt", scanFirst: "Zum Verbinden zuerst den QR-Code vom Pi scannen.",
+    serverLabel: "Server", lastOk: "Letzter Erfolg", never: "noch nie", lastError: "Letzter Fehler", none: "keiner", tries: "Fehlversuche in Folge",
+    p_missing: "Server fehlt", p_unreachable: "Server nicht erreichbar", p_unauthorized: "Token falsch", p_timeout: "Zeitüberschreitung", p_error: "Verbindungsfehler",
+    p_insecure: "Server muss https sein – z. B. https://<pi>.<tailnet>.ts.net:8443",
   },
   en: {
     agentsOnline: "agents online", connected: "Connected", disconnected: "Not connected", devices: "devices", notifications: "notifications",
@@ -48,8 +82,20 @@ const copy = {
     private: "Configuration stays on this device.", checking: "Testing connection …", camera: "Opening camera …",
     saved: "✓ Connected and saved", failed: "Connection failed – settings were saved",
     scanned: "✓ QR code imported and connected", unreachable: "QR imported, but server is unreachable", scanFailed: "QR code could not be read",
+    test: "Test connection", testing: "Testing …", testOk: "✓ Connection ok", notSaved: "⚠ Could not be stored permanently",
+    notConnectedServer: "Not connected · server missing", scanFirst: "To connect, scan the QR code from the Pi first.",
+    serverLabel: "Server", lastOk: "Last success", never: "never", lastError: "Last error", none: "none", tries: "Failed attempts in a row",
+    p_missing: "Server missing", p_unreachable: "Server unreachable", p_unauthorized: "Wrong token", p_timeout: "Timed out", p_error: "Connection error",
+    p_insecure: "Server must be https - e.g. https://<pi>.<tailnet>.ts.net:8443",
   },
 } as const;
+
+function clock(at: number | null): string {
+  if (at === null) return "";
+  const d = new Date(at);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
 
 function esc(value: string): string {
   return value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character] ?? character);
@@ -67,27 +113,38 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     voiceAutoSend: (root.querySelector("#voice-auto") as HTMLInputElement | null)?.checked ?? false,
   });
 
+  const describe = (ok: boolean, problem: ConnProblem | null, good: string, bad: string): string => {
+    if (ok) return good;
+    const c = copy[state().locale];
+    return problem === null ? bad : `✗ ${c[`p_${problem}` as keyof typeof c]}`;
+  };
+
   const render = (): void => {
-    const { model, locale, settings } = state();
+    const { model, locale, settings, conn } = state();
     const c = copy[locale];
-    const connected = model.report.connection === "connected";
+    const connected = conn.connected;
+    const reason = conn.problem === null ? "" : c[`p_${conn.problem}` as keyof typeof c];
+    const title = connected ? c.connected : conn.problem === "missing" || !conn.configured ? c.notConnectedServer : `${c.disconnected} · ${reason}`;
+    const scanBlock = `<button id="scan" class="primary" type="button" ${busy ? "disabled" : ""}>${c.scan}</button><p class="hint">${c.scanHint}</p>`;
     const unread = model.report.inbox.events.filter((event) => !event.read).length;
     root.innerHTML = `
       <header class="brand"><span class="pixel-logo" aria-hidden="true">▦</span><div><div class="brand-mark">QUIETGLASS</div><h1>Quiet Hub</h1></div></header>
       <section class="card status-card">
-        <div><span class="dot ${connected ? "ok" : "bad"}"></span><strong>${connected ? c.connected : c.disconnected}</strong></div>
+        <div><span class="dot ${connected ? "ok" : "bad"}"></span><strong>${esc(title)}</strong></div>
+        <div class="metrics"><span>${c.serverLabel}: ${esc(conn.host || "–")}</span><span>${c.lastOk}: ${conn.lastOkAt === null ? c.never : clock(conn.lastOkAt)}</span><span>${c.lastError}: ${conn.problem === null ? c.none : `${esc(String(reason))}${conn.lastErrorAt === null ? "" : ` (${clock(conn.lastErrorAt)})`}`}</span>${conn.fails > 0 ? `<span>${c.tries}: ${conn.fails}</span>` : ""}</div>
+        ${connected ? "" : scanBlock}
         <div class="metrics"><span>${model.report.agents.filter((agent) => agent.online).length}/${model.report.agents.length} ${c.agentsOnline}</span><span>${model.report.home.devices.length} ${c.devices}</span><span>${unread} ${c.notifications}</span></div>
       </section>
       <section class="card">
         <h2>${c.setup}</h2>
-        <button id="scan" class="primary" type="button" ${busy ? "disabled" : ""}>${c.scan}</button>
-        <p class="hint">${c.scanHint}</p>
+        ${connected ? scanBlock : ""}
         <div class="divider"><span>${c.manual}</span></div>
         <label for="server">${c.server}</label>
         <input id="server" type="url" value="${esc(settings.serverUrl)}" placeholder="http://pi5:8787" autocomplete="url" />
         <label for="token">${c.token}</label>
         <input id="token" type="password" value="${esc(settings.token)}" autocomplete="off" />
         <button id="save" type="button" ${busy ? "disabled" : ""}>${c.save}</button>
+        <button id="test" type="button" ${busy ? "disabled" : ""}>${c.test}</button>
         ${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
       </section>
       <section class="card">
@@ -112,15 +169,20 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     root.querySelector("#save")?.addEventListener("click", async () => {
       const next = readForm();
       busy = true; notice = c.checking; render();
-      const ok = await handlers.onSettings(next).catch(() => false);
-      busy = false; notice = ok ? c.saved : c.failed; render();
+      const result = await handlers.onSettings(next).catch((): SettingsResult => ({ ok: false, persisted: false, problem: "error" }));
+      busy = false; notice = describe(result.ok, result.problem, c.saved, c.failed) + (result.persisted ? "" : ` ${c.notSaved}`); render();
+    });
+    root.querySelector("#test")?.addEventListener("click", async () => {
+      busy = true; notice = c.testing; render();
+      const result = await handlers.onTest(readForm()).catch((): TestResult => ({ ok: false, problem: "error", ms: 0 }));
+      busy = false; notice = result.ok ? `${c.testOk} (${result.ms} ms)` : describe(false, result.problem, "", c.failed); render();
     });
     root.querySelector("#scan")?.addEventListener("click", async () => {
       busy = true; notice = c.camera; render();
       try {
         const scanned = await handlers.onScanQr();
-        const ok = await handlers.onSettings(scanned);
-        notice = ok ? c.scanned : c.unreachable;
+        const result = await handlers.onSettings(scanned);
+        notice = (result.ok ? c.scanned : `${c.unreachable}: ${describe(false, result.problem, "", "")}`) + (result.persisted ? "" : ` ${c.notSaved}`);
       } catch (error) {
         notice = error instanceof Error ? error.message : c.scanFailed;
       } finally {

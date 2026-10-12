@@ -276,3 +276,20 @@ describe("events", () => {
     expect((await h.api("/report")).json.inbox.events[0].read).toBe(true);
   });
 });
+
+describe("access log", () => {
+  it("logs one token-free line per request, client IP from X-Forwarded-For, skips relay heartbeats", async () => {
+    const lines = [];
+    const h = await hub({ accessLog: (line) => lines.push(line), pollHoldMs: 20 });
+    await fetch(`${h.url}/report?token=SECRET`, { headers: { Authorization: `Bearer ${TOKEN}`, "X-Forwarded-For": "100.1.2.3, 10.0.0.1" } });
+    await fetch(`${h.url}/report`);
+    const reg = await register(h.api);
+    await h.api(`/relay/poll?relay=${reg.json.relayId}`);
+    await sleep(30);
+    expect(lines.some((l) => l.includes("100.1.2.3 GET /report 200"))).toBe(true);
+    expect(lines.some((l) => l.includes(" GET /report 401"))).toBe(true);
+    expect(lines.join("\n")).not.toMatch(/SECRET|Bearer|test-token/);
+    expect(lines.some((l) => l.includes("/relay/poll") || l.includes("/relay/register"))).toBe(false);
+    expect(lines.every((l) => /ms$/.test(l))).toBe(true);
+  });
+});

@@ -836,7 +836,22 @@ export function createHub(options = {}) {
     sendJson(res, 404, { error: "not found" });
   }
 
+  // One access line per request (no tokens, no query string): tells whether the
+  // phone/glasses reach the hub at all. Relay long-polls are heartbeats - skipped.
+  const accessLog = options.accessLog ?? ((line) => console.log(`[access] ${line}`));
+  const quietPath = (path) => path === "/relay/poll" || path === "/relay/register";
+  const clientIp = (req) => {
+    const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim();
+    return (forwarded || req.socket?.remoteAddress || "-").replace(/^::ffff:/, "");
+  };
   const server = createServer((req, res) => {
+    const started = Date.now();
+    const path = (req.url ?? "/").split("?")[0].slice(0, 120);
+    if (accessLog && !quietPath(path)) {
+      res.on("finish", () => {
+        accessLog(`${new Date(started).toISOString()} ${clientIp(req)} ${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`);
+      });
+    }
     handle(req, res).catch((error) => {
       console.error("[daemon] handler error:", String(error).slice(0, 200));
       if (!res.headersSent) sendJson(res, 500, { error: "internal error" });

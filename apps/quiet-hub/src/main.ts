@@ -1,19 +1,21 @@
 import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
-import { createClient, ApiError } from "./api/client";
-import { createDemoApi, DEMO_SCENES, demoReport, type DemoScene } from "./api/demo";
-import type { HubApi, HubReport } from "./api/types";
+import { createClient, ApiError, classifyError, insecureServer, serverHost, type LinkProblem } from "./api/client";
+import { emptyReport } from "./api/empty";
+import { createDemoApi, DEMO_SCENES, type DemoScene } from "./api/demo";
+import type { HubApi } from "./api/types";
 import { getLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
-import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, withLink, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
 import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { pixelIconFor } from "./glasses/icons";
 import type { ScreenView } from "./glasses/screen";
 import { buildWav } from "./audio/wav";
-import { mountPhoneUi, type AppSettings } from "./ui/phone";
+import { mountPhoneUi, type ConnView, type SettingsResult } from "./ui/phone";
+import { loadSettings, saveSettings } from "./setup/settings";
 import { decodeQr, parseSetupQr } from "./setup/qr";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
@@ -22,8 +24,9 @@ const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) 
 const POLL_MS = 5000;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const RETRY_MS = 5000;
-const BUILD = "0.5.0";
+const BUILD = "0.5.1";
+/** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
+export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
 export const MAX_RECORD_MS = 18_000;
 /** Less audio than this is a mis-press (16 kHz, 16 bit, mono = 32 bytes per ms). */
@@ -47,7 +50,7 @@ async function boot(): Promise<void> {
   const forcedToken = setup.get("token");
   if (forcedServer !== null && forcedServer !== "") {
     settings = { ...settings, serverUrl: forcedServer, token: forcedToken ?? settings.token };
-    saveSettings(bridge, settings);
+    void saveSettings(bridge, settings);
     // Remove credentials from the visible URL after the one-time QR setup.
     try {
       globalThis.history?.replaceState?.(null, "", `${globalThis.location?.pathname ?? "/"}${globalThis.location?.search ?? ""}`);
@@ -57,7 +60,41 @@ async function boot(): Promise<void> {
   }
   let api: HubApi = DEMO ? createDemoApi(locale, DEMO_SCENE) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
 
-  let model: HubModel = createModel(await firstReport(api, locale));
+  // ---- connection state: real data or an honest reason, never demo data ----
+  const conn = { lastOkAt: null as number | null, lastProblem: null as LinkProblem | "missing" | null, lastAt: null as number | null, fails: 0, hadData: DEMO };
+  const problemFor = (error: unknown): LinkProblem | "missing" => {
+    if (settings.serverUrl.trim() === "") return "missing";
+    if (insecureServer(settings.serverUrl, globalThis.location?.protocol)) return "insecure";
+    return classifyError(error);
+  };
+  let model: HubModel = createModel(emptyReport(DEMO ? "demo" : "missing"));
+  const markFailure = (error: unknown): void => {
+    const problem = problemFor(error);
+    conn.fails += 1;
+    conn.lastProblem = problem;
+    conn.lastAt = Date.now();
+    model = withLink(model, { problem, host: serverHost(settings.serverUrl), fails: conn.fails, hadData: conn.hadData });
+  };
+  const markOk = (): void => {
+    conn.lastOkAt = Date.now();
+    conn.lastProblem = null;
+    conn.fails = 0;
+    conn.hadData = true;
+  };
+  if (DEMO) {
+    model = createModel(await api.report());
+  } else if (problemFor(null) !== "error") {
+    // No server, or an http:// server that an https page may not call (mixed content): do not even try.
+    markFailure(null);
+  } else {
+    try {
+      model = createModel(await api.report());
+      markOk();
+    } catch (error) {
+      console.warn("[quiethub] initial report failed:", error);
+      markFailure(error);
+    }
+  }
   const savedUi = await loadUiState(bridge);
   let launchSource: "appMenu" | "glassesMenu" | null = null;
   if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, Math.min(savedUi.rootSelected ?? 0, 3)) };
@@ -71,6 +108,10 @@ async function boot(): Promise<void> {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let fast = false;
   let newestEventId: string | null = model.report.inbox.events[0]?.id ?? null;
+  const applyReport = (report: Awaited<ReturnType<HubApi["report"]>>): void => {
+    markOk();
+    model = mergeReport(model, report);
+  };
 
   // ---- microphone (voice notes) ------------------------------------------
   const micChunks: Uint8Array[] = [];
@@ -181,13 +222,20 @@ async function boot(): Promise<void> {
   // ---- data --------------------------------------------------------------
   const poll = async (): Promise<void> => {
     if (closed) return;
+    if (!DEMO && problemFor(null) !== "error") {
+      // Nothing to poll (no server / insecure URL); saving new settings triggers a poll.
+      markFailure(null);
+      await draw();
+      refreshPhone();
+      return;
+    }
     try {
       const report = await api.report();
       const nextId = report.inbox.events[0]?.id ?? null;
       const isNew = nextId !== null && nextId !== newestEventId;
       const newCard = report.approvals.length > 0 && model.report.approvals.length === 0;
       newestEventId = nextId;
-      model = mergeReport(model, report);
+      applyReport(report);
       // A permission card must be answered, so it opens the agent page. A plain
       // "done" notice never pulls the wearer out of a page they are working in:
       // it only opens from the overview (it is waiting in Meldungen otherwise).
@@ -199,7 +247,10 @@ async function boot(): Promise<void> {
       fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
     } catch (error) {
       if (!(error instanceof ApiError)) console.warn("[quiethub] poll failed:", error);
-      pollTimer = setTimeout(() => void poll(), RETRY_MS);
+      markFailure(error);
+      await draw();
+      refreshPhone();
+      pollTimer = setTimeout(() => void poll(), BACKOFF_MS[Math.min(conn.fails - 1, BACKOFF_MS.length - 1)]);
       return;
     }
     await draw();
@@ -287,11 +338,16 @@ async function boot(): Promise<void> {
       }
       const report = await api.report();
       newestEventId = report.inbox.events[0]?.id ?? newestEventId;
-      model = mergeReport(model, report);
+      applyReport(report);
       fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
       if (fast && pollTimer !== null) { clearTimeout(pollTimer); pollTimer = setTimeout(() => void poll(), POLL_FAST_MS); }
     } catch (error) {
       console.warn("[quiethub] effect failed:", error);
+      const problem = classifyError(error);
+      if (problem !== "error") markFailure(error);
+      const why = tr(messages, locale, problem === "error" ? "effect.failedHttp" : `link.title.${problem}`, { status: error instanceof ApiError ? (error.status ?? "") : "" });
+      model = { ...model, message: { text: tr(messages, locale, "effect.failed", { why }), until: Date.now() + MESSAGE_MS } };
+      if (problem !== "error" && pollTimer !== null) { clearTimeout(pollTimer); pollTimer = setTimeout(() => void poll(), BACKOFF_MS[0]); }
     }
     await draw();
     refreshPhone();
@@ -383,7 +439,42 @@ async function boot(): Promise<void> {
   // ---- phone page --------------------------------------------------------
   const phoneRoot = document.querySelector<HTMLElement>("#app");
   if (phoneRoot !== null) {
-    refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings }), {
+    const connView = (): ConnView => ({
+      configured: settings.serverUrl.trim() !== "",
+      connected: model.link === null && model.report.connection !== "missing" && model.report.connection !== "error",
+      host: serverHost(settings.serverUrl),
+      lastOkAt: conn.lastOkAt,
+      problem: conn.lastProblem,
+      lastErrorAt: conn.lastAt,
+      fails: conn.fails,
+    });
+    /** Applies new settings at once: persist (SDK store), rebuild the client, poll right now. */
+    const applySettings = async (next: typeof settings): Promise<SettingsResult> => {
+      settings = next;
+      const saved = await saveSettings(bridge, settings);
+      if (!saved.persisted) console.warn("[quiethub] settings were not persisted");
+      if (DEMO) return { ok: true, persisted: saved.persisted, problem: null };
+      api = createClient({ baseUrl: settings.serverUrl, token: settings.token });
+      conn.fails = 0;
+      if (pollTimer !== null) clearTimeout(pollTimer);
+      if (problemFor(null) !== "error") {
+        markFailure(null);
+        await draw();
+        return { ok: false, persisted: saved.persisted, problem: conn.lastProblem };
+      }
+      try {
+        applyReport(await api.report());
+        await draw();
+        pollTimer = setTimeout(() => void poll(), POLL_MS);
+        return { ok: true, persisted: saved.persisted, problem: null };
+      } catch (error) {
+        markFailure(error);
+        await draw();
+        pollTimer = setTimeout(() => void poll(), BACKOFF_MS[0]);
+        return { ok: false, persisted: saved.persisted, problem: conn.lastProblem };
+      }
+    };
+    refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings, conn: connView() }), {
       onLocale: (next) => {
         locale = next;
         setLocale(next);
@@ -391,18 +482,16 @@ async function boot(): Promise<void> {
         void draw();
         refreshPhone();
       },
-      onSettings: async (next) => {
-        settings = next;
-        saveSettings(bridge, settings);
-        if (DEMO) return true;
-        api = createClient({ baseUrl: settings.serverUrl, token: settings.token });
+      onSettings: applySettings,
+      onTest: async (candidate) => {
+        const started = Date.now();
+        if (candidate.serverUrl.trim() === "") return { ok: false, problem: "missing", ms: 0 };
+        if (insecureServer(candidate.serverUrl, globalThis.location?.protocol)) return { ok: false, problem: "insecure", ms: 0 };
         try {
-          const report = await api.report();
-          model = mergeReport(model, report);
-          await draw();
-          return true;
-        } catch {
-          return false;
+          await createClient({ baseUrl: candidate.serverUrl, token: candidate.token }).report();
+          return { ok: true, problem: null, ms: Date.now() - started };
+        } catch (error) {
+          return { ok: false, problem: classifyError(error), ms: Date.now() - started };
         }
       },
       onScanQr: async () => {
@@ -416,50 +505,6 @@ async function boot(): Promise<void> {
 
   await draw();
   void poll();
-}
-
-async function loadSettings(bridge: EvenAppBridge): Promise<AppSettings> {
-  // The SDK KV (`setLocalStorage`/`getLocalStorage`) is the only reliably
-  // persistent store in the EvenHub WebView — plain `localStorage` may not
-  // survive relaunches there (verified by the Pulse project). Read SDK first,
-  // fall back to localStorage for web/simulator contexts.
-  try {
-    const raw = await bridge.getLocalStorage("quiethub.settings");
-    if (raw !== null && raw !== undefined && raw !== "") return normalizeSettings(JSON.parse(raw) as Partial<AppSettings>);
-  } catch {
-    // Fall through to localStorage.
-  }
-  try {
-    const raw = globalThis.localStorage?.getItem("quiethub.settings");
-    if (raw !== null && raw !== undefined) return normalizeSettings(JSON.parse(raw) as Partial<AppSettings>);
-  } catch {
-    // No storage: start unconfigured.
-  }
-  return { serverUrl: "", token: "", autoOpenNotifications: true, invertScroll: false, voiceAutoSend: false };
-}
-
-function normalizeSettings(value: Partial<AppSettings>): AppSettings {
-  return {
-    serverUrl: typeof value.serverUrl === "string" ? value.serverUrl : "",
-    token: typeof value.token === "string" ? value.token : "",
-    autoOpenNotifications: value.autoOpenNotifications !== false,
-    invertScroll: value.invertScroll === true,
-    voiceAutoSend: value.voiceAutoSend === true,
-  };
-}
-
-function saveSettings(bridge: EvenAppBridge, settings: AppSettings): void {
-  const raw = JSON.stringify(settings);
-  try {
-    globalThis.localStorage?.setItem("quiethub.settings", raw);
-  } catch {
-    // Best effort mirror only.
-  }
-  // SDK KV is authoritative; `setLocalStorage` resolves false without
-  // throwing on failure, so check nothing here — persistence is best effort.
-  void bridge.setLocalStorage("quiethub.settings", raw)
-    .then((ok) => { if (!ok) console.warn("[quiethub] settings were not persisted"); })
-    .catch(() => console.warn("[quiethub] settings persistence failed"));
 }
 
 async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen; rootSelected?: number } | null> {
@@ -476,17 +521,6 @@ function saveUiState(bridge: EvenAppBridge, model: HubModel): void {
   void bridge.setLocalStorage("quiethub.ui", JSON.stringify({ screen: model.screen, rootSelected: model.rootSelected }))
     .then((ok) => { if (!ok) console.warn("[quiethub] UI state was not persisted"); })
     .catch(() => console.warn("[quiethub] UI state persistence failed"));
-}
-
-async function firstReport(api: HubApi, locale: Locale = "de"): Promise<HubReport> {
-  try {
-    return await api.report();
-  } catch (error) {
-    // Daemon unreachable at startup: show the demo so the display is never
-    // blank; `connection: "missing"` keeps the footer honest about it.
-    console.warn("[quiethub] initial report failed:", error);
-    return { ...demoReport(locale), connection: "missing" };
-  }
 }
 
 globalThis.addEventListener?.("error", (event) => console.error("[quiethub] window error:", event.error ?? event.message));

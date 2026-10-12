@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.1
+
+Never show demo data when disconnected; connection diagnostics.
+
+- **No silent demo fallback.** An unreachable daemon at startup used to show
+  demo agents, devices and a printer while every action went nowhere. Demo data
+  now exists only behind `?demo=1`. Disconnected, every page says "Nicht
+  verbunden" with the exact reason (server missing / unreachable / wrong token /
+  timeout / not https) and the server host; automatic retry with backoff
+  (2, 5, 10, 30 s) and on tap. Daemon stand-ins for Home Assistant / Moonraker
+  show "nicht eingerichtet" instead of fake items.
+- **https check.** The installed app runs on an https origin and cannot call
+  `http://` servers (mixed content). The app refuses to try and says
+  "Server muss https sein - z. B. https://<pi>.<tailnet>.ts.net:8443".
+  `scripts/start-pi.sh` now puts the Tailscale HTTPS names (from
+  `tailscale serve status --json`) into the pairing QR, http only with a warning.
+- **Phone page.** Connection status (host, last success, last error), inline
+  "Verbindung testen", QR button on top when not connected; settings are written
+  to the SDK store and read back, the client reloads and polls immediately.
+- **Daemon access log**: one token-free line per request to the journal
+  (`[access]`), relay heartbeats skipped.
+- Failed actions (send, approve ...) now say why on the glasses.
+
 ## 0.5.0
 
 A clearer hub: everything on one overview, a native menu per page, confirmed voice.

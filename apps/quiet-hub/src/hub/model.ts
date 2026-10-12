@@ -44,7 +44,24 @@ export type PendingVoice =
   | { readonly state: "transcribing"; readonly agentId: string }
   | { readonly state: "confirm"; readonly agentId: string; readonly text: string };
 
+/** Why the hub cannot be used right now; null = the last report succeeded. */
+export interface LinkStatus {
+  readonly problem: "missing" | "unreachable" | "unauthorized" | "timeout" | "error" | "insecure";
+  /** Server host only (never the token); "" when no server is configured. */
+  readonly host: string;
+  /** Failed attempts in a row. */
+  readonly fails: number;
+  /** True when a real report was received earlier in this run (then the last data stays visible for a moment). */
+  readonly hadData: boolean;
+}
+
+/** The disconnected notice replaces the pages unless a short blip hit an already working link. */
+export function linkBlocks(link: LinkStatus | null | undefined): boolean {
+  return link !== null && link !== undefined && (!link.hadData || link.fails >= 2);
+}
+
 export interface HubModel {
+  readonly link: LinkStatus | null;
   readonly report: HubReport;
   readonly screen: Screen;
   readonly rootSelected: number;
@@ -100,7 +117,7 @@ export type Effect =
 
 export function createModel(report: HubReport): HubModel {
   return {
-    report: normalizeReport(report), screen: "root", rootSelected: 0, confirm: null, message: null, recording: false,
+    link: null, report: normalizeReport(report), screen: "root", rootSelected: 0, confirm: null, message: null, recording: false,
     agentIndex: 0, agentView: "list", questionIndex: 0, recordAgent: null, sessions: null, sessionIndex: 1,
     voice: null, help: false, picker: null, answerPage: 0, answerKey: "",
   };
@@ -110,6 +127,12 @@ const clampIndex = (value: number, length: number): number => Math.max(0, Math.m
 
 function answerKeyOf(agent: AgentInfo | undefined): string {
   return agent === undefined ? "" : `${agent.id}|${agent.session?.id ?? ""}|${agent.lastQuestion ?? ""}`;
+}
+
+export function withLink(model: HubModel, link: LinkStatus | null): HubModel {
+  if (link === null) return { ...model, link: null };
+  // A failing link must never keep claiming "online" in the status line.
+  return { ...model, link, report: { ...model.report, connection: link.problem === "missing" ? "missing" : "error" } };
 }
 
 /** A fresh report from the daemon keeps the wearer's selections. */
@@ -122,6 +145,7 @@ export function mergeReport(model: HubModel, next: HubReport): HubModel {
   const pages = agent === undefined ? 0 : pageCount(agent);
   return {
     ...model,
+    link: null,
     report: {
       ...report,
       home: { ...report.home, selected: clampIndex(model.report.home.selected, report.home.devices.length) },
@@ -272,6 +296,20 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       const next = { ...model, recording: false, recordAgent: null };
       if (agentId === undefined) return { model: next };
       return { model: { ...next, voice: { state: "transcribing", agentId } }, effect: { kind: "recordStop", agentId } };
+    }
+    return { model };
+  }
+
+  // No usable link: the page only offers "try again" (tap) and the way out.
+  if (linkBlocks(model.link) && !model.help) {
+    if (gesture === "click") return { model: say(model, t("link.retrying"), now), effect: { kind: "refresh" } };
+    if (gesture === "doubleClick" || gesture === "ringDoubleClick") {
+      return model.screen === "root" ? { model, effect: { kind: "exit" } } : { model: { ...model, screen: "root", picker: null } };
+    }
+    if (gesture === "scrollDown" || gesture === "scrollUp") {
+      const at = SCREENS.indexOf(model.screen);
+      const next = SCREENS[(at + (gesture === "scrollDown" ? 1 : SCREENS.length - 1)) % SCREENS.length] ?? "root";
+      return { model: { ...model, screen: next, picker: null } };
     }
     return { model };
   }
@@ -704,17 +742,18 @@ function approvalRows(card: Approval, total: number, locale: Locale): string[] {
 }
 
 function homeRows(home: HomeSnapshot, locale: Locale): string[] {
+  if (home.demo === true) return [tr(messages, locale, "home.notConfigured")];
   if (home.devices.length === 0) return [tr(messages, locale, "home.empty")];
   const rows = home.devices.map((device, i) => {
     const mark = device.on ? "●" : "○";
     return marked(`${mark} ${device.label} — ${device.state}`, i === home.selected);
   });
-  const list = windowed(rows, home.selected, home.demo === true ? 6 : 7);
-  return home.demo === true ? [...list, tr(messages, locale, "home.demoNote")] : list;
+  return windowed(rows, home.selected, 7);
 }
 
 function printerRows(printer: PrinterSnapshot, locale: Locale): string[] {
   const rows: string[] = [];
+  if (printer.demo === true) return [tr(messages, locale, "printer.notConfigured")];
   if (printer.offline === true) {
     rows.push(tr(messages, locale, "printer.offline"));
   } else if (printer.job === null) {
@@ -729,7 +768,6 @@ function printerRows(printer: PrinterSnapshot, locale: Locale): string[] {
     rows.push(`${printer.nozzleC}° · ${printer.bedC}°`);
     printerActions(printer, locale).forEach((entry, i) => rows.push(marked(entry.label, i === printer.selected)));
   }
-  if (printer.demo === true) rows.push(tr(messages, locale, "demo.note"));
   return rows;
 }
 
@@ -768,10 +806,10 @@ function rootRows(report: HubReport, selected: number, locale: Locale): string[]
   const extra = (busy > 0 ? t("root.busyN", { n: busy }) : "") + (report.approvals.length > 0 ? t("root.waitN", { n: report.approvals.length }) : "");
   const dots = report.agents.slice(0, 8).map((agent) => agentDot(agent, waiting)).join("");
   const agentRow = report.agents.length === 0 ? t("root.agentNone") : t("root.agent", { dots, online, total: report.agents.length, extra });
-  const homeRow = report.home.demo === true ? t("root.homeDemo")
+  const homeRow = report.home.demo === true ? t("root.homeNotConfigured")
     : report.home.devices.length === 0 ? t("root.homeNone")
       : t("root.homeLights", { lights: homeSummary(report.home, locale), count: report.home.devices.length });
-  const printerRow = report.printer.demo === true ? t("root.printerDemo") : t("root.printer", { state: printerSummary(report.printer, locale) });
+  const printerRow = report.printer.demo === true ? t("root.printerNotConfigured") : t("root.printer", { state: printerSummary(report.printer, locale) });
   const menu = [agentRow, homeRow, printerRow, t("root.inbox", { count: unreadCount(report.inbox) })].map((row, index) => marked(row, index === selected));
 
   // Up to three lines about what needs attention right now.
@@ -808,12 +846,25 @@ export function statusLine(model: HubModel, locale: Locale): string {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const parts = [
     t(`screen.${model.screen}`),
-    t(`link.short.${report.connection}`),
+    model.link !== null ? t(`link.short.${model.link.problem}`) : t(`link.short.${report.connection}`),
     t("status.new", { n: unreadCount(report.inbox) }),
     t("status.busy", { n: report.agents.filter((agent) => agent.busy).length }),
   ];
   if (report.approvals.length > 0) parts.push(t("status.waiting", { n: report.approvals.length }));
   return fit(parts.join(" · "));
+}
+
+function linkRows(link: LinkStatus, locale: Locale): string[] {
+  const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  const rows = [t(`link.title.${link.problem}`)];
+  if (link.problem === "missing") rows.push(t("link.missingHint"));
+  else {
+    if (link.host !== "") rows.push(fit(t("link.host", { host: link.host })));
+    if (link.problem === "insecure") rows.push(t("link.insecureHint"));
+    else rows.push(t("link.autoRetry", { n: link.fails }));
+    if (link.problem === "unauthorized") rows.push(t("link.tokenHint"));
+  }
+  return rows;
 }
 
 function helpRows(locale: Locale): string[] {
@@ -846,6 +897,9 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       body = [name, tr(messages, locale, "voice.understood"), ...wrap(model.voice.text).slice(0, 5)];
       footer = tr(messages, locale, "voice.confirmHelp");
     }
+  } else if (linkBlocks(model.link) && model.link !== null) {
+    body = linkRows(model.link, locale);
+    footer = tr(messages, locale, model.link.problem === "missing" || model.link.problem === "insecure" ? "link.footerMissing" : "link.footerRetry");
   } else if (model.screen === "root") {
     body = rootRows(report, model.rootSelected, locale);
     footer = tr(messages, locale, "root.help");

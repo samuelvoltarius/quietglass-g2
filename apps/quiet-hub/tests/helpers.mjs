@@ -18,6 +18,7 @@ export async function startHub(options = {}) {
     suggestions: false,
     approvalTimeoutMs: 400,
     pollHoldMs: 300,
+    accessLog: false,
     ...options,
   });
   const address = await hub.listen(0, "127.0.0.1");
