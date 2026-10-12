@@ -13,7 +13,7 @@ import { encodePng } from "./glasses/pixel";
 import { effectiveOffset, isCalibrated, load, save, type NoiseData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -47,7 +47,7 @@ async function boot(): Promise<void> {
   let opening: Promise<void> | null = null;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
   /** The last attempt to open the microphone failed; the glasses say what to do. */
   let micError = false;
   /** Level as last drawn on the meter, in 3 dB steps; the hysteresis works against it. */
@@ -252,7 +252,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       void draw();
     },
   });
