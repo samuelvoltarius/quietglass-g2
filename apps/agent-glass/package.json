@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/agent-glass",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "description": "Quietglass Agent Glass — watch and steer a coding agent from the glasses",
   "author": "Quietglass",
   "license": "MIT",

@@ -11,7 +11,7 @@ import { createBackend, describeBackendError, type AgentBackend } from "./provid
 import { DecisionGate } from "./input/decision";
 import { decisionOnScreen, routeGesture } from "./input/route";
 import { createExitRequest } from "./exit";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const DEMO_SESSION: Session = {
@@ -70,7 +70,7 @@ async function boot(): Promise<void> {
 
   let settings: Settings = await load(bridge);
   /** App language for glasses and phone; the narrator keeps its own setting. */
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
   const narrator = new AgentNarrator(createBrowserSpeechEngine(), () => settings, () => locale);
 
   // A stored token always wins; the URL only helps the very first run.
@@ -373,7 +373,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       // The glasses follow at once, not on the next tick or event.
       void draw();
     },
