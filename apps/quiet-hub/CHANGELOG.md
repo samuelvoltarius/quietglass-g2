@@ -21,6 +21,9 @@ Never show demo data when disconnected; connection diagnostics.
   to the SDK store and read back, the client reloads and polls immediately.
 - **Daemon access log**: one token-free line per request to the journal
   (`[access]`), relay heartbeats skipped.
+- **Daemon CORS preflight fixed.** The `OPTIONS` answer was a 204 with a body and
+  `Content-Length: 2`; WebKit (iPhone) treats that as a failed preflight, so the
+  real request never followed. Now a clean 204 plus `Access-Control-Max-Age`.
 - Failed actions (send, approve ...) now say why on the glasses.
 
 ## 0.5.0

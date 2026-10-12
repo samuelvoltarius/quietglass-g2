@@ -277,6 +277,18 @@ describe("events", () => {
   });
 });
 
+describe("CORS preflight", () => {
+  it("answers OPTIONS with a clean 204 (no body, no Content-Length) and the allow headers", async () => {
+    const h = await hub();
+    const res = await fetch(`${h.url}/report`, { method: "OPTIONS", headers: { Origin: "https://x.invalid", "Access-Control-Request-Headers": "authorization" } });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("access-control-allow-headers")).toMatch(/Authorization/);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+});
+
 describe("access log", () => {
   it("logs one token-free line per request, client IP from X-Forwarded-For, skips relay heartbeats", async () => {
     const lines = [];

@@ -518,13 +518,21 @@ export function createHub(options = {}) {
 
   // ------------------------------------------------------------- HTTP
   function sendJson(res, status, body) {
+    const cors = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Private-Network": "true",
+      "Access-Control-Max-Age": "600",
+    };
+    // A 204 (CORS preflight answer) must carry no body and no Content-Length:
+    // WebKit rejects the malformed preflight and the real request never follows.
+    if (status === 204) { res.writeHead(204, cors); res.end(); return; }
     const data = JSON.stringify(body);
     res.writeHead(status, {
       "Content-Type": "application/json",
       "Content-Length": Buffer.byteLength(data),
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      ...cors,
     });
     res.end(data);
   }
