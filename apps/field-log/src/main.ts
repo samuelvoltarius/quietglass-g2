@@ -12,7 +12,7 @@ import {
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, type Locale } from "./i18n";
+import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { autoTitle, quickNotes, t } from "./messages";
 
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
@@ -51,7 +51,8 @@ async function boot(): Promise<void> {
     sample = addEntry(sample, "Window seal is damaged", "major", now - 480_000); sample = addEntry(sample, "Lamp flickers above desk", "minor", now - 180_000); sample = addEntry(sample, "Smoke detector tested", "note", now - 30_000);
     data = { ...data, inspections: [sample], activeId: sample.id };
   }
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
+  setLocale(locale);
   let phase: Phase = "idle";
   /** Highlighted quick note; the row after the last note is "Cancel". */
   let pickIndex = 0;
@@ -416,6 +417,7 @@ async function boot(): Promise<void> {
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
+      rememberLocale(bridge, next);
       void draw();
     },
     takePhoto: () => attachPhoto(),
