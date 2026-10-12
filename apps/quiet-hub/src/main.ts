@@ -27,7 +27,7 @@ const POLL_MS = 5000;
 const BUSY_POLL_MS = 1500;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.5.6";
+const BUILD = "0.5.7";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -345,6 +345,9 @@ async function boot(): Promise<void> {
         for (const id of effect.ids) await api.readEvent(id);
       } else if (effect.kind === "readEvent") {
         await api.readEvent(effect.id);
+      } else if (effect.kind === "openEvent") {
+        await api.readEvent(effect.id);
+        if (effect.sessionId !== null) await api.selectSession(effect.agentId, effect.sessionId, "");
       } else if (effect.kind === "toggle") {
         await api.toggle(effect.device);
       } else {

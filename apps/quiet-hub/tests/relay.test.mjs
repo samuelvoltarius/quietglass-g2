@@ -207,6 +207,11 @@ describe("relay protocol with a mocked claude", () => {
       if (a.activity) activities.push(a.activity);
       return a.answer === "In /etc liegen 12 Dateien." && a.busy === false;
     });
+    // One alert per answer (the relay's own "Antwort fertig" is folded in), carrying the answer and its session.
+    await until(async () => (await h.api("/report")).json.inbox.events.length > 0);
+    const events = (await h.api("/report")).json.inbox.events;
+    expect(events.filter((e) => e.agentId === "hermes-spark")).toHaveLength(1);
+    expect(events[0]).toMatchObject({ title: "Zähl", detail: "In /etc liegen 12 Dateien.", agentId: "hermes-spark", sessionId: "S1" });
   });
 
   it("codex app-server: approval request becomes a glasses card, accept/decline is returned", async () => {

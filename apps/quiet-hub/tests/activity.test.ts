@@ -37,3 +37,25 @@ describe("finished steps while there are no words yet", () => {
     expect(body.some((r) => r.startsWith("» Führt Befehl aus"))).toBe(true);
   });
 });
+
+describe("alerts lead straight to the conversation", () => {
+  it("shows only unread alerts, with the answer, and a tap opens the agent in that session", async () => {
+    const { buildView, createModel, decide } = await import("../src/hub/model");
+    const { demoReport } = await import("../src/api/demo");
+    const base = demoReport();
+    const agentId = base.agents[1]!.id;
+    const events = [
+      { id: "e1", provider: agentId, status: "done" as const, title: "Wie warm?", detail: "Es hat 20 Grad.", createdAt: "", read: false, agentId, sessionId: "S9" },
+      { id: "e0", provider: agentId, status: "done" as const, title: "Alt", detail: "alt", createdAt: "", read: true, agentId, sessionId: "S1" },
+    ];
+    const report = { ...base, inbox: { events, selected: 0 } };
+    const m = { ...createModel(report), screen: "inbox" as const };
+    const body = buildView(m, "de", 0).body.join(" ");
+    expect(body).toContain("Es hat 20 Grad.");
+    expect(body).toContain("1/1");
+    const out = decide(m, "click", 0);
+    expect(out.model.screen).toBe("agent");
+    expect(out.model.agentView).toBe("ask");
+    expect(out.effect).toEqual({ kind: "openEvent", id: "e1", agentId, sessionId: "S9" });
+  });
+});

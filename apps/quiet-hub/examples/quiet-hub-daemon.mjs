@@ -86,13 +86,16 @@ export function createHub(options = {}) {
       console.error("[daemon] state save failed:", String(error).slice(0, 200));
     }
   };
-  function addEvent(provider, status, title, detail = null) {
+  function addEvent(provider, status, title, detail = null, meta = {}) {
     const event = {
       id: `${now()}-${randomUUID().slice(0, 8)}`,
       provider: String(provider).slice(0, 32),
       status,
       title: String(title).slice(0, 180),
-      detail: detail == null || detail === "" ? null : String(detail).slice(0, 300),
+      detail: detail == null || detail === "" ? null : String(detail).slice(0, 1200),
+      // Which agent and session the event belongs to: tapping it on the glasses goes straight there.
+      agentId: typeof meta.agentId === "string" ? meta.agentId : null,
+      sessionId: typeof meta.sessionId === "string" && meta.sessionId !== "" ? meta.sessionId : null,
       createdAt: new Date(now()).toISOString(),
       read: false,
     };
@@ -250,6 +253,10 @@ export function createHub(options = {}) {
         agent.suggesting = false;
       }
     }
+    if (agent && (status === "done" || status === "error")) {
+      // The question as title, the answer itself as detail, plus where it lives.
+      addEvent(agent.id, status, String(job.question ?? "").replace(/s+/g, " ").trim() || "Antwort", status === "error" ? (agent.error ?? "Fehler") : (agent.answer ?? ""), { agentId: agent.id, sessionId: agent.session?.id ?? null });
+    }
     job.waiters.forEach((resolve) => resolve({ status, text: agent?.answer ?? text ?? "" }));
     job.waiters.length = 0;
     setTimeout(() => jobs.delete(job.id), 60_000).unref?.();
@@ -364,11 +371,9 @@ export function createHub(options = {}) {
         const out = String(result.text ?? "").trim();
         if (result.status === "error" && out === "") {
           console.error("[daemon] hermes failed:", String(result.error ?? "").slice(0, 400));
-          addEvent(agent.id, "error", "Keine Antwort vom Assistenten", job.question);
           finishJob(job, "error", "", "Keine Antwort vom Assistenten.");
           return;
         }
-        addEvent(agent.id, "done", "Antwort fertig", job.question);
         finishJob(job, "done", out === "" ? "Keine Antwort." : out);
       });
   }
@@ -619,6 +624,11 @@ export function createHub(options = {}) {
       if (typeof provider !== "string" || provider.trim() === "" || typeof title !== "string" || title.trim() === "" ||
           typeof status !== "string" || !["done", "waiting", "error"].includes(status)) {
         sendJson(res, 400, { error: "provider, title and status (done|waiting|error) required" });
+        return;
+      }
+      // Relays used to post their own "answer ready" events; the daemon now writes a richer one itself.
+      if (agents.has(provider.trim()) && status !== "waiting" && (title.trim() === "Antwort fertig" || title.trim().startsWith("Fehler:"))) {
+        sendJson(res, 201, { event: null, deduplicated: true });
         return;
       }
       const event = addEvent(provider.trim(), status, title.trim(), typeof detail === "string" ? detail.trim() : null);

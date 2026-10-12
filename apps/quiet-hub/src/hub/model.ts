@@ -115,6 +115,8 @@ export type Effect =
   | { readonly kind: "refresh" }
   | { readonly kind: "readAll"; readonly ids: readonly string[] }
   | { readonly kind: "readEvent"; readonly id: string }
+  /** Mark an event read and open its agent in the session the event came from. */
+  | { readonly kind: "openEvent"; readonly id: string; readonly agentId: string; readonly sessionId: string | null }
   | { readonly kind: "toggle"; readonly device: string }
   | { readonly kind: "printer"; readonly action: "pause" | "resume" | "cancel" };
 
@@ -153,7 +155,7 @@ export function mergeReport(model: HubModel, next: HubReport): HubModel {
       ...report,
       home: { ...report.home, selected: clampIndex(model.report.home.selected, report.home.devices.length) },
       printer: { ...report.printer, selected: model.report.printer.selected },
-      inbox: { ...report.inbox, selected: clampIndex(model.report.inbox.selected, report.inbox.events.length) },
+      inbox: { ...report.inbox, selected: clampIndex(model.report.inbox.selected, unreadEvents(report.inbox).length) },
     },
     agentIndex,
     answerKey: key,
@@ -429,7 +431,7 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       return { model: withReport({ ...model, confirm: null }, { ...report, home: { ...report.home, selected: cycle(devices.length, report.home.selected, step) } }) };
     }
     if (model.screen === "inbox") {
-      const events = report.inbox.events;
+      const events = unreadEvents(report.inbox);
       return { model: withReport({ ...model, confirm: null }, { ...report, inbox: { ...report.inbox, selected: cycle(events.length, report.inbox.selected, step) } }) };
     }
     const actions = printerActions(report.printer);
@@ -463,8 +465,18 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
     }
 
     if (model.screen === "inbox") {
-      const event = report.inbox.events[report.inbox.selected];
-      if (event === undefined || event.read) return { model: say(model, t("ack.nothing"), now) };
+      const event = unreadEvents(report.inbox)[report.inbox.selected];
+      if (event === undefined) return { model: say(model, t("ack.nothing"), now) };
+      const agentIndex = event.agentId ? report.agents.findIndex((agent) => agent.id === event.agentId) : -1;
+      const target = report.agents[agentIndex];
+      if (target !== undefined && event.agentId) {
+        // Straight into the conversation the event is about, at the start of its answer.
+        const sameSession = event.sessionId === null || event.sessionId === undefined || target.session?.id === event.sessionId;
+        return {
+          model: { ...model, screen: "agent", agentView: "ask", agentIndex, questionIndex: 0, answerPage: 0, confirm: null, message: null },
+          effect: { kind: "openEvent", id: event.id, agentId: event.agentId, sessionId: sameSession ? null : (event.sessionId ?? null) },
+        };
+      }
       return {
         model: say(model, t("inbox.read"), now),
         effect: { kind: "readEvent", id: event.id },
@@ -850,15 +862,20 @@ function eventMark(event: AgentEvent, locale: Locale): string {
   return tr(messages, locale, `inbox.${event.status}`);
 }
 
+/** Read events leave the list; the root count already only counts unread ones. */
+export function unreadEvents(inbox: InboxSnapshot): readonly AgentEvent[] {
+  return inbox.events.filter((event) => !event.read);
+}
+
 function inboxRows(inbox: InboxSnapshot, locale: Locale): string[] {
-  if (inbox.events.length === 0) return wrap(tr(messages, locale, "inbox.empty"));
-  const event = inbox.events[inbox.selected] ?? inbox.events[0];
+  const events = unreadEvents(inbox);
+  if (events.length === 0) return wrap(tr(messages, locale, "inbox.empty"));
+  const event = events[inbox.selected] ?? events[0];
   if (event === undefined) return [tr(messages, locale, "inbox.empty")];
   const status = eventMark(event, locale);
-  const unread = event.read ? " " : "●";
-  const rows = [marked(`${unread} ${status} ${event.provider}`, true), ...wrap(event.title).slice(0, 2)];
-  if (event.detail !== null && event.detail !== "") rows.push("", ...wrap(event.detail).slice(0, 2));
-  rows.push(`${inbox.selected + 1}/${inbox.events.length}`);
+  const rows = [marked(`● ${status} ${event.provider}`, true), fit(tr(messages, locale, "agent.you", { text: event.title }))];
+  if (event.detail !== null && event.detail !== "") rows.push(...wrap(event.detail).slice(0, 3));
+  rows.push(`${inbox.selected + 1}/${events.length}`);
   return rows;
 }
 

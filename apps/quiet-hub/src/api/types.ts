@@ -102,6 +102,9 @@ export interface AgentEvent {
   readonly detail: string | null;
   readonly createdAt: string;
   readonly read: boolean;
+  /** The agent and session this event came from; tapping it opens them. */
+  readonly agentId?: string | null;
+  readonly sessionId?: string | null;
 }
 
 export interface InboxSnapshot {
