@@ -439,6 +439,8 @@ function agentAskRows(model: HubModel, locale: Locale): string[] {
 
 function approvalRows(card: Approval, total: number, locale: Locale): string[] {
   const rows = [fit(`! ${tr(messages, locale, "approval.title")} · ${card.agentId}${total > 1 ? ` (${total})` : ""}`), ...wrap(card.title).slice(0, 4)];
+  const options = card.suggestions ?? [];
+  if (options.length > 0) rows.push(fit(options.join(" / ")));
   return rows;
 }
 

@@ -54,7 +54,8 @@ export function createHub(options = {}) {
     whisperLang: options.whisperLang ?? env.WHISPER_LANG ?? "de",
     vllmUrl: options.vllmUrl ?? env.VLLM_URL ?? "http://127.0.0.1:8000/v1",
     vllmModel: options.vllmModel ?? env.VLLM_MODEL ?? "qwen",
-    suggestions: options.suggestions ?? env.VLLM_URL !== "off",
+    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 6000),
+    suggestions: options.suggestions ?? (env.VLLM_URL !== "off"),
     lang: options.lang ?? env.HUB_LANG ?? "de",
   };
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -369,6 +370,10 @@ export function createHub(options = {}) {
     const timer = setTimeout(() => settleApproval(card.id, "deny"), cfg.approvalTimeoutMs);
     timer.unref?.();
     card.timer = timer;
+    card.suggestions = [];
+    if (cfg.suggestions) {
+      void suggestions("card", card.title, "").then((list) => { if (approvals.has(card.id)) card.suggestions = list; });
+    }
     return { card, promise };
   }
 
@@ -382,36 +387,51 @@ export function createHub(options = {}) {
   }
 
   // ------------------------------------------------------------- speech / AI helpers
-  async function suggestFor(question, answer) {
+  /**
+   * Follow-up options for the glasses. ALWAYS from the Spark vLLM, for every
+   * agent kind and for permission cards; never from the agent itself and never
+   * a canned fallback: if vLLM fails or is slow, there are no suggestions.
+   */
+  async function suggestions(kind, subject, answer) {
+    const started = now();
+    const de = cfg.lang !== "en";
+    const text = (value, max) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+    const prompt = kind === "card"
+      ? (de
+        ? `Ein Agent bittet um Freigabe: "${text(subject, 300)}"\nNenne 3 sehr kurze Antwortoptionen des Nutzers (je höchstens 32 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`
+        : `An agent asks for permission: "${text(subject, 300)}"\nGive 3 very short reply options for the user (each at most 32 characters, English). Only a JSON array of strings, nothing else.`)
+      : (de
+        ? `Frage: "${text(subject, 300)}"\nAntwort: "${text(answer, 700)}"\nNenne 3 sehr kurze Folgefragen des Nutzers darauf (je höchstens 32 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`
+        : `Question: "${text(subject, 300)}"\nAnswer: "${text(answer, 700)}"\nGive 3 very short follow-up replies of the user (each at most 32 characters, English). Only a JSON array of strings, nothing else.`);
     try {
       const res = await fetchImpl(`${cfg.vllmUrl}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(cfg.suggestTimeoutMs),
         body: JSON.stringify({
           model: cfg.vllmModel,
-          messages: [{
-            role: "user",
-            content: `Frage: "${question}"\nAntwort: "${answer}"\nNenne 3 sehr kurze Folgefragen darauf (je max 24 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`,
-          }],
-          temperature: 0.7,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.3,
           chat_template_kwargs: { enable_thinking: false },
-          max_tokens: 400,
+          max_tokens: 120,
         }),
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error(`vllm http ${res.status}`);
       const data = await res.json();
-      const text = String(data.choices?.[0]?.message?.content ?? "");
-      const start = text.indexOf("[");
-      const end = text.lastIndexOf("]");
-      if (start < 0 || end <= start) return [];
-      const list = JSON.parse(text.slice(start, end + 1));
-      return Array.isArray(list) ? list.map((s) => String(s).trim()).filter(Boolean).slice(0, 4) : [];
+      const raw = String(data.choices?.[0]?.message?.content ?? "");
+      const start = raw.indexOf("[");
+      const end = raw.lastIndexOf("]");
+      if (start < 0 || end <= start) throw new Error("vllm returned no JSON array");
+      const list = JSON.parse(raw.slice(start, end + 1));
+      const clean = (Array.isArray(list) ? list : []).map((item) => String(item).trim()).filter((item) => item !== "" && item.length <= 32).slice(0, 3);
+      log(`suggestions (${kind}): vLLM ${cfg.vllmModel} ok, ${clean.length} in ${now() - started} ms`);
+      return clean;
     } catch (error) {
-      console.error("[daemon] suggestions failed:", String(error).slice(0, 200));
+      log(`suggestions (${kind}): vLLM failed (${String(error?.message ?? error).slice(0, 100)}), showing none`);
       return [];
     }
   }
+  const suggestFor = (question, answer) => suggestions("answer", question, answer);
 
   /** Self-hosted Whisper (OpenAI-compatible). Audio goes nowhere else. */
   async function transcribe(bytes, mime) {
@@ -450,7 +470,7 @@ export function createHub(options = {}) {
         suggestions: main?.suggestions ?? [],
       },
       agents: list,
-      approvals: [...approvals.values()].map(({ id, agentId, title, detail, createdAt, expiresAt }) => ({ id, agentId, title, detail, createdAt, expiresAt })),
+      approvals: [...approvals.values()].map(({ id, agentId, title, detail, createdAt, expiresAt, suggestions: options_ }) => ({ id, agentId, title, detail, createdAt, expiresAt, suggestions: options_ ?? [] })),
       home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
       printer: moon ? moon.printer() : printerDemo,
       inbox: { events: state.events, selected: 0 },

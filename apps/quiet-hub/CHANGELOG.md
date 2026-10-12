@@ -29,6 +29,10 @@ Real session control for every agent, a real Stop, and a way back from every pag
   payload next to it; phone setting to reverse the swipe direction.
 - **Voice.** Max 18 s, minimum length, and clear errors on the glasses
   (`Mikrofon nicht freigegeben`, `Spracherkennung nicht erreichbar`).
+- **Suggestions only from the Spark vLLM.** Follow-up options for every agent kind
+  and for permission cards come from vLLM (`VLLM_URL`, `VLLM_MODEL`, default
+  `qwen`, Qwen thinking off, temperature 0.3, 6 s timeout, asynchronous). If it
+  fails there are no suggestions (and a log line) - never agent-supplied or canned.
 - Agent logic moved to `examples/quiet-hub-agents.mjs` (copy it next to the
   relay).
 
