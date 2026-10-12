@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.5.0] — 2026-10-13
+
+Readable at a glance while driving (user feedback: "map too small ... impossible
+while driving").
+
+### Changed
+
+- **Turn view**: a big arrow (144 x 144, 32 px strokes) on the left; the distance
+  to the turn in huge pixel digits (70 px tall, twice the old height, rounded:
+  "950 m", "150 m", "1,2 km") on the right with a thick eight-block approach bar
+  beneath; the road name in bold type across the full width (drawn as an image
+  in two 288 x 56 halves, because the glasses text is too small); a footer with
+  remaining distance and arrival time, also while driving. Within 200 m of the
+  turn the footer goes: only arrow, distance and road remain.
+- **Map**: fills the whole display (four 288 x 144 images), heading-up when a
+  direction is known (route ahead, GPS heading off route), north-up otherwise;
+  thick route, the car as a large chevron low on the picture, ring on the next
+  turn, destination square, compass; zoom in steps so the next turn is always
+  visible. One short line of text on a plate top left: the next turn,
+  "-> 960 m". It is sent only when the route, streets, turn or zoom step change,
+  and otherwise at most every 4 s after 12 m of travel or 12 degrees of turn;
+  tiles that look the same are not resent.
+- Distances on the big card are rounded calmly: 50 m steps from 200 m, 10 m below.
+- Three glasses pages: turn view (4 images), map (4 images), plain text (none).
+  At most four images per page, exactly one input-capturing container.
+
+### Fixed
+
+- **The map stayed empty** (most visibly in the demo): switching the view called
+  `createStartUpPageContainer` a second time, which the glasses refuse as
+  "invalid", so the map image was never sent. Pages after the first are now
+  replaced with `rebuildPageContainer`.
+- The demo route had no corners (a straight line); it now has a right turn, a
+  bending road and a roundabout. Demo-only URL parameter `scene=far|near|map`
+  starts on a given picture.
+
 ## [0.4.2] — 2026-10-13
 
 ### Fixed

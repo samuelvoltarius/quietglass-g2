@@ -2,16 +2,17 @@ import type { TravelMode } from "../routing/provider";
 import { createGrayCanvas, encodePng, type GrayCanvas } from "./png";
 
 /**
- * The turn card: the distance to the next turn in large pixel digits, and
- * below it a bar that fills as the turn comes closer.
+ * The turn card: the distance to the next turn in very large pixel digits,
+ * and below it a thick bar that fills as the turn comes closer.
  *
- * The glasses' text has one fixed size, so "big" has to be an image. It is
- * sent only when what it shows changes — the rounded distance or one of the
- * eight bar steps — never for every GPS fix.
+ * The glasses' text has one fixed size, so "big" has to be an image: the
+ * largest image container the G2 accepts, 288 × 144. It is sent only when
+ * what it shows changes — the rounded distance or one of the eight bar steps
+ * — never for every GPS fix.
  */
 
 export const CARD_WIDTH = 288;
-export const CARD_HEIGHT = 64;
+export const CARD_HEIGHT = 144;
 /** The bar is split into this many blocks; the image changes only when one fills. */
 export const BAR_STEPS = 8;
 
@@ -50,7 +51,7 @@ export function cardKey(card: TurnCard | null): string {
   return card ? card.label + "|" + card.steps : "blank";
 }
 
-/** 5 × 7 pixel glyphs for what a distance label can contain. */
+/** 5 × 7 pixel glyphs for what a distance label can contain (a few are narrower than 5 columns). */
 const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   "0": [".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."],
   "1": ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
@@ -62,8 +63,8 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   "7": ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
   "8": [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
   "9": [".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."],
-  ".": [".....", ".....", ".....", ".....", ".....", ".##..", ".##.."],
-  ",": [".....", ".....", ".....", ".....", ".##..", "..#..", ".#..."],
+  ".": ["..", "..", "..", "..", "..", "##", "##"],
+  ",": ["..", "..", "..", "..", "##", ".#", "#."],
   "-": [".....", ".....", ".....", "####.", ".....", ".....", "....."],
   "m": [".....", ".....", "##.#.", "#.#.#", "#.#.#", "#.#.#", "#.#.#"],
   "k": ["#....", "#....", "#..#.", "#.#..", "##...", "#.#..", "#..#."],
@@ -76,22 +77,36 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   "z": [".....", ".....", "#####", "...#.", "..#..", ".#...", "#####"],
 };
 
-/** Pixel scale of the digits: 5 × 7 glyphs become 25 × 35. */
-export const DIGIT_SCALE = 5;
-const ADVANCE = 6; // glyph columns plus one blank column
-const SPACE_ADVANCE = 3;
+/**
+ * Pixel scale of the digits: 5 × 7 glyphs become 50 × 70, twice the height of
+ * the first turn card, and "250 m" and "1,2 km" still fit the 288 px image.
+ */
+export const DIGIT_SCALE = 10;
+const SPACE_ADVANCE = 2;
+/** Where the digits start from the top, and the bar's place below them. */
+const DIGIT_TOP = 6;
+const BAR_TOP = 100;
+const BAR_HEIGHT = 36;
+
+/** Columns a glyph advances: its own width plus one blank column. */
+function advanceOf(glyph: readonly string[]): number {
+  return (glyph[0]?.length ?? 0) + 1;
+}
 
 /** Width in pixels of `label` at `scale`; characters without a glyph count as narrow spaces. */
 export function labelWidth(label: string, scale = DIGIT_SCALE): number {
   let width = 0;
-  for (const char of label) width += (GLYPHS[char] ? ADVANCE : SPACE_ADVANCE) * scale;
+  for (const char of label) {
+    const glyph = GLYPHS[char];
+    width += (glyph ? advanceOf(glyph) : SPACE_ADVANCE) * scale;
+  }
   return Math.max(0, width - scale);
 }
 
 export type CardContext = Pick<GrayCanvas, "fillStyle" | "fillRect">;
 
 /**
- * Black card; white digits top left; the bar along the bottom as blocks —
+ * Black card; white digits centred at the top; the bar below as thick blocks —
  * filled white, empty dim grey so its length can be read before it fills.
  * A null card (no turn to show) stays black.
  */
@@ -99,25 +114,25 @@ export function drawTurnCard(ctx: CardContext, card: TurnCard | null, width = CA
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
   if (!card) return;
 
-  // Shrink only if a label would not fit (it never should: "10,0 km" is 7 glyphs).
+  // Shrink only if a label would not fit ("jetzt" is the widest at full size, by a hair).
   let scale = DIGIT_SCALE;
   while (scale > 1 && labelWidth(card.label, scale) > width) scale--;
   ctx.fillStyle = "#fff";
-  let x = 0;
+  let x = Math.max(0, Math.floor((width - labelWidth(card.label, scale)) / 2));
   for (const char of card.label) {
     const glyph = GLYPHS[char];
     if (!glyph) { x += SPACE_ADVANCE * scale; continue; }
     glyph.forEach((row, gy) => {
-      for (let gx = 0; gx < row.length; gx++) if (row[gx] === "#") ctx.fillRect(x + gx * scale, 2 + gy * scale, scale, scale);
+      for (let gx = 0; gx < row.length; gx++) if (row[gx] === "#") ctx.fillRect(x + gx * scale, DIGIT_TOP + gy * scale, scale, scale);
     });
-    x += ADVANCE * scale;
+    x += advanceOf(glyph) * scale;
   }
 
-  const gap = 4, barTop = height - 16, barHeight = 14;
+  const gap = 6, barTop = Math.min(BAR_TOP, height - BAR_HEIGHT - 2);
   const block = (width - gap * (BAR_STEPS - 1)) / BAR_STEPS;
   for (let i = 0; i < BAR_STEPS; i++) {
     ctx.fillStyle = i < card.steps ? "#fff" : "#333";
-    ctx.fillRect(Math.round(i * (block + gap)), barTop, Math.round(block), barHeight);
+    ctx.fillRect(Math.round(i * (block + gap)), barTop, Math.round(block), BAR_HEIGHT);
   }
 }
 

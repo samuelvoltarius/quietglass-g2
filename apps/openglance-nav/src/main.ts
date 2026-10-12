@@ -12,16 +12,15 @@ import {
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type GlassLayout, type NavView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import {
-  createOverviewPage, createPage, updateOverviewPage, updatePage,
-} from "./glasses/render";
+import { showPage, updatePage, type PageKind } from "./glasses/render";
 import { pixelArrowFor } from "./glasses/icons";
 import { approachSteps, cardKey, type TurnCard } from "./glasses/turncard";
-import { renderRoutePng } from "./overview/draw";
-import { markerPixel, overviewProjector, OVERVIEW_HEIGHT, OVERVIEW_WIDTH } from "./overview/layout";
+import { renderMapTiles, type MapScene } from "./overview/draw";
+import { courseAhead, rangeFor } from "./overview/camera";
+import { overviewProjector } from "./overview/layout";
 import { thinPoints } from "./overview/project";
-import { needsOverviewImage, type OverviewFrame } from "./overview/refresh";
-import { createStreetSource, streetsForRoute, type StreetSegment } from "./overview/streets";
+import { needsMapImage, type MapFrame } from "./overview/refresh";
+import { createStreetSource, loadStreets, type Street } from "./overview/streets";
 import { createGeocoder, type Geocoder } from "./geocode/photon";
 import { resolveLocale, rememberLocale, setLocale, tr, type Locale } from "./i18n";
 import { messages } from "./messages";
@@ -38,6 +37,15 @@ const STREETS_DWELL_MS = 1_500;
 const EXIT_WITH_CONFIRMATION = 1;
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
+/** Demo only: `scene=far|near|map` starts on a given picture (far from the turn, close to it, the map). */
+const SCENE = DEMO ? new URLSearchParams(location.search).get("scene") : null;
+
+/** A cheap fingerprint of an image, to leave a map tile unsent when it did not change. */
+function fingerprint(bytes: Uint8Array): number {
+  let hash = 2166136261;
+  for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+  return hash >>> 0;
+}
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -45,7 +53,7 @@ async function boot(): Promise<void> {
   let locale: Locale = await resolveLocale(bridge);
   setLocale(locale);
   let data: NavData = await load(bridge);
-  if (DEMO) data = { ...data, places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }], destinationId: "demo", demo: true };
+  if (DEMO) data = { ...data, places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }], destinationId: "demo", demo: true, ...(SCENE ? { mode: "driving" as const, glassView: SCENE === "map" ? "overview" as const : "turns" as const } : {}) };
   let nav: NavState | null = null;
   let position: LatLng | null = DEMO ? { lat: 47.805, lon: 13.042 } : null;
   let rerouting = false;
@@ -53,13 +61,16 @@ async function boot(): Promise<void> {
   let errorKey: string | null = null;
   let lastView: NavView | null = null;
   let pageReady = false;
-  let pageLayout: GlassLayout | null = null;
-  /** The overview picture last sent; a new one goes out only when it would look different. */
-  let sentOverview: OverviewFrame | null = null;
+  let pageKind: PageKind | null = null;
+  /** The map last sent and a fingerprint of each of its four tiles; a new one goes out only when it would look different. */
+  let sentMap: { frame: MapFrame; hashes: readonly number[] } | null = null;
   /** What the turn images last sent showed, and when the card went out. */
   let sentIconKey = "";
   let sentCardKey = "";
+  let sentRoad = "";
   let sentCardAt = 0;
+  /** Direction of travel from the GPS, used on the map when the route cannot say (off route). */
+  let gpsHeading: number | null = null;
   /** Bumped for every new route, so the overview image knows to redraw. */
   let routeVersion = 0;
   /**
@@ -68,7 +79,7 @@ async function boot(): Promise<void> {
    * once and the streets join it when (if) they arrive.
    */
   const streetSource = createStreetSource();
-  let streets: { route: number; segments: readonly StreetSegment[] } = { route: -1, segments: [] };
+  let streets: { route: number; list: readonly Street[] } = { route: -1, list: [] };
   let streetsAskedFor = -1;
   let streetsVersion = 0;
   let closed = false;
@@ -104,8 +115,16 @@ async function boot(): Promise<void> {
     return geocoder.instance.search(query, options);
   };
 
-  const currentView = (layout: GlassLayout): NavView =>
-    buildView(nav ? progressOf(nav) : null, {
+  /** Which of the three glasses pages the state calls for. */
+  const kindNow = (): PageKind => {
+    if (data.glassView === "overview") return "overview";
+    // Without a turn to show (idle, error, arrived) the plain text page does.
+    return nav && !errorKey && !progressOf(nav).arrived ? "turns" : "text";
+  };
+
+  const currentView = (kind: PageKind): NavView => {
+    const layout: GlassLayout = kind === "overview" ? "overview" : "turns";
+    return buildView(nav ? progressOf(nav) : null, {
       mode: data.mode,
       navigating: nav !== null,
       rerouting,
@@ -115,10 +134,11 @@ async function boot(): Promise<void> {
       locale,
       destination: destinationOf(data)?.label ?? null,
       layout,
-      bigDistance: layout === "turns",
+      bigDistance: kind === "turns",
     });
+  };
 
-  /** The thinned route the overview draws, computed once per route. */
+  /** The thinned route, computed once per route: its extent decides which streets to fetch. */
   let thinned: { route: number; points: readonly LatLng[] } = { route: -1, points: [] };
   const overviewPoints = (): readonly LatLng[] => {
     if (!nav) return [];
@@ -126,19 +146,46 @@ async function boot(): Promise<void> {
     return thinned.points;
   };
 
-  /** What the overview would show now; compared with what was sent. */
-  const overviewFrame = (): OverviewFrame => ({
-    route: nav ? routeVersion : -1,
-    // Switching streets off must redraw without them, so the setting is part of the picture.
-    streets: data.streets ? streetsVersion : -1,
-    maneuver: nav ? nav.maneuverIndex : -1,
-    marker: nav ? markerPixel(overviewPoints(), nav.position) : null,
-    at: Date.now(),
-  });
+  /**
+   * What the map would show now, as a picture description and as the frame
+   * that is compared with what was sent. The map looks the way the car faces:
+   * along the route when on it, by the GPS heading when off it, north up when
+   * neither is known.
+   */
+  const mapNow = (): { scene: MapScene; frame: MapFrame } => {
+    const now = Date.now();
+    if (!nav) {
+      const view = { center: position ?? { lat: 0, lon: 0 }, bearing: null, range: rangeFor(0) };
+      return {
+        scene: { route: [], next: null, streets: [], view },
+        frame: { route: -1, streets: -1, maneuver: -1, range: view.range, position, bearing: null, at: now },
+      };
+    }
+    const progress = progressOf(nav);
+    const center = nav.position ?? nav.route.shape[0] ?? { lat: 0, lon: 0 };
+    const onRoute = courseAhead(nav.route.shape, center);
+    const bearing = progress.offRoute ? gpsHeading : onRoute ?? gpsHeading;
+    const view = { center, bearing, range: rangeFor(progress.distanceToManeuver) };
+    const next = progress.maneuver && !progress.arrived ? nav.route.shape[progress.maneuver.shapeIndex] ?? null : null;
+    const list = data.streets && streets.route === routeVersion ? streets.list : [];
+    return {
+      scene: { route: nav.route.shape, next, streets: list, view },
+      frame: {
+        route: routeVersion,
+        // Switching streets off must redraw without them, so the setting is part of the picture.
+        streets: data.streets ? streetsVersion : -1,
+        maneuver: nav.maneuverIndex,
+        range: view.range,
+        position: center,
+        bearing,
+        at: now,
+      },
+    };
+  };
 
   /**
    * Starts the street fetch for the current route if it has not been asked
-   * for yet — once the overview has stayed up for STREETS_DWELL_MS, so a swipe
+   * for yet - once the map has stayed up for STREETS_DWELL_MS, so a swipe
    * through to the other view does not cost the public server a request.
    */
   let streetsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -154,22 +201,14 @@ async function boot(): Promise<void> {
   };
   const fetchStreets = (forRoute: number): void => {
     const points = overviewPoints();
-    void streetsForRoute(streetSource, overviewProjector(points), data.mode, OVERVIEW_WIDTH, OVERVIEW_HEIGHT).then((result) => {
+    void loadStreets(streetSource, overviewProjector(points), data.mode).then((result) => {
       if (closed || forRoute !== routeVersion) return;
       if (result.error) console.warn("[openglance] streets unavailable:", result.error);
-      if (!result.segments.length) return;
-      streets = { route: forRoute, segments: result.segments };
+      if (!result.streets.length) return;
+      streets = { route: forRoute, list: result.streets };
       streetsVersion++;
       void draw();
     });
-  };
-
-  const overviewPng = (): Promise<Uint8Array> => {
-    if (!nav) return renderRoutePng([], null);
-    const progress = progressOf(nav);
-    const next = progress.maneuver ? nav.route.shape[progress.maneuver.shapeIndex] ?? null : null;
-    const segments = data.streets && streets.route === routeVersion ? streets.segments : [];
-    return renderRoutePng(overviewPoints(), nav.position, progress.arrived ? null : next, OVERVIEW_WIDTH, OVERVIEW_HEIGHT, segments);
   };
 
   /** The turn card for a view: its big distance and how full the approach bar is. */
@@ -181,58 +220,74 @@ async function boot(): Promise<void> {
 
   const drawNow = async (): Promise<void> => {
     if (closed) return;
-    const layout = data.glassView;
-    const view = currentView(layout);
-    const samePage = pageReady && pageLayout === layout;
+    const kind = kindNow();
+    const view = currentView(kind);
+    const samePage = pageReady && pageKind === kind;
+    const fail = (reason: string | undefined): void => {
+      pageReady = false;
+      console.warn("[openglance] draw failed:", reason);
+    };
 
-    if (layout === "overview") {
+    if (kind === "overview") {
       ensureStreets();
-      const frame = overviewFrame();
-      const needImage = !samePage || needsOverviewImage(sentOverview, frame);
+      const { scene, frame } = mapNow();
+      const needImage = !samePage || needsMapImage(sentMap?.frame ?? null, frame);
       if (samePage && sameView(lastView, view) && !needImage) return;
-      let png: Uint8Array | null = null;
+      let tiles: (Uint8Array | null)[] | undefined;
+      let hashes: readonly number[] = [];
       if (needImage) {
-        try { png = await overviewPng(); } catch (thrown) {
-          console.warn("[openglance] overview image failed:", thrown);
+        try {
+          const pngs = await renderMapTiles(scene);
+          hashes = pngs.map(fingerprint);
+          // A tile that looks like the one already on the glasses is not sent again.
+          tiles = pngs.map((png, index) => (samePage && sentMap?.hashes[index] === hashes[index] ? null : png));
+        } catch (thrown) {
+          console.warn("[openglance] map image failed:", thrown);
           return;
         }
       }
       if (closed) return;
-      const result = samePage || !png
-        ? await updateOverviewPage(bridge, view, png)
-        : await createOverviewPage(bridge, view, png);
+      const images = tiles ? { map: tiles } : {};
+      const result = samePage ? await updatePage(bridge, view, kind, images) : await showPage(bridge, view, kind, images);
       if (closed) return;
-      if (result.ok) { pageReady = true; pageLayout = layout; lastView = view; if (png) sentOverview = frame; return; }
-      pageReady = false;
-      console.warn("[openglance] draw failed:", result.reason);
+      if (!result.ok) { fail(result.reason); return; }
+      pageReady = true; pageKind = kind; lastView = view;
+      if (tiles) sentMap = { frame, hashes };
       return;
     }
 
-    const maneuver = nav ? progressOf(nav).maneuver : null;
-    const icon = pixelArrowFor(maneuver?.type);
-    const iconKey = icon.join("");
-    const card = turnCardFor(view);
-    const nextCardKey = cardKey(card);
-    const now = Date.now();
-    // The arrow goes out only when the manoeuvre changes; the card when its
-    // digits or bar change, and while it only counts down no more often than
-    // CARD_MIN_INTERVAL_MS. Each image crosses Bluetooth.
-    const sendIcon = iconKey !== sentIconKey;
-    const sendCard = nextCardKey !== sentCardKey && (sendIcon || card === null || now - sentCardAt >= CARD_MIN_INTERVAL_MS);
-    if (samePage && sameView(lastView, view) && !sendIcon && !sendCard) return;
+    if (kind === "turns") {
+      // Arrow, distance and road go out only when they change: the arrow when
+      // the manoeuvre does, the road with it, the card when its digits or bar
+      // change and then no more often than CARD_MIN_INTERVAL_MS while it only
+      // counts down. Each image crosses Bluetooth.
+      const maneuver = nav ? progressOf(nav).maneuver : null;
+      const icon = pixelArrowFor(view.big !== undefined ? maneuver?.type : undefined);
+      const iconKey = icon.join("");
+      const road = view.body[0] ?? "";
+      const card = turnCardFor(view);
+      const nextCardKey = cardKey(card);
+      const now = Date.now();
+      const sendIcon = !samePage || iconKey !== sentIconKey;
+      const sendRoad = !samePage || road !== sentRoad;
+      const sendCard = !samePage || (nextCardKey !== sentCardKey && (sendIcon || card === null || now - sentCardAt >= CARD_MIN_INTERVAL_MS));
+      if (samePage && sameView(lastView, view) && !sendIcon && !sendCard && !sendRoad) return;
+      const turn = { ...(sendIcon ? { icon } : {}), ...(sendCard ? { card } : {}), ...(sendRoad ? { road } : {}) };
+      const result = samePage ? await updatePage(bridge, view, kind, { turn }) : await showPage(bridge, view, kind, { turn });
+      if (closed) return;
+      if (!result.ok) { fail(result.reason); return; }
+      pageReady = true; pageKind = kind; lastView = view;
+      if (sendIcon) sentIconKey = iconKey;
+      if (sendRoad) sentRoad = road;
+      if (sendCard) { sentCardKey = nextCardKey; sentCardAt = now; }
+      return;
+    }
 
-    const result = samePage
-      ? await updatePage(bridge, view, { ...(sendIcon ? { icon } : {}), ...(sendCard ? { card } : {}) })
-      : await createPage(bridge, view, icon, card);
+    if (samePage && sameView(lastView, view)) return;
+    const result = samePage ? await updatePage(bridge, view, kind) : await showPage(bridge, view, kind);
     if (closed) return;
-    if (result.ok) {
-      pageReady = true; pageLayout = layout; lastView = view;
-      if (!samePage || sendIcon) sentIconKey = iconKey;
-      if (!samePage || sendCard) { sentCardKey = nextCardKey; sentCardAt = now; }
-      return;
-    }
-    pageReady = false;
-    console.warn("[openglance] draw failed:", result.reason);
+    if (!result.ok) { fail(result.reason); return; }
+    pageReady = true; pageKind = kind; lastView = view;
   };
 
   // Draws run one after another: a layout switch must not race a text update
@@ -311,7 +366,14 @@ async function boot(): Promise<void> {
     void save(bridge, next).catch((thrown: unknown) => { console.warn("[openglance] save failed:", thrown); });
   };
 
-  if (DEMO && position) await computeRoute(position); else await draw();
+  if (DEMO && position) {
+    await computeRoute(position);
+    // Demo scenes put the car part-way along the made-up route.
+    const stop = SCENE === "near" ? 14 : SCENE === "map" ? 11 : 0;
+    const routed = nav as NavState | null;
+    const spot = routed?.route.shape[stop];
+    if (routed && spot && stop > 0) { position = spot; nav = update(routed, spot); await draw(); }
+  } else await draw();
 
   // Location updates: the distance filter keeps the callback quiet while
   // stationary, which matters for battery on a long walk.
@@ -324,6 +386,8 @@ async function boot(): Promise<void> {
     if (closed) return;
     if (typeof location?.latitude !== "number" || typeof location?.longitude !== "number") return;
     position = { lat: location.latitude, lon: location.longitude };
+    // The GPS heading means something only while moving; standing still it is noise.
+    if (typeof location.heading === "number" && location.heading >= 0 && (location.speed ?? 0) >= 2.5) gpsHeading = location.heading;
 
     if (nav) {
       nav = update(nav, position);

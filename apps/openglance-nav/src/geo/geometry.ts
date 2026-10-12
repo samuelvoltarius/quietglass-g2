@@ -184,6 +184,19 @@ export function formatDistance(meters: number, locale: "de" | "en" = "en"): stri
   return String(Math.round(meters / 1000)) + " km";
 }
 
+/**
+ * The distance as the big pixel digits show it: calm and round. Under 200 m
+ * every 10 m counts (the turn is about to happen), further out steps of 50 m
+ * keep the number from flickering and the image from being resent for every
+ * few metres; from a kilometre it is "1,2 km" as in {@link formatDistance}.
+ */
+export function formatDistanceBig(meters: number, locale: "de" | "en" = "en"): string {
+  if (Number.isFinite(meters) && meters >= 200 && meters < 975) return String(Math.round(meters / 50) * 50) + " m";
+  // 9.96 km would print as "10.0 km", a character wider than the digits have room for.
+  if (Number.isFinite(meters) && meters >= 9950 && meters < 10_000) return "10 km";
+  return formatDistance(meters, locale);
+}
+
 export function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "--";
   const total = Math.round(seconds / 60);

@@ -51,32 +51,54 @@ with `?demo=1`, or switch on **Advanced → Demo route** on the phone.
 
 ![On the glasses](docs/screenshot.png)
 
-*Captured from the Even Hub simulator at the real 576 × 288.*
+*Captured from the Even Hub simulator at the real 576 × 288: the turn view (demo route, 950 m before the turn) and the map.*
+
+![The map, heading-up](docs/screenshot-map.png)
 
 ## Driving mode is the whole design
 
-A navigation display in a car competes with the road. So in driving mode the
-glasses show exactly three things: the pixel arrow, the distance to the turn
-(large, with its approach bar), and the road name.
+A navigation display in a car competes with the road, so the turn view is built
+to be read in one glance, from the corner of the eye:
 
-The approach bar belongs to the distance — it is the same number, made
-readable from the corner of the eye — not a progress bar for the trip.
-**No arrival time, no trip progress, no decoration** — there is a test
-asserting the footer is empty in driving mode, so it cannot creep back in.
+- a **big arrow** (144 x 144, 32 px strokes) on the left,
+- the **distance to the turn in huge pixel digits** (70 px tall, rounded:
+  "950 m", "150 m", "1,2 km") on the right, and under it a **thick approach
+  bar** of eight blocks that fills as the turn comes closer,
+- the **road name in bold type across the full width** (drawn as an image,
+  because the glasses text has one small fixed size),
+- a small footer with the remaining distance and the arrival time.
 
-Walking and cycling add the remaining distance and arrival time, because
-glancing at them on foot is safe. Walking is the default.
+**Within 200 m of the turn the footer goes**, and only arrow, distance and road
+remain. The approach bar belongs to the distance - it is the same number, made
+readable from the corner of the eye - not a progress bar for the trip.
 
-## Two views: next turn, or the whole route
+Images are sent only when they change: the arrow and the road name with the
+manoeuvre, the distance card when its rounded number or one of the eight bar
+steps changes (and then at most every 2 s). The text updates are cheap and
+always in place.
 
-**Swipe** on the glasses to switch between the turn arrow and an **overview
-map** — the whole route as a thick white line with a black edge over the
-**real streets around it**, your position (ringed dot), the next turn (ring),
-the destination (square) and north. Three lines of turn text stay below the
-map. The choice is remembered and can also be picked on the phone.
+## Two views: next turn, or the map
 
-![Overview with real streets (rendered by the tests from a made-up route and street data)](docs/overview-preview.png)
-![Turn card: big distance and approach bar](docs/turn-card-preview.png)
+**Swipe** on the glasses to switch between the turn view and the **map**. The
+map fills the **whole display** (four 288 x 144 images, 576 x 288 together),
+**heading-up**: it turns so that the direction of travel is up, with the car
+as a large chevron low on the picture, so the road ahead gets the room. The
+route is a thick white line with a black edge over the **real streets around
+it**, with a ring on the next turn, a square at the destination and a small
+compass whose needle follows north. One short line of text sits top left,
+over a black plate: the next turn, "-> 960 m". The direction comes from the
+route ahead (about 80 m), from the GPS heading when you are off the route, and
+the map is north-up when neither is known. The zoom moves in steps (150 m ...
+80 km ahead) so the next turn is always on the picture. The choice of view is
+remembered and can also be picked on the phone.
+
+Switching between the views rebuilds the page on the glasses (the two use
+different image containers), which takes a moment - fine for a swipe you chose,
+and it never happens for an ordinary update. The map is sent when the route,
+the streets, the next turn or the zoom step change, and otherwise at most every
+4 s after you moved 12 m or the map has to turn 12 degrees; a tile that looks
+exactly like the one already shown is not sent again.
+
 
 ### What the map shows
 
@@ -96,9 +118,7 @@ Streets are OpenStreetMap data from the public **Overpass API**: one request
 per route, made only after the overview has been on screen for 1.5 s (so a
 swipe past it costs nothing), with only way geometry asked for and cut to
 the area server-side. A reroute inside the area already loaded asks nothing.
-The answer is held in memory, never stored. The overview image is sent when
-the route, the streets or the next turn change — not per GPS fix: your
-position marker moves only after it has moved 6 px and 5 s have passed.
+The answer is held in memory, never stored.
 
 If the street server is slow (12 s timeout), busy, offline, or answers with
 something oversized (> 3 MB) or broken, the next server is tried once, then
@@ -215,7 +235,7 @@ real navigation.
 | Gesture | Effect |
 |---|---|
 | **Tap** | Start navigating · retry after an error · reroute when off route |
-| **Swipe** (either way) | Switch between next turn and overview map |
+| **Swipe** (either way) | Switch between the turn view and the map |
 | **Hold** | Stop navigating |
 | **Double tap** | Leave OpenGlance — the glasses ask to confirm; cancelling keeps navigating |
 
@@ -225,9 +245,7 @@ real navigation.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5199
 npm run build      # typecheck + production bundle
-npm test           # 216 unit tests
-OPENGLANCE_PREVIEW=1 npx vitest run tests/overview-streets.test.ts tests/turncard.test.ts
-                   # re-render docs/overview-preview.png and docs/turn-card-preview.png
+npm test           # unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -252,7 +270,7 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 | Limitation | Detail |
 |---|---|
 | **Public servers, no guarantee** | FOSSGIS and komoot run them for free on single servers and may change terms or switch them off at any time. If OpenGlance became popular enough to matter to them, a self-hosted or sponsored server would be the right answer. |
-| Overview streets are best effort | They depend on a free public server that is often overloaded (504) and may refuse a WebView that sends no `Referer` (406); then the overview shows the route alone. No street names, no buildings — the 288 × 144 picture cannot carry them. |
+| Overview streets are best effort | They depend on a free public server that is often overloaded (504) and may refuse a WebView that sends no `Referer` (406); then the overview shows the route alone. No street names, no buildings — the map cannot carry them. |
 | Long walks | The public server caps walking routes at 100 km. |
 | No lane guidance | Valhalla supplies some; it is not displayed yet. |
 | No speed or speed limits | Not shown. |

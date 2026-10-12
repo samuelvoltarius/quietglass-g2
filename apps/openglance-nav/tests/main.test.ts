@@ -3,14 +3,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge, so route ordering, stopping and
 // the close path can be checked without glasses, GPS or a Valhalla server.
-const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+const harness = vi.hoisted(() => ({ bridge: null as unknown, road: "" }));
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
 // Canvas is unavailable in node; the arrow bitmap is not what these tests are about.
 vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8Array([1]) }));
-vi.mock("../src/overview/draw", () => ({ renderRoutePng: async () => new Uint8Array([2]) }));
+// The road name is an image on the turn page: remember what it was asked to draw.
+vi.mock("../src/glasses/street", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/glasses/street")>()),
+  renderStreetPngs: async (text: string) => { harness.road = text; return [new Uint8Array([3]), new Uint8Array([4])]; },
+}));
+vi.mock("../src/overview/draw", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/overview/draw")>()),
+  renderMapTiles: async () => [1, 2, 3, 4].map((n) => new Uint8Array([n])),
+}));
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as {
@@ -120,6 +128,7 @@ describe("openglance lifecycle", () => {
 
   beforeEach(() => {
   resetGestureDedupe();
+    harness.road = "";
     unhandled = [];
     replies = [];
     nodeProcess.on("unhandledRejection", onUnhandled);
@@ -165,11 +174,11 @@ describe("openglance lifecycle", () => {
     await vi.waitFor(() => expect(replies).toHaveLength(2), { timeout: 3000 });
 
     replies[1]?.(valhalla("New Street"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("New Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("New Street"));
     replies[0]?.(valhalla("Old Street"));
     await settle();
-    expect(fake.state.body).toContain("New Street");
-    expect(fake.state.body).not.toContain("Old Street");
+    expect(harness.road).toContain("New Street");
+    expect(harness.road).not.toContain("Old Street");
   });
 
   it("stays stopped when a route arrives after a hold", async () => {
@@ -185,7 +194,7 @@ describe("openglance lifecycle", () => {
     await settle();
     // Idle again, with the destination still chosen and ready to restart.
     expect(fake.state.body).toContain("Tap to start.");
-    expect(fake.state.body).not.toContain("Late Street");
+    expect(harness.road).not.toContain("Late Street");
   });
 
   it("turns location updates back on when navigation starts again after a hold", async () => {
@@ -196,7 +205,7 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.(valhalla("First Street"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("First Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("First Street"));
 
     fake.gesture(HOLD);
     await settle();
@@ -216,7 +225,7 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.(valhalla("Main Street"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Main Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Main Street"));
 
     fake.gesture(DOUBLE_TAP);
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
@@ -233,13 +242,13 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.(valhalla("Map Street"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Map Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Map Street"));
 
     fake.gesture(SWIPE);
-    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("overview-map"));
-    await vi.waitFor(() => expect(fake.state.images).toContain("overview-map"));
-    expect(fake.state.header).toBe("Overview");
-    expect(fake.state.body).toContain("Map Street");
+    // The map is four images covering the display, and one short line of text on it.
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("map-nw"));
+    await vi.waitFor(() => expect(fake.state.images).toEqual(expect.arrayContaining(["map-nw", "map-ne", "map-sw", "map-se"])));
+    expect(fake.state.body).toMatch(/→\s+\d+ m/);
     // The choice is remembered for next time.
     expect(JSON.parse(fake.state.saved).glassView).toBe("overview");
 

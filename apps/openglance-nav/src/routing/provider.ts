@@ -295,27 +295,43 @@ function numberOr(value: unknown, fallback: number): number {
  * Mock route for the simulator, which supplies no GPS.
  *
  * It is a real route object so the whole navigation pipeline can be exercised;
- * the app labels it MOCK wherever it appears.
+ * the app labels it MOCK wherever it appears. It has real corners - a right
+ * turn after 960 m, a bending road, a roundabout - so the map has something
+ * to turn with, and a point every 60 m like a router's shape.
  */
+export const MOCK_STEP_M = 60;
+
+/** Bearing (degrees clockwise from north) of the mock road between shape point i and i + 1. */
+function mockBearing(i: number): number {
+  if (i < 16) return 20;
+  if (i < 30) return 110 + (i - 16) * 2.5;
+  return 70 - (i - 30) * 3;
+}
+
 export function createMockProvider(): RoutingProvider {
   return {
     name: "mock",
     async route({ from }): Promise<RouteOutcome> {
-      const shape: LatLng[] = [];
-      for (let i = 0; i <= 40; i++) {
-        shape.push({ lat: from.lat + i * 0.0005, lon: from.lon + i * 0.0003 });
+      const shape: LatLng[] = [from];
+      for (let i = 0; i < 40; i++) {
+        const last = shape[i]!;
+        const bearing = (mockBearing(i) * Math.PI) / 180;
+        shape.push({
+          lat: last.lat + (Math.cos(bearing) * MOCK_STEP_M) / 111_320,
+          lon: last.lon + (Math.sin(bearing) * MOCK_STEP_M) / (111_320 * Math.cos((last.lat * Math.PI) / 180)),
+        });
       }
       return {
         route: {
           shape,
           maneuvers: [
-            { type: "depart", instruction: "Head north on Mock Street", street: "Mock Street", length: 800, time: 120, shapeIndex: 0 },
-            { type: "right", instruction: "Turn right onto Example Road", street: "Example Road", length: 1200, time: 180, shapeIndex: 16 },
-            { type: "roundabout", instruction: "At the roundabout, take the second exit", street: "Sample Avenue", length: 600, time: 90, shapeIndex: 30 },
+            { type: "depart", instruction: "Head north on Mock Street", street: "Mock Street", length: 960, time: 120, shapeIndex: 0 },
+            { type: "right", instruction: "Turn right onto Example Road", street: "Example Road", length: 840, time: 100, shapeIndex: 16 },
+            { type: "roundabout", instruction: "At the roundabout, take the second exit", street: "Sample Avenue", exitNumber: 2, length: 600, time: 90, shapeIndex: 30 },
             { type: "arrive", instruction: "You have arrived", length: 0, time: 0, shapeIndex: 40 },
           ],
-          distance: 2600,
-          duration: 390,
+          distance: 2400,
+          duration: 310,
         },
         error: null,
       };

@@ -1,4 +1,4 @@
-import { formatDistance, formatEta } from "../geo/geometry";
+import { formatDistance, formatDistanceBig, formatEta } from "../geo/geometry";
 import type { ManeuverType, TravelMode } from "../routing/provider";
 import type { Progress } from "../nav/navigator";
 import { tr, type Locale } from "../i18n";
@@ -11,6 +11,10 @@ import { messages } from "../messages";
  * display in a car competes with the road, so it carries exactly three things:
  * the arrow, the distance, and the road name. No ETA, no progress bar, no
  * decoration — those are available on foot, where looking at them is safe.
+ *
+ * In the turn layout the first body line is the road (or the headline of a
+ * state such as "Rerouting"): the glasses draw it as a large image across the
+ * full width. Any further lines are small text below it.
  */
 export interface NavView {
   readonly header: string;
@@ -43,17 +47,22 @@ const ARROWS: Readonly<Record<ManeuverType, string>> = {
 };
 
 /**
- * Characters that fit on one body line beside the 96 px pixel arrow (472 px of
- * proportional font). Router text is cut to this: a long instruction would
- * otherwise wrap down the body in the one mode where nobody should be reading.
+ * Characters of the road line. It is drawn large across the full width, and
+ * the image shrinks the type to fit this many. Router text is cut to it: a long
+ * instruction would otherwise be unreadable in the one mode where nobody
+ * should be reading.
  */
-export const ROAD_WIDTH = 36;
+export const ROAD_WIDTH = 40;
+
+/** Within this distance of the turn nothing but arrow, distance and road is shown. */
+export const NEAR_TURN_M = 200;
 
 /** Hard limits of a full-width body: 7 rows of at most 46 characters. */
 export const MAX_ROWS = 7;
 export const LINE_WIDTH = 46;
-/** In the overview the map takes the top half; the text below has 3 rows. */
-export const OVERVIEW_ROWS = 3;
+/** In the overview the map fills the display; one short line of text sits on it, top left. */
+export const OVERVIEW_ROWS = 1;
+export const OVERVIEW_WIDTH_CHARS = 22;
 
 export type GlassLayout = "turns" | "overview";
 
@@ -84,10 +93,10 @@ export function buildView(
   const view = rawView(progress, options, now);
   const overview = options.layout === "overview";
   return {
-    header: overview && !view.header ? t(options, "g.overview") : view.header,
-    // Beside the pixel arrow a line holds 36 characters; the overview text runs full width.
-    body: fitLines(view.body, overview ? OVERVIEW_ROWS : MAX_ROWS, overview ? LINE_WIDTH : ROAD_WIDTH),
-    footer: clip(view.footer, LINE_WIDTH),
+    // Over the map there is room for one short line and nothing else.
+    header: overview ? "" : view.header,
+    body: fitLines(view.body, overview ? OVERVIEW_ROWS : MAX_ROWS, overview ? OVERVIEW_WIDTH_CHARS : ROAD_WIDTH),
+    footer: overview ? "" : clip(view.footer, LINE_WIDTH),
     ...(view.big !== undefined ? { big: view.big } : {}),
   };
 }
@@ -129,7 +138,8 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
 
   const maneuver = progress.maneuver;
   const arrow = maneuver ? ARROWS[maneuver.type] : ARROWS.straight;
-  const distance = formatDistance(progress.distanceToManeuver, options.locale ?? "en");
+  const locale = options.locale ?? "en";
+  const distance = formatDistance(progress.distanceToManeuver, locale);
 
   const body: string[] = [];
   // With the turn card the distance is drawn large beside the pixel arrow;
@@ -137,8 +147,6 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
   const big = options.bigDistance === true && options.layout !== "overview";
   if (!big) body.push(arrow + "  " + distance);
 
-  // Beside the pixel arrow there is room for 36 characters; the overview
-  // text runs the full width.
   const width = options.layout === "overview" ? LINE_WIDTH : ROAD_WIDTH;
   const road = roadLabel(maneuver?.street, maneuver?.instruction);
   if (road) body.push(clip(road, width));
@@ -147,11 +155,13 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
     body.push(t(options, "g.exit", { n: maneuver.exitNumber }));
   }
 
+  // Close to the turn the footer goes: nothing but arrow, distance and road.
+  const near = big && progress.distanceToManeuver < NEAR_TURN_M;
   return {
     header: "",
     body,
-    footer: statusFooter(options, progress, now),
-    ...(big ? { big: distance } : {}),
+    footer: near ? "" : statusFooter(options, progress, now),
+    ...(big ? { big: formatDistanceBig(progress.distanceToManeuver, locale) } : {}),
   };
 }
 
@@ -170,13 +180,11 @@ function t(options: ViewOptions, key: string, vars: Record<string, string | numb
 }
 
 /**
- * Driving carries no footer at all. Walking and cycling get the remaining
- * distance and the arrival time, which are worth a glance when stationary.
+ * The remaining distance and the arrival time, in small text at the bottom.
+ * They stay out of the way: close to a turn the footer is dropped altogether.
  */
 function statusFooter(options: ViewOptions, progress: Progress | null, now: number): string {
   const tag = t(options, "g.demoTag");
-  if (options.mode === "driving") return options.mock ? tag : "";
-
   const parts: string[] = [];
   if (progress) {
     parts.push(formatDistance(progress.distanceRemaining, options.locale ?? "en"));

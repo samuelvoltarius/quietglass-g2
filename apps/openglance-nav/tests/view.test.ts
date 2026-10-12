@@ -54,8 +54,17 @@ describe("driving display is deliberately bare", () => {
     expect(view.body.join(" ")).toContain("Example Road");
   });
 
-  it("carries no footer at all while driving", async () => {
-    expect(buildView(progressOf(await navigating()), options).footer).toBe("");
+  it("shows the remaining distance and arrival time while driving, and drops them close to the turn", async () => {
+    const { route } = await createMockProvider().route({ from: { lat: 52, lon: 13 }, to: { lat: 53, lon: 14 }, mode: "driving" });
+    const far = buildView(progressOf(update(startNavigation(route!), route!.shape[2]!)), { ...options, bigDistance: true });
+    expect(far.footer).toMatch(/km.*\d\d:\d\d/);
+    // 120 m before the turn: only arrow, distance and road remain.
+    const near = progressOf(update(startNavigation(route!), route!.shape[14]!));
+    expect(near.distanceToManeuver).toBeLessThan(200);
+    const view = buildView(near, { ...options, bigDistance: true });
+    expect(view.footer).toBe("");
+    expect(view.big).toBe("120 m");
+    expect(view.body).toEqual(["Example Road"]);
   });
 
   it("adds distance and arrival time when walking", async () => {
@@ -65,7 +74,7 @@ describe("driving display is deliberately bare", () => {
   });
 
   it("marks a demo route even in driving mode", async () => {
-    expect(buildView(progressOf(await navigating()), { ...options, mock: true }).footer).toBe("DEMO");
+    expect(buildView(progressOf(await navigating()), { ...options, mock: true }).footer).toContain("DEMO");
   });
 });
 
@@ -115,7 +124,7 @@ describe("labels", () => {
   it("uses a large pixel arrow that matches the turn direction", () => {
     expect(pixelArrowFor("left")).not.toEqual(pixelArrowFor("right"));
     expect(pixelArrowFor("straight")).not.toEqual(pixelArrowFor("roundabout"));
-    for (const row of pixelArrowFor("right")) expect(row).toHaveLength(10);
+    for (const row of pixelArrowFor("right")) expect(row).toHaveLength(72);
   });
 });
 

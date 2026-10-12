@@ -5,7 +5,8 @@ import {
 } from "../src/overview/streets";
 import { fitProjection } from "../src/overview/project";
 import { overviewProjector } from "../src/overview/layout";
-import { needsOverviewImage, MARKER_MIN_INTERVAL_MS, type OverviewFrame } from "../src/overview/refresh";
+import { needsMapImage, MAP_MIN_INTERVAL_MS, type MapFrame } from "../src/overview/refresh";
+import type { LatLng } from "../src/geo/geometry";
 
 const box = (south: number, west: number, north: number, east: number) => ({ south, west, north, east });
 /** About 1.1 km × 0.75 km in Salzburg. */
@@ -226,22 +227,35 @@ describe("streets for a route", () => {
   });
 });
 
-describe("resending the overview image", () => {
-  const frame = (over: Partial<OverviewFrame> = {}): OverviewFrame => ({ route: 1, streets: 0, maneuver: 0, marker: { x: 100, y: 50 }, at: 0, ...over });
+describe("resending the map", () => {
+  const frame = (over: Partial<MapFrame> = {}): MapFrame => ({ route: 1, streets: 0, maneuver: 0, range: 600, position: { lat: 47.8, lon: 13.04 }, bearing: 20, at: 0, ...over });
+  // 0.0002 degrees of latitude is about 22 m; 0.00005 about 5.5 m.
+  const moved = (lat: number): LatLng => ({ lat: 47.8 + lat, lon: 13.04 });
 
-  it("sends the first picture and any new route, streets or turn at once", () => {
-    expect(needsOverviewImage(null, frame())).toBe(true);
-    expect(needsOverviewImage(frame(), frame({ route: 2 }))).toBe(true);
-    expect(needsOverviewImage(frame(), frame({ streets: 1 }))).toBe(true);
-    expect(needsOverviewImage(frame(), frame({ maneuver: 1 }))).toBe(true);
+  it("sends the first picture and any new route, streets, turn or zoom step at once", () => {
+    expect(needsMapImage(null, frame())).toBe(true);
+    expect(needsMapImage(frame(), frame({ route: 2 }))).toBe(true);
+    expect(needsMapImage(frame(), frame({ streets: 1 }))).toBe(true);
+    expect(needsMapImage(frame(), frame({ maneuver: 1 }))).toBe(true);
+    expect(needsMapImage(frame(), frame({ range: 300 }))).toBe(true);
+    expect(needsMapImage(frame(), frame({ bearing: null }))).toBe(true);
   });
 
-  it("moves the marker only after it moved visibly and some seconds passed", () => {
-    expect(needsOverviewImage(frame(), frame({ marker: { x: 102, y: 51 }, at: 60_000 }))).toBe(false);
-    expect(needsOverviewImage(frame(), frame({ marker: { x: 110, y: 50 }, at: 1_000 }))).toBe(false);
-    expect(needsOverviewImage(frame(), frame({ marker: { x: 110, y: 50 }, at: MARKER_MIN_INTERVAL_MS }))).toBe(true);
-    expect(needsOverviewImage(frame(), frame({ marker: null }))).toBe(true);
-    expect(needsOverviewImage(frame({ marker: null }), frame({ marker: null, at: 99_000 }))).toBe(false);
+  it("moves the car only after it moved visibly and some seconds passed", () => {
+    expect(needsMapImage(frame(), frame({ position: moved(0.00005), at: 60_000 }))).toBe(false);
+    expect(needsMapImage(frame(), frame({ position: moved(0.0002), at: 1_000 }))).toBe(false);
+    expect(needsMapImage(frame(), frame({ position: moved(0.0002), at: MAP_MIN_INTERVAL_MS }))).toBe(true);
+    expect(needsMapImage(frame(), frame({ position: null }))).toBe(true);
+    expect(needsMapImage(frame({ position: null }), frame({ position: null, at: 99_000 }))).toBe(false);
+  });
+
+  it("turns the map only once the heading changed visibly, and then not more than every few seconds", () => {
+    expect(needsMapImage(frame(), frame({ bearing: 25, at: 60_000 }))).toBe(false);
+    expect(needsMapImage(frame(), frame({ bearing: 40, at: 1_000 }))).toBe(false);
+    expect(needsMapImage(frame(), frame({ bearing: 40, at: MAP_MIN_INTERVAL_MS }))).toBe(true);
+    // Across north: 355 to 5 degrees is a turn of 10, not 350.
+    expect(needsMapImage(frame({ bearing: 355 }), frame({ bearing: 5, at: 60_000 }))).toBe(false);
+    expect(needsMapImage(frame({ bearing: 355 }), frame({ bearing: 20, at: 60_000 }))).toBe(true);
   });
 });
 

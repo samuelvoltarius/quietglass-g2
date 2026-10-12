@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildView, fitLines, LINE_WIDTH, MAX_ROWS, OVERVIEW_ROWS, ROAD_WIDTH } from "../src/glasses/view";
+import { validateEvenHubPageContainer } from "@evenrealities/even_hub_sdk";
+import { buildView, fitLines, LINE_WIDTH, MAX_ROWS, OVERVIEW_ROWS, OVERVIEW_WIDTH_CHARS, ROAD_WIDTH } from "../src/glasses/view";
 import { buildPage } from "../src/glasses/render";
 import { formatDistance } from "../src/geo/geometry";
 import { createMockProvider } from "../src/routing/provider";
 import { progressOf, startNavigation, update } from "../src/nav/navigator";
-import { pixelArrowFor } from "../src/glasses/icons";
 
 const options = {
   mode: "walking" as const,
@@ -44,7 +44,7 @@ describe("German on the glasses", () => {
   it("translates states and keeps umlauts", async () => {
     const p = await progress();
     expect(buildView(p, { ...options, rerouting: true, locale: "de" }).body).toEqual(["Abseits der Route", "Neue Route…"]);
-    expect(buildView(p, { ...options, mock: true, mode: "driving", locale: "de" }).footer).toBe("DEMO");
+    expect(buildView(p, { ...options, mock: true, mode: "driving", locale: "de" }).footer).toContain("DEMO");
     expect(buildView(null, { ...options, error: "Kein GPS — geh ins Freie", locale: "de" }).footer).toBe("tippen = nochmal");
   });
 
@@ -71,32 +71,52 @@ describe("text limits", () => {
 });
 
 describe("overview layout", () => {
-  it("labels the overview and keeps the text below the map to three rows", async () => {
+  it("shows one short line over the map and nothing else", async () => {
     const p = { ...(await progress()), maneuver: { type: "roundabout" as const, instruction: "", street: "S".repeat(60), length: 1, time: 1, shapeIndex: 0, exitNumber: 2 } };
     const view = buildView(p, { ...options, layout: "overview", locale: "de" });
-    expect(view.header).toBe("Übersicht");
-    expect(view.body.length).toBeLessThanOrEqual(OVERVIEW_ROWS);
-    // Full width below the map: the street may use all 46 characters.
-    expect(view.body[1]!.length).toBe(LINE_WIDTH);
-    expect(view.body[2]).toBe("Ausfahrt 2");
+    expect(view.header).toBe("");
+    expect(view.footer).toBe("");
+    expect(view.body).toHaveLength(OVERVIEW_ROWS);
+    expect(view.body[0]!.length).toBeLessThanOrEqual(OVERVIEW_WIDTH_CHARS);
+    // The next turn: arrow and distance.
+    expect(view.body[0]).toMatch(/↻\s+\d/);
   });
 
-  it("builds a page with the 288 x 144 map image and the text beneath", async () => {
+  it("builds a page with four map images covering the display, and the text on the top left", async () => {
     const view = buildView(await progress(), { ...options, layout: "overview" });
-    const page = buildPage(view, undefined, "overview");
-    const image = page.imageObject?.[0];
-    expect(image).toMatchObject({ containerName: "overview-map", width: 288, height: 144, xPosition: 144, yPosition: 0 });
+    const page = buildPage(view, "overview");
+    const images = page.imageObject ?? [];
+    expect(images).toHaveLength(4);
+    expect(images.map((image) => [image.xPosition, image.yPosition, image.width, image.height])).toEqual([
+      [0, 0, 288, 144], [288, 0, 288, 144], [0, 144, 288, 144], [288, 144, 288, 144],
+    ]);
+    expect(page.imageObject?.map((image) => image.containerName)).toEqual(["map-nw", "map-ne", "map-sw", "map-se"]);
     const body = page.textObject?.find((text) => text.containerName === "body");
+    expect(body).toMatchObject({ xPosition: 0, yPosition: 0 });
     expect(body?.isEventCapture).toBe(1);
-    expect(body?.yPosition).toBeGreaterThanOrEqual(144);
     // Exactly one container captures input, as the SDK requires.
     expect(page.textObject?.filter((text) => text.isEventCapture === 1)).toHaveLength(1);
+    // The text sits above the images.
     const z = [...(page.textObject ?? []), ...(page.imageObject ?? [])].map((c) => c.zOrderIndex);
     expect(new Set(z).size).toBe(z.length);
+    expect(body!.zOrderIndex!).toBeGreaterThan(Math.max(...images.map((image) => image.zOrderIndex!)));
+    expect(page.containerTotalNum).toBe(5);
+    expect(validateEvenHubPageContainer(page).valid).toBe(true);
   });
 
-  it("keeps the turn layout as it was", async () => {
-    const page = buildPage(buildView(await progress(), options), pixelArrowFor("right"));
-    expect(page.imageObject?.[0]).toMatchObject({ containerName: "pixel-icon", width: 96, height: 144 });
+  it("keeps the turn page: arrow, distance, road name as two halves, and the line of text", async () => {
+    const page = buildPage(buildView(await progress(), { ...options, bigDistance: true }), "turns");
+    const names = page.imageObject?.map((image) => image.containerName);
+    expect(names).toEqual(["pixel-icon", "turn-distance", "street-left", "street-right"]);
+    expect(page.imageObject?.[0]).toMatchObject({ width: 144, height: 144 });
+    expect(page.imageObject?.[1]).toMatchObject({ width: 288, height: 144 });
+    expect(validateEvenHubPageContainer(page).valid).toBe(true);
+  });
+
+  it("has a plain text page for everything without a turn", async () => {
+    const page = buildPage(buildView(null, { ...options, navigating: false }), "text");
+    expect(page.imageObject ?? []).toHaveLength(0);
+    expect(page.textObject).toHaveLength(3);
+    expect(validateEvenHubPageContainer(page).valid).toBe(true);
   });
 });

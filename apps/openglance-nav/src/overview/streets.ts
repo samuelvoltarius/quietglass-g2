@@ -280,6 +280,30 @@ export function createStreetSource(config: StreetSourceConfig = {}): StreetSourc
 }
 
 /**
+ * The streets around a route in geographic coordinates: which classes to ask
+ * for at this zoom, which box to fetch. The moving map projects them itself,
+ * turned to the direction of travel. Never throws; no streets is a valid
+ * outcome.
+ */
+export async function loadStreets(
+  source: StreetSource,
+  projector: Projector | null,
+  mode: TravelMode,
+): Promise<{ readonly streets: readonly Street[]; readonly error: StreetsError | null }> {
+  const view = projector?.bounds;
+  if (!projector || !view) return { streets: [], error: null };
+  const classes = classesFor(view, mode);
+  const box = fetchBox(view);
+  if (!box || !classes.length) return { streets: [], error: null };
+  try {
+    const outcome = await source.load(box, classes);
+    return { streets: outcome.streets, error: outcome.error };
+  } catch {
+    return { streets: [], error: "server" };
+  }
+}
+
+/**
  * Everything between a route and the street segments of its overview image:
  * which classes to ask for at this zoom, which box to fetch, and the answer
  * cut to the picture. Never throws; no streets is a valid outcome.

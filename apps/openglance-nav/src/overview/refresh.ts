@@ -1,39 +1,48 @@
-import type { PixelPoint } from "./project";
+import { bearingDelta, distanceMeters, type LatLng } from "../geo/geometry";
 
 /**
- * When the overview image is worth sending again.
+ * When the map is worth sending again.
  *
- * Every image crosses Bluetooth to the glasses, so it is sent only when the
- * picture really changed: a new route, streets that arrived, the next turn
- * moving on. Walking along the route moves the marker a pixel or two per GPS
- * fix; that waits until it has moved visibly and some time has passed.
+ * The map is four images, about 80 kB over Bluetooth, and it moves with the
+ * car, so it is sent only when the picture really changed: a new route,
+ * streets that arrived, the next turn moving on, a new zoom step. Driving
+ * along the route moves the car and turns the map a little at every GPS fix;
+ * that waits until the change is visible and some seconds have passed.
  */
-export interface OverviewFrame {
+export interface MapFrame {
   /** Bumped for every new route. */
   readonly route: number;
   /** Bumped when streets for the route arrive. */
   readonly streets: number;
   readonly maneuver: number;
-  /** Where the position marker is drawn, or null without a route. */
-  readonly marker: PixelPoint | null;
+  /** The zoom step in metres, see rangeFor. */
+  readonly range: number;
+  readonly position: LatLng | null;
+  /** Direction of travel drawn upwards, or null when north is up. */
+  readonly bearing: number | null;
   /** When this frame would be sent, in ms. */
   readonly at: number;
 }
 
-/** Marker updates at most this often. */
-export const MARKER_MIN_INTERVAL_MS = 5_000;
-/** …and only once it has moved this many pixels. */
-export const MARKER_MIN_MOVE_PX = 6;
+/** The car and the map orientation update at most this often. */
+export const MAP_MIN_INTERVAL_MS = 4_000;
+/** …and only once the car has moved this many metres… */
+export const MAP_MIN_MOVE_M = 12;
+/** …or the map has to turn this many degrees. */
+export const MAP_MIN_TURN_DEG = 12;
 
-export function needsOverviewImage(
-  sent: OverviewFrame | null,
-  next: OverviewFrame,
-  minIntervalMs = MARKER_MIN_INTERVAL_MS,
-  minMovePx = MARKER_MIN_MOVE_PX,
+export function needsMapImage(
+  sent: MapFrame | null,
+  next: MapFrame,
+  minIntervalMs = MAP_MIN_INTERVAL_MS,
+  minMoveM = MAP_MIN_MOVE_M,
+  minTurnDeg = MAP_MIN_TURN_DEG,
 ): boolean {
   if (!sent) return true;
-  if (sent.route !== next.route || sent.streets !== next.streets || sent.maneuver !== next.maneuver) return true;
-  if (!sent.marker || !next.marker) return sent.marker !== next.marker;
-  const moved = Math.hypot(next.marker.x - sent.marker.x, next.marker.y - sent.marker.y);
-  return moved >= minMovePx && next.at - sent.at >= minIntervalMs;
+  if (sent.route !== next.route || sent.streets !== next.streets || sent.maneuver !== next.maneuver || sent.range !== next.range) return true;
+  if ((sent.bearing === null) !== (next.bearing === null)) return true;
+  if ((sent.position === null) !== (next.position === null)) return true;
+  if (next.at - sent.at < minIntervalMs) return false;
+  if (sent.position && next.position && distanceMeters(sent.position, next.position) >= minMoveM) return true;
+  return sent.bearing !== null && next.bearing !== null && Math.abs(bearingDelta(sent.bearing, next.bearing)) >= minTurnDeg;
 }

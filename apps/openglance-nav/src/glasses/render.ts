@@ -9,61 +9,79 @@ import {
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import type { GlassLayout, NavView } from "./view";
+import type { NavView } from "./view";
 import { renderPixelIcon, type PixelIcon } from "./pixel";
 import { CARD_HEIGHT, CARD_WIDTH, renderTurnCardPng, type TurnCard } from "./turncard";
+import { renderStreetPngs, STREET_HALF, STREET_HEIGHT } from "./street";
+import { MAP_TILES, PLATE, TILE_HEIGHT, TILE_WIDTH } from "../overview/camera";
 
 /**
  * Renders the navigation onto the G2.
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
- * changes text without rebuilding the page — on real hardware a rebuild falls
- * back to a full page creation and costs seconds, discarding input meanwhile.
+ * Three pages exist on the 576 x 288 display, none with more than four image
+ * containers (each at most 288 x 144) and exactly one that captures input:
+ *
+ *  - "turns", the driving view: a big arrow (144 x 144) and the distance with
+ *    its approach bar (288 x 144) side by side, the road name as two image
+ *    halves across the full width, a line of small text and the footer;
+ *  - "overview", the map: four images covering the whole display, with one
+ *    short line of text on the top left;
+ *  - "text", for everything without a turn to show: three text containers.
+ *
+ * Changing from one page to another rebuilds the page, which on hardware takes
+ * a moment and swallows input meanwhile: it happens when the user swipes or a
+ * route starts or ends, never for an update. Updates go through
+ * `textContainerUpgrade` and `updateImageRawData` and touch only what changed.
  */
 
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
 
+export type PageKind = "text" | "turns" | "overview";
+
+interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number; }
 interface ContainerSpec {
   readonly id: number;
   readonly name: string;
-  readonly y: number;
-  readonly height: number;
 }
 
-const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
-  header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
-  footer: { id: 3, name: "footer", y: 252, height: 34 },
-};
+const HEADER: ContainerSpec = { id: 1, name: "header" };
+const BODY: ContainerSpec = { id: 2, name: "body" };
+const FOOTER: ContainerSpec = { id: 3, name: "footer" };
 
-/**
- * Overview layout: the route image (288 x 144, the largest image container
- * the G2 accepts) top centre, a short label left of it, and three rows of
- * turn text plus the footer below. Same container ids and names as the turn
- * layout, so the text fast path works unchanged in both.
- */
-const OVERVIEW_MAP = { id: 4, name: "overview-map", x: 144, y: 0, width: 288, height: 144 } as const;
-const OVERVIEW_TEXT: Readonly<Record<"header" | "body" | "footer", { x: number; y: number; width: number; height: number }>> = {
-  header: { x: 0, y: 0, width: 140, height: 32 },
-  body: { x: 0, y: 148, width: SCREEN_WIDTH, height: 102 },
+const TEXT_BOX: Readonly<Record<"header" | "body" | "footer", Box>> = {
+  header: { x: 0, y: 0, width: SCREEN_WIDTH, height: 32 },
+  body: { x: 0, y: 36, width: SCREEN_WIDTH, height: 214 },
   footer: { x: 0, y: 252, width: SCREEN_WIDTH, height: 34 },
 };
 
 /**
- * Turn layout: the pixel arrow on the left, the turn card (big distance and
- * approach bar) to its right, and the road text beneath the card.
+ * Turn page: arrow and distance side by side at the top (together 448 px wide,
+ * centred), the road name as two halves below, one line of small text, footer.
  */
-const ICON = { id: 4, name: "pixel-icon", x: 0, y: 36, width: 96, height: 144 } as const;
-const CARD = { id: 5, name: "turn-distance", x: 104, y: 36, width: CARD_WIDTH, height: CARD_HEIGHT } as const;
-const CARD_BODY = { y: CARD.y + CARD.height + 4, height: CONTAINER.footer.y - 2 - (CARD.y + CARD.height + 4) } as const;
+const ARROW = { id: 4, name: "pixel-icon", x: 64, y: 4, width: 144, height: 144 } as const;
+const DISTANCE = { id: 5, name: "turn-distance", x: 224, y: 4, width: CARD_WIDTH, height: CARD_HEIGHT } as const;
+const STREET_LEFT = { id: 6, name: "street-left", x: 0, y: 152, width: STREET_HALF, height: STREET_HEIGHT } as const;
+const STREET_RIGHT = { id: 7, name: "street-right", x: STREET_HALF, y: 152, width: STREET_HALF, height: STREET_HEIGHT } as const;
+const TURN_BODY: Box = { x: 0, y: 212, width: SCREEN_WIDTH, height: 38 };
 
-/** Images of the turn layout to send; a field left out is unchanged on the glasses. */
+/** Map page: image ids 4…7, the info text over the plate on the top left. */
+const MAP_IMAGES = MAP_TILES.map((tile, index) => ({ id: 4 + index, name: tile.name, x: tile.x, y: tile.y, width: TILE_WIDTH, height: TILE_HEIGHT }));
+const MAP_BODY: Box = { x: 0, y: 0, width: PLATE.width, height: PLATE.height };
+
+/** Images of the turn page to send; a field left out is unchanged on the glasses. */
 export interface TurnImages {
   readonly icon?: PixelIcon;
   /** The card to show; null blanks it. */
   readonly card?: TurnCard | null;
+  /** The road name; "" blanks it. */
+  readonly road?: string;
+}
+
+/** Images to send: for the turn page, or the four map tiles (null = unchanged). */
+export interface PageImages {
+  readonly turn?: TurnImages;
+  readonly map?: readonly (Uint8Array | null)[];
 }
 
 export interface RenderResult {
@@ -72,101 +90,65 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: NavView, icon?: PixelIcon, layout: GlassLayout = "turns"): CreateStartUpPageContainer {
-  if (layout === "overview") return buildOverviewPage(view);
-  const body = text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon));
-  return new CreateStartUpPageContainer({
-    containerTotalNum: icon ? 5 : 3,
-    textObject: [
-      text(CONTAINER.header, view.header, 1, false),
-      // Exactly one container may capture input; the body owns it. With the
-      // card above it, the body starts below the card.
-      icon ? new TextContainerProperty({ ...body, yPosition: CARD_BODY.y, height: CARD_BODY.height }) : body,
-      text(CONTAINER.footer, view.footer, 3, false),
-    ],
-    imageObject: icon ? [
-      new ImageContainerProperty({ containerID: ICON.id, containerName: ICON.name, xPosition: ICON.x, yPosition: ICON.y, width: ICON.width, height: ICON.height, zOrderIndex: 4 }),
-      new ImageContainerProperty({ containerID: CARD.id, containerName: CARD.name, xPosition: CARD.x, yPosition: CARD.y, width: CARD.width, height: CARD.height, zOrderIndex: 5 }),
-    ] : [],
-  });
+/** What the text containers of a page show: the road is an image on the turn page, so the text starts below it. */
+export function bodyText(view: NavView, kind: PageKind): string {
+  if (kind === "turns") return view.body.slice(1).join("\n");
+  if (kind === "overview") return view.body[0] ?? "";
+  return view.body.join("\n");
 }
 
-function buildOverviewPage(view: NavView): CreateStartUpPageContainer {
-  const place = (spec: ContainerSpec, box: { x: number; y: number; width: number; height: number }, content: string, z: number, capture: boolean): TextContainerProperty =>
-    new TextContainerProperty({
-      containerID: spec.id,
-      containerName: spec.name,
-      xPosition: box.x,
-      yPosition: box.y,
-      width: box.width,
-      height: box.height,
-      paddingLength: 4,
-      zOrderIndex: z,
-      isEventCapture: capture ? 1 : 0,
-      content: content || " ",
-    });
-  return new CreateStartUpPageContainer({
-    containerTotalNum: 4,
-    textObject: [
-      place(CONTAINER.header, OVERVIEW_TEXT.header, view.header, 1, false),
-      place(CONTAINER.body, OVERVIEW_TEXT.body, view.body.join("\n"), 2, true),
-      place(CONTAINER.footer, OVERVIEW_TEXT.footer, view.footer, 3, false),
-    ],
-    imageObject: [new ImageContainerProperty({
-      containerID: OVERVIEW_MAP.id, containerName: OVERVIEW_MAP.name,
-      xPosition: OVERVIEW_MAP.x, yPosition: OVERVIEW_MAP.y,
-      width: OVERVIEW_MAP.width, height: OVERVIEW_MAP.height, zOrderIndex: 4,
-    })],
-  });
-}
-
-function text(
-  spec: ContainerSpec,
-  content: string,
-  zOrderIndex: number,
-  captureEvents: boolean,
-  compact = false,
-): TextContainerProperty {
+function textBox(spec: ContainerSpec, box: Box, content: string, z: number, capture: boolean): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: compact ? 104 : 0,
-    yPosition: spec.y,
-    width: compact ? SCREEN_WIDTH - 104 : SCREEN_WIDTH,
-    height: spec.height,
+    xPosition: box.x,
+    yPosition: box.y,
+    width: box.width,
+    height: box.height,
     paddingLength: 4,
-    zOrderIndex,
-    isEventCapture: captureEvents ? 1 : 0,
+    zOrderIndex: z,
+    isEventCapture: capture ? 1 : 0,
     content: content || " ",
   });
 }
 
-/**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
- */
-export async function createPage(bridge: EvenAppBridge, view: NavView, icon?: PixelIcon, card: TurnCard | null = null): Promise<RenderResult> {
-  const page = buildPage(view, icon);
-  try {
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-  } catch {
-    // Expected on current firmware; the creation below is the real path.
-  }
-
-  try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return icon ? updateTurnImages(bridge, { icon, card }) : { ok: true };
-    return { ok: false, reason: describeCreateResult(result) };
-  } catch (error) {
-    return { ok: false, reason: errorMessage(error) };
-  }
+function imageBox(image: { id: number; name: string } & Box, z: number): ImageContainerProperty {
+  return new ImageContainerProperty({
+    containerID: image.id, containerName: image.name,
+    xPosition: image.x, yPosition: image.y, width: image.width, height: image.height, zOrderIndex: z,
+  });
 }
 
-/**
- * Fast path: change the text of the three containers in place, and send only
- * the images that changed — each one crosses Bluetooth.
- */
+export function buildPage(view: NavView, kind: PageKind = "text"): CreateStartUpPageContainer {
+  // Images sit below the text (lower z), so the text may overlay them.
+  if (kind === "turns") {
+    return new CreateStartUpPageContainer({
+      containerTotalNum: 6,
+      // Exactly one container may capture input; the text line owns it.
+      textObject: [
+        textBox(BODY, TURN_BODY, bodyText(view, kind), 5, true),
+        textBox(FOOTER, TEXT_BOX.footer, view.footer, 6, false),
+      ],
+      imageObject: [imageBox(ARROW, 1), imageBox(DISTANCE, 2), imageBox(STREET_LEFT, 3), imageBox(STREET_RIGHT, 4)],
+    });
+  }
+  if (kind === "overview") {
+    return new CreateStartUpPageContainer({
+      containerTotalNum: 5,
+      textObject: [textBox(BODY, MAP_BODY, bodyText(view, kind), 5, true)],
+      imageObject: MAP_IMAGES.map((image, index) => imageBox(image, index + 1)),
+    });
+  }
+  return new CreateStartUpPageContainer({
+    containerTotalNum: 3,
+    textObject: [
+      textBox(HEADER, TEXT_BOX.header, view.header, 1, false),
+      textBox(BODY, TEXT_BOX.body, bodyText(view, kind), 2, true),
+      textBox(FOOTER, TEXT_BOX.footer, view.footer, 3, false),
+    ],
+    imageObject: [],
+  });
+}
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
@@ -184,27 +166,51 @@ function guarded(specId: number, content: string): { content: string; contentLen
   return { content: text, contentLength: length };
 }
 
-export async function updatePage(bridge: EvenAppBridge, view: NavView, images: TurnImages = {}): Promise<RenderResult> {
-  const updated = await updateTexts(bridge, view);
-  return updated.ok ? updateTurnImages(bridge, images) : updated;
-}
+/** `createStartUpPageContainer` works once per run; every later page is a rebuild. */
+let startupDone = false;
 
-async function updateTurnImages(bridge: EvenAppBridge, images: TurnImages): Promise<RenderResult> {
-  if (images.icon) {
-    const sent = await updatePixel(bridge, images.icon);
-    if (!sent.ok) return sent;
+/**
+ * Puts a page on the glasses. The first page is created; every later one
+ * replaces it with `rebuildPageContainer` (a second creation is refused as
+ * "invalid" - which once left the map blank for good). If a rebuild is
+ * refused, creating is tried as the last resort.
+ */
+async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
+  sentLength.clear();
+  try {
+    // On the first page the call is made although there is nothing to rebuild
+    // yet: it registers event routing, and skipping it leaves the app deaf to input.
+    if (await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })) && startupDone) return { ok: true };
+  } catch {
+    // Expected on current firmware; creation below is the real path.
   }
-  if (images.card === undefined) return { ok: true };
-  return sendImage(bridge, CARD, () => renderTurnCardPng(images.card ?? null));
+  try {
+    const result = await bridge.createStartUpPageContainer(page);
+    if (result === StartUpPageCreateResult.success) { startupDone = true; return { ok: true }; }
+    return { ok: false, reason: describeCreateResult(result) };
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
 }
 
-async function updateTexts(bridge: EvenAppBridge, view: NavView): Promise<RenderResult> {
-  const updates: Array<[ContainerSpec, string]> = [
-    [CONTAINER.header, view.header],
-    [CONTAINER.body, view.body.join("\n")],
-    [CONTAINER.footer, view.footer],
-  ];
+/** Creates or replaces the page and sends all the images that go with it. */
+export async function showPage(bridge: EvenAppBridge, view: NavView, kind: PageKind, images: PageImages = {}): Promise<RenderResult> {
+  const installed = await installPage(bridge, buildPage(view, kind));
+  return installed.ok ? updateImages(bridge, images) : installed;
+}
 
+/** Fast path: text in place, and only the images that changed - each one crosses Bluetooth. */
+export async function updatePage(bridge: EvenAppBridge, view: NavView, kind: PageKind, images: PageImages = {}): Promise<RenderResult> {
+  const updated = await updateTexts(bridge, view, kind);
+  return updated.ok ? updateImages(bridge, images) : updated;
+}
+
+async function updateTexts(bridge: EvenAppBridge, view: NavView, kind: PageKind): Promise<RenderResult> {
+  const updates: Array<[ContainerSpec, string]> = kind === "text"
+    ? [[HEADER, view.header], [BODY, bodyText(view, kind)], [FOOTER, view.footer]]
+    : kind === "turns"
+      ? [[BODY, bodyText(view, kind)], [FOOTER, view.footer]]
+      : [[BODY, bodyText(view, kind)]];
   try {
     for (const [spec, content] of updates) {
       await bridge.textContainerUpgrade(new TextContainerUpgrade({
@@ -219,42 +225,40 @@ async function updateTexts(bridge: EvenAppBridge, view: NavView): Promise<Render
   }
 }
 
-/**
- * Creates the overview page. Switching layout needs a new page — on hardware
- * that takes a moment, which is acceptable for a swipe the user chose.
- */
-export async function createOverviewPage(bridge: EvenAppBridge, view: NavView, png: Uint8Array): Promise<RenderResult> {
-  const page = buildPage(view, undefined, "overview");
-  try {
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-  } catch {
-    // Expected on current firmware; the creation below is the real path.
+async function updateImages(bridge: EvenAppBridge, images: PageImages): Promise<RenderResult> {
+  const turn = images.turn;
+  if (turn) {
+    if (turn.icon) {
+      const icon = turn.icon;
+      const sent = await sendImage(bridge, ARROW, () => renderPixelIcon(icon));
+      if (!sent.ok) return sent;
+    }
+    if (turn.card !== undefined) {
+      const card = turn.card;
+      const sent = await sendImage(bridge, DISTANCE, () => renderTurnCardPng(card));
+      if (!sent.ok) return sent;
+    }
+    if (turn.road !== undefined) {
+      const road = turn.road;
+      let halves: Promise<[Uint8Array, Uint8Array]> | null = null;
+      const both = (): Promise<[Uint8Array, Uint8Array]> => (halves ??= renderStreetPngs(road));
+      for (const [target, index] of [[STREET_LEFT, 0], [STREET_RIGHT, 1]] as const) {
+        const sent = await sendImage(bridge, target, async () => (await both())[index]);
+        if (!sent.ok) return sent;
+      }
+    }
   }
-  try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updateOverviewImage(bridge, png);
-    return { ok: false, reason: describeCreateResult(result) };
-  } catch (error) {
-    return { ok: false, reason: errorMessage(error) };
+  const map = images.map;
+  if (map) {
+    for (let i = 0; i < MAP_IMAGES.length; i++) {
+      const png = map[i];
+      if (!png) continue;
+      const target = MAP_IMAGES[i]!;
+      const sent = await sendImage(bridge, target, async () => png);
+      if (!sent.ok) return sent;
+    }
   }
-}
-
-/** Text in place; the image only when it changed (`png` null = unchanged). */
-export async function updateOverviewPage(bridge: EvenAppBridge, view: NavView, png: Uint8Array | null): Promise<RenderResult> {
-  const updated = await updateTexts(bridge, view);
-  if (!updated.ok || !png) return updated;
-  return updateOverviewImage(bridge, png);
-}
-
-async function updateOverviewImage(bridge: EvenAppBridge, png: Uint8Array): Promise<RenderResult> {
-  try {
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: OVERVIEW_MAP.id, containerName: OVERVIEW_MAP.name, imageData: png }));
-    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
-  } catch (error) { return { ok: false, reason: errorMessage(error) }; }
-}
-
-function updatePixel(bridge: EvenAppBridge, icon: PixelIcon): Promise<RenderResult> {
-  return sendImage(bridge, ICON, () => renderPixelIcon(icon));
+  return { ok: true };
 }
 
 async function sendImage(bridge: EvenAppBridge, target: { readonly id: number; readonly name: string }, render: () => Promise<Uint8Array>): Promise<RenderResult> {

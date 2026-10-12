@@ -1,131 +1,168 @@
 import type { LatLng } from "../geo/geometry";
-import { project, type PixelPoint } from "./project";
-import type { RoadClass, StreetSegment } from "./streets";
-import { nearestPixel, OVERVIEW_HEIGHT, OVERVIEW_PADDING, OVERVIEW_WIDTH } from "./layout";
-
-export { markerPixel, nearestPixel, overviewProjector, OVERVIEW_HEIGHT, OVERVIEW_WIDTH } from "./layout";
+import type { PixelPoint } from "./project";
+import type { RoadClass, Street } from "./streets";
+import { mapProjector, MARKER_AT, MAP_HEIGHT, MAP_TILES, MAP_WIDTH, PLATE, TILE_HEIGHT, TILE_WIDTH, type MapView } from "./camera";
 
 /**
- * Overview image drawing, ported from Map Glass: black background, the real
- * streets around the route in grey (when they could be loaded), the route as
- * one thick white line with a black edge so it stands clear of them, a ringed
- * dot for the position, a square for the destination, "N" with an
- * up-pointing triangle. OpenGlance adds a small ring on the next manoeuvre.
+ * Map drawing for the whole display: black background, the real streets
+ * around the route in grey (when they could be loaded), the route as one thick
+ * white line with a black edge so it stands clear of them, a ring on the next
+ * turn, a square at the destination, and the car as a large chevron.
  *
- * The glasses convert images to 16 grey levels, so streets can be dimmer
- * than the route without disappearing: major roads brighter and thicker,
- * minor roads dim, footpaths faint.
+ * The picture is 576 x 288 and is cut into four 288 x 144 images, the largest
+ * the G2 accepts, which together cover the display. The glasses convert images
+ * to 16 grey levels, so streets can be dimmer than the route without
+ * disappearing: major roads brighter and thicker, minor roads dim, footpaths
+ * faint.
  */
 
 /** The slice of the 2D canvas API the map uses, so drawing can be checked against a recording fake in node. */
 export type MapContext = Pick<CanvasRenderingContext2D, "fillStyle" | "strokeStyle" | "lineWidth" | "lineCap" | "lineJoin" | "font" | "fillRect" | "beginPath" | "moveTo" | "lineTo" | "stroke" | "arc" | "fill" | "strokeRect" | "fillText">;
-export interface Segment { readonly from: PixelPoint; readonly to: PixelPoint; }
-
-/**
- * The decorative grid Map Glass drew behind the route. No longer drawn — it
- * looked like streets and was not; real streets replaced it — and kept only
- * so the Map Glass history and its test stay readable.
- */
-export function gridLines(width: number, height: number): Segment[] {
-  const lines: Segment[] = [];
-  for (let x = 40; x < width; x += 70) lines.push({ from: { x, y: 0 }, to: { x: x - 80, y: height } });
-  for (let y = 35; y < height; y += 55) lines.push({ from: { x: 0, y }, to: { x: width, y: y + 28 } });
-  return lines;
-}
-
-/** "N" in the top-right corner with a triangle below it whose apex points up (north). */
-export function northArrow(width: number): { readonly label: PixelPoint; readonly triangle: readonly [PixelPoint, PixelPoint, PixelPoint] } {
-  return { label: { x: width - 30, y: 24 }, triangle: [{ x: width - 30, y: 32 }, { x: width - 24, y: 44 }, { x: width - 36, y: 44 }] };
-}
-
-const PADDING = OVERVIEW_PADDING;
 
 /** Stroke per road class: brightness and width on a 16-grey display. */
 export const STREET_STYLE: Readonly<Record<RoadClass, { readonly color: string; readonly width: number }>> = {
-  major: { color: "#a0a0a0", width: 3 },
-  minor: { color: "#606060", width: 2 },
-  path: { color: "#404040", width: 1 },
+  major: { color: "#b0b0b0", width: 5 },
+  minor: { color: "#707070", width: 3 },
+  path: { color: "#484848", width: 2 },
 };
 
 /** Faintest first, so a major road is never painted over by a footpath. */
 const STREET_ORDER: readonly RoadClass[] = ["path", "minor", "major"];
+/** The route: a white line this thick on a black edge this thick. */
+export const ROUTE_WIDTH = 16;
+export const ROUTE_EDGE = 28;
+
+export interface MapScene {
+  /** The whole route. */
+  readonly route: readonly LatLng[];
+  /** Where the next manoeuvre happens; null shows no ring. */
+  readonly next: LatLng | null;
+  readonly streets: readonly Street[];
+  readonly view: MapView;
+}
+
+/** Beyond this the canvas has nothing to draw; keeps absurd coordinates (zoomed far in on a far-off point) out of the strokes. */
+const LIMIT = 4000;
+const clampPoint = (point: PixelPoint): PixelPoint => ({
+  x: Math.max(-LIMIT, Math.min(LIMIT, point.x)),
+  y: Math.max(-LIMIT, Math.min(LIMIT, point.y)),
+});
+
+/** Adds a polyline to the current path, skipping points less than `step` pixels from the last one. */
+function polyline(ctx: MapContext, points: readonly PixelPoint[], step: number): void {
+  let last: PixelPoint | null = null;
+  points.forEach((raw, index) => {
+    if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) { last = null; return; }
+    const point = clampPoint(raw);
+    if (!last) { ctx.moveTo(point.x, point.y); last = point; return; }
+    const isEnd = index === points.length - 1;
+    if (!isEnd && Math.hypot(point.x - last.x, point.y - last.y) < step) return;
+    ctx.lineTo(point.x, point.y); last = point;
+  });
+}
+
+/** The car: a chevron pointing up (the map is turned to the direction of travel), black-edged. */
+function drawCar(ctx: MapContext, at: PixelPoint, upward: boolean): void {
+  if (!upward) {
+    // North up and no direction known: a ringed dot says "you are here" without claiming a heading.
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(at.x, at.y, 17, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(at.x, at.y, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(at.x, at.y, 6, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
+  const chevron = [
+    { x: at.x, y: at.y - 36 }, { x: at.x + 27, y: at.y + 24 }, { x: at.x, y: at.y + 9 }, { x: at.x - 27, y: at.y + 24 }, { x: at.x, y: at.y - 36 },
+  ];
+  const trace = (): void => { ctx.beginPath(); chevron.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)); };
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.strokeStyle = "#000"; ctx.lineWidth = 12; trace(); ctx.stroke();
+  ctx.fillStyle = "#fff"; trace(); ctx.fill();
+}
+
+/** A small compass top right: the needle points to north wherever the map is turned to. */
+function drawCompass(ctx: MapContext, width: number, bearing: number | null): void {
+  const centre = { x: width - 44, y: 52 };
+  const phi = (-(bearing ?? 0) * Math.PI) / 180;
+  const north = { x: Math.sin(phi), y: -Math.cos(phi) };
+  const side = { x: Math.cos(phi), y: Math.sin(phi) };
+  ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(centre.x, centre.y, 24, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#808080"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(centre.x, centre.y, 24, 0, Math.PI * 2); ctx.stroke();
+  const tip = { x: centre.x + north.x * 20, y: centre.y + north.y * 20 };
+  const base = { x: centre.x - north.x * 3, y: centre.y - north.y * 3 };
+  ctx.fillStyle = "#fff"; ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y); ctx.lineTo(base.x + side.x * 9, base.y + side.y * 9); ctx.lineTo(base.x - side.x * 9, base.y - side.y * 9); ctx.lineTo(tip.x, tip.y);
+  ctx.fill();
+  ctx.font = "bold 18px sans-serif";
+  ctx.fillText("N", centre.x + north.x * 37 - 6, centre.y + north.y * 37 + 6);
+}
 
 /**
- * Draws streets, route, position marker, destination square, optional
- * next-manoeuvre ring and north arrow. An empty route draws only the
- * background; no streets means the route alone, never a fake grid.
+ * Draws the whole map. An empty route draws only the background, the car and
+ * the plate; no streets means the route alone.
  */
-export function drawRoute(
-  ctx: MapContext,
-  points: readonly LatLng[],
-  position: LatLng | null,
-  width: number,
-  height: number,
-  next: LatLng | null = null,
-  streets: readonly StreetSegment[] = [],
-): void {
+export function drawMap(ctx: MapContext, scene: MapScene, width = MAP_WIDTH, height = MAP_HEIGHT): void {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
+  const toPixel = mapProjector(scene.view);
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
 
-  const pixels = project(points, width, height, PADDING);
-  if (pixels.length && streets.length) {
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
+  if (scene.route.length && scene.streets.length) {
     for (const cls of STREET_ORDER) {
-      const style = STREET_STYLE[cls];
-      const own = streets.filter((segment) => segment.cls === cls);
+      const own = scene.streets.filter((street) => street.cls === cls);
       if (!own.length) continue;
-      // One path per class: hundreds of tiny strokes cost far more than one.
+      const style = STREET_STYLE[cls];
       ctx.strokeStyle = style.color; ctx.lineWidth = style.width;
+      // One path per class: hundreds of tiny strokes cost far more than one.
       ctx.beginPath();
-      for (const segment of own) { ctx.moveTo(segment.from.x, segment.from.y); ctx.lineTo(segment.to.x, segment.to.y); }
+      for (const street of own) polyline(ctx, street.points.map(toPixel), 1.5);
       ctx.stroke();
     }
   }
 
+  const pixels = scene.route.map(toPixel);
   if (pixels.length) {
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    if (streets.length) {
+    if (scene.streets.length) {
       // A black edge keeps the route readable where it runs along a street.
-      ctx.strokeStyle = "#000"; ctx.lineWidth = 14;
-      ctx.beginPath();
-      pixels.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
-      ctx.stroke();
+      ctx.strokeStyle = "#000"; ctx.lineWidth = ROUTE_EDGE;
+      ctx.beginPath(); polyline(ctx, pixels, 2); ctx.stroke();
     }
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 8;
-    ctx.beginPath();
-    pixels.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
-    ctx.stroke();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = ROUTE_WIDTH;
+    ctx.beginPath(); polyline(ctx, pixels, 2); ctx.stroke();
   }
 
-  const turn = next && pixels.length ? nearestPixel(next, points, pixels) : undefined;
-  if (turn) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(turn.x, turn.y, 14, 0, Math.PI * 2); ctx.stroke(); }
-
-  const marker = position ? nearestPixel(position, points, pixels) : pixels[0];
-  if (marker) {
-    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(marker.x, marker.y, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(marker.x, marker.y, 4, 0, Math.PI * 2); ctx.fill();
+  if (scene.next && pixels.length) {
+    const turn = toPixel(scene.next);
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 9; ctx.beginPath(); ctx.arc(turn.x, turn.y, 24, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(turn.x, turn.y, 24, 0, Math.PI * 2); ctx.stroke();
   }
 
   const end = pixels[pixels.length - 1];
-  if (end) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.strokeRect(end.x - 9, end.y - 9, 18, 18); }
+  if (end) {
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 9; ctx.strokeRect(end.x - 13, end.y - 13, 26, 26);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.strokeRect(end.x - 13, end.y - 13, 26, 26);
+  }
 
-  const north = northArrow(width);
-  ctx.fillStyle = "#fff"; ctx.font = "bold 18px sans-serif"; ctx.fillText("N", north.label.x, north.label.y);
-  ctx.beginPath();
-  north.triangle.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
-  ctx.fill();
+  // The map is centred on the car, so the car is always at the marker place.
+  drawCar(ctx, MARKER_AT, scene.view.bearing !== null);
+
+  drawCompass(ctx, width, scene.view.bearing);
+
+  // The plate goes last, over everything, so the text on it always reads.
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, PLATE.width, PLATE.height);
+  ctx.strokeStyle = "#606060"; ctx.lineWidth = 2; ctx.strokeRect(0, 0, PLATE.width, PLATE.height);
 }
 
-export async function renderRoutePng(
-  points: readonly LatLng[],
-  position: LatLng | null,
-  next: LatLng | null = null,
-  width = OVERVIEW_WIDTH,
-  height = OVERVIEW_HEIGHT,
-  streets: readonly StreetSegment[] = [],
-): Promise<Uint8Array> {
-  const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+/** The map as four PNG tiles in {@link MAP_TILES} order. */
+export async function renderMapTiles(scene: MapScene): Promise<Uint8Array[]> {
+  const canvas = document.createElement("canvas"); canvas.width = MAP_WIDTH; canvas.height = MAP_HEIGHT;
   const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("2d canvas unavailable");
-  drawRoute(ctx, points, position, width, height, next, streets);
-  const blob: Blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encode failed")), "image/png"));
-  return new Uint8Array(await blob.arrayBuffer());
+  drawMap(ctx, scene, MAP_WIDTH, MAP_HEIGHT);
+  const tiles: Uint8Array[] = [];
+  for (const tile of MAP_TILES) {
+    const part = document.createElement("canvas"); part.width = TILE_WIDTH; part.height = TILE_HEIGHT;
+    const partCtx = part.getContext("2d"); if (!partCtx) throw new Error("2d canvas unavailable");
+    partCtx.drawImage(canvas, tile.x, tile.y, TILE_WIDTH, TILE_HEIGHT, 0, 0, TILE_WIDTH, TILE_HEIGHT);
+    const blob: Blob = await new Promise((resolve, reject) => part.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encode failed")), "image/png"));
+    tiles.push(new Uint8Array(await blob.arrayBuffer()));
+  }
+  return tiles;
 }
