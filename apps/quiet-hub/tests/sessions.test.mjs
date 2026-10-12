@@ -243,6 +243,33 @@ describe("Hermes controller", () => {
     expect(items[1].title).toBe("(ohne Titel)");
   });
 
+  it("reads full titles newest-first from state.db and falls back to the CLI table", async () => {
+    const now = Math.round(Date.now() / 1000);
+    const rows = [["b", "Nenne eine Hauptstadt in Europa", now - 600], ["a", "", now - 3600]];
+    const calls = [];
+    const spawn = (bin, args) => {
+      calls.push(bin);
+      const child = fakeChild();
+      setImmediate(() => { if (bin === "python3") child.emitLines(JSON.stringify(rows)); child.exit(0); });
+      return child;
+    };
+    const c = createController({ id: "h", kind: "hermes", mode: "auto" }, { spawn });
+    cleanup.push(() => c.close());
+    const list = await c.sessions();
+    expect(calls).toEqual(["python3"]);
+    expect(list.items.map((i) => i.title)).toEqual(["Nenne eine Hauptstadt in Europa", "(ohne Titel)"]);
+    expect(list.items[0].when).toBe("10m");
+
+    const failing = (bin) => {
+      const child = fakeChild();
+      setImmediate(() => { if (bin !== "python3") child.emitLines("x  y  2m ago  20261012_202513_d7b925"); child.exit(bin === "python3" ? 1 : 0); });
+      return child;
+    };
+    const d = createController({ id: "h2", kind: "hermes", mode: "auto" }, { spawn: failing });
+    cleanup.push(() => d.close());
+    expect((await d.sessions()).items[0].id).toBe("20261012_202513_d7b925");
+  });
+
   it("legacy agent.url configs still mean 'use the bridge'", async () => {
     const b = fakeBridge();
     const c = createController({ id: "h", kind: "hermes", mode: "auto", url: "ws://x", tokenEnv: "EVENHUB_BRIDGE_TOKEN" }, ctxFor(b));

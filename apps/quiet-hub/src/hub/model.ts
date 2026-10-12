@@ -719,7 +719,7 @@ function agentAskRows(model: HubModel, locale: Locale): string[] {
     if ((agent.lastQuestion ?? "") !== "") rows.push(fit(tr(messages, locale, "agent.you", { text: agent.lastQuestion ?? "" })));
     const answer = (agent.answer ?? "") !== ""
       ? wrap(agent.answer ?? "")
-      : agent.error !== null ? wrap(agent.error) : agent.busy ? [tr(messages, locale, "agent.busy")] : [];
+      : agent.error !== null ? wrap(agent.error) : [];
     const tool = agent.busy ? [fit(agent.activity !== "" ? tr(messages, locale, "tool.line", { text: agent.activity }) : tr(messages, locale, "tool.thinking"))] : [];
     // The newest words matter while streaming: show the tail.
     const room = 7 - rows.length - (agent.stopped === true ? 1 : 0) - tool.length;

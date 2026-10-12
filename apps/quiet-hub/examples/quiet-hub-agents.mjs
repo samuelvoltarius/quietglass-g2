@@ -368,7 +368,30 @@ export function createHermesController(agent, ctx) {
     }).then((res) => ({ ...res, out }));
   };
 
+  /**
+   * Full titles, newest activity first, straight from Hermes' SQLite store
+   * (read-only). The CLI table cuts titles at 26 characters and sorts by start
+   * time, so it is only the fallback. Cron runs are not conversations.
+   */
+  async function dbSessions() {
+    const db = agent.stateDb ?? join(process.env.HERMES_HOME ?? join(homedir(), ".hermes"), "state.db");
+    const script = [
+      "import json,sqlite3,sys",
+      "c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)",
+      "q=\"select id,coalesce(title,''),coalesce(last_activity_at,started_at) from sessions where coalesce(archived,0)=0 and coalesce(hidden,0)=0 and source!='cron' and message_count>0 order by 3 desc limit ?\"",
+      "print(json.dumps([list(r) for r in c.execute(q,(int(sys.argv[2]),))]))",
+    ].join("\n");
+    let out = "";
+    const res = await runProcess({
+      spawn: ctx.spawn, bin: agent.python ?? "python3", args: ["-c", script, db, String(SESSION_LIMIT)], env: childEnv(), timeoutMs: 10_000, killOptions: ctx.killOptions,
+      onLine: (line) => { out += line; },
+    });
+    if (res.code !== 0) throw new Error("state.db unreadable");
+    return JSON.parse(out).map(([id, title, updated]) => ({ id, title: oneLine(title, 60) || "(ohne Titel)", updated: Math.round(updated), when: whenShort(updated) }));
+  }
+
   async function cliSessions() {
+    try { return await dbSessions(); } catch { /* CLI fallback below */ }
     const res = await runCli(["sessions", "list", "--limit", String(SESSION_LIMIT)], { timeoutMs: 40_000 });
     if (res.code !== 0 && res.out.trim() === "") throw new Error(oneLine(res.stderr || "hermes sessions failed", 120));
     return parseHermesSessions(res.out).slice(0, SESSION_LIMIT);
