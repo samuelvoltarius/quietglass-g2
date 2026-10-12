@@ -179,6 +179,20 @@ describe("Hermes controller", () => {
     expect(c.transport()).toBe("cli");
   });
 
+  it("a bridge that ends the turn without any reply (unpaired device) hands the prompt to the CLI", async () => {
+    const b = fakeBridge();
+    const send = b.FakeWS.prototype.send;
+    b.FakeWS.prototype.send = function patched(raw) {
+      if (JSON.parse(raw).t === "text") { this.reply({ t: "turn.done" }); return; }
+      send.call(this, raw);
+    };
+    const spawn = () => { const child = fakeChild(); setImmediate(() => { child.emitLines("Servus"); child.exit(0); }); return child; };
+    const c = createController(bridgeAgent(), ctxFor(b, spawn));
+    cleanup.push(() => c.close());
+    const out = await c.run({ prompt: "Hallo", sessionId: null, fresh: false, signal: new AbortController().signal }, () => undefined);
+    expect(out).toMatchObject({ status: "done", text: "Servus", transport: "cli" });
+  });
+
   it("select returns the last exchange for the glasses", async () => {
     const b = fakeBridge();
     const c = createController(bridgeAgent(), ctxFor(b));

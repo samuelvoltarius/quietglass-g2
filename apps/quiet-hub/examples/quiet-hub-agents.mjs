@@ -381,6 +381,7 @@ export function createHermesController(agent, ctx) {
       let text = "";
       let settled = false;
       let stopping = false;
+      let toolSeen = false;
       const finish = (result) => {
         if (settled) return;
         settled = true;
@@ -392,11 +393,12 @@ export function createHermesController(agent, ctx) {
       const unsubscribe = bridge.subscribe((m) => {
         if (m.t === "assistant.delta") { text = clip(text + String(m.text ?? ""), MAX_TEXT); emit({ text, activity: "" }); }
         else if (m.t === "assistant" && typeof m.text === "string") { text = clip(m.text, MAX_TEXT); emit({ text, activity: "" }); }
-        else if (m.t === "tool.start") emit({ text, activity: oneLine(`${m.name ?? "tool"} ${m.label ?? ""}`, 80) });
+        else if (m.t === "tool.start") { toolSeen = true; emit({ text, activity: oneLine(`${m.name ?? "tool"} ${m.label ?? ""}`, 80) }); }
         else if (m.t === "tool.end") emit({ text, activity: "" });
         else if (m.t === "turn.done") {
           if (stopping) finish({ status: "cancelled", text });
           // An unpaired device only gets a pairing prompt back: say so instead of showing it as an answer.
+          else if (text === "" && !toolSeen) finish({ status: "error", text: "", pairing: true, error: "Bridge antwortet nicht (nicht gekoppelt?)" });
           else if (PAIRING_REPLY.test(text) && text.length < 800) finish({ status: "error", text: "", pairing: true, error: "Bridge nicht gekoppelt: hermes pairing approve even_g2 <id>" });
           else finish({ status: "done", text: text || "(keine Antwort)" });
         }
