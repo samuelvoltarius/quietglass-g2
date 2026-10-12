@@ -11,7 +11,7 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
@@ -35,7 +35,7 @@ async function boot(): Promise<void> {
   let cursor = 0;
   let lastView: StatusView | null = null;
   let pageReady = false;
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
 
   // The actions screen is a separate mode. Monitoring is something you glance
   // at; triggering something in your house is deliberate, so a stray tap on the
@@ -292,7 +292,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       // The glasses follow straight away, not on the next poll.
       void draw();
     },
