@@ -1,7 +1,7 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { createClient, createDemoPrinter, toApiError, type PrinterApi } from "./printer/client";
 import type { Command, PrinterStatus } from "./printer/status";
-import { getLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
 import { t } from "./messages";
 import { sameView } from "./glasses/diff";
@@ -23,7 +23,7 @@ const MESSAGE_MS = 5_000;
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
   let settings: Settings = await loadSettings(bridge);
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
 
   const makeApi = (): PrinterApi | null => {
     if (DEMO) return createDemoPrinter();
@@ -296,6 +296,7 @@ async function boot(): Promise<void> {
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
+      rememberLocale(bridge, next);
       void draw();
     },
   });

@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/klipper-glance",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "Quietglass Klipper Glance — Klipper/Moonraker print status at a glance, with confirmed pause, resume and cancel",
   "author": "Quietglass",
   "license": "MIT",
