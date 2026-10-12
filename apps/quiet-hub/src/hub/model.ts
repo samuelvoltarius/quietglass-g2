@@ -737,10 +737,12 @@ function agentAskRows(model: HubModel, locale: Locale, now: number): string[] {
       const you = wrap(tr(messages, locale, "agent.you", { text: agent.lastQuestion ?? "" }));
       rows.push(...(you.length > 2 ? [you[0] ?? "", fit(`${you[1] ?? ""} ${you.slice(2).join(" ")}`)] : you));
     }
-    const answer = (agent.answer ?? "") !== ""
+    const answer: string[] = (agent.answer ?? "") !== ""
       ? wrap(agent.answer ?? "")
       : agent.error !== null ? wrap(agent.error) : [];
     const tool = agent.busy ? [workingLine(agent, locale, now)] : [];
+    // No words yet: the finished steps show that the agent is getting somewhere.
+    if (agent.busy && answer.length === 0) answer.push(...doneSteps(agent, locale));
     // The newest words matter while streaming: show the tail.
     const room = 7 - rows.length - (agent.stopped === true ? 1 : 0) - tool.length;
     if (room > 0) rows.push(...answer.slice(-room));
@@ -986,4 +988,14 @@ export function workingLine(agent: AgentInfo, locale: Locale, now: number): stri
 function busyShort(agent: AgentInfo, locale: Locale, now: number): string {
   const label = describeActivity(agent.activity, locale).label;
   return typeof agent.busySince === "number" && agent.busySince > 0 ? `${label} · ${elapsedShort(now - agent.busySince)}` : label;
+}
+
+/** "✓ Führt Befehl aus · find /etc" for each step the agent already finished (not the running one). */
+function doneSteps(agent: AgentInfo, locale: Locale): string[] {
+  const steps = agent.steps ?? [];
+  const finished = agent.activity !== "" && steps.at(-1) === agent.activity ? steps.slice(0, -1) : steps;
+  return finished.map((step) => {
+    const activity = describeActivity(step, locale);
+    return fit(`· ${activity.label}${activity.detail !== "" ? ` · ${activity.detail}` : ""}`);
+  });
 }

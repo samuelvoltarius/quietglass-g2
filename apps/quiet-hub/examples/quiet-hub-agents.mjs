@@ -410,6 +410,26 @@ export function createHermesController(agent, ctx) {
     return JSON.parse(out).map(([id, title, updated]) => ({ id, title: oneLine(title, 60) || "(ohne Titel)", updated: Math.round(updated), when: whenShort(updated) }));
   }
 
+  /** The last spoken turns of a session (read-only from state.db), for reopening it on the glasses. */
+  async function dbHistory(id) {
+    const db = agent.stateDb ?? join(process.env.HERMES_HOME ?? join(homedir(), ".hermes"), "state.db");
+    const script = [
+      "import json,sqlite3,sys",
+      "c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)",
+      "q=\"select role,content from messages where session_id=? and role in ('user','assistant') and coalesce(content,'')!='' order by id desc limit 12\"",
+      "print(json.dumps([list(r) for r in c.execute(q,(sys.argv[2],))][::-1]))",
+    ].join("\n");
+    let out = "";
+    const res = await runProcess({
+      spawn: ctx.spawn, bin: agent.python ?? "python3", args: ["-c", script, db, id], env: childEnv(), timeoutMs: 10_000, killOptions: ctx.killOptions,
+      onLine: (line) => { out += line; },
+    });
+    if (res.code !== 0) throw new Error("state.db unreadable");
+    // Drop the glasses' own style hint that the hub appends to every question.
+    const history = JSON.parse(out).map(([role, text]) => ({ role, text: String(text).replace(/\n\n\(Antworte [^)]*\)\s*$/, "") }));
+    return { ...exchange(history), history: history.slice(-8) };
+  }
+
   async function cliSessions() {
     try { return await dbSessions(); } catch { /* CLI fallback below */ }
     const res = await runCli(["sessions", "list", "--limit", String(SESSION_LIMIT)], { timeoutMs: 40_000 });
@@ -541,11 +561,12 @@ export function createHermesController(agent, ctx) {
       if (await bridgeUp()) {
         try {
           const history = await bridge.switchSession(id);
-          return exchange(history.map((h) => ({ role: h.role, text: h.text })));
+          const turns = history.map((h) => ({ role: h.role, text: h.text }));
+          return { ...exchange(turns), history: turns.slice(-8) };
         } catch { transport = "cli"; }
       }
       cliSession = id;
-      return { lastUser: null, lastAssistant: null };
+      return dbHistory(id).catch(() => ({ lastUser: null, lastAssistant: null }));
     },
     close() { bridge?.dispose(); },
   };

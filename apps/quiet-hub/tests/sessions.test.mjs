@@ -197,7 +197,7 @@ describe("Hermes controller", () => {
     const b = fakeBridge();
     const c = createController(bridgeAgent(), ctxFor(b));
     cleanup.push(() => c.close());
-    expect(await c.select("s-2")).toEqual({ lastUser: "Frage?", lastAssistant: "Antwort!" });
+    expect(await c.select("s-2")).toMatchObject({ lastUser: "Frage?", lastAssistant: "Antwort!" });
   });
 
   it("lists sessions through the bridge, and the token never shows up in results", async () => {
@@ -560,5 +560,17 @@ describe("hermes stream-json lines", () => {
     expect(parseHermesStreamLine('{"type":"result","session_id":"S","text":"Fertig"}')).toEqual({ final: "Fertig", sessionId: "S" });
     expect(parseHermesStreamLine('{"type":"system","session_id":"S"}')).toEqual({ sessionId: "S" });
     expect(parseHermesStreamLine("kein json")).toBeNull();
+  });
+});
+
+describe("reopening a Hermes CLI session", () => {
+  it("reads its last turns from state.db and strips the glasses style hint", async () => {
+    const rows = [["user", "Wie warm?\n\n(Antworte knapp auf Deutsch, ohne Markdown.)"], ["assistant", "20 Grad."], ["user", "Und morgen?"], ["assistant", "18 Grad."]];
+    const spawn = (bin) => { const child = fakeChild(); setImmediate(() => { if (bin === "python3") child.emitLines(JSON.stringify(rows)); child.exit(0); }); return child; };
+    const c = createController({ id: "h", kind: "hermes", mode: "auto" }, { spawn });
+    cleanup.push(() => c.close());
+    const out = await c.select("S");
+    expect(out).toMatchObject({ lastUser: "Und morgen?", lastAssistant: "18 Grad." });
+    expect(out.history[0]).toEqual({ role: "user", text: "Wie warm?" });
   });
 });

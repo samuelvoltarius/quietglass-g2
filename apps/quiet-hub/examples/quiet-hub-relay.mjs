@@ -44,7 +44,7 @@ import { createController, clip, oneLine, sleep, nodeSpawn } from "./quiet-hub-a
 export * from "./quiet-hub-agents.mjs";
 export const SEND_TEXT = 4_000; // tail that is sent to the hub
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BRIEF_DE = "\n\n(Antworte knapp auf Deutsch, höchstens etwa 280 Zeichen, ohne Markdown.)";
+const BRIEF_DE = "\n\n(Antworte knapp auf Deutsch, ohne Markdown.)";
 
 // ---------------------------------------------------------------- config
 

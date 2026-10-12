@@ -23,3 +23,17 @@ describe("readable agent activity", () => {
     expect(workingLine(agent, "de", 24_000)).toMatch(/^» Führt Tests aus\.{1,3} *· 23 s · npm test$/);
   });
 });
+
+describe("finished steps while there are no words yet", () => {
+  it("lists earlier steps above the running one", async () => {
+    const { buildView } = await import("../src/hub/model");
+    const { demoReport } = await import("../src/api/demo");
+    const base = demoReport();
+    const report = { ...base, agents: base.agents.map((a, i) => (i === 0 ? { ...a, busy: true, answer: "", lastQuestion: "Zähl", activity: "terminal: wc -l", steps: ["terminal: find /etc", "terminal: wc -l"], suggestions: [] } : a)) };
+    const { createModel } = await import("../src/hub/model");
+    const m = { ...createModel(report), screen: "agent" as const, agentView: "ask" as const };
+    const body = buildView(m, "de", 0).body;
+    expect(body.some((r) => r.startsWith("· Führt Befehl aus · find /etc"))).toBe(true);
+    expect(body.some((r) => r.startsWith("» Führt Befehl aus"))).toBe(true);
+  });
+});

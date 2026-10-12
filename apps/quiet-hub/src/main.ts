@@ -23,9 +23,11 @@ const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") 
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
 const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) ?? "default";
 const POLL_MS = 5000;
+/** While an agent works, ask more often so its steps and words keep moving. */
+const BUSY_POLL_MS = 1500;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.5.5";
+const BUILD = "0.5.6";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -478,7 +480,7 @@ async function boot(): Promise<void> {
       try {
         applyReport(await api.report());
         await draw();
-        pollTimer = setTimeout(() => void poll(), POLL_MS);
+        pollTimer = setTimeout(() => void poll(), model.report.agents.some((agent) => agent.busy) ? BUSY_POLL_MS : POLL_MS);
         return { ok: true, persisted: saved.persisted, problem: null };
       } catch (error) {
         markFailure(error);

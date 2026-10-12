@@ -290,6 +290,7 @@ export function createHub(options = {}) {
     jobs.set(job.id, job);
     agent.busy = true;
     agent.busySince = job.startedAt;
+    agent.steps = [];
     agent.jobId = job.id;
     agent.answer = "";
     agent.activity = "";
@@ -323,15 +324,35 @@ export function createHub(options = {}) {
     }
   }
 
+  /** The reopened session's last answer first, then the turns before it (newest first), so page 1 is what matters. */
+  function withEarlier(last, history) {
+    const turns = Array.isArray(history) ? history.filter((t) => t && typeof t.text === "string" && t.text.trim() !== "") : [];
+    const lastUser = turns.map((t) => t.role).lastIndexOf("user");
+    const earlier = turns.slice(0, Math.max(0, lastUser)).reverse();
+    if (earlier.length === 0) return last;
+    const lines = earlier.map((t) => (t.role === "user" ? `Du: ${t.text.trim()}` : t.text.trim()));
+    return `${last}\n\n— früher —\n\n${lines.join("\n\n")}`;
+  }
+
+  /**
+   * Tool steps are often over in milliseconds, far below the glasses' poll
+   * interval: keep the last few so the glasses can still show what happened.
+   */
+  function noteActivity(agent, activity) {
+    const text = typeof activity === "string" ? activity.slice(0, 80) : "";
+    if (text !== "" && text !== agent.steps?.at(-1)) agent.steps = [...(agent.steps ?? []), text].slice(-6);
+    agent.activity = text;
+  }
+
   function runLocal(job, agent) {
-    // Keep glasses answers short: three wrapped rows at most.
-    const prompt = `${job.question}\n\n(Antworte auf Deutsch in einem kurzen Satz von höchstens 110 Zeichen. Schreibe keine Zeichenzahl und keine Meta-Kommentare in die Antwort.)`;
+    // Glasses-friendly, but not cut short: the glasses page long answers.
+    const prompt = `${job.question}\n\n(Antworte knapp auf Deutsch, ohne Markdown.)`;
     const abort = new AbortController();
     agent.abort = abort;
     const emit = (update) => {
       if (job.done) return;
       agent.answer = clipTail(String(update.text ?? ""), 4000);
-      agent.activity = String(update.activity ?? "").slice(0, 80);
+      noteActivity(agent, update.activity);
     };
     localController.run({ prompt, sessionId: job.sessionId, fresh: job.fresh, title: job.question.slice(0, 40), signal: abort.signal }, emit)
       .catch((error) => ({ status: "error", text: "", error: String(error?.message ?? error) }))
@@ -495,7 +516,7 @@ export function createHub(options = {}) {
   // ------------------------------------------------------------- report
   const agentInfo = (agent) => ({
     id: agent.id, label: agent.label, kind: agent.kind, machine: agent.machine, mode: agent.mode,
-    online: isOnline(agent), busy: agent.busy, busySince: agent.busy ? agent.busySince ?? null : null, activity: agent.activity, error: agent.error,
+    online: isOnline(agent), busy: agent.busy, busySince: agent.busy ? agent.busySince ?? null : null, steps: agent.busy ? agent.steps ?? [] : [], activity: agent.activity, error: agent.error,
     answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions, suggesting: agent.suggesting === true,
     transport: agent.transport, sessionsSupported: agent.sessionsSupported,
     session: agent.session ? { id: agent.session.id, title: agent.session.title } : null,
@@ -741,7 +762,7 @@ export function createHub(options = {}) {
         agent.lastQuestion = null;
       } else {
         setSession(agent, { id: body.sessionId, title: typeof body.title === "string" ? body.title.slice(0, 60) : "", fresh: false });
-        agent.answer = typeof data.lastAssistant === "string" ? clipTail(data.lastAssistant, 4000) : null;
+        agent.answer = typeof data.lastAssistant === "string" ? clipTail(withEarlier(data.lastAssistant, data.history), 4000) : null;
         agent.lastQuestion = typeof data.lastUser === "string" ? data.lastUser.slice(0, 200) : null;
       }
       log(isNew ? "session new:" : "session select:", agent.id);
@@ -798,7 +819,7 @@ export function createHub(options = {}) {
       if (agent && status === "cancelled" && job.cancelRequested) agent.stopConfirmed = true;
       const body = typeof text === "string" ? clipTail(text, 4000) : "";
       if (status === "running") {
-        if (agent && !job.done) { agent.answer = body; agent.activity = typeof activity === "string" ? activity.slice(0, 80) : ""; }
+        if (agent && !job.done) { agent.answer = body; noteActivity(agent, activity); }
       } else if (status === "done" || status === "error" || status === "cancelled") {
         finishJob(job, status, body, typeof error === "string" ? error : null);
       } else {
