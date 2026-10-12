@@ -130,7 +130,7 @@ describe("speech never reads secrets or commands", () => {
   });
 });
 
-describe("the glasses view stays inside 7 rows of 46 characters", () => {
+describe("the glasses view stays inside 7 rows of 56 characters", () => {
   const base: AgentState = { ...EMPTY_STATE, session: SESSION };
   const fits = (state: AgentState): void => {
     const view = buildView(state, NOW, "en");

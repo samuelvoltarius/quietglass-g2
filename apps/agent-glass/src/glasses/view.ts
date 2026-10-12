@@ -22,7 +22,7 @@ export interface AgentView {
   readonly footer: string;
 }
 
-export const LINE_WIDTH = 46;
+export const LINE_WIDTH = 56;
 export const BODY_ROWS = 7;
 
 /** Wraps text to the display width, keeping words intact. */
@@ -81,7 +81,7 @@ export function clip(text: string, width: number = LINE_WIDTH): string {
 }
 
 /** Shortens a session title to something readable in one glance. */
-export function shortTitle(title: string, width = 40): string {
+export function shortTitle(title: string, width = 52): string {
   return title.length <= width ? title : title.slice(0, width - 1) + "…";
 }
 
@@ -185,7 +185,7 @@ export function sessionList(
       const index = Math.max(0, first) + offset;
       const cursor = index === selected ? ">" : " ";
       const busy = session.status && session.status !== "idle" ? " *" : "";
-      return `${cursor} ${shortTitle(session.title, 38)}${busy}`.slice(0, LINE_WIDTH);
+      return `${cursor} ${shortTitle(session.title, 50)}${busy}`.slice(0, LINE_WIDTH);
     }),
     footer: t(locale, "g.selectOpen"),
   };

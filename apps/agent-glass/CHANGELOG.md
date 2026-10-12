@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.4] — 2026-10-13
+
+### Changed
+
+- Glasses text now uses the full display width (56 characters per row instead of 46) for the agent text, permission details and session titles.
+
 ## [0.5.3] — 2026-10-13
 
 ### Fixed
