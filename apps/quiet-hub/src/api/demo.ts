@@ -7,7 +7,7 @@
  * or the English screenshots would show German content.
  */
 import type { Locale } from "../i18n";
-import type { AgentInfo, HubApi, HubReport } from "./types";
+import type { AgentInfo, HubApi, HubReport, SessionInfo } from "./types";
 
 interface DemoDevice {
   readonly id: string;
@@ -145,7 +145,21 @@ export function createDemoApi(locale: Locale = "de"): HubApi {
       report = { ...report, approvals: report.approvals.filter((card) => card.id !== cardId) };
     },
     cancel: async (agentId) => {
-      report = { ...report, agents: report.agents.map((a) => a.id === agentId ? { ...a, busy: false } : a) };
+      report = { ...report, agents: report.agents.map((a) => a.id === agentId ? { ...a, busy: false, stopped: true } : a) };
+    },
+    sessions: async (agentId) => {
+      const current = report.agents.find((a) => a.id === agentId)?.session?.id ?? null;
+      const rows: ReadonlyArray<readonly [string, string, string]> = locale === "de"
+        ? [["d-1", "Drucker-Check", "10m"], ["d-2", "Wochenplan", "2h"], ["d-3", "Server-RAM", "3d"]]
+        : [["d-1", "Printer check", "10m"], ["d-2", "Weekly plan", "2h"], ["d-3", "Server RAM", "3d"]];
+      const sessions: SessionInfo[] = rows.map(([id, title, when]) => ({ id, title, when, current: id === current }));
+      return { agentId, supported: true, transport: "demo", sessions };
+    },
+    newSession: async (agentId) => {
+      report = { ...report, agents: report.agents.map((a) => a.id === agentId ? { ...a, answer: null, lastQuestion: null, stopped: false, suggestions: [], session: { id: null, title: "" } } : a) };
+    },
+    selectSession: async (agentId, sessionId, title) => {
+      report = { ...report, agents: report.agents.map((a) => a.id === agentId ? { ...a, stopped: false, session: { id: sessionId, title } } : a) };
     },
     toggle: async (deviceId: string) => {
       report = {

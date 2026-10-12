@@ -8,7 +8,7 @@
  * API keys on the device.
  */
 import { normalizeReport } from "./normalize";
-import type { HubApi, HubReport } from "./types";
+import type { HubApi, HubReport, SessionList } from "./types";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -58,6 +58,13 @@ export function createClient(options: ClientOptions): HubApi {
     },
     cancel: async (agentId) => {
       await call("/agent/cancel", { method: "POST", body: JSON.stringify({ agentId }) });
+    },
+    sessions: async (agentId) => call<SessionList>(`/agent/sessions?agentId=${encodeURIComponent(agentId)}`),
+    newSession: async (agentId) => {
+      await call("/agent/session/new", { method: "POST", body: JSON.stringify({ agentId }) });
+    },
+    selectSession: async (agentId, sessionId, title) => {
+      await call("/agent/session/select", { method: "POST", body: JSON.stringify({ agentId, sessionId, title }) });
     },
     toggle: async (device) => {
       await call("/home/toggle", { method: "POST", body: JSON.stringify({ device }) });

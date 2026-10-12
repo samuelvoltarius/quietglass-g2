@@ -45,6 +45,29 @@ export interface AgentInfo {
   readonly answer: string | null;
   readonly lastQuestion: string | null;
   readonly suggestions: readonly string[];
+  /** "bridge" (Hermes evenhub-bridge), "cli", "app-server", "exec" or "http"; empty when unknown. */
+  readonly transport?: string;
+  /** The session prompts go to; id null = a new one the first prompt will create. */
+  readonly session?: { readonly id: string | null; readonly title: string } | null;
+  /** The last run was stopped by the wearer (real interrupt). */
+  readonly stopped?: boolean;
+  readonly sessionsSupported?: boolean;
+}
+
+/** One entry of an agent's session list. */
+export interface SessionInfo {
+  readonly id: string;
+  readonly title: string;
+  /** Short age such as "10m", "2h", "3d". */
+  readonly when: string;
+  readonly current: boolean;
+}
+
+export interface SessionList {
+  readonly agentId: string;
+  readonly supported: boolean;
+  readonly transport: string;
+  readonly sessions: readonly SessionInfo[];
 }
 
 /** A permission request waiting for a yes/no on the glasses. */
@@ -131,7 +154,11 @@ export interface HubApi {
   /** WAV bytes from the glasses → transcript (self-hosted Whisper) → asked. */
   voice(wav: Uint8Array, agentId?: string): Promise<{ question: string }>;
   approve(cardId: string, decision: "allow" | "deny"): Promise<void>;
+  /** Real stop: the agent is interrupted, not just forgotten. */
   cancel(agentId: string): Promise<void>;
+  sessions(agentId: string): Promise<SessionList>;
+  newSession(agentId: string): Promise<void>;
+  selectSession(agentId: string, sessionId: string, title: string): Promise<void>;
   toggle(deviceId: string): Promise<void>;
   printer(action: "pause" | "resume" | "cancel"): Promise<void>;
   readEvent(id: string): Promise<void>;

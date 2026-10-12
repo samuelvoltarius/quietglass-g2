@@ -3,16 +3,20 @@
  *
  * The root page is a conventional menu: swipe selects and tap opens. Inside a
  * page, swipe selects and tap acts; risky home/printer actions require a
- * second tap. Double tap goes back, except on root where Even requires the
- * native exit dialog. The agent page lists every agent (swipe, tap to open);
- * hold-to-talk speaks to the selected one. A pending permission card takes over
- * the agent page: tap = allow, double tap = deny.
+ * second tap. Double tap goes back one level, except on root where Even
+ * requires the native exit dialog. The agent page is three levels:
+ *   agents (list) -> sessions of that agent -> the open session (ask).
+ * Double tap climbs ask -> sessions -> agents -> overview; while an agent is
+ * running, double tap in the open session is a real STOP first. Hold-to-talk
+ * speaks into the selected session. A pending permission card takes over the
+ * agent page: tap = allow, double tap = deny. While recording, double tap
+ * discards the recording, so no state can trap the wearer.
  */
 import type { ScreenView } from "../glasses/screen";
 import { fit, marked, wrap } from "../glasses/screen";
 import { tr, type Locale } from "../i18n";
 import { messages } from "../messages";
-import type { AgentEvent, AgentInfo, Approval, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot } from "../api/types";
+import type { AgentEvent, AgentInfo, Approval, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot, SessionInfo } from "../api/types";
 import { normalizeReport } from "../api/normalize";
 
 export type Screen = "root" | "agent" | "home" | "printer" | "inbox";
@@ -36,16 +40,31 @@ export interface HubModel {
   readonly recording: boolean;
   /** Selected agent in the agent list, and which part of the agent page is open. */
   readonly agentIndex: number;
-  readonly agentView: "list" | "ask";
+  readonly agentView: "list" | "sessions" | "ask";
   readonly questionIndex: number;
+  /** Session list of the agent being browsed (null until first opened). */
+  readonly sessions: SessionsState | null;
+  /** Selected row of the session page: 0 = new, 1 = continue, 2.. = listed sessions. */
+  readonly sessionIndex: number;
   /** Agent the running recording was started for. */
   readonly recordAgent: string | null;
+}
+
+export interface SessionsState {
+  readonly agentId: string;
+  readonly status: "loading" | "ready" | "error" | "unsupported";
+  readonly items: readonly SessionInfo[];
+  readonly transport: string;
 }
 
 /** Side effects leave the model; main.ts runs them against the daemon. */
 export type Effect =
   | { readonly kind: "ask"; readonly agentId: string; readonly question: string }
   | { readonly kind: "recordStart" }
+  | { readonly kind: "recordAbort" }
+  | { readonly kind: "loadSessions"; readonly agentId: string }
+  | { readonly kind: "newSession"; readonly agentId: string }
+  | { readonly kind: "selectSession"; readonly agentId: string; readonly sessionId: string; readonly title: string }
   | { readonly kind: "recordStop"; readonly agentId: string }
   | { readonly kind: "approve"; readonly cardId: string; readonly decision: "allow" | "deny" }
   | { readonly kind: "cancel"; readonly agentId: string }
@@ -57,7 +76,7 @@ export type Effect =
 export function createModel(report: HubReport): HubModel {
   return {
     report: normalizeReport(report), screen: "root", rootSelected: 0, confirm: null, message: null, recording: false,
-    agentIndex: 0, agentView: "list", questionIndex: 0, recordAgent: null,
+    agentIndex: 0, agentView: "list", questionIndex: 0, recordAgent: null, sessions: null, sessionIndex: 1,
   };
 }
 
@@ -75,6 +94,18 @@ export function mergeReport(model: HubModel, next: HubReport): HubModel {
     },
     agentIndex: clamp(model.agentIndex, report.agents.length),
   };
+}
+
+/** Result of a session list request; stale answers for another agent are ignored. */
+export function withSessions(model: HubModel, agentId: string, state: Omit<SessionsState, "agentId">): HubModel {
+  if (selectedAgent(model)?.id !== agentId) return model;
+  const next: SessionsState = { agentId, ...state };
+  return { ...model, sessions: next, sessionIndex: Math.min(model.sessionIndex, sessionRowCount(next) - 1) };
+}
+
+/** Rows of the session page: [new, continue, ...listed]. */
+export function sessionRowCount(state: SessionsState | null): number {
+  return 2 + (state?.items.length ?? 0);
 }
 
 export function selectedAgent(model: HubModel): AgentInfo | undefined {
@@ -126,9 +157,23 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
     return { model };
   }
 
-  // While recording, nothing else may happen — a stray tap during dictation
-  // must not switch pages or fire a question.
-  if (model.recording) return { model };
+  // While recording nothing else may happen — a stray swipe during dictation
+  // must not switch pages or fire a question. The way out is always open:
+  // tap ends and sends the recording, double tap discards it.
+  if (model.recording) {
+    if (gesture === "click") {
+      const agentId = model.recordAgent ?? selectedAgent(model)?.id;
+      const next = { ...model, recording: false, recordAgent: null };
+      return agentId === undefined ? { model: next } : { model: next, effect: { kind: "recordStop", agentId } };
+    }
+    if (gesture === "doubleClick") {
+      return {
+        model: { ...model, recording: false, recordAgent: null, message: { text: tr(messages, locale, "voice.cancelled"), until: now + MESSAGE_MS } },
+        effect: { kind: "recordAbort" },
+      };
+    }
+    return { model };
+  }
 
   // A permission card owns the agent page: tap allows, double tap denies.
   const card = model.screen === "agent" ? pendingApproval(report) : undefined;
@@ -165,6 +210,9 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       if (model.agentView === "list") {
         return { model: { ...model, confirm: null, agentIndex: cycle(report.agents.length, model.agentIndex, step) } };
       }
+      if (model.agentView === "sessions") {
+        return { model: { ...model, confirm: null, sessionIndex: cycle(sessionRowCount(model.sessions), model.sessionIndex, step) } };
+      }
       const agent = selectedAgent(model);
       const items = agent === undefined ? [] : agentItems(agent, report.agent.questions);
       return { model: { ...model, confirm: null, questionIndex: cycle(items.length, model.questionIndex, step) } };
@@ -184,15 +232,20 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (gesture === "click") {
     if (model.screen === "root") {
       const target = ROOT_ITEMS[model.rootSelected] ?? "agent";
-      return { model: { ...model, screen: target, confirm: null, agentView: report.agents.length > 1 ? "list" : "ask", questionIndex: 0 } };
+      const opened: HubModel = { ...model, screen: target, confirm: null, agentView: report.agents.length > 1 ? "list" : "sessions", questionIndex: 0, sessionIndex: 1 };
+      // One agent: skip straight to its session page.
+      const only = report.agents[0];
+      if (target === "agent" && report.agents.length === 1 && only !== undefined) return openSessions({ ...opened, agentIndex: 0 }, only);
+      return { model: opened };
     }
     if (model.screen === "agent") {
       const agent = selectedAgent(model);
       if (agent === undefined) return { model };
       if (model.agentView === "list") {
         if (!agent.online) return { model: { ...model, message: { text: tr(messages, locale, "agent.offline"), until: now + MESSAGE_MS } } };
-        return { model: { ...model, agentView: "ask", questionIndex: 0, message: null } };
+        return openSessions({ ...model, message: null }, agent);
       }
+      if (model.agentView === "sessions") return chooseSession(model, agent, now, locale);
       if (agent.busy) return { model: { ...model, message: { text: tr(messages, locale, "agent.busy"), until: now + MESSAGE_MS } } };
       if (!agent.online) return { model: { ...model, message: { text: tr(messages, locale, "agent.offline"), until: now + MESSAGE_MS } } };
       const question = agentItems(agent, report.agent.questions)[model.questionIndex];
@@ -255,13 +308,50 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (model.screen === "root") return { model, effect: { kind: "exit" } };
   if (model.screen === "agent") {
     const agent = selectedAgent(model);
-    // A running agent: double tap stops it. Idle: step back out of the page.
+    // A running agent: double tap is a real stop. Idle: climb one level.
     if (agent !== undefined && agent.busy && model.agentView === "ask") {
-      return { model: { ...model, message: null }, effect: { kind: "cancel", agentId: agent.id } };
+      return {
+        model: withReport({ ...model, message: null }, patchAgent(report, agent.id, { busy: false, activity: "", stopped: true })),
+        effect: { kind: "cancel", agentId: agent.id },
+      };
     }
-    if (model.agentView === "ask" && report.agents.length > 1) return { model: { ...model, agentView: "list", message: null } };
+    if (model.agentView === "ask" && agent !== undefined) return openSessions({ ...model, message: null }, agent);
+    if (model.agentView === "sessions" && report.agents.length > 1) return { model: { ...model, agentView: "list", message: null } };
   }
   return { model: { ...model, screen: "root", confirm: null, message: null } };
+}
+
+/** Opens the session page of an agent and asks the daemon for its sessions. */
+function openSessions(model: HubModel, agent: AgentInfo): { model: HubModel; effect?: Effect } {
+  const keep = model.sessions?.agentId === agent.id ? model.sessions : null;
+  const sessions: SessionsState = keep ?? { agentId: agent.id, status: "loading", items: [], transport: agent.transport ?? "" };
+  return {
+    model: { ...model, agentView: "sessions", sessions, sessionIndex: 1, confirm: null },
+    effect: { kind: "loadSessions", agentId: agent.id },
+  };
+}
+
+/** Tap on the session page: new, continue the current one, or open a listed one. */
+function chooseSession(model: HubModel, agent: AgentInfo, now: number, locale: Locale): { model: HubModel; effect?: Effect } {
+  if (!agent.online) return { model: { ...model, message: { text: tr(messages, locale, "agent.offline"), until: now + MESSAGE_MS } } };
+  const askView: HubModel = { ...model, agentView: "ask", questionIndex: 0, message: null };
+  const busy = { model: { ...model, message: { text: tr(messages, locale, "agent.busy"), until: now + MESSAGE_MS } } };
+  if (model.sessionIndex === 0) {
+    if (agent.busy) return busy;
+    return {
+      model: withReport(askView, patchAgent(model.report, agent.id, { answer: null, lastQuestion: null, suggestions: [], stopped: false, error: null, session: { id: null, title: "" } })),
+      effect: { kind: "newSession", agentId: agent.id },
+    };
+  }
+  if (model.sessionIndex === 1) return { model: askView };
+  const listed = model.sessions?.items[model.sessionIndex - 2];
+  if (listed === undefined) return { model };
+  if (agent.session?.id === listed.id) return { model: askView };
+  if (agent.busy) return busy;
+  return {
+    model: withReport(askView, patchAgent(model.report, agent.id, { stopped: false, error: null, session: { id: listed.id, title: listed.title } })),
+    effect: { kind: "selectSession", agentId: agent.id, sessionId: listed.id, title: listed.title },
+  };
 }
 
 // ---- views ---------------------------------------------------------------
@@ -292,28 +382,57 @@ function agentListRows(model: HubModel, locale: Locale): string[] {
   if (agents.length === 0) return [tr(messages, locale, "agent.none")];
   const rows = agents.map((agent) => {
     const dot = agent.online ? "●" : "○";
-    const state = !agent.online ? ` ${tr(messages, locale, "agent.off")}` : agent.busy ? " …" : "";
+    const state = !agent.online ? ` ${tr(messages, locale, "agent.off")}` : agent.busy ? " …" : agent.stopped === true ? ` ${tr(messages, locale, "agent.stopped")}` : "";
     return fit(`${dot} ${agent.label}${state}`);
   });
   const window = windowed(rows.map((row, i) => marked(row, i === model.agentIndex)), model.agentIndex, 7);
   return window;
 }
 
+function sessionTitle(agent: AgentInfo, locale: Locale): string {
+  const title = agent.session?.title ?? "";
+  if (title !== "") return title;
+  return agent.session === null || agent.session === undefined ? "" : tr(messages, locale, "session.new");
+}
+
+function sessionRows(model: HubModel, locale: Locale): string[] {
+  const agent = selectedAgent(model);
+  if (agent === undefined) return [tr(messages, locale, "agent.none")];
+  const state = model.sessions?.agentId === agent.id ? model.sessions : null;
+  const transport = state?.transport || agent.transport || "";
+  const head = fit(`${agent.online ? "●" : "○"} ${agent.label}${transport ? ` · ${transport}` : ""}`);
+  const current = agent.session?.title ?? "";
+  const rows = [
+    tr(messages, locale, "sessions.new"),
+    current !== "" ? tr(messages, locale, "sessions.continue", { title: current }) : tr(messages, locale, "sessions.continueNone"),
+    ...(state?.items ?? []).map((item) => `${item.current || agent.session?.id === item.id ? "●" : " "} ${item.title}${item.when ? ` · ${item.when}` : ""}`),
+  ];
+  const list = windowed(rows.map((row, i) => marked(row, i === model.sessionIndex)), model.sessionIndex, 5);
+  const note = state === null || state.status === "loading" ? tr(messages, locale, "sessions.loading")
+    : state.status === "error" ? tr(messages, locale, "sessions.error")
+      : state.status === "unsupported" ? tr(messages, locale, "sessions.unsupported") : null;
+  return [head, ...list, ...(note === null ? [] : [fit(note)])];
+}
+
 function agentAskRows(model: HubModel, locale: Locale): string[] {
   const agent = selectedAgent(model);
   if (agent === undefined) return [tr(messages, locale, "agent.none")];
   const items = agentItems(agent, model.report.agent.questions);
-  const head = fit(`${agent.online ? "●" : "○"} ${agent.label} · ${agent.machine || agent.kind}`);
-  const hasAnswer = (agent.answer ?? "") !== "" || agent.busy || agent.error !== null;
+  const title = sessionTitle(agent, locale);
+  const head = fit(`${agent.online ? "●" : "○"} ${agent.label} · ${title || agent.machine || agent.kind}`);
+  const hasAnswer = (agent.answer ?? "") !== "" || agent.busy || agent.error !== null || agent.stopped === true;
   const questionRows = items.map((q, i) => marked(q, i === model.questionIndex));
   const rows = [head, ...windowed(questionRows, model.questionIndex, hasAnswer ? 2 : 5)];
   if (items.length === 0) rows.push(tr(messages, locale, "agent.empty"));
   if (hasAnswer) {
+    if ((agent.lastQuestion ?? "") !== "") rows.push(fit(tr(messages, locale, "agent.you", { text: agent.lastQuestion ?? "" })));
     const answer = (agent.answer ?? "") !== ""
       ? wrap(agent.answer ?? "")
-      : agent.error !== null ? wrap(agent.error) : [tr(messages, locale, "agent.busy")];
+      : agent.error !== null ? wrap(agent.error) : agent.busy ? [tr(messages, locale, "agent.busy")] : [];
     // The newest words matter while streaming: show the tail.
-    rows.push(...answer.slice(-(7 - rows.length)));
+    const room = 7 - rows.length - (agent.stopped === true ? 1 : 0);
+    if (room > 0) rows.push(...answer.slice(-room));
+    if (agent.stopped === true) rows.push(tr(messages, locale, "agent.stopped"));
   }
   return rows;
 }
@@ -409,9 +528,12 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
     } else if (model.agentView === "list") {
       body = agentListRows(model, locale);
       footer = tr(messages, locale, "agent.list");
+    } else if (model.agentView === "sessions") {
+      body = sessionRows(model, locale);
+      footer = tr(messages, locale, "sessions.help");
     } else {
       body = agentAskRows(model, locale);
-      footer = tr(messages, locale, agent?.busy === true ? "agent.running" : "agent.ask");
+      footer = tr(messages, locale, agent?.busy === true ? "agent.running" : agent?.stopped === true ? "agent.stoppedHelp" : "agent.ask");
     }
   } else if (model.screen === "home") {
     body = homeRows(report.home);

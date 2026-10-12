@@ -60,14 +60,23 @@ describe("hold-to-speak", () => {
     expect(out.effect).toEqual({ kind: "recordStop", agentId: "hermes-spark" });
   });
 
-  it("swallows every other gesture while recording", () => {
+  it("swipes are swallowed while recording; tap sends, double tap discards", () => {
     const model = agentModel();
     const recording = decide(model, "longPress", 1000).model;
-    for (const gesture of ["click", "doubleClick", "scrollDown", "scrollUp"] as const) {
+    for (const gesture of ["scrollDown", "scrollUp"] as const) {
       const out = decide(recording, gesture, 1100);
       expect(out.effect).toBeUndefined();
+      expect(out.model.recording).toBe(true);
       expect(out.model.screen).toBe("agent");
     }
+    // The release event can get lost on real hardware: these two are the way out.
+    const sent = decide(recording, "click", 1100);
+    expect(sent.effect).toEqual({ kind: "recordStop", agentId: "hermes-spark" });
+    expect(sent.model.recording).toBe(false);
+    const discarded = decide(recording, "doubleClick", 1100);
+    expect(discarded.effect).toEqual({ kind: "recordAbort" });
+    expect(discarded.model.recording).toBe(false);
+    expect(discarded.model.screen).toBe("agent");
   });
 
   it("shows the recording line over everything else", () => {

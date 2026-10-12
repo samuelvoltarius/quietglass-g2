@@ -6,7 +6,7 @@ import { getLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
-import { buildView, createModel, decide, mergeReport, MESSAGE_MS, SCREENS, type Effect, type HubModel, type Screen } from "./hub/model";
+import { buildView, createModel, decide, mergeReport, MESSAGE_MS, SCREENS, withSessions, type Effect, type HubModel, type Screen } from "./hub/model";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { pixelIconFor } from "./glasses/icons";
@@ -20,7 +20,11 @@ const POLL_MS = 5000;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
 const RETRY_MS = 5000;
-const BUILD = "0.3.0";
+const BUILD = "0.4.0";
+/** A voice note is cut off here and sent; also guards against a lost "release" event. */
+export const MAX_RECORD_MS = 18_000;
+/** Less audio than this is a mis-press (16 kHz, 16 bit, mono = 32 bytes per ms). */
+const MIN_RECORD_BYTES = 32 * 400;
 
 /** Map the shared gesture vocabulary onto the hub's page language. */
 function hubGesture(gesture: Gesture): "click" | "doubleClick" | "scrollUp" | "scrollDown" | "longPress" | "longPressRelease" | null {
@@ -102,13 +106,32 @@ async function boot(): Promise<void> {
     return null;
   };
 
-  const startMic = async (): Promise<void> => {
+  let recordTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearRecordTimer = (): void => {
+    if (recordTimer !== null) clearTimeout(recordTimer);
+    recordTimer = null;
+  };
+
+  const startMic = async (): Promise<boolean> => {
     micChunks.length = 0;
     micActive = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
-    if (!micActive) console.warn("[quiethub] microphone refused");
+    if (!micActive) {
+      console.warn("[quiethub] microphone refused");
+      return false;
+    }
+    // Hard stop: a recording must end even when the release event never arrives.
+    clearRecordTimer();
+    recordTimer = setTimeout(() => {
+      recordTimer = null;
+      if (!model.recording) return;
+      model = { ...model, message: { text: tr(messages, locale, "voice.limit", { s: MAX_RECORD_MS / 1000 }), until: Date.now() + MESSAGE_MS } };
+      onGesture("longPressRelease");
+    }, MAX_RECORD_MS);
+    return true;
   };
 
   const stopMic = async (): Promise<void> => {
+    clearRecordTimer();
     micActive = false;
     await bridge.audioControl(false).catch(() => undefined);
     // In-flight blocks still arrive after the off-switch; without the drain the
@@ -158,10 +181,13 @@ async function boot(): Promise<void> {
       const newCard = report.approvals.length > 0 && model.report.approvals.length === 0;
       newestEventId = nextId;
       model = mergeReport(model, report);
-      if ((isNew || newCard) && settings.autoOpenNotifications && !model.recording) {
-        model = newCard
-          ? { ...model, screen: "agent", agentView: "list", confirm: null }
-          : { ...model, screen: "inbox", confirm: null };
+      // A permission card must be answered, so it opens the agent page. A plain
+      // "done" notice never pulls the wearer out of a page they are working in:
+      // it only opens from the overview (it is waiting in Meldungen otherwise).
+      if (newCard && settings.autoOpenNotifications && !model.recording) {
+        model = { ...model, screen: "agent", agentView: "list", confirm: null };
+      } else if (isNew && settings.autoOpenNotifications && !model.recording && model.screen === "root") {
+        model = { ...model, screen: "inbox", confirm: null };
       }
       fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
     } catch (error) {
@@ -178,7 +204,30 @@ async function boot(): Promise<void> {
     if (effect === undefined) return;
     try {
       if (effect.kind === "recordStart") {
-        await startMic();
+        if (!(await startMic())) {
+          // Say why nothing is happening instead of a silent dead microphone.
+          model = { ...model, recording: false, recordAgent: null, message: { text: tr(messages, locale, "voice.mic"), until: Date.now() + MESSAGE_MS } };
+          await draw();
+          refreshPhone();
+        }
+        return;
+      }
+      if (effect.kind === "recordAbort") {
+        await stopMic();
+        micChunks.length = 0;
+        await draw();
+        refreshPhone();
+        return;
+      }
+      if (effect.kind === "loadSessions") {
+        try {
+          const list = await api.sessions(effect.agentId);
+          model = withSessions(model, effect.agentId, { status: list.supported ? "ready" : "unsupported", items: list.sessions, transport: list.transport });
+        } catch {
+          model = withSessions(model, effect.agentId, { status: "error", items: [], transport: "" });
+        }
+        await draw();
+        refreshPhone();
         return;
       }
       if (effect.kind === "exit") {
@@ -195,12 +244,22 @@ async function boot(): Promise<void> {
             ...model,
             message: { text: tr(messages, locale, "voice.empty"), until: Date.now() + MESSAGE_MS },
           };
+        } else if (wav.length - 44 < MIN_RECORD_BYTES) {
+          model = { ...model, message: { text: tr(messages, locale, "voice.short"), until: Date.now() + MESSAGE_MS } };
         } else {
-          const heard = await api.voice(wav, effect.agentId);
-          model = {
-            ...model,
-            message: { text: tr(messages, locale, "voice.heard", { text: heard.question }), until: Date.now() + MESSAGE_MS },
-          };
+          try {
+            const heard = await api.voice(wav, effect.agentId);
+            model = {
+              ...model,
+              message: { text: tr(messages, locale, "voice.heard", { text: heard.question }), until: Date.now() + MESSAGE_MS },
+            };
+          } catch (error) {
+            // Each failure gets its own words: the wearer must know what to fix.
+            const status = error instanceof ApiError ? error.status : undefined;
+            const key = status === 502 ? "voice.stt" : status === 422 ? "voice.unclear" : status === 503 ? "agent.offline" : status === 409 ? "agent.busy" : status === undefined ? "voice.stt" : "voice.failed";
+            model = { ...model, message: { text: tr(messages, locale, key), until: Date.now() + MESSAGE_MS } };
+            console.warn("[quiethub] voice failed:", error);
+          }
         }
       } else if (effect.kind === "ask") {
         await api.ask(effect.question, effect.agentId);
@@ -208,6 +267,10 @@ async function boot(): Promise<void> {
         await api.approve(effect.cardId, effect.decision);
       } else if (effect.kind === "cancel") {
         await api.cancel(effect.agentId);
+      } else if (effect.kind === "newSession") {
+        await api.newSession(effect.agentId);
+      } else if (effect.kind === "selectSession") {
+        await api.selectSession(effect.agentId, effect.sessionId, effect.title);
       } else if (effect.kind === "readEvent") {
         await api.readEvent(effect.id);
       } else if (effect.kind === "toggle") {
@@ -255,6 +318,7 @@ async function boot(): Promise<void> {
     if (systemType === 6 || systemType === 7) {
       closed = true;
       if (pollTimer !== null) clearTimeout(pollTimer);
+      clearRecordTimer();
       if (micActive) void bridge.audioControl(false).catch(() => false);
       saveUiState(bridge, model.screen);
       unsubscribeEvents();
@@ -270,7 +334,7 @@ async function boot(): Promise<void> {
       if (bytes !== null && bytes.length > 0) micChunks.push(bytes);
       return;
     }
-    const gesture = gestureFromEvent(event);
+    const gesture = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (gesture !== null) onGesture(gesture.gesture);
   };
   unsubscribeEvents = bridge.onEvenHubEvent(handle as never);
@@ -320,7 +384,7 @@ async function boot(): Promise<void> {
         const asset = await bridge.captureImageFromCamera().catch(() => null);
         if (asset === null || asset.base64 === "") throw new Error("Kamera abgebrochen");
         const value = await decodeQr(asset.base64, asset.mimeType || "image/jpeg");
-        return parseSetupQr(value, settings.autoOpenNotifications);
+        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll };
       },
     });
   }
@@ -346,7 +410,7 @@ async function loadSettings(bridge: EvenAppBridge): Promise<AppSettings> {
   } catch {
     // No storage: start unconfigured.
   }
-  return { serverUrl: "", token: "", autoOpenNotifications: true };
+  return { serverUrl: "", token: "", autoOpenNotifications: true, invertScroll: false };
 }
 
 function normalizeSettings(value: Partial<AppSettings>): AppSettings {
@@ -354,6 +418,7 @@ function normalizeSettings(value: Partial<AppSettings>): AppSettings {
     serverUrl: typeof value.serverUrl === "string" ? value.serverUrl : "",
     token: typeof value.token === "string" ? value.token : "",
     autoOpenNotifications: value.autoOpenNotifications !== false,
+    invertScroll: value.invertScroll === true,
   };
 }
 

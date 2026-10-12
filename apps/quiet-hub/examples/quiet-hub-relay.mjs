@@ -8,6 +8,11 @@
  * and streams the answer back. Permission questions of Claude Code travel to
  * the glasses through quiet-hub-approve-mcp.mjs (same folder).
  *
+ * Besides prompts the daemon sends session commands: list the sessions of an
+ * agent, start a new one, select one, and a real stop (Hermes bridge "stop",
+ * Codex turn/interrupt, process-tree kill for CLIs). The agent logic lives in
+ * quiet-hub-agents.mjs (same folder).
+ *
  *   node quiet-hub-relay.mjs --hub https://pi5.example.ts.net --config relay.json
  *   HUB_TOKEN=... node quiet-hub-relay.mjs --hub http://127.0.0.1:8787
  *
@@ -19,29 +24,27 @@
  *     "agents": [
  *       { "id": "claude-win", "kind": "claude", "cwd": "F:\\work", "mode": "ask" },
  *       { "id": "codex-win",  "kind": "codex",  "cwd": "F:\\work", "mode": "ask" },
- *       { "id": "hermes-spark", "kind": "hermes", "bin": "hermes" },
+ *       { "id": "hermes-spark", "kind": "hermes", "bin": "hermes",
+ *         "bridge": { "url": "ws://127.0.0.1:8765", "tokenEnv": "EVENHUB_BRIDGE_TOKEN" } },
  *       { "id": "claw", "kind": "openclaw", "url": "http://127.0.0.1:18789", "tokenEnv": "OPENCLAW_TOKEN" } ] }
+ *
+ * Hermes "bridge" = the hermes-evenhub-bridge plugin (WebSocket). Its token is
+ * read at runtime from the environment or ~/.hermes/.env and never stored here.
+ * Without a bridge (or when it is down) the relay falls back to `hermes chat -q`.
  *
  * Dependency-free: Node 22+ (global fetch / WebSocket).
  */
-import { spawn as nodeSpawn } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createController, clip, oneLine, sleep, nodeSpawn } from "./quiet-hub-agents.mjs";
 
-export const MAX_TEXT = 20_000; // hard cap of accumulated output per answer
+// Everything that used to live here is still importable from this file.
+export * from "./quiet-hub-agents.mjs";
 export const SEND_TEXT = 4_000; // tail that is sent to the hub
-export const DEFAULT_TIMEOUT_MS = 600_000;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIEF_DE = "\n\n(Antworte knapp auf Deutsch, höchstens etwa 280 Zeichen, ohne Markdown.)";
-
-const clip = (text, max) => (text.length > max ? text.slice(text.length - max) : text);
-const oneLine = (text, max = 120) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-const sleep = (ms, signal) => new Promise((resolve) => {
-  const t = setTimeout(resolve, ms);
-  signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-});
 
 // ---------------------------------------------------------------- config
 
@@ -59,6 +62,9 @@ export function validateConfig(raw) {
     if (!KINDS.includes(a.kind)) throw new Error(`agent ${a.id}: kind must be one of ${KINDS.join(", ")}`);
     const mode = a.mode ?? (a.kind === "claude" || a.kind === "codex" ? "ask" : "auto");
     if (!MODES.includes(mode)) throw new Error(`agent ${a.id}: mode must be one of ${MODES.join(", ")}`);
+    if (a.bridge !== undefined && (a.kind !== "hermes" || typeof a.bridge?.url !== "string" || !/^wss?:\/\//.test(a.bridge.url))) {
+      throw new Error(`agent ${a.id}: bridge.url (ws://…) is only valid for kind hermes`);
+    }
     return { ...a, mode, brief: a.brief !== false };
   });
   return { machine, agents };
@@ -72,447 +78,9 @@ export function loadConfig(path) {
   return validateConfig(raw);
 }
 
-// ------------------------------------------------------------ child process
-
-function killTree(child, spawnImpl) {
-  try {
-    if (process.platform === "win32" && child.pid) {
-      spawnImpl("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-      child.kill();
-    } else {
-      child.kill("SIGTERM");
-      setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } }, 3000).unref?.();
-    }
-  } catch { /* already gone */ }
-}
-
-/**
- * Runs one child process. `onLine` gets stdout line by line. Resolves with
- * {code, stderr, timedOut, cancelled}. Output beyond the caps is dropped.
- */
-export function runProcess({ spawn, bin, args, cwd, env, stdin, onLine, timeoutMs, signal }) {
-  return new Promise((resolve) => {
-    let child;
-    const useShell = /\.(cmd|bat)$/i.test(bin);
-    try {
-      child = spawn(bin, args, { cwd, env, shell: useShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
-    } catch (error) {
-      resolve({ code: -1, stderr: String(error?.message ?? error), timedOut: false, cancelled: false });
-      return;
-    }
-    let stderr = "";
-    let buffer = "";
-    let timedOut = false;
-    let cancelled = false;
-    let settled = false;
-    const finish = (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (buffer !== "") { try { onLine(buffer); } catch { /* ignore */ } }
-      resolve({ code, stderr: stderr.slice(-1500), timedOut, cancelled });
-    };
-    const timer = setTimeout(() => { timedOut = true; killTree(child, spawn); }, timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    signal?.addEventListener("abort", () => { cancelled = true; killTree(child, spawn); }, { once: true });
-    child.on("error", (error) => { stderr += String(error?.message ?? error); finish(-1); });
-    child.on("close", (code) => finish(code ?? -1));
-    child.stdout?.setEncoding?.("utf8");
-    child.stdout?.on("data", (chunk) => {
-      buffer += chunk;
-      if (buffer.length > 4_000_000) buffer = buffer.slice(-1_000_000);
-      let index;
-      while ((index = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, index).replace(/\r$/, "");
-        buffer = buffer.slice(index + 1);
-        try { onLine(line); } catch { /* one bad line must not stop the run */ }
-      }
-    });
-    child.stderr?.setEncoding?.("utf8");
-    child.stderr?.on("data", (chunk) => { stderr = clip(stderr + chunk, 3000); });
-    child.stdin?.on?.("error", () => undefined);
-    if (stdin !== undefined) child.stdin?.end(stdin); else child.stdin?.end();
-  });
-}
-
-function childEnv(extra = {}) {
-  const env = { ...process.env, ...extra };
-  if (!("QUIET_HUB_TOKEN" in extra)) { delete env.QUIET_HUB_TOKEN; delete env.HUB_TOKEN; }
-  return env;
-}
-
-// ------------------------------------------------------------------ runners
-// A runner is async (job, emit) => {status:"done"|"error"|"cancelled", text, error?}
-// `emit({text, activity})` reports progress; `job.signal` cancels.
-
-function finalStatus(res, text, fallbackError) {
-  if (res.cancelled) return { status: "cancelled", text };
-  if (res.timedOut) return { status: "error", text, error: "timeout" };
-  if (res.code !== 0 && text.trim() === "") return { status: "error", text, error: oneLine(res.stderr || fallbackError || `exit ${res.code}`, 200) };
-  return { status: "done", text: text.trim() === "" ? "(keine Antwort)" : text };
-}
-
-export function claudeArgs(agent, ctx, sessionId) {
-  const args = ["-p", "--output-format", "stream-json", "--verbose"];
-  if (agent.model) args.push("--model", agent.model);
-  if (sessionId) args.push("--resume", sessionId);
-  if (agent.mode === "auto" || agent.mode === "full") {
-    args.push("--permission-mode", "bypassPermissions");
-  } else if (agent.mode === "plan" || agent.mode === "readonly") {
-    args.push("--permission-mode", "plan");
-  } else {
-    args.push("--mcp-config", ctx.mcpConfigPath(agent), "--permission-prompt-tool", "mcp__quiethub__approve");
-  }
-  if (Array.isArray(agent.args)) args.push(...agent.args.map(String));
-  return args;
-}
-
-export function createClaudeRunner(agent, ctx) {
-  let sessionId = null;
-  return async (job, emit) => {
-    let text = "";
-    let finalText = "";
-    let isError = false;
-    const env = childEnv(agent.mode === "ask"
-      ? { QUIET_HUB_URL: ctx.hub, QUIET_HUB_TOKEN: ctx.token, QUIET_HUB_AGENT: agent.id }
-      : {});
-    const res = await runProcess({
-      spawn: ctx.spawn, bin: agent.bin ?? "claude", args: claudeArgs(agent, ctx, sessionId),
-      cwd: agent.cwd, env, stdin: job.prompt, timeoutMs: agent.timeoutMs, signal: job.signal,
-      onLine: (line) => {
-        if (!line.startsWith("{")) return;
-        const obj = JSON.parse(line);
-        if (obj.session_id && typeof obj.session_id === "string") sessionId = obj.session_id;
-        if (obj.type === "assistant" && Array.isArray(obj.message?.content)) {
-          const parts = obj.message.content;
-          const t = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-          if (t) { text = clip(t, MAX_TEXT); emit({ text, activity: "" }); }
-          const tool = parts.find((p) => p.type === "tool_use");
-          if (tool) {
-            const i = tool.input ?? {};
-            emit({ text, activity: oneLine(`${tool.name}: ${i.command ?? i.file_path ?? i.path ?? i.pattern ?? ""}`, 80) });
-          }
-        } else if (obj.type === "result") {
-          finalText = typeof obj.result === "string" ? clip(obj.result, MAX_TEXT) : "";
-          isError = obj.is_error === true;
-        }
-      },
-    });
-    const out = finalText || text;
-    const status = finalStatus(res, out, "claude failed");
-    if (status.status === "done" && isError) return { status: "error", text: out, error: oneLine(out, 200) };
-    return status;
-  };
-}
-
-export function codexArgs(agent) {
-  const args = ["exec", "--json", "--skip-git-repo-check"];
-  if (agent.cwd) args.push("-C", agent.cwd);
-  if (agent.model) args.push("-m", agent.model);
-  // `codex exec` cannot ask interactively: "ask" therefore stays read-only.
-  if (agent.mode === "full") args.push("--dangerously-bypass-approvals-and-sandbox");
-  else if (agent.mode === "auto") args.push("-s", "workspace-write");
-  else args.push("-s", "read-only");
-  if (Array.isArray(agent.args)) args.push(...agent.args.map(String));
-  args.push("-");
-  return args;
-}
-
-export function createCodexExecRunner(agent, ctx) {
-  return async (job, emit) => {
-    let text = "";
-    const raw = [];
-    const res = await runProcess({
-      spawn: ctx.spawn, bin: agent.bin ?? "codex", args: codexArgs(agent), cwd: agent.cwd,
-      env: childEnv(), stdin: job.prompt, timeoutMs: agent.timeoutMs, signal: job.signal,
-      onLine: (line) => {
-        if (line.startsWith("{")) {
-          let obj;
-          try { obj = JSON.parse(line); } catch { return; }
-          const item = obj.item ?? obj.msg ?? {};
-          const kind = item.type ?? obj.type;
-          if ((kind === "agent_message" || kind === "message") && typeof (item.text ?? item.message) === "string") {
-            text = clip(String(item.text ?? item.message), MAX_TEXT);
-            emit({ text, activity: "" });
-          } else if (kind === "command_execution" || kind === "exec_command_begin") {
-            const cmd = Array.isArray(item.command) ? item.command.join(" ") : item.command;
-            emit({ text, activity: oneLine(`exec: ${cmd ?? ""}`, 80) });
-          } else if (kind === "file_change" || kind === "patch_apply_begin") {
-            emit({ text, activity: "patch" });
-          }
-        } else if (line.trim() !== "") {
-          raw.push(line);
-        }
-      },
-    });
-    return finalStatus(res, text || raw.join("\n").slice(-MAX_TEXT), "codex failed");
-  };
-}
-
-/**
- * Codex through `codex app-server` (JSON-RPC over stdin/stdout, no PTY).
- * Unlike `codex exec` it can ASK: approval requests of the agent are forwarded
- * to the daemon and decided on the glasses.
- *
- * Codex app-server protocol handling adapted from sunasaji/terminal-mode-console
- * (MIT, (c) 2026 S.Suna): initialize, thread/start|resume, turn/start,
- * item/agentMessage/delta, the three requestApproval requests, turn/completed.
- * See NOTICE.md in this app for the full attribution.
- */
-export const CODEX_POLICY = {
-  ask: { approvalPolicy: "on-request", sandbox: "workspace-write" },
-  auto: { approvalPolicy: "never", sandbox: "workspace-write" },
-  readonly: { approvalPolicy: "never", sandbox: "read-only" },
-  plan: { approvalPolicy: "never", sandbox: "read-only" },
-  full: { approvalPolicy: "never", sandbox: "danger-full-access" },
-};
-
-export function createCodexRunner(agent, ctx) {
-  if (agent.engine === "exec") return createCodexExecRunner(agent, ctx);
-  let threadId = null;
-  const policy = CODEX_POLICY[agent.mode] ?? CODEX_POLICY.ask;
-  return (job, emit) => new Promise((resolve) => {
-    let full = "";
-    let nextId = 1;
-    let buffer = "";
-    let turnId = null;
-    let settled = false;
-    let child;
-    const pending = new Map();
-    const bin = agent.bin ?? "codex";
-    try {
-      child = ctx.spawn(bin, ["app-server", ...(Array.isArray(agent.args) ? agent.args.map(String) : [])], {
-        cwd: agent.cwd, env: childEnv(), shell: /\.(cmd|bat)$/i.test(bin), windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
-      });
-    } catch (error) {
-      resolve({ status: "error", text: "", error: oneLine(error?.message ?? error, 200) });
-      return;
-    }
-    let stderr = "";
-    const write = (message) => { try { child.stdin.write(`${JSON.stringify(message)}\n`); } catch { /* closed */ } };
-    const request = (method, params = {}) => new Promise((res, rej) => {
-      const id = nextId++;
-      pending.set(id, { res, rej });
-      write({ id, method, params });
-    });
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      for (const p of pending.values()) p.rej(new Error("closed"));
-      pending.clear();
-      killTree(child, ctx.spawn);
-      resolve(result);
-    };
-    const timer = setTimeout(() => finish({ status: "error", text: full, error: "timeout" }), agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    job.signal?.addEventListener("abort", () => {
-      if (threadId && turnId) write({ id: nextId++, method: "turn/interrupt", params: { threadId, turnId } });
-      setTimeout(() => finish({ status: "cancelled", text: full }), 200);
-    }, { once: true });
-
-    async function askGlasses(tool, summary) {
-      try {
-        const res = await ctx.fetch(`${ctx.hub}/relay/permission`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${ctx.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ agentId: agent.id, tool, summary: oneLine(summary, 140) }),
-          signal: AbortSignal.timeout(agent.approvalTimeoutMs ?? 130_000),
-        });
-        if (!res.ok) return "deny";
-        return (await res.json()).decision === "allow" ? "allow" : "deny";
-      } catch { return "deny"; }
-    }
-
-    async function onServerRequest(msg) {
-      const p = msg.params ?? {};
-      if (msg.method === "item/commandExecution/requestApproval" || msg.method === "item/fileChange/requestApproval") {
-        const command = msg.method.includes("commandExecution");
-        const detail = String(p.command ?? p.reason ?? p.grantRoot ?? "");
-        const verdict = await askGlasses(command ? "Bash" : "apply_patch", detail || (command ? "command" : "file change"));
-        write({ id: msg.id, result: { decision: verdict === "allow" ? "accept" : "decline" } });
-      } else if (msg.method === "item/permissions/requestApproval") {
-        const verdict = await askGlasses("permissions", String(p.reason ?? "additional permissions"));
-        write({ id: msg.id, result: { permissions: verdict === "allow" ? (p.permissions ?? {}) : {}, scope: "turn" } });
-      } else {
-        write({ id: msg.id, error: { code: -32601, message: `unsupported request: ${msg.method}` } });
-      }
-    }
-
-    function onNotification(method, p) {
-      const item = p.item ?? {};
-      if (method === "item/agentMessage/delta") {
-        full = clip(full + String(p.delta ?? ""), MAX_TEXT);
-        emit({ text: full, activity: "" });
-      } else if (method === "item/started") {
-        const name = item.type === "commandExecution" ? `exec: ${item.command ?? ""}` : item.type === "fileChange" ? "apply_patch" : item.type === "mcpToolCall" ? `${item.server ?? "mcp"}.${item.tool ?? "tool"}` : "";
-        if (name) emit({ text: full, activity: oneLine(name, 80) });
-      } else if (method === "turn/completed") {
-        const turn = p.turn ?? {};
-        if (turn.status === "failed") finish({ status: "error", text: full, error: oneLine(turn.error?.message ?? "turn failed", 200) });
-        else finish({ status: "done", text: full.trim() === "" ? "(keine Antwort)" : full });
-      }
-    }
-
-    child.on("error", (error) => finish({ status: "error", text: full, error: oneLine(error?.message ?? error, 200) }));
-    child.on("close", (code) => finish(full !== "" && code === 0 ? { status: "done", text: full } : { status: "error", text: full, error: oneLine(stderr || `codex exited (${code})`, 200) }));
-    child.stderr?.on?.("data", (d) => { stderr = clip(stderr + d, 1500); });
-    child.stdin?.on?.("error", () => undefined);
-    child.stdout?.setEncoding?.("utf8");
-    child.stdout?.on("data", (chunk) => {
-      buffer += chunk;
-      let index;
-      while ((index = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, index).trim();
-        buffer = buffer.slice(index + 1);
-        if (!line.startsWith("{")) continue;
-        let msg;
-        try { msg = JSON.parse(line); } catch { continue; }
-        if (msg.id !== undefined && !msg.method) {
-          const p = pending.get(msg.id);
-          if (p) { pending.delete(msg.id); if (msg.error) p.rej(new Error(msg.error.message ?? "rpc error")); else p.res(msg.result); }
-        } else if (msg.id !== undefined && msg.method) {
-          void onServerRequest(msg);
-        } else if (msg.method) {
-          onNotification(msg.method, msg.params ?? {});
-        }
-      }
-    });
-
-    (async () => {
-      try {
-        await request("initialize", { clientInfo: { name: "quiet-hub-relay", title: "Quiet Hub relay", version: "0.3.0" }, capabilities: { experimentalApi: true } });
-        write({ method: "initialized", params: {} });
-        let started = null;
-        if (threadId) started = await request("thread/resume", { threadId }).catch(() => null);
-        if (!started) {
-          started = await request("thread/start", { cwd: agent.cwd, approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox, serviceName: "quiet-hub" });
-          threadId = String(started?.thread?.id ?? "");
-        }
-        const turn = await request("turn/start", { threadId, input: [{ type: "text", text: job.prompt }], ...(agent.model ? { model: agent.model } : {}) });
-        turnId = String(turn?.turn?.id ?? "") || null;
-      } catch (error) {
-        finish({ status: "error", text: full, error: oneLine(error?.message ?? error, 200) });
-      }
-    })();
-  });
-}
-
-export function createHermesRunner(agent, ctx) {
-  if (agent.url) return createHermesBridgeRunner(agent, ctx);
-  return async (job, emit) => {
-    let out = "";
-    const res = await runProcess({
-      spawn: ctx.spawn, bin: agent.bin ?? "hermes", args: ["chat", "-q", job.prompt, "-Q", ...(agent.format ? ["--format", String(agent.format)] : [])],
-      cwd: agent.cwd, env: childEnv(), timeoutMs: agent.timeoutMs, signal: job.signal,
-      onLine: (line) => {
-        // -Q still prints a "session_id: ..." line on some Hermes versions.
-        if (/^session_id:\s*\S+\s*$/.test(line)) return;
-        out = clip(`${out}${out ? "\n" : ""}${line}`, MAX_TEXT);
-        emit({ text: out, activity: "" });
-      },
-    });
-    return finalStatus(res, out, "hermes failed");
-  };
-}
-
-/** Hermes evenhub-bridge wire protocol: {t:"hello"} → {t:"text"} → assistant.delta … turn.done. */
-export function createHermesBridgeRunner(agent, ctx) {
-  const token = agent.token ?? (agent.tokenEnv ? process.env[agent.tokenEnv] : "") ?? "";
-  return (job, emit) => new Promise((resolve) => {
-    const WS = ctx.WebSocket ?? globalThis.WebSocket;
-    if (!WS) { resolve({ status: "error", text: "", error: "WebSocket unavailable" }); return; }
-    let text = "";
-    let settled = false;
-    const socket = new WS(agent.url);
-    const done = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try { socket.close(); } catch { /* closed */ }
-      resolve(result);
-    };
-    const timer = setTimeout(() => done({ status: "error", text, error: "timeout" }), agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    job.signal?.addEventListener("abort", () => {
-      try { socket.send(JSON.stringify({ t: "stop" })); } catch { /* ignore */ }
-      done({ status: "cancelled", text });
-    }, { once: true });
-    socket.onopen = () => socket.send(JSON.stringify({ t: "hello", token, device: "quiet-hub-relay" }));
-    socket.onerror = () => done({ status: "error", text, error: "bridge websocket error" });
-    socket.onclose = (event) => done(text !== "" ? { status: "done", text } : { status: "error", text, error: event?.code === 1008 ? "token rejected" : "bridge closed" });
-    socket.onmessage = (event) => {
-      let m;
-      try { m = JSON.parse(String(event.data)); } catch { return; }
-      if (m.t === "hello.ok") socket.send(JSON.stringify({ t: "text", text: job.prompt }));
-      else if (m.t === "assistant.delta") { text = clip(text + String(m.text ?? ""), MAX_TEXT); emit({ text, activity: "" }); }
-      else if (m.t === "assistant" && typeof m.text === "string") { text = clip(m.text, MAX_TEXT); emit({ text, activity: "" }); }
-      else if (m.t === "tool.start") emit({ text, activity: oneLine(`${m.name ?? "tool"} ${m.label ?? ""}`, 80) });
-      else if (m.t === "turn.done") done({ status: "done", text: text || "(keine Antwort)" });
-      else if (m.t === "error") done({ status: "error", text, error: oneLine(m.msg ?? "Hermes error", 200) });
-    };
-  });
-}
-
-/** Reads a chat-completions body (JSON or SSE) — ported from agent-glass. */
-export function parseCompletionBody(body) {
-  const trimmed = String(body).trim();
-  if (!trimmed) return "";
-  if (!/^(?:data|event|id|retry)\s*:|^:/.test(trimmed)) {
-    try { return JSON.parse(trimmed)?.choices?.[0]?.message?.content ?? ""; } catch { return ""; }
-  }
-  let answer = "";
-  for (const raw of trimmed.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line.startsWith("data:")) continue;
-    const data = line.slice(5).trim();
-    if (!data) continue;
-    if (data === "[DONE]") break;
-    try {
-      const choice = JSON.parse(data)?.choices?.[0] ?? {};
-      answer += choice.delta?.content ?? choice.message?.content ?? "";
-    } catch { /* one bad line must not lose the answer */ }
-  }
-  return answer;
-}
-
-export function createOpenClawRunner(agent, ctx) {
-  const history = [];
-  const token = agent.token ?? (agent.tokenEnv ? process.env[agent.tokenEnv] : "") ?? "";
-  const base = String(agent.url ?? "").replace(/\/+$/, "");
-  return async (job, emit) => {
-    history.push({ role: "user", content: job.prompt });
-    while (history.length > 20) history.shift();
-    const controller = new AbortController();
-    job.signal?.addEventListener("abort", () => controller.abort(), { once: true });
-    const timer = setTimeout(() => controller.abort("timeout"), agent.timeoutMs ?? 90_000);
-    try {
-      const res = await ctx.fetch(`${base}/v1/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: agent.model ?? "openclaw", messages: history }),
-        signal: controller.signal,
-      });
-      if (res.status === 401 || res.status === 403) return { status: "error", text: "", error: "OpenClaw token rejected" };
-      if (!res.ok) return { status: "error", text: "", error: `OpenClaw HTTP ${res.status}` };
-      const content = clip(parseCompletionBody(await res.text()), MAX_TEXT);
-      if (!content) return { status: "error", text: "", error: "OpenClaw returned an empty answer" };
-      history.push({ role: "assistant", content });
-      emit({ text: content, activity: "" });
-      return { status: "done", text: content };
-    } catch (error) {
-      if (job.signal?.aborted) return { status: "cancelled", text: "" };
-      return { status: "error", text: "", error: controller.signal.aborted ? "timeout" : oneLine(error?.message ?? error, 200) };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-}
-
+/** Back-compat name: a runner is the run() of a controller. */
 export function createRunner(agent, ctx) {
-  switch (agent.kind) {
-    case "claude": return createClaudeRunner(agent, ctx);
-    case "codex": return createCodexRunner(agent, ctx);
-    case "hermes": return createHermesRunner(agent, ctx);
-    default: return createOpenClawRunner(agent, ctx);
-  }
+  return createController(agent, ctx).run;
 }
 
 // -------------------------------------------------------------------- relay
@@ -528,6 +96,7 @@ export function createRelay(options) {
   const pollMs = options.pollTimeoutMs ?? 40_000;
   const ctx = {
     hub, token, fetch: fetchImpl, spawn: options.spawnImpl ?? nodeSpawn, WebSocket: options.WebSocket,
+    env: options.env, home: options.home, claudeDir: options.claudeDir, killOptions: options.killOptions,
     /** MCP config WITHOUT secrets: the token reaches the MCP child via ${VAR} expansion. */
     mcpConfigPath(agent) {
       const path = join(mcpDir, `quiethub-mcp-${agent.id}.json`);
@@ -540,9 +109,9 @@ export function createRelay(options) {
       return path;
     },
   };
-  const runners = new Map(config.agents.map((a) => [a.id, createRunner(a, ctx)]));
+  const controllers = new Map(config.agents.map((a) => [a.id, createController(a, ctx)]));
   const agentCfg = new Map(config.agents.map((a) => [a.id, a]));
-  const running = new Map(); // agentId -> AbortController
+  const running = new Map(); // agentId -> {controller: AbortController, done: Promise}
   const stop = new AbortController();
   let relayId = null;
 
@@ -556,7 +125,10 @@ export function createRelay(options) {
   async function register() {
     const res = await call("/relay/register", {
       machine: config.machine,
-      agents: config.agents.map((a) => ({ id: a.id, kind: a.kind, mode: a.mode, label: a.label ?? a.id })),
+      agents: config.agents.map((a) => ({
+        id: a.id, kind: a.kind, mode: a.mode, label: a.label ?? a.id,
+        transport: controllers.get(a.id)?.transport() ?? "", sessions: true,
+      })),
     });
     if (res.status === 401) throw Object.assign(new Error("hub rejected the token"), { fatal: true });
     if (!res.ok) throw new Error(`register HTTP ${res.status}`);
@@ -566,12 +138,16 @@ export function createRelay(options) {
 
   async function runJob(command) {
     const agent = agentCfg.get(command.agentId);
-    const runner = runners.get(command.agentId);
+    const controller = controllers.get(command.agentId);
     const post = (payload) => call("/relay/result", { jobId: command.jobId, ...payload }).catch(() => undefined);
-    if (!agent || !runner) { await post({ status: "error", error: "unknown agent" }); return; }
+    if (!agent || !controller) { await post({ status: "error", error: "unknown agent" }); return; }
+    // A stop just issued may still be tearing the old process down: give it a moment.
+    const previous = running.get(agent.id);
+    if (previous) await Promise.race([previous.done, sleep(5000)]);
     if (running.has(agent.id)) { await post({ status: "error", error: "agent busy" }); return; }
-    const controller = new AbortController();
-    running.set(agent.id, controller);
+    const abort = new AbortController();
+    let release;
+    running.set(agent.id, { abort, done: new Promise((resolve) => { release = resolve; }) });
     const prompt = agent.brief && !command.raw ? `${command.prompt}${BRIEF_DE}` : command.prompt;
 
     let latest = { text: "", activity: "" };
@@ -580,7 +156,7 @@ export function createRelay(options) {
     const flush = () => {
       timer = null;
       lastSent = Date.now();
-      void post({ status: "running", text: clip(latest.text, SEND_TEXT), activity: latest.activity });
+      void post({ status: "running", text: clip(latest.text, SEND_TEXT), activity: latest.activity, transport: controller.transport() });
     };
     const emit = (update) => {
       latest = update;
@@ -590,13 +166,19 @@ export function createRelay(options) {
     };
     let result;
     try {
-      result = await runner({ prompt, signal: controller.signal }, emit);
+      result = await controller.run({
+        prompt, sessionId: command.sessionId ?? null, fresh: command.fresh === true, title: oneLine(command.prompt, 40), signal: abort.signal,
+      }, emit);
     } catch (error) {
       result = { status: "error", text: latest.text, error: oneLine(error?.message ?? error, 200) };
     }
     if (timer) clearTimeout(timer);
     running.delete(agent.id);
-    await post({ status: result.status, text: clip(result.text ?? "", SEND_TEXT), error: result.error ?? null, activity: "" });
+    release();
+    await post({
+      status: result.status, text: clip(result.text ?? "", SEND_TEXT), error: result.error ?? null, activity: "",
+      sessionId: result.sessionId ?? null, transport: result.transport ?? controller.transport(),
+    });
     if (result.status !== "cancelled") {
       await call("/events", {
         provider: agent.id,
@@ -607,9 +189,26 @@ export function createRelay(options) {
     }
   }
 
+  /** Session commands answer through POST /relay/reply, keyed by the daemon's reqId. */
+  async function runSessionCommand(command) {
+    const controller = controllers.get(command.agentId);
+    const reply = (payload) => call("/relay/reply", { reqId: command.reqId, ...payload }).catch(() => undefined);
+    if (!controller) { await reply({ ok: false, error: "unknown agent" }); return; }
+    try {
+      let data;
+      if (command.type === "sessions") data = await controller.sessions();
+      else if (command.type === "session.new") data = await controller.newSession(command.title);
+      else data = await controller.select(String(command.sessionId ?? ""));
+      await reply({ ok: true, data: { ...data, transport: controller.transport() } });
+    } catch (error) {
+      await reply({ ok: false, error: oneLine(error?.message ?? error, 160) });
+    }
+  }
+
   function dispatch(command) {
     if (command.type === "ask") void runJob(command);
-    else if (command.type === "cancel") running.get(command.agentId)?.abort();
+    else if (command.type === "cancel") running.get(command.agentId)?.abort.abort();
+    else if (command.type === "sessions" || command.type === "session.new" || command.type === "session.select") void runSessionCommand(command);
   }
 
   async function loop() {
@@ -639,8 +238,9 @@ export function createRelay(options) {
 
   return {
     start: () => loop(),
-    stop: () => { stop.abort(); for (const c of running.values()) c.abort(); },
+    stop: () => { stop.abort(); for (const r of running.values()) r.abort.abort(); for (const c of controllers.values()) c.close(); },
     running,
+    controllers,
     get relayId() { return relayId; },
   };
 }

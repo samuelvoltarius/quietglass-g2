@@ -18,18 +18,19 @@
  * HA_DEVICES, MOONRAKER_URL, QUIET_HUB_STATE_FILE.
  */
 import { createServer } from "node:http";
-import { execFile } from "node:child_process";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHomeAssistant, createMoonraker, parseDevices } from "./quiet-hub-adapters.mjs";
+import { createController, nodeSpawn } from "./quiet-hub-agents.mjs";
 
 const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den Tag zusammen"];
 const MAX_AUDIO = 12 * 1024 * 1024;
 const RELAY_STALE_MS = 45_000;
 const POLL_HOLD_MS = 25_000;
+const RPC_TIMEOUT_MS = 20_000;
 
 const digest = (text) => createHash("sha256").update(text).digest();
 const clipTail = (text, max) => (text.length > max ? text.slice(text.length - max) : text);
@@ -39,6 +40,10 @@ export function createHub(options = {}) {
   const cfg = {
     token: options.token ?? env.HUB_TOKEN ?? "",
     hermesBin: options.hermesBin ?? env.HERMES_BIN ?? "hermes",
+    // Optional hermes-evenhub-bridge for the daemon's own Hermes (token read at runtime, never stored).
+    bridgeUrl: options.bridgeUrl ?? env.HERMES_BRIDGE_URL ?? "",
+    hermesFormat: options.hermesFormat ?? env.HERMES_FORMAT ?? "text",
+    bridgeTokenEnv: options.bridgeTokenEnv ?? env.HERMES_BRIDGE_TOKEN_ENV ?? "EVENHUB_BRIDGE_TOKEN",
     localAgentId: options.localAgentId ?? env.LOCAL_AGENT_ID ?? "hermes-pi5",
     localAgent: options.localAgent ?? env.LOCAL_AGENT !== "off",
     askTimeoutMs: Number(options.askTimeoutMs ?? env.ASK_TIMEOUT_MS ?? 300_000),
@@ -53,7 +58,7 @@ export function createHub(options = {}) {
     lang: options.lang ?? env.HUB_LANG ?? "de",
   };
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const execFileImpl = options.execFileImpl ?? execFile;
+  const spawnImpl = options.spawnImpl ?? nodeSpawn;
   const log = options.log ?? ((...args) => console.log("[daemon]", ...args));
   const now = options.now ?? (() => Date.now());
 
@@ -61,15 +66,18 @@ export function createHub(options = {}) {
   const loadEvents = () => {
     try {
       const parsed = JSON.parse(readFileSync(cfg.stateFile, "utf8"));
-      return Array.isArray(parsed.events) ? parsed.events.slice(0, 50) : [];
-    } catch { return []; }
+      return {
+        events: Array.isArray(parsed.events) ? parsed.events.slice(0, 50) : [],
+        sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
+      };
+    } catch { return { events: [], sessions: {} }; }
   };
-  const state = { events: loadEvents() };
+  const state = loadEvents();
   const saveEvents = () => {
     try {
       mkdirSync(dirname(cfg.stateFile), { recursive: true });
       const temporary = `${cfg.stateFile}.tmp`;
-      writeFileSync(temporary, JSON.stringify({ events: state.events }, null, 2), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify({ events: state.events, sessions: state.sessions }, null, 2), { mode: 0o600 });
       renameSync(temporary, cfg.stateFile);
     } catch (error) {
       console.error("[daemon] state save failed:", String(error).slice(0, 200));
@@ -96,7 +104,12 @@ export function createHub(options = {}) {
   const relays = new Map();
   const jobs = new Map();
   const approvals = new Map();
-  const localChildren = new Map();
+  const rpcs = new Map();
+  const setSession = (agent, session) => {
+    agent.session = session;
+    if (session) state.sessions[agent.id] = session; else delete state.sessions[agent.id];
+    saveEvents();
+  };
 
   function upsertAgent(spec, relayId, machine) {
     const old = agents.get(spec.id);
@@ -114,9 +127,22 @@ export function createHub(options = {}) {
       activity: "",
       error: null,
       jobId: null,
+      transport: String(spec.transport ?? old?.transport ?? "").slice(0, 16),
+      sessionsSupported: spec.sessions !== false,
+      session: old?.session ?? state.sessions[spec.id] ?? null,
+      stopped: false,
+      stopConfirmed: false,
+      abort: null,
     });
   }
-  if (cfg.localAgent) upsertAgent({ id: cfg.localAgentId, kind: "hermes", mode: "auto" }, null, "hub");
+  // The daemon's own Hermes: bridge when configured, `hermes chat -q` otherwise.
+  const localController = cfg.localAgent
+    ? createController({
+      id: cfg.localAgentId, kind: "hermes", bin: cfg.hermesBin, format: cfg.hermesFormat, mode: "auto", brief: false,
+      bridge: cfg.bridgeUrl ? { url: cfg.bridgeUrl, tokenEnv: cfg.bridgeTokenEnv } : undefined,
+    }, { spawn: spawnImpl, WebSocket: options.WebSocket, fetch: fetchImpl, env, home: options.home, killOptions: options.killOptions })
+    : null;
+  if (cfg.localAgent) upsertAgent({ id: cfg.localAgentId, kind: "hermes", mode: "auto", transport: localController.transport() }, null, "hub");
 
   const isOnline = (agent) => {
     if (agent.relayId === null) return true;
@@ -165,7 +191,9 @@ export function createHub(options = {}) {
       agent.activity = "";
       agent.jobId = null;
       agent.error = status === "error" ? String(error ?? "error").slice(0, 160) : null;
-      const finalText = status === "cancelled" ? "(abgebrochen)" : (status === "error" && !text ? `Fehler: ${agent.error}` : text);
+      // A stop keeps what the agent had said so far; the glasses show "gestoppt" next to it.
+      const finalText = status === "cancelled" ? (agent.answer ?? "") : (status === "error" && !text ? `Fehler: ${agent.error}` : text);
+      if (status === "cancelled") agent.stopped = true;
       agent.answer = clipTail(finalText ?? "", 4000);
       if (status === "done" && cfg.suggestions) {
         const question = job.question;
@@ -206,7 +234,7 @@ export function createHub(options = {}) {
   }
 
   /** Starts a question; returns {job} or {error,status}. */
-  function startAsk(agentId, question) {
+  function startAsk(agentId, question, opts = {}) {
     const id = agentId || defaultAgentId();
     const agent = id ? agents.get(id) : undefined;
     if (!agent) return { status: 404, error: "unknown agent" };
@@ -221,37 +249,59 @@ export function createHub(options = {}) {
     agent.error = null;
     agent.suggestions = [];
     agent.lastQuestion = question;
+    agent.stopped = false;
+    agent.stopConfirmed = false;
+    if (typeof opts.sessionId === "string" && opts.sessionId !== "" && opts.sessionId !== agent.session?.id) {
+      setSession(agent, { id: opts.sessionId, title: "", fresh: false });
+    }
+    job.sessionId = agent.session?.id ?? null;
+    job.fresh = opts.fresh === true || (agent.session !== null && agent.session.id === null && agent.session.fresh === true);
+    if (job.fresh) setSession(agent, { id: null, title: question.slice(0, 40), fresh: true });
     if (agent.relayId === null) {
       runLocal(job, agent);
     } else {
       const relay = relays.get(agent.relayId);
-      enqueue(relay, { type: "ask", jobId: job.id, agentId: agent.id, prompt: question });
+      enqueue(relay, { type: "ask", jobId: job.id, agentId: agent.id, prompt: question, sessionId: job.sessionId, fresh: job.fresh });
     }
     return { job };
+  }
+
+  /** Remembers which session an answer belongs to (a new session learns its id here). */
+  function noteResult(agent, result) {
+    if (typeof result.transport === "string" && result.transport !== "") agent.transport = result.transport.slice(0, 16);
+    if (typeof result.sessionId === "string" && result.sessionId !== "") {
+      const title = agent.session?.id === result.sessionId || agent.session?.id === null ? (agent.session?.title ?? "") : "";
+      setSession(agent, { id: result.sessionId, title: title || String(agent.lastQuestion ?? "").slice(0, 40), fresh: false });
+    }
   }
 
   function runLocal(job, agent) {
     // Keep glasses answers short: three wrapped rows at most.
     const prompt = `${job.question}\n\n(Antworte auf Deutsch in einem kurzen Satz von höchstens 110 Zeichen. Schreibe keine Zeichenzahl und keine Meta-Kommentare in die Antwort.)`;
-    const child = execFileImpl(
-      cfg.hermesBin,
-      ["chat", "-q", prompt, "-Q", "--format", "text"],
-      { timeout: cfg.askTimeoutMs, maxBuffer: 1024 * 1024 },
-      (error, stdout, stderr) => {
-        localChildren.delete(agent.id);
-        if (job.done) return;
-        const out = String(stdout ?? "").trim();
-        if (error && out === "") {
-          console.error("[daemon] hermes failed:", String(stderr || error).slice(0, 400));
+    const abort = new AbortController();
+    agent.abort = abort;
+    const emit = (update) => {
+      if (job.done) return;
+      agent.answer = clipTail(String(update.text ?? ""), 4000);
+      agent.activity = String(update.activity ?? "").slice(0, 80);
+    };
+    localController.run({ prompt, sessionId: job.sessionId, fresh: job.fresh, title: job.question.slice(0, 40), signal: abort.signal }, emit)
+      .catch((error) => ({ status: "error", text: "", error: String(error?.message ?? error) }))
+      .then((result) => {
+        agent.abort = null;
+        noteResult(agent, result);
+        if (job.done) { if (result.status === "cancelled") agent.stopConfirmed = true; return; }
+        if (result.status === "cancelled") { agent.stopConfirmed = true; finishJob(job, "cancelled", result.text ?? ""); return; }
+        const out = String(result.text ?? "").trim();
+        if (result.status === "error" && out === "") {
+          console.error("[daemon] hermes failed:", String(result.error ?? "").slice(0, 400));
           addEvent(agent.id, "error", "Keine Antwort vom Assistenten", job.question);
           finishJob(job, "error", "", "Keine Antwort vom Assistenten.");
           return;
         }
         addEvent(agent.id, "done", "Antwort fertig", job.question);
         finishJob(job, "done", out === "" ? "Keine Antwort." : out);
-      },
-    );
-    if (child) localChildren.set(agent.id, child);
+      });
   }
 
   function waitFor(job, ms) {
@@ -263,19 +313,42 @@ export function createHub(options = {}) {
     });
   }
 
+  /** Real stop: the relay interrupts the agent (bridge stop / turn interrupt / process-tree kill). */
   function cancelAgent(agentId) {
     const agent = agents.get(agentId);
     if (!agent) return { status: 404, error: "unknown agent" };
     if (!agent.busy) return { status: 200, ok: true, note: "nothing running" };
     const job = jobs.get(agent.jobId);
+    if (job) job.cancelRequested = true;
     if (agent.relayId === null) {
-      localChildren.get(agent.id)?.kill?.();
+      agent.abort?.abort();
     } else {
       const relay = relays.get(agent.relayId);
       if (relay) enqueue(relay, { type: "cancel", agentId: agent.id, jobId: agent.jobId });
     }
     if (job) finishJob(job, "cancelled", "");
-    return { status: 200, ok: true };
+    return { status: 200, ok: true, stopped: true };
+  }
+
+  /** Asks the machine that runs the agent (relay or this daemon) something about its sessions. */
+  function rpc(agent, command) {
+    if (agent.relayId === null) {
+      const call = command.type === "sessions" ? localController.sessions()
+        : command.type === "session.new" ? localController.newSession(command.title)
+          : localController.select(String(command.sessionId ?? ""));
+      return call
+        .then((data) => ({ ok: true, data: { ...data, transport: localController.transport() } }))
+        .catch((error) => ({ ok: false, status: 502, error: String(error?.message ?? error).slice(0, 160) }));
+    }
+    const relay = relays.get(agent.relayId);
+    if (!relay || !isOnline(agent)) return Promise.resolve({ ok: false, status: 503, error: "agent offline" });
+    const reqId = randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { rpcs.delete(reqId); resolve({ ok: false, status: 504, error: "relay did not answer" }); }, options.rpcTimeoutMs ?? RPC_TIMEOUT_MS);
+      timer.unref?.();
+      rpcs.set(reqId, { resolve, timer });
+      enqueue(relay, { ...command, reqId, agentId: agent.id });
+    });
   }
 
   // ------------------------------------------------------------- approvals
@@ -357,6 +430,9 @@ export function createHub(options = {}) {
     id: agent.id, label: agent.label, kind: agent.kind, machine: agent.machine, mode: agent.mode,
     online: isOnline(agent), busy: agent.busy, activity: agent.activity, error: agent.error,
     answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions,
+    transport: agent.transport, sessionsSupported: agent.sessionsSupported,
+    session: agent.session ? { id: agent.session.id, title: agent.session.title } : null,
+    stopped: agent.stopped, stopConfirmed: agent.stopConfirmed,
   });
 
   function report() {
@@ -459,7 +535,9 @@ export function createHub(options = {}) {
       const body = await readJson(req);
       const question = typeof body.question === "string" ? body.question.trim() : "";
       if (question === "") { sendJson(res, 400, { error: "question required" }); return; }
-      const started = startAsk(typeof body.agentId === "string" ? body.agentId : "", question);
+      const started = startAsk(typeof body.agentId === "string" ? body.agentId : "", question, {
+        sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined, fresh: body.new === true,
+      });
       if (!started.job) { sendJson(res, started.status, { error: started.error }); return; }
       log("ask:", started.job.agentId, question.slice(0, 80));
       if (body.wait === false) { sendJson(res, 202, { accepted: true, jobId: started.job.id, agentId: started.job.agentId }); return; }
@@ -525,7 +603,59 @@ export function createHub(options = {}) {
     if (post && path === "/agent/cancel") {
       const { agentId } = await readJson(req);
       const outcome = cancelAgent(typeof agentId === "string" ? agentId : defaultAgentId() ?? "");
-      sendJson(res, outcome.status, outcome.error ? { error: outcome.error } : { ok: true });
+      sendJson(res, outcome.status, outcome.error ? { error: outcome.error } : { ok: true, stopped: outcome.stopped === true });
+      return;
+    }
+
+    // ---- sessions
+    if (req.method === "GET" && path === "/agent/sessions") {
+      const agent = agents.get(url.searchParams.get("agentId") ?? defaultAgentId() ?? "");
+      if (!agent) { sendJson(res, 404, { error: "unknown agent" }); return; }
+      if (!isOnline(agent)) { sendJson(res, 503, { error: "agent offline" }); return; }
+      const out = await rpc(agent, { type: "sessions" });
+      if (!out.ok) { sendJson(res, out.status ?? 502, { error: out.error }); return; }
+      const data = out.data ?? {};
+      if (typeof data.transport === "string") agent.transport = data.transport.slice(0, 16);
+      const current = agent.session?.id ?? (typeof data.active === "string" && data.active !== "" ? data.active : null);
+      const sessions = (Array.isArray(data.items) ? data.items : []).slice(0, 12).map((item) => ({
+        id: String(item.id), title: String(item.title ?? "").slice(0, 60), when: String(item.when ?? "").slice(0, 8), updated: Number(item.updated ?? 0), current: item.id === current,
+      }));
+      sendJson(res, 200, {
+        agentId: agent.id, supported: data.supported !== false, transport: agent.transport,
+        current: agent.session ? { id: agent.session.id, title: agent.session.title } : null, sessions,
+      });
+      return;
+    }
+
+    if (post && (path === "/agent/session/new" || path === "/agent/session/select")) {
+      const body = await readJson(req);
+      const agent = agents.get(typeof body.agentId === "string" && body.agentId !== "" ? body.agentId : defaultAgentId() ?? "");
+      if (!agent) { sendJson(res, 404, { error: "unknown agent" }); return; }
+      if (!isOnline(agent)) { sendJson(res, 503, { error: "agent offline" }); return; }
+      if (agent.busy) { sendJson(res, 409, { error: "agent busy" }); return; }
+      const isNew = path.endsWith("/new");
+      if (!isNew && (typeof body.sessionId !== "string" || body.sessionId === "")) { sendJson(res, 400, { error: "sessionId required" }); return; }
+      const out = await rpc(agent, isNew ? { type: "session.new", title: typeof body.title === "string" ? body.title.slice(0, 60) : undefined } : { type: "session.select", sessionId: body.sessionId });
+      if (!out.ok) { sendJson(res, out.status ?? 502, { error: out.error }); return; }
+      const data = out.data ?? {};
+      if (typeof data.transport === "string") agent.transport = data.transport.slice(0, 16);
+      agent.stopped = false;
+      agent.stopConfirmed = false;
+      agent.error = null;
+      agent.activity = "";
+      agent.suggestions = [];
+      if (isNew) {
+        const id = typeof data.id === "string" && data.id !== "" ? data.id : null;
+        setSession(agent, { id, title: "", fresh: id === null });
+        agent.answer = null;
+        agent.lastQuestion = null;
+      } else {
+        setSession(agent, { id: body.sessionId, title: typeof body.title === "string" ? body.title.slice(0, 60) : "", fresh: false });
+        agent.answer = typeof data.lastAssistant === "string" ? clipTail(data.lastAssistant, 4000) : null;
+        agent.lastQuestion = typeof data.lastUser === "string" ? data.lastUser.slice(0, 200) : null;
+      }
+      log(isNew ? "session new:" : "session select:", agent.id);
+      sendJson(res, 200, { ok: true, session: { id: agent.session.id, title: agent.session.title }, transport: agent.transport });
       return;
     }
 
@@ -569,10 +699,13 @@ export function createHub(options = {}) {
     }
 
     if (post && path === "/relay/result") {
-      const { jobId, status, text, activity, error } = await readJson(req);
+      const { jobId, status, text, activity, error, sessionId, transport } = await readJson(req);
       const job = jobs.get(jobId);
       if (!job) { sendJson(res, 404, { error: "unknown job" }); return; }
       const agent = agents.get(job.agentId);
+      if (agent && status !== "running") noteResult(agent, { sessionId, transport });
+      else if (agent && typeof transport === "string") agent.transport = transport.slice(0, 16);
+      if (agent && status === "cancelled" && job.cancelRequested) agent.stopConfirmed = true;
       const body = typeof text === "string" ? clipTail(text, 4000) : "";
       if (status === "running") {
         if (agent && !job.done) { agent.answer = body; agent.activity = typeof activity === "string" ? activity.slice(0, 80) : ""; }
@@ -582,6 +715,17 @@ export function createHub(options = {}) {
         sendJson(res, 400, { error: "bad status" });
         return;
       }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (post && path === "/relay/reply") {
+      const { reqId, ok, data, error } = await readJson(req);
+      const pending = rpcs.get(reqId);
+      if (!pending) { sendJson(res, 404, { error: "unknown request" }); return; }
+      rpcs.delete(reqId);
+      clearTimeout(pending.timer);
+      pending.resolve(ok === true ? { ok: true, data } : { ok: false, status: 502, error: typeof error === "string" ? error.slice(0, 160) : "failed" });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -648,6 +792,8 @@ export function createHub(options = {}) {
     },
     close() {
       for (const t of timers) clearInterval(t);
+      localController?.close();
+      for (const pending of rpcs.values()) clearTimeout(pending.timer);
       for (const relay of relays.values()) if (relay.waiter) clearTimeout(relay.waiter.timer);
       for (const card of approvals.values()) clearTimeout(card.timer);
       server.closeAllConnections?.();

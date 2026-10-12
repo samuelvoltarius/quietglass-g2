@@ -73,15 +73,18 @@ GET  /agents                 every agent with online/busy/answer
 POST /agent/ask              {agentId, question, wait?}   (wait:false = answer streams into /report)
 POST /agent/voice?agentId=   WAV body (or JSON base64) -> Whisper -> ask
 POST /agent/approve          {cardId, decision: allow|deny}
-POST /agent/cancel           {agentId}
+POST /agent/cancel           {agentId}                    (real stop, see Sessions)
+GET  /agent/sessions?agentId=                              (session list of an agent)
+POST /agent/session/new      {agentId}
+POST /agent/session/select   {agentId,sessionId,title}
 POST /events                 {provider,status,title,detail}  (completion hook)
 POST /events/read            {id}
 POST /home/toggle            {device}                     (Home Assistant, allow-listed)
 POST /printer                {action: pause|resume|cancel} (Moonraker)
 ```
 
-The relays use three more (`/relay/register`, `/relay/poll`, `/relay/result`,
-`/relay/permission`), all with the same bearer token.
+The relays use a few more (`/relay/register`, `/relay/poll`, `/relay/result`,
+`/relay/reply`, `/relay/permission`), all with the same bearer token.
 
 Fast path: `/report` is served from cached state, so the glance is instant. The
 agent path is the only one that thinks.
@@ -128,7 +131,9 @@ needed.
 | `mode` | `ask` (default for claude/codex): every write/command waits for a yes/no on the glasses. `auto`: no questions (Claude `bypassPermissions`, Codex `workspace-write`, never ask). `plan`/`readonly`: read-only. `full` (Codex): no sandbox at all. **You opt in per agent.** |
 | `bin` | Executable if it is not on `PATH`. |
 | `model`, `args`, `timeoutMs`, `brief` | Optional. `brief:false` stops the relay from asking for glasses-sized answers. |
-| `url`, `token` / `tokenEnv` | OpenClaw gateway (OpenAI-compatible `/v1/chat/completions`, bearer token), or a Hermes evenhub-bridge WebSocket (`kind: hermes` + `url` `ws://...`). Prefer `tokenEnv` so no token sits in the file. |
+| `url`, `token` / `tokenEnv` | OpenClaw gateway (OpenAI-compatible `/v1/chat/completions`, bearer token). Prefer `tokenEnv` so no token sits in the file. |
+| `bridge` | Hermes only: `{"url":"ws://127.0.0.1:8765","tokenEnv":"EVENHUB_BRIDGE_TOKEN"}` — the hermes-evenhub-bridge plugin. Real sessions and a real stop. The token is read at runtime from the relay's environment or `~/.hermes/.env` (or `bridge.envFile`) and never stored in `relay.json`. Without a bridge, or while it is down, the relay falls back to `hermes chat -q`. |
+| `continue` | Claude only: `true` makes a prompt without a chosen session use `claude -p --continue`. |
 | `engine` | Codex only: `"exec"` uses `codex exec` (cannot ask; read-only for `ask`). Default is `codex app-server`, which can ask. |
 
 `relay*.json` is git-ignored (only `relay.example.json` is tracked).
@@ -141,7 +146,7 @@ node quiet-hub-relay.mjs --hub https://<hub>.<tailnet>.ts.net --config relay.jso
 ```
 
 (`--token <value>` and `--token-file <path>` also work; the env variable keeps the
-token out of the process list.) Copy `quiet-hub-relay.mjs` **and**
+token out of the process list.) Copy `quiet-hub-relay.mjs`, `quiet-hub-agents.mjs` **and**
 `quiet-hub-approve-mcp.mjs` into the same folder if you do not clone the repo.
 The relay survives hub restarts and network drops (it re-registers with
 back-off), caps all output (4 kB to the hub), never prints the token, and stops
@@ -173,6 +178,35 @@ loginctl enable-linger $USER
   `"engine": "exec"` Codex cannot ask and stays read-only.
 - **Hermes** and **OpenClaw** have no per-action permission prompts; they run
   as configured on their machine.
+
+### Sessions and Stop
+
+Every agent has sessions you can see, create and select on the glasses
+(agent list → session page → open session). The session page lists
+`+ New session`, `» Continue: <title>` and the agent's recent sessions.
+
+| Agent | List | New | Continue | Stop |
+| --- | --- | --- | --- | --- |
+| Hermes via bridge | `sessions.list` | `sessions.new` | `sessions.switch` | `{"t":"stop"}` |
+| Hermes via CLI (fallback) | `hermes sessions list` | next prompt starts one | `hermes chat -q … --resume <id>` | process-tree kill |
+| Claude Code | `~/.claude/projects/<cwd>/*.jsonl` | no flag | `claude -p --resume <id>` (or `--continue`) | process-tree kill |
+| Codex (app-server) | `thread/list` | `thread/start` | `thread/resume` | `turn/interrupt` + process-tree kill |
+| OpenClaw | — | clears the history | — | aborts the request |
+
+Stop is a **double tap** while an agent is running. The daemon answers at once
+(`stopped:true` in `/report`, shown as `[gestoppt]`) and the relay confirms
+when the process or turn is really gone (`stopConfirmed`). Process trees are
+ended with `taskkill /T /F /PID` on Windows and by signalling the process group
+(children are started detached) on Linux/macOS. The glasses footer always
+shows the double tap: `2× = zurück`, `2× = stoppen` while running, `2× = Ende`
+on the overview.
+
+Voice: hold the touchpad on the open session (max 18 s). The G2 microphone
+(16 kHz, 16 bit, mono) becomes a WAV, the daemon transcribes it with the
+Whisper endpoint (`WHISPER_URL`), shows `gehört: …` and sends the text into the
+selected session. Tap ends and sends, double tap discards a recording. Errors
+are spelled out on the glasses (`Mikrofon nicht freigegeben`,
+`Spracherkennung nicht erreichbar`, `Nichts verstanden`).
 
 ### Completion events from your own sessions
 
@@ -238,8 +272,7 @@ node scripts/find-moonraker.mjs 192.168.0
   agent's answer/error on the glasses.
 - Codex approvals use the experimental `codex app-server` protocol; a future
   Codex version can change it (`"engine": "exec"` is the fallback, read-only).
-- Hermes/OpenClaw answers are one-shot per question; Hermes does not keep a
-  conversation between asks, Claude (session resume) and OpenClaw (history) do.
+- Hermes without a bridge continues a session only when the CLI prints its id (`hermes chat --resume`); OpenClaw keeps a short in-memory history.
 - Not yet verified on physical G2 hardware.
 
 ## Status

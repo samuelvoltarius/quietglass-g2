@@ -6,6 +6,8 @@ export interface AppSettings {
   readonly serverUrl: string;
   readonly token: string;
   readonly autoOpenNotifications: boolean;
+  /** Real G2 hardware may report swipes the other way round than the simulator. */
+  readonly invertScroll: boolean;
 }
 
 export interface PhoneState {
@@ -25,10 +27,10 @@ const copy = {
     agentsOnline: "Agenten online", connected: "Verbunden", disconnected: "Nicht verbunden", devices: "Geräte", notifications: "Meldungen",
     setup: "Einrichtung", scan: "▦ QR-Code vom Pi scannen", scanHint: "Öffnet die Handykamera. Server und Token werden aus dem QR-Code übernommen.", manual: "oder manuell",
     server: "Server-Adresse", token: "Zugangs-Token", save: "Speichern & Verbindung testen",
-    display: "Anzeige", language: "Sprache", auto: "Neue Agenten-Meldung automatisch öffnen",
+    display: "Anzeige", language: "Sprache", auto: "Neue Agenten-Meldung automatisch öffnen (nur auf der Übersicht)", invert: "Wischrichtung umkehren (falls oben/unten vertauscht ist)",
     agents: "Hermes, OpenClaw, Codex und Claude melden Fertig/Wartet/Fehler über denselben Hub.",
     controls: "Brillensteuerung", swipe: "Wischen", select: "Eintrag wählen", tap: "Tippen", open: "Öffnen oder ausführen",
-    double: "Doppeltipp", back: "Zurück; auf Übersicht beenden", hold: "Halten", speak: "Beim Agenten sprechen",
+    double: "Doppeltipp", back: "Zurück; läuft ein Agent: Stopp; Übersicht: beenden", hold: "Halten", speak: "In die Sitzung sprechen (max. 18 s)",
     private: "Konfiguration bleibt auf diesem Gerät.", checking: "Verbindung wird geprüft …", camera: "Kamera wird geöffnet …",
     saved: "✓ Verbunden und gespeichert", failed: "Verbindung fehlgeschlagen – Daten sind gespeichert",
     scanned: "✓ QR-Code erkannt und verbunden", unreachable: "QR erkannt, Server aber nicht erreichbar", scanFailed: "QR-Code konnte nicht gelesen werden",
@@ -37,10 +39,10 @@ const copy = {
     agentsOnline: "agents online", connected: "Connected", disconnected: "Not connected", devices: "devices", notifications: "notifications",
     setup: "Setup", scan: "▦ Scan QR code from Pi", scanHint: "Opens the phone camera and imports the server and access token.", manual: "or enter manually",
     server: "Server address", token: "Access token", save: "Save & test connection",
-    display: "Display", language: "Language", auto: "Open new agent notifications automatically",
+    display: "Display", language: "Language", auto: "Open new agent notifications automatically (overview only)", invert: "Reverse swipe direction (if up/down feels swapped)",
     agents: "Hermes, OpenClaw, Codex and Claude report Done/Waiting/Error through the same hub.",
     controls: "Glasses controls", swipe: "Swipe", select: "Select item", tap: "Tap", open: "Open or execute",
-    double: "Double tap", back: "Back; exit on overview", hold: "Hold", speak: "Speak on Agent page",
+    double: "Double tap", back: "Back; stops a running agent; exit on overview", hold: "Hold", speak: "Speak into the session (max 18 s)",
     private: "Configuration stays on this device.", checking: "Testing connection …", camera: "Opening camera …",
     saved: "✓ Connected and saved", failed: "Connection failed – settings were saved",
     scanned: "✓ QR code imported and connected", unreachable: "QR imported, but server is unreachable", scanFailed: "QR code could not be read",
@@ -59,6 +61,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     serverUrl: (root.querySelector("#server") as HTMLInputElement | null)?.value.trim() ?? "",
     token: (root.querySelector("#token") as HTMLInputElement | null)?.value.trim() ?? "",
     autoOpenNotifications: (root.querySelector("#auto-open") as HTMLInputElement | null)?.checked ?? true,
+    invertScroll: (root.querySelector("#invert-scroll") as HTMLInputElement | null)?.checked ?? false,
   });
 
   const render = (): void => {
@@ -88,6 +91,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
         <h2>${c.display}</h2>
         ${languageSelect(locale)}
         <label class="check"><input id="auto-open" type="checkbox" ${settings.autoOpenNotifications ? "checked" : ""} /> ${c.auto}</label>
+        <label class="check"><input id="invert-scroll" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${c.invert}</label>
         <p class="hint">${c.agents}</p>
       </section>
       <section class="card">
@@ -99,6 +103,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
 
     root.querySelector("#language")?.addEventListener("change", (event) => handlers.onLocale((event.target as HTMLSelectElement).value as Locale));
     root.querySelector("#auto-open")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
+    root.querySelector("#invert-scroll")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#save")?.addEventListener("click", async () => {
       const next = readForm();
       busy = true; notice = c.checking; render();

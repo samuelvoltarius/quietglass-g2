@@ -11,13 +11,22 @@ function onAgents(report: HubReport = demoReport()): HubModel {
   return { ...createModel(report), screen: "agent", agentView: "list" };
 }
 
+/** list -> sessions -> (continue the current session) -> question view. */
+function openAsk(model: HubModel): HubModel {
+  const sessions = decide(model, "click", T0).model;
+  return decide(sessions, "click", T0).model;
+}
+
 describe("agent list", () => {
-  it("swipe selects an agent, tap opens its questions", () => {
+  it("swipe selects an agent, tap opens its sessions, tap again its questions", () => {
     const down = decide(onAgents(), "scrollDown", T0).model;
     expect(down.agentIndex).toBe(1);
-    const opened = decide(down, "click", T0).model;
-    expect(opened.agentView).toBe("ask");
-    expect(opened.questionIndex).toBe(0);
+    const opened = decide(down, "click", T0);
+    expect(opened.model.agentView).toBe("sessions");
+    expect(opened.effect).toEqual({ kind: "loadSessions", agentId: "claude-win" });
+    const ask = decide(opened.model, "click", T0).model;
+    expect(ask.agentView).toBe("ask");
+    expect(ask.questionIndex).toBe(0);
   });
 
   it("an offline agent cannot be opened and says so", () => {
@@ -53,22 +62,29 @@ describe("agent list", () => {
     expect(out.model.recording).toBe(false);
   });
 
-  it("double tap in the question view steps back to the list, then to the overview", () => {
-    const ask = decide(onAgents(), "click", T0).model;
-    const list = decide(ask, "doubleClick", T0).model;
+  it("double tap climbs session -> sessions -> agent list -> overview", () => {
+    const ask = openAsk(onAgents());
+    const sessions = decide(ask, "doubleClick", T0).model;
+    expect(sessions.agentView).toBe("sessions");
+    const list = decide(sessions, "doubleClick", T0).model;
     expect(list.agentView).toBe("list");
     expect(decide(list, "doubleClick", T0).model.screen).toBe("root");
   });
 
   it("a busy agent is stopped with double tap instead of leaving the page", () => {
-    const ask = decide(onAgents(), "click", T0).model;
+    const ask = openAsk(onAgents());
     const busy = { ...ask, report: { ...ask.report, agents: ask.report.agents.map((a, i) => (i === 0 ? { ...a, busy: true } : a)) } };
-    expect(decide(busy, "doubleClick", T0).effect).toEqual({ kind: "cancel", agentId: "hermes-spark" });
+    const stop = decide(busy, "doubleClick", T0);
+    expect(stop.effect).toEqual({ kind: "cancel", agentId: "hermes-spark" });
+    // The stop shows at once: not busy any more, marked as stopped.
+    expect(stop.model.report.agents[0]).toMatchObject({ busy: false, stopped: true });
+    expect(buildView(stop.model, "de", T0).footer).toContain("gestoppt");
+    expect(buildView(stop.model, "de", T0).body.join(" ")).toContain("[gestoppt]");
     expect(decide(busy, "click", T0).effect).toBeUndefined();
   });
 
   it("asking targets the selected agent", () => {
-    const ask = decide(decide(onAgents(), "scrollDown", T0).model, "click", T0).model;
+    const ask = openAsk(decide(onAgents(), "scrollDown", T0).model);
     const out = decide(ask, "click", T0);
     expect(out.effect).toMatchObject({ kind: "ask", agentId: "claude-win" });
   });
@@ -130,7 +146,7 @@ describe("layout limits", () => {
       ...demoReport(),
       agents: Array.from({ length: 12 }, (_, i) => ({ ...demoReport().agents[0]!, id: `agent-with-a-very-long-name-${i}`, label: `agent-with-a-very-long-name-number-${i}`, answer: long, busy: i % 2 === 0, activity: long })),
     };
-    for (const view of ["list", "ask"] as const) {
+    for (const view of ["list", "sessions", "ask"] as const) {
       const out = buildView({ ...createModel(crowded), screen: "agent", agentView: view }, "en", T0);
       expect(out.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
       for (const row of out.body) expect(row.length).toBeLessThanOrEqual(ROW_WIDTH);

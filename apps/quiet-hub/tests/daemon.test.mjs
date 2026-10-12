@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { startHub, TOKEN, until, sleep } from "./helpers.mjs";
+import { startHub, TOKEN, until, sleep, fakeChild } from "./helpers.mjs";
 
 const open = [];
 async function hub(options) {
@@ -105,7 +105,7 @@ describe("registry and routing", () => {
     expect(cancel.status).toBe(200);
     const poll = await h.api(`/relay/poll?relay=${reg.json.relayId}`);
     expect(poll.json.commands[0]).toMatchObject({ type: "cancel", agentId: "claude-win" });
-    expect((await h.api("/agents")).json.agents[0]).toMatchObject({ busy: false, answer: "(abgebrochen)" });
+    expect((await h.api("/agents")).json.agents[0]).toMatchObject({ busy: false, stopped: true });
   });
 
   it("the daemon's own Hermes is an agent too, and failures say so", async () => {
@@ -113,7 +113,7 @@ describe("registry and routing", () => {
     const h = await hub({
       localAgent: true,
       localAgentId: "hermes-pi5",
-      execFileImpl: (bin, args, _opts, cb) => { calls.push([bin, args[0], args[2]]); setImmediate(() => cb(null, "Ja.\n", "")); return { kill() {} }; },
+      spawnImpl: (bin, args) => { calls.push([bin, args[0], args[2]]); const c = fakeChild(); setImmediate(() => { c.emitLines("Ja."); c.exit(0); }); return c; },
     });
     const ask = await h.api("/agent/ask", { question: "Läuft es?" });
     expect(ask.json.answer).toBe("Ja.");
@@ -200,7 +200,7 @@ describe("voice", () => {
 
   it("JSON base64 (old clients) still works and returns the answer", async () => {
     const w = whisperMock("hallo");
-    const h = await hub({ fetchImpl: w.fetchImpl, localAgent: true, execFileImpl: (b, a, o, cb) => { setImmediate(() => cb(null, "Hi", "")); return { kill() {} }; } });
+    const h = await hub({ fetchImpl: w.fetchImpl, localAgent: true, spawnImpl: () => { const c = fakeChild(); setImmediate(() => { c.emitLines("Hi"); c.exit(0); }); return c; } });
     const res = await h.api("/agent/voice", { audio: wav.toString("base64"), mime: "audio/wav" });
     expect(res.json).toMatchObject({ question: "hallo", answer: "Hi" });
   });
