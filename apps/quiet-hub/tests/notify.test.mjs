@@ -39,7 +39,7 @@ const phoneServices = [
 ];
 
 describe("phone mirror via Home Assistant notify", () => {
-  it("auto-detects the first notify.mobile_app_* service (read-only) and mirrors waiting/done/error", async () => {
+  it("auto-detects the first notify.mobile_app_* service (read-only) and mirrors only waiting events", async () => {
     const w = world({ services: phoneServices });
     const h = await hub({ ...base, fetchImpl: w.fetchImpl });
     await h.api("/events", { provider: "claude-win", status: "waiting", title: "Freigabe: Bash: npm test" });
@@ -49,8 +49,8 @@ describe("phone mirror via Home Assistant notify", () => {
     expect(notifyCalls(w)[0].body).toEqual({ title: "claude-win: wartet", message: "Freigabe: Bash: npm test" });
     await h.api("/events", { provider: "claude-win", status: "done", title: "Antwort fertig" });
     await h.api("/events", { provider: "claude-win", status: "error", title: "Build kaputt" });
-    await until(() => notifyCalls(w).length === 3);
-    expect(notifyCalls(w).map((c) => c.body.title)).toEqual(["claude-win: wartet", "claude-win: fertig", "claude-win: Fehler"]);
+    await sleep(60);
+    expect(notifyCalls(w).map((c) => c.body.title)).toEqual(["claude-win: wartet"]);
     // detection happened once
     expect(w.calls.filter((c) => c.path === "/api/services").length).toBe(1);
   });
@@ -67,7 +67,7 @@ describe("phone mirror via Home Assistant notify", () => {
   it("HA_NOTIFY_SERVICE pins the service and skips detection", async () => {
     const w = world({ services: phoneServices });
     const h = await hub({ ...base, fetchImpl: w.fetchImpl, haNotifyService: "notify.mobile_app_ipad" });
-    await h.api("/events", { provider: "x", status: "done", title: "ok" });
+    await h.api("/events", { provider: "x", status: "waiting", title: "ok" });
     await until(() => notifyCalls(w).length === 1);
     expect(notifyCalls(w)[0].path).toBe("/api/services/notify/mobile_app_ipad");
     expect(w.calls.some((c) => c.path === "/api/services")).toBe(false);
@@ -76,7 +76,7 @@ describe("phone mirror via Home Assistant notify", () => {
   it("is off when no mobile_app service exists", async () => {
     const w = world({ services: [{ domain: "notify", services: { notify: {}, persistent_notification: {} } }] });
     const h = await hub({ ...base, fetchImpl: w.fetchImpl });
-    await h.api("/events", { provider: "x", status: "done", title: "ok" });
+    await h.api("/events", { provider: "x", status: "waiting", title: "ok" });
     await until(() => w.calls.some((c) => c.path === "/api/services"));
     await sleep(60);
     expect(notifyCalls(w)).toEqual([]);

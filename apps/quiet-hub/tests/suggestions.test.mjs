@@ -44,13 +44,13 @@ describe("suggestions come from the Spark vLLM only", () => {
       expect(agent.suggestions).toEqual(["Mehr Details", "Kurzfassung", "Und morgen?"]);
       expect(v.calls[0].url).toBe("http://spark.test:8000/v1/chat/completions");
       expect(v.calls[0].body).toMatchObject({
-        model: "qwen", temperature: 0.3, chat_template_kwargs: { enable_thinking: false },
+        model: "qwen", temperature: 0.5, chat_template_kwargs: { enable_thinking: false },
       });
       expect(v.calls[0].body.max_tokens).toBeLessThanOrEqual(150);
       const prompt = v.calls[0].body.messages[0].content;
       expect(prompt).toContain("Wie spät ist es?");
       expect(prompt).toContain("Es ist 14 Uhr.");
-      expect(prompt).toContain("32");
+      expect(prompt).toContain("28");
     });
   }
 
