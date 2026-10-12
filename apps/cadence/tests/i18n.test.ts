@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr } from "../src/i18n";
 import { messages } from "../src/messages";
 import { buildView, composeView } from "../src/glasses/view";
-import { BODY_COLS, BODY_ROWS, LINE_COLS } from "../src/glasses/fit";
+import { BODY_COLS, BODY_ROWS, HEADER_COLS, LINE_COLS } from "../src/glasses/fit";
 import { COMMON_SIGNATURES, createState, DEFAULT_SETTINGS, MAX_BPM, start, type MetronomeSettings } from "../src/metronome/engine";
 import { formatDuration } from "../src/practice/log";
 import { mountPhoneUi } from "../src/ui/phone";
@@ -86,7 +86,7 @@ describe("glasses text budget", () => {
         views.push(composeView(start(createState(), 0), settings, { locale }, 0));
       }
       for (const view of views) {
-        expect(view.header.length).toBeLessThanOrEqual(LINE_COLS);
+        expect(view.header.length).toBeLessThanOrEqual(HEADER_COLS);
         expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_COLS);
         expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
         for (const line of view.body) expect(line.length, line).toBeLessThanOrEqual(BODY_COLS);

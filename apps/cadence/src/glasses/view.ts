@@ -2,7 +2,7 @@ import { positionAt, type MetronomeSettings, type MetronomeState } from "../metr
 import { formatDuration } from "../practice/log";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import { fitView, LINE_COLS } from "./fit";
+import { fitView, HEADER_COLS } from "./fit";
 
 /**
  * What the glasses show.
@@ -95,7 +95,7 @@ export function beatRow(
 }
 
 /** Characters that fit one header line on the 576 px display. */
-const HEADER_WIDTH = LINE_COLS;
+const HEADER_WIDTH = HEADER_COLS;
 
 export function truncate(text: string, maxWidth: number): string {
   if (text.length <= maxWidth) return text;

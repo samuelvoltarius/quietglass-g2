@@ -12,7 +12,7 @@ import { mountPhoneUi } from "./ui/phone";
 import { getLocale, setLocale, type Locale } from "./i18n";
 import { createExitRequest } from "./exit";
 
-const PIXEL_ICON = ["....##....", "...####...", "....##....", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
+const PIXEL_ICON = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
 
 /** Tempo step for a swipe on the glasses. */
 const BPM_STEP = 4;

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] — 2026-10-13
+
+### Changed
+
+- Layout: the metronome sign moved into the top-right corner of the header; the body now uses the full display width.
+
 ## [0.3.1] — 2026-10-12
 
 ### Changed
