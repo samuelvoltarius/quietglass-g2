@@ -9,7 +9,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { load, save, setSettings, type CadenceData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { createExitRequest } from "./exit";
 
 const PIXEL_ICON = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
@@ -30,7 +30,7 @@ async function boot(): Promise<void> {
   let closed = false;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
 
   const currentView = (): CadenceView =>
     buildView(state, data.settings, {
@@ -178,7 +178,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       void draw();
     },
     getData: () => data,
