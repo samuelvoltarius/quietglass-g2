@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge, so request ordering and the close
@@ -81,6 +82,7 @@ describe("nextstop lifecycle", () => {
   let pending: { stopId: string; reply: (body: unknown) => void }[];
 
   beforeEach(() => {
+  resetGestureDedupe();
     unhandled = [];
     pending = [];
     nodeProcess.on("unhandledRejection", onUnhandled);

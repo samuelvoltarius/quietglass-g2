@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageRawDataUpdateResult } from "@evenrealities/even_hub_sdk";
 
@@ -46,7 +47,7 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
   };
   return {
     bridge, shutdown, imu, writes, saved, images,
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     sample: (y: number) => handler?.({ sysEvent: { eventType: IMU_DATA_REPORT, imuData: { x: 0, y, z: 1 } } }),
     reconnect: () => statusHandler?.({ connectType: "connected" }),
     ready: () => handler !== undefined,
@@ -55,6 +56,7 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
 
 describe("posturelens loop", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

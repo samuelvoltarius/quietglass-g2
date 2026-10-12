@@ -1,11 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import {
-  EVENT_CLICK, EVENT_DOUBLE_CLICK, EVENT_LONG_PRESS, EVENT_SCROLL_BOTTOM, EVENT_SCROLL_TOP,
-  SOURCE_GLASSES_LEFT, SOURCE_GLASSES_RIGHT, SOURCE_RING,
-  gestureFromCode, gestureFromEvent, sourceFromCode,
+  EVENT_CLICK, EVENT_DOUBLE_CLICK, EVENT_LONG_PRESS, EVENT_SCROLL_BOTTOM, EVENT_SCROLL_TOP, SOURCE_GLASSES_LEFT, SOURCE_GLASSES_RIGHT, SOURCE_RING, gestureFromCode, gestureFromEvent, sourceFromCode, resetGestureDedupe,
 } from "../src/input/gestures";
 
 describe("event code mapping", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+  });
   it("maps the documented gesture codes", () => {
     expect(gestureFromCode(EVENT_CLICK)).toBe("click");
     expect(gestureFromCode(EVENT_DOUBLE_CLICK)).toBe("doubleClick");
@@ -32,6 +33,9 @@ describe("event code mapping", () => {
 });
 
 describe("reading gestures out of SDK events", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+  });
   it("reads a text container event", () => {
     expect(gestureFromEvent({ textEvent: { eventType: EVENT_CLICK, eventSource: SOURCE_RING } }))
       .toEqual({ gesture: "click", source: "ring" });
@@ -56,6 +60,9 @@ describe("reading gestures out of SDK events", () => {
 });
 
 describe("proto3 default-value omission", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+  });
   it("reads a tap that arrives with no eventType at all", () => {
     // Verified against the real simulator: a tap produces exactly this, because
     // CLICK_EVENT is 0 and proto3 omits fields holding their default value.

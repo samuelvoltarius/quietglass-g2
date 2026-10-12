@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { EVENT_CLICK, EVENT_DOUBLE_CLICK, EVENT_LONG_PRESS, EVENT_LONG_PRESS_RELEASE, EVENT_SCROLL_BOTTOM, EVENT_SCROLL_TOP, SOURCE_RING, gestureFromCode, gestureFromEvent, sourceFromCode } from "../src/input/gestures";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  EVENT_CLICK, EVENT_DOUBLE_CLICK, EVENT_LONG_PRESS, EVENT_LONG_PRESS_RELEASE, EVENT_SCROLL_BOTTOM, EVENT_SCROLL_TOP, SOURCE_RING, gestureFromCode, gestureFromEvent, sourceFromCode, resetGestureDedupe,
+} from "../src/input/gestures";
 
 describe("gestures", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+  });
   it("maps long-press and double-tap codes", () => {
     expect(gestureFromCode(EVENT_LONG_PRESS)).toBe("longPress");
     expect(gestureFromCode(EVENT_LONG_PRESS_RELEASE)).toBe("longPressRelease");

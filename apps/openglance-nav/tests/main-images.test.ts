@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge (as main.test.ts does) to pin
@@ -77,7 +78,7 @@ function fakeBridge(glassView: "turns" | "overview") {
   return {
     bridge, state,
     ready: () => onEvent !== undefined,
-    gesture: (eventType: number) => onEvent?.({ sysEvent: { eventType, eventSource: 1 } }),
+    gesture: (eventType: number) => (resetGestureDedupe(), onEvent?.({ sysEvent: { eventType, eventSource: 1 } })),
     move: (lat: number, lon: number) => onLocation?.({ latitude: lat, longitude: lon }),
     listening: () => onLocation !== undefined,
   };

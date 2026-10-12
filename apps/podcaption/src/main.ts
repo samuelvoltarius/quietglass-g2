@@ -1,4 +1,5 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { appStore } from "./storage/kv";
 import { createTextPage, updateTextPage, type TextView } from "./glasses/text";
 import { getLocale, languageSelect, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent } from "./input/gestures";
@@ -15,7 +16,8 @@ type Source = "DEMO" | "FILE" | "RSS";
 const SOURCE_TAG: Record<Source, string> = { DEMO: "tagDemo", FILE: "tagFile", RSS: "tagFeed" };
 
 async function boot(): Promise<void> {
-  const bridge: EvenAppBridge = await waitForEvenAppBridge(); let locale = getLocale();
+  const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  await appStore.init(bridge, ["quietglass.locale", "podcaption.bridge"]); let locale = getLocale();
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   /** The first-run captions are a how-to in the user's language, not sample podcast text. */
   const demo = (): Caption[] => demoCaptions([t("demo1"), t("demo2"), t("demo3"), t("demo4")]);
@@ -27,7 +29,7 @@ async function boot(): Promise<void> {
   const fail = (cause: unknown): void => { console.warn("[podcaption]", cause); failure = failureFor(cause); last = ""; void draw(); renderPhone(); };
   const useCaptions = async (parsed: Caption[], title: string, nextSource: Source): Promise<void> => { player.stop(); captions = parsed; episode = title || t("transcript"); source = nextSource; cursor = 0; failure = null; last = ""; await draw(); renderPhone(); };
   /** Newest episode with a transcript; its files are tried best first (VTT, SRT, JSON, then HTML/text), so one broken link does not end the load. */
-  const loadFeed = async (): Promise<void> => { const api = localStorage.getItem("podcaption.bridge") || DEFAULT_API; try { const first = parsePodcastFeed(await fetchText(bridgeUrl(api, "/feed"), "feed"))[0]; if (!first) throw new Error("feed has no podcast:transcript"); let lastFailure: unknown = new Error("transcript unavailable"); for (const transcript of first.transcripts) { try { await useCaptions(readTranscript(await fetchText(bridgeUrl(api, `/transcript?url=${encodeURIComponent(transcript.url)}`), "transcript"), transcript.type), first.title, "RSS"); return; } catch (cause) { lastFailure = cause; } } throw lastFailure; } catch (cause) { fail(cause); } };
+  const loadFeed = async (): Promise<void> => { const api = appStore.get("podcaption.bridge") || DEFAULT_API; try { const first = parsePodcastFeed(await fetchText(bridgeUrl(api, "/feed"), "feed"))[0]; if (!first) throw new Error("feed has no podcast:transcript"); let lastFailure: unknown = new Error("transcript unavailable"); for (const transcript of first.transcripts) { try { await useCaptions(readTranscript(await fetchText(bridgeUrl(api, `/transcript?url=${encodeURIComponent(transcript.url)}`), "transcript"), transcript.type), first.title, "RSS"); return; } catch (cause) { lastFailure = cause; } } throw lastFailure; } catch (cause) { fail(cause); } };
   const player = createPlayer({ delayMs: (index) => captionDelay(captions, index), length: () => captions.length, cursor: () => cursor, setCursor: (next) => { cursor = next; }, onChange: () => { last = ""; void draw(); renderLive(); } }); const toggle = (): void => player.toggle();
   const previewHtml = (): string => captions.slice(cursor, cursor + 3).map((caption) => `<p><time>${formatTime(caption.start)}</time>${escapeHtml(caption.text)}</p>`).join("");
   /** Playback and scrolling touch only the preview and the button; a full re-render every caption wiped what the user was typing. */
@@ -39,14 +41,14 @@ async function boot(): Promise<void> {
     const typedTitle = document.querySelector<HTMLInputElement>("#title")?.value ?? ""; const pasted = document.querySelector<HTMLTextAreaElement>("#paste")?.value ?? "";
     const open = `<section class="card"><h2>${t("open")}</h2><label>${t("file")}<input id="transcript-file" type="file" accept=".vtt,.srt,.json,.txt,text/vtt,application/json,text/plain"></label><label>${t("title")}<input id="title" type="text" value="${escapeHtml(typedTitle)}"></label><p class="hint">${t("help")}</p><label>${t("paste")}<textarea id="paste" rows="4" placeholder="${escapeHtml(t("pasteHint"))}">${escapeHtml(pasted)}</textarea></label><button id="use-paste">${t("usePaste")}</button></section>`;
     const playerCard = `<section class="card"><div class="status-row"><span class="status-dot ${source === "DEMO" ? "warn" : ""}"></span><strong>${t(source === "DEMO" ? "demo" : "connected")}</strong></div>${failure ? `<p class="error">${t("error")}: ${escapeHtml(errorText())}</p>` : ""}<h2>${escapeHtml(episode)}</h2><div class="caption-preview">${previewHtml()}</div><button id="toggle">${t(player.playing ? "pause" : "play")}</button></section>`;
-    const advanced = `<details class="card advanced"><summary>${t("advanced")}</summary><h2>${t("bridge")}</h2><p class="hint">${t("bridgeHelp")}</p><label>${t("endpoint")}<input id="endpoint" type="text" value="${escapeHtml(localStorage.getItem("podcaption.bridge") || DEFAULT_API)}"></label><button id="connect">${t("connect")}</button></details>`;
+    const advanced = `<details class="card advanced"><summary>${t("advanced")}</summary><h2>${t("bridge")}</h2><p class="hint">${t("bridgeHelp")}</p><label>${t("endpoint")}<input id="endpoint" type="text" value="${escapeHtml(appStore.get("podcaption.bridge") || DEFAULT_API)}"></label><button id="connect">${t("connect")}</button></details>`;
     app.innerHTML = `<header class="brand"><div class="brand-mark">QUIETGLASS / ACCESSIBILITY</div><h1>PodCaption</h1><p class="lede">${t("lede")}</p></header><p class="next">${escapeHtml(nextStep())}</p>${source === "DEMO" ? open + playerCard : playerCard + open}<section class="card compact">${languageSelect(locale)}</section>${advanced}`;
     document.querySelector("#language")?.addEventListener("change", (event) => { locale = (event.target as HTMLSelectElement).value as Locale; setLocale(locale); if (source === "DEMO") { captions = demo(); episode = t("demoTitle"); } last = ""; void draw(); renderPhone(); });
     document.querySelector("#toggle")?.addEventListener("click", toggle);
     const titleFor = (fallback: string): string => document.querySelector<HTMLInputElement>("#title")?.value.trim() || fallback;
     document.querySelector("#transcript-file")?.addEventListener("change", async (event) => { const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return; const title = titleFor(file.name.replace(/\.[^.]+$/, "")); const mime = file.type || (file.name.endsWith(".json") ? "application/json" : "text/vtt"); try { await useCaptions(readTranscript(await file.text(), mime), title, "FILE"); } catch (cause) { fail(cause); } });
     document.querySelector("#use-paste")?.addEventListener("click", async () => { const text = document.querySelector<HTMLTextAreaElement>("#paste")?.value ?? ""; if (!text.trim()) { failure = { key: "errPasteEmpty" }; last = ""; void draw(); renderPhone(); return; } try { await useCaptions(readTranscript(text, text.trimStart().startsWith("{") ? "application/json" : "text/vtt"), titleFor(t("transcript")), "FILE"); } catch (cause) { fail(cause); } });
-    document.querySelector("#connect")?.addEventListener("click", () => { const input = document.querySelector<HTMLInputElement>("#endpoint"); if (input) localStorage.setItem("podcaption.bridge", input.value.trim()); void loadFeed(); });
+    document.querySelector("#connect")?.addEventListener("click", () => { const input = document.querySelector<HTMLInputElement>("#endpoint"); if (input) appStore.set("podcaption.bridge", input.value.trim()); void loadFeed(); });
   };
   // Double tap opens the system exit dialog; playback continues until the user confirms.
   const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; player.stop(); } }, "podcaption");

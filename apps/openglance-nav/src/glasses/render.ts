@@ -103,7 +103,7 @@ function buildOverviewPage(view: NavView): CreateStartUpPageContainer {
       paddingLength: 4,
       zOrderIndex: z,
       isEventCapture: capture ? 1 : 0,
-      content,
+      content: content || " ",
     });
   return new CreateStartUpPageContainer({
     containerTotalNum: 4,
@@ -137,7 +137,7 @@ function text(
     paddingLength: 4,
     zOrderIndex,
     isEventCapture: captureEvents ? 1 : 0,
-    content,
+    content: content || " ",
   });
 }
 
@@ -167,6 +167,23 @@ export async function createPage(bridge: EvenAppBridge, view: NavView, icon?: Pi
  * Fast path: change the text of the three containers in place, and send only
  * the images that changed — each one crosses Bluetooth.
  */
+
+/**
+ * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
+ * `contentLength` characters, so it must always be at least the length the
+ * container held before, or leftovers of the old text stay visible. Text is
+ * additionally capped at the ~900-character firmware hard limit.
+ */
+const TEXT_HARD_CAP = 900;
+const sentLength = new Map<number, number>();
+
+function guarded(specId: number, content: string): { content: string; contentLength: number } {
+  const text = (content || " ").slice(0, TEXT_HARD_CAP);
+  const length = Math.max(sentLength.get(specId) ?? 0, text.length);
+  sentLength.set(specId, text.length);
+  return { content: text, contentLength: length };
+}
+
 export async function updatePage(bridge: EvenAppBridge, view: NavView, images: TurnImages = {}): Promise<RenderResult> {
   const updated = await updateTexts(bridge, view);
   return updated.ok ? updateTurnImages(bridge, images) : updated;
@@ -193,7 +210,7 @@ async function updateTexts(bridge: EvenAppBridge, view: NavView): Promise<Render
       await bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
-        content,
+        ...guarded(spec.id, content),
       }));
     }
     return { ok: true };

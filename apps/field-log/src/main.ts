@@ -26,6 +26,24 @@ const FINAL_WAIT_MS = 8_000;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  const MIC_DRAIN_MS = 150;
+
+  /** audioPcm arrives as Uint8Array, number[] or base64 depending on the host
+   * bridge; normalize it or every chunk is silently dropped (empty recording). */
+  const toBytes = (pcm: unknown): Uint8Array | null => {
+    if (pcm instanceof Uint8Array) return pcm;
+    if (Array.isArray(pcm)) return Uint8Array.from(pcm.filter((n): n is number => typeof n === "number"));
+    if (typeof pcm === "string") {
+      try {
+        const bin = atob(pcm);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+        return out;
+      } catch { return null; }
+    }
+    return null;
+  };
+
 
   let data: FieldLogData = await load(bridge);
   if (DEMO) {
@@ -146,8 +164,14 @@ async function boot(): Promise<void> {
     await provider?.stop();
   };
 
-  const stopMic = async (): Promise<void> => {
+  // Let in-flight PCM blocks land before closing the capture (drain rule).
+  const micOff = async (): Promise<void> => {
     await bridge.audioControl(false).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, MIC_DRAIN_MS));
+  };
+
+  const stopMic = async (): Promise<void> => {
+    await micOff();
     await closeStt();
   };
 
@@ -192,7 +216,7 @@ async function boot(): Promise<void> {
       if (!ok || closed) {
         if (!closed) console.warn("[fieldlog] microphone was refused");
         // Left while the microphone was opening: it must not stay on.
-        if (ok) await bridge.audioControl(false).catch(() => undefined);
+        if (ok) await micOff();
         if (stt === provider) stt = null;
         await provider.stop();
         return;
@@ -295,7 +319,7 @@ async function boot(): Promise<void> {
     if (closed) return;
     if (phase === "recording" && !micPausedForExit) {
       micPausedForExit = true;
-      await bridge.audioControl(false).catch(() => undefined);
+      await micOff();
     }
     await requestExit();
   };
@@ -304,8 +328,9 @@ async function boot(): Promise<void> {
     if (closed) return;
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
-    if (phase === "recording" && pcm instanceof Uint8Array && pcm.length > 0) {
-      stt?.send(pcm);
+    const bytes = phase === "recording" ? toBytes(pcm) : null;
+    if (bytes && bytes.length > 0) {
+      stt?.send(bytes);
       return;
     }
 

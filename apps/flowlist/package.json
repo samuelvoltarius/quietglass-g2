@@ -1,7 +1,7 @@
 {
   "name": "@quietglass/flowlist",
   "version": "0.2.0",
-  "description": "Quietglass FlowList — hands-free checklists and workflows",
+  "description": "Quietglass FlowList \u2014 hands-free checklists and workflows",
   "author": "Quietglass",
   "license": "MIT",
   "private": false,
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9891 http://127.0.0.1:5191",
-    "pack": "evenhub pack app.json dist -o"
+    "pack": "evenhub pack app.json dist -o flowlist.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16"

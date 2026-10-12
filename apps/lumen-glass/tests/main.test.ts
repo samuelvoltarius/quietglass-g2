@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge and a fake LUMEN to check the polling loop without hardware.
@@ -36,7 +37,7 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, writes, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 const payload = (gesture: string) => ({
@@ -63,6 +64,7 @@ function fakeLumen(delayMs: number) {
 
 describe("lumen polling loop", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.stubGlobal("location", { search: "" });
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });

@@ -27,7 +27,7 @@ function page(view: TextView): CreateStartUpPageContainer {
     containerTotalNum: parts.length + 2,
     textObject: parts.map((part, index) => new TextContainerProperty({
       containerID: part.id, containerName: part.name, xPosition: part.x, yPosition: part.y, width: part.width, height: part.height,
-      paddingLength: 4, zOrderIndex: index + 1, isEventCapture: part.name === "body" ? 1 : 0, content: content[index] ?? "",
+      paddingLength: 4, zOrderIndex: index + 1, isEventCapture: part.name === "body" ? 1 : 0, content: content[index] || " ",
     })),
     imageObject: [ICONS, CHART].map((image, index) => new ImageContainerProperty({ containerID: image.id, containerName: image.name, xPosition: image.x, yPosition: image.y, width: image.width, height: image.height, zOrderIndex: parts.length + 1 + index })),
   });
@@ -49,13 +49,30 @@ export async function createTextPage(bridge: EvenAppBridge, view: TextView): Pro
 }
 
 /** Upgrades only the containers whose text changed since `previous`. */
+
+/**
+ * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
+ * `contentLength` characters, so it must always be at least the length the
+ * container held before, or leftovers of the old text stay visible. Text is
+ * additionally capped at the ~900-character firmware hard limit.
+ */
+const TEXT_HARD_CAP = 900;
+const sentLength = new Map<number, number>();
+
+function guarded(specId: number, content: string): { content: string; contentLength: number } {
+  const text = (content || " ").slice(0, TEXT_HARD_CAP);
+  const length = Math.max(sentLength.get(specId) ?? 0, text.length);
+  sentLength.set(specId, text.length);
+  return { content: text, contentLength: length };
+}
+
 export async function updateTextPage(bridge: EvenAppBridge, view: TextView, previous?: TextView): Promise<RenderResult> {
   const content = contents(view); const before = previous ? contents(previous) : [];
   try {
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index];
       if (!part || content[index] === before[index]) continue;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, content: content[index] ?? "" }));
+      await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, ...guarded(part.id, content[index] ?? "") }));
     }
     return { ok: true };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }

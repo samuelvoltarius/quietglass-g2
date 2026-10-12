@@ -67,7 +67,7 @@ function text(
     paddingLength: 4,
     zOrderIndex,
     isEventCapture: captureEvents ? 1 : 0,
-    content,
+    content: content || " ",
   });
 }
 
@@ -94,6 +94,23 @@ export async function createPage(bridge: EvenAppBridge, view: CaptionView): Prom
 }
 
 /** Fast path: change the text of the three containers in place. */
+
+/**
+ * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
+ * `contentLength` characters, so it must always be at least the length the
+ * container held before, or leftovers of the old text stay visible. Text is
+ * additionally capped at the ~900-character firmware hard limit.
+ */
+const TEXT_HARD_CAP = 900;
+const sentLength = new Map<number, number>();
+
+function guarded(specId: number, content: string): { content: string; contentLength: number } {
+  const text = (content || " ").slice(0, TEXT_HARD_CAP);
+  const length = Math.max(sentLength.get(specId) ?? 0, text.length);
+  sentLength.set(specId, text.length);
+  return { content: text, contentLength: length };
+}
+
 export async function updatePage(bridge: EvenAppBridge, view: CaptionView): Promise<RenderResult> {
   const updates: Array<[ContainerSpec, string]> = [
     [CONTAINER.header, view.header],
@@ -106,7 +123,7 @@ export async function updatePage(bridge: EvenAppBridge, view: CaptionView): Prom
       await bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
-        content,
+        ...guarded(spec.id, content),
       }));
     }
     return { ok: true };

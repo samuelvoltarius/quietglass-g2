@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
 
@@ -33,7 +34,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
     audio: () => handler?.({ audioEvent: { audioPcm: new Uint8Array(32) } }),
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
 }
@@ -94,6 +95,7 @@ function data(sttUrl = "wss://asr.test/ws") {
 
 describe("fieldlog lifecycle", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     FakeSocket.instances = [];
     FakeSocket.autoOpen = true;

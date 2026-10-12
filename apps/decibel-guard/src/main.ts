@@ -17,6 +17,22 @@ import { getLocale, setLocale, type Locale } from "./i18n";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  /** audioPcm arrives as Uint8Array, number[] or base64 depending on the host
+   * bridge; normalize it or every chunk is silently dropped (empty recording). */
+  const toBytes = (pcm: unknown): Uint8Array | null => {
+    if (pcm instanceof Uint8Array) return pcm;
+    if (Array.isArray(pcm)) return Uint8Array.from(pcm.filter((n): n is number => typeof n === "number"));
+    if (typeof pcm === "string") {
+      try {
+        const bin = atob(pcm);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+        return out;
+      } catch { return null; }
+    }
+    return null;
+  };
+
 
   let data: NoiseData = await load(bridge);
   let dose: DoseState = createDose();
@@ -176,8 +192,9 @@ async function boot(): Promise<void> {
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
 
-    if (listening && pcm instanceof Uint8Array && pcm.length > 0) {
-      const reading = levelFromPcm(pcm);
+    const bytes = listening ? toBytes(pcm) : null;
+    if (bytes && bytes.length > 0) {
+      const reading = levelFromPcm(bytes);
       smoothedDbfs = smoothDb(smoothedDbfs, reading.dbfs, data.smoothing);
 
       const now = Date.now();

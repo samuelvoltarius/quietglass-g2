@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
 
@@ -47,7 +48,7 @@ function fakeBridge(stored: Record<string, string> = {}) {
     header: () => screen.get(1) ?? "",
     body: () => screen.get(2) ?? "",
     footer: () => screen.get(3) ?? "",
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     audio: (bytes: number) => handler?.({ audioEvent: { audioPcm: new Uint8Array(bytes) } }),
     ready: () => handler !== undefined,
   };
@@ -126,6 +127,7 @@ const configured = (): Record<string, string> => ({ [SETTINGS]: JSON.stringify({
 describe("Shoot Day lifecycle", () => {
   let server: ReturnType<typeof fakeServer>;
   beforeEach(() => {
+  resetGestureDedupe();
     server = fakeServer();
     vi.stubGlobal("fetch", server.fetchMock);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

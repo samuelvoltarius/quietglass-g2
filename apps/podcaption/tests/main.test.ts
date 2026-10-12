@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app (demo captions) against a fake bridge to check the exit dialog wiring.
@@ -23,11 +24,12 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, writes, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 describe("podcaption exit dialog", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     vi.stubGlobal("navigator", { language: "en-US" });

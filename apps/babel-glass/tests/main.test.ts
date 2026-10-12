@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app (mock recogniser, no server) against a fake bridge to check the exit dialog and the microphone.
@@ -27,11 +28,12 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, mic, writes, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, shutdown, mic, writes, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 describe("babel-glass exit dialog", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -53,7 +55,7 @@ describe("babel-glass exit dialog", () => {
   it("closes the microphone, asks for the system dialog (mode 1) and stays closed on confirm", async () => {
     const fake = await bootListening();
     fake.emit(3);
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(200);
     expect(fake.shutdown.modes).toEqual([1]);
     expect(fake.mic.open).toBe(false);
     const writesAtClose = fake.writes.count;
@@ -67,7 +69,7 @@ describe("babel-glass exit dialog", () => {
     const fake = await bootListening();
     fake.shutdown.answer = () => Promise.resolve(false);
     fake.emit(3);
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(200);
     expect(fake.shutdown.modes).toEqual([1]);
     expect(fake.mic.calls).toEqual([true, false, true]);
     expect(fake.mic.open).toBe(true);
@@ -79,10 +81,10 @@ describe("babel-glass exit dialog", () => {
   it("does not open the microphone on cancel if captions were off", async () => {
     const fake = await bootListening();
     fake.emit(0); // tap: stop captions
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(200);
     fake.shutdown.answer = () => Promise.resolve(false);
     fake.emit(3);
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(200);
     expect(fake.mic.open).toBe(false);
     expect(fake.mic.calls).toEqual([true, false]);
   });
@@ -94,7 +96,7 @@ describe("babel-glass exit dialog", () => {
     const fake = await bootListening();
     fake.shutdown.answer = () => Promise.reject(new Error("ble gone"));
     fake.emit(3);
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(200);
     vi.useRealTimers();
     await new Promise((resolve) => setTimeout(resolve, 20));
     nodeProcess.off("unhandledRejection", onUnhandled);

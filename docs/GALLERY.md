@@ -18,6 +18,7 @@ Every image below is captured from the Even Hub simulator at the native 576 × 2
 | [OpenGlance](../apps/openglance-nav) | ![OpenGlance Navigation](../apps/openglance-nav/docs/screenshot.png) |
 | [PodCaption](../apps/podcaption) | ![PodCaption](../apps/podcaption/docs/screenshot.png) |
 | [PostureLens — private posture reminder](../apps/posture-lens) | ![PostureLens](../apps/posture-lens/docs/screenshot.png) |
+| [Quiet Hub](../apps/quiet-hub) | ![Quiet Hub](../apps/quiet-hub/docs/screenshot.png) |
 | [RainLens](../apps/rain-lens) | ![RainLens](../apps/rain-lens/docs/screenshot.png) |
 | [ShiftClock](../apps/shift-clock) | ![ShiftClock](../apps/shift-clock/docs/screenshot.png) |
 | [Shoot Day](../apps/shoot-day) | ![Shoot Day](../apps/shoot-day/docs/screenshot.png) |

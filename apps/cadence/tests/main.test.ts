@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge to check the run loop without hardware.
@@ -42,11 +43,12 @@ function fakeBridge(writeDelayMs = 0) {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, writes, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 describe("cadence run loop", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
     // The glasses follow the device language; these assertions read the English text.

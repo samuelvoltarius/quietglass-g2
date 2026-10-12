@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge, so polling, removal and the close
@@ -102,6 +103,7 @@ describe("status-glass lifecycle", () => {
   let savedLocale: string | null;
 
   beforeEach(() => {
+  resetGestureDedupe();
     unhandled = [];
     replies = [];
     root = new FakeRoot();

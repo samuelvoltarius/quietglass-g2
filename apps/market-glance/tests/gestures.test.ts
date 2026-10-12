@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { EVENT_DOUBLE_CLICK, EVENT_SCROLL_BOTTOM, EVENT_SCROLL_TOP, SOURCE_RING, gestureFromCode, gestureFromEvent } from "../src/input/gestures";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  EVENT_DOUBLE_CLICK, EVENT_SCROLL_BOTTOM, EVENT_SCROLL_TOP, SOURCE_RING, gestureFromCode, gestureFromEvent, resetGestureDedupe,
+} from "../src/input/gestures";
 
 describe("gestures", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+  });
   it("maps scroll codes and can invert them", () => {
     expect(gestureFromCode(EVENT_SCROLL_BOTTOM)).toBe("scrollDown");
     expect(gestureFromCode(EVENT_SCROLL_TOP, { invertScroll: true })).toBe("scrollDown");

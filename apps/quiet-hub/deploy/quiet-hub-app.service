@@ -1,0 +1,15 @@
+[Unit]
+Description=Quiet Hub local Even Hub app server
+After=network-online.target quiet-hub-daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/quietglass-g2/apps/quiet-hub
+Environment=PATH=%h/.hermes/node/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env npm run dev -- --host 0.0.0.0 --port 5210
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
 
@@ -38,7 +39,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
   return {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
 }
@@ -86,7 +87,8 @@ function data(open: { project: string | null; startedAt: number | null } = { pro
 }
 
 describe("shiftclock lifecycle", () => {
-  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  beforeEach(() => {
+  resetGestureDedupe(); vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   it("regression: a failed exit call on double tap is not an unhandled rejection, and the app stays", async () => {

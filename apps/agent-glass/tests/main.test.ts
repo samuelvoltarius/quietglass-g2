@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app (demo mode, no backend) against a fake bridge to check the exit dialog wiring.
@@ -34,11 +35,12 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, writes, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 describe("agent-glass exit dialog", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     // main.ts only boots inside a browser window.
     vi.stubGlobal("window", { addEventListener: () => undefined, removeEventListener: () => undefined });

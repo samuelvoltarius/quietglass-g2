@@ -428,7 +428,11 @@ async function boot(): Promise<void> {
   };
 
   // ---- microphone --------------------------------------------------------
-  const micOff = (): Promise<void> => bridge.audioControl(false).then(() => undefined, () => undefined);
+  const MIC_DRAIN_MS = 150;
+  const micOff = async (): Promise<void> => {
+    await bridge.audioControl(false).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, MIC_DRAIN_MS));
+  };
 
   const startRec = async (target: "takes" | "pack", via: "tap" | "hold"): Promise<void> => {
     if (rec || closed || !api) return;

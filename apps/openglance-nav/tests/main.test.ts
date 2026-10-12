@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge, so route ordering, stopping and
@@ -103,7 +104,7 @@ function fakeBridge() {
   return {
     bridge, state,
     ready: () => onEvent !== undefined,
-    gesture: (eventType: number) => onEvent?.({ sysEvent: { eventType, eventSource: 1 } }),
+    gesture: (eventType: number) => (resetGestureDedupe(), onEvent?.({ sysEvent: { eventType, eventSource: 1 } })),
   };
 }
 
@@ -118,6 +119,7 @@ describe("openglance lifecycle", () => {
   let replies: ((body: unknown) => void)[];
 
   beforeEach(() => {
+  resetGestureDedupe();
     unhandled = [];
     replies = [];
     nodeProcess.on("unhandledRejection", onUnhandled);

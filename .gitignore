@@ -5,6 +5,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env-hub.example
 .DS_Store
 *.ehpk
 .verify/

@@ -1,7 +1,7 @@
 {
   "name": "@quietglass/babel-glass",
   "version": "0.2.0",
-  "description": "Quietglass Babel Glass — live captions and translation on your own server",
+  "description": "Quietglass Babel Glass \u2014 live captions and translation on your own server",
   "author": "Quietglass",
   "license": "MIT",
   "private": false,
@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9897 http://127.0.0.1:5197",
-    "pack": "evenhub pack app.json dist -o"
+    "pack": "evenhub pack app.json dist -o babel-glass.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16"

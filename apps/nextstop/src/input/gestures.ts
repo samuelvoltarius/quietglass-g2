@@ -99,7 +99,47 @@ export function gestureFromEvent(event: unknown, options: GestureOptions = {}): 
   if (gesture === null) return null;
 
   const sourceCode = readNumberField(payload, "eventSource", "event_source", "source");
-  return { gesture, source: sourceFromCode(sourceCode) };
+  const source = sourceFromCode(sourceCode);
+  if (!passesDebounce(gesture, source, Date.now())) return null;
+  return { gesture, source };
+}
+
+/**
+ * Per-gesture debounce windows in milliseconds, applied inside
+ * `gestureFromEvent` itself so every app inherits them.
+ *
+ * Real G2 firmware emits duplicate events 50-100 ms apart for a single tap,
+ * and one physical swipe arrives as 5-10 SCROLL events. Without a window the
+ * app double-fires taps and scrolls several rows per swipe. The simulator has
+ * no duplicates, so the windows only ever affect hardware. The window is
+ * tracked per (gesture, source) pair so a deliberate ring double-tap right
+ * after a glasses double-tap is never swallowed.
+ */
+const GESTURE_DEDUPE_MS: Readonly<Record<string, number>> = {
+  click: 250,
+  scroll: 300,
+  doubleClick: 500,
+  longPress: 600,
+  longPressRelease: 250,
+};
+
+// Hosted on globalThis: tests that vi.resetModules() and re-import the app
+// get a fresh module copy, and a per-module Map would silently keep stale
+// timestamps; a shared map keeps the reset seams working across copies.
+const lastGestureAt: Map<string, number> = ((globalThis as { __g2GestureClock?: Map<string, number> }).__g2GestureClock ??= new Map<string, number>());
+
+/** Test seam: forget the debounce history (tests run many gestures per tick). */
+export function resetGestureDedupe(): void {
+  lastGestureAt.clear();
+}
+
+function passesDebounce(gesture: Gesture, source: InputSource, now: number): boolean {
+  const key = (gesture === "scrollUp" || gesture === "scrollDown" ? "scroll" : gesture) + ":" + source;
+  const windowMs = GESTURE_DEDUPE_MS[gesture === "scrollUp" || gesture === "scrollDown" ? "scroll" : gesture] ?? 0;
+  const previous = lastGestureAt.get(key);
+  if (previous !== undefined && now - previous < windowMs) return false;
+  lastGestureAt.set(key, now);
+  return true;
 }
 
 function pickRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {

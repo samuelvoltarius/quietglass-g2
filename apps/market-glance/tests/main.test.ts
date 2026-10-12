@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge and a fake phone DOM to check refresh wiring without hardware.
@@ -19,7 +20,7 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, headers, shutdown, emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }), ready: () => handler !== undefined };
+  return { bridge, headers, shutdown, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 function fakeDocument() {
@@ -36,6 +37,7 @@ describe("market glance refresh loop", () => {
   let pending: Pending[];
   let dom: ReturnType<typeof fakeDocument>;
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 0, 1, 12));
     pending = [];

@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
 
@@ -38,7 +39,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
   return {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
 }
@@ -99,7 +100,8 @@ function data(settings: Record<string, unknown> = {}, steps: unknown[] = STEPS) 
 }
 
 describe("flowlist lifecycle", () => {
-  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  beforeEach(() => {
+  resetGestureDedupe(); vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   const drawCount = (fake: ReturnType<typeof fakeBridge>): number =>

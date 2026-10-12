@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageRawDataUpdateResult } from "@evenrealities/even_hub_sdk";
 
@@ -52,7 +53,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
   };
   return {
     bridge, shutdown, mic, writes, texts, images,
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     audio: (amplitude: number) => {
       const pcm = new Uint8Array(320);
       for (let i = 0; i < pcm.length; i += 2) { pcm[i] = amplitude & 0xff; pcm[i + 1] = (amplitude >> 8) & 0x7f; }
@@ -64,6 +65,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
 
 describe("decibelguard loop", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

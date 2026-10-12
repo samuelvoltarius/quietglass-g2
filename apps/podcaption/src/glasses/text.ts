@@ -6,7 +6,7 @@ function makePage(view: TextView): CreateStartUpPageContainer {
   const content = [view.header, view.body.join("\n"), view.footer];
   return new CreateStartUpPageContainer({ containerTotalNum: 3, textObject: parts.map((part, index) => new TextContainerProperty({
     containerID: part.id, containerName: part.name, xPosition: 0, yPosition: part.y, width: 576, height: part.height,
-    paddingLength: 4, zOrderIndex: index + 1, isEventCapture: part.id === 2 ? 1 : 0, content: content[index] ?? "",
+    paddingLength: 4, zOrderIndex: index + 1, isEventCapture: part.id === 2 ? 1 : 0, content: content[index] || " ",
   })) });
 }
 export async function createTextPage(bridge: EvenAppBridge, view: TextView): Promise<RenderResult> {
@@ -14,10 +14,27 @@ export async function createTextPage(bridge: EvenAppBridge, view: TextView): Pro
   try { const result = await bridge.createStartUpPageContainer(next); return result === StartUpPageCreateResult.success ? { ok: true } : { ok: false, reason: `create:${String(result)}` }; }
   catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
 }
+
+/**
+ * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
+ * `contentLength` characters, so it must always be at least the length the
+ * container held before, or leftovers of the old text stay visible. Text is
+ * additionally capped at the ~900-character firmware hard limit.
+ */
+const TEXT_HARD_CAP = 900;
+const sentLength = new Map<number, number>();
+
+function guarded(specId: number, content: string): { content: string; contentLength: number } {
+  const text = (content || " ").slice(0, TEXT_HARD_CAP);
+  const length = Math.max(sentLength.get(specId) ?? 0, text.length);
+  sentLength.set(specId, text.length);
+  return { content: text, contentLength: length };
+}
+
 export async function updateTextPage(bridge: EvenAppBridge, view: TextView): Promise<RenderResult> {
   const content = [view.header, view.body.join("\n"), view.footer];
   try {
-    for (let index = 0; index < parts.length; index += 1) { const part = parts[index]; if (part) await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, content: content[index] ?? "" })); }
+    for (let index = 0; index < parts.length; index += 1) { const part = parts[index]; if (part) await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, ...guarded(part.id, content[index] ?? "") })); }
     return { ok: true };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
 }

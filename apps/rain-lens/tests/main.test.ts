@@ -1,3 +1,4 @@
+import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageRawDataUpdateResult } from "@evenrealities/even_hub_sdk";
 
@@ -41,13 +42,14 @@ function fakeBridge(imageDelayMs = 0) {
   };
   return {
     bridge, images, texts, shutdown,
-    emit: (eventType: number) => handler?.({ sysEvent: { eventType, eventSource: 1 } }),
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
 }
 
 describe("rainlens images", () => {
   beforeEach(() => {
+  resetGestureDedupe();
     vi.useFakeTimers();
     const store = new Map<string, string>([["quietglass.locale", "en"]]);
     vi.stubGlobal("localStorage", { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } });
