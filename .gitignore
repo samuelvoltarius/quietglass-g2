@@ -4,6 +4,7 @@ dist/
 .sim/
 .env
 .env.*
+.env-*
 !.env.example
 !.env-hub.example
 .DS_Store
