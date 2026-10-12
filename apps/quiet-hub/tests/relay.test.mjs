@@ -169,6 +169,22 @@ describe("relay protocol with a mocked claude", () => {
     await until(async () => (await h.api("/agents")).json.agents[0].answer === "Fertig mit Codex");
   });
 
+  it("hermes: uses chat -q -Q and drops the session_id line", async () => {
+    let seen;
+    const spawnImpl = (bin, args) => {
+      const c = fakeChild();
+      if (bin !== "taskkill") seen = args;
+      setImmediate(() => { c.emitLines("session_id: 20261012_202604_006825", "OK"); c.exit(0); });
+      return c;
+    };
+    const { h } = await setup([{ id: "hermes-spark", kind: "hermes", bin: "hermes" }], spawnImpl);
+    await h.api("/agent/ask", { agentId: "hermes-spark", question: "Antworte nur mit OK", wait: false });
+    await until(async () => (await h.api("/agents")).json.agents[0].answer === "OK");
+    expect(seen.slice(0, 2)).toEqual(["chat", "-q"]);
+    expect(seen).toContain("-Q");
+    expect(seen).not.toContain("--format");
+  });
+
   it("codex app-server: approval request becomes a glasses card, accept/decline is returned", async () => {
     const received = [];
     let child;

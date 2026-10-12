@@ -401,9 +401,14 @@ export function createHermesRunner(agent, ctx) {
   return async (job, emit) => {
     let out = "";
     const res = await runProcess({
-      spawn: ctx.spawn, bin: agent.bin ?? "hermes", args: ["chat", "-q", job.prompt, "-Q", "--format", "text"],
+      spawn: ctx.spawn, bin: agent.bin ?? "hermes", args: ["chat", "-q", job.prompt, "-Q", ...(agent.format ? ["--format", String(agent.format)] : [])],
       cwd: agent.cwd, env: childEnv(), timeoutMs: agent.timeoutMs, signal: job.signal,
-      onLine: (line) => { out = clip(`${out}${out ? "\n" : ""}${line}`, MAX_TEXT); emit({ text: out, activity: "" }); },
+      onLine: (line) => {
+        // -Q still prints a "session_id: ..." line on some Hermes versions.
+        if (/^session_id:\s*\S+\s*$/.test(line)) return;
+        out = clip(`${out}${out ? "\n" : ""}${line}`, MAX_TEXT);
+        emit({ text: out, activity: "" });
+      },
     });
     return finalStatus(res, out, "hermes failed");
   };
