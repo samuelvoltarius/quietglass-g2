@@ -65,6 +65,7 @@ Namen deines Servers im Tailscale-Netz ein.
 | [FieldLog](#fieldlog) | nein (Sprechen: optional, eigener Sprachserver) |
 | [Babel Glass](#babel-glass) | **ja**: Sprachserver (und optional Übersetzer) |
 | [Agent Glass](#agent-glass) | **ja**: Server deines KI-Agenten |
+| [Quiet Hub](#quiet-hub) | **ja**: Hub-Daemon (+ Relay je Rechner mit Agenten) |
 | [Shoot Day](#shoot-day) | **ja**: eigener Server |
 | [Klipper Glance](#klipper-glance) | **ja**: Bridge für den Drucker |
 | [Xaventra HUD](#xaventra-hud) | **ja**: dein Xaventra-Rechner (Even-G2-Dienst) |
@@ -323,6 +324,58 @@ einschalten**, Vorlese-Sprache, Stimme, Tempo.
 **So prüfst du, dass es läuft:** Unter „Aktueller Status“ steht
 „… Sitzungen · aktiv: …“ statt „Keine Sitzungen geladen“ oder „Fehler: …“.
 Auf der Brille erscheint die aktive Sitzung.
+
+### Quiet Hub
+
+Ein Hub für alle deine Agenten (Hermes, OpenClaw, Codex, Claude Code – auch auf
+anderen Rechnern), dein Zuhause (Home Assistant) und deinen Drucker (Moonraker).
+Freigaben („darf Claude das ausführen?“) und Sprachfragen laufen direkt über die
+Brille.
+
+**Was du brauchst:** einen kleinen Dauer-Rechner (z. B. Raspberry Pi) für den
+Daemon. Auf jedem weiteren Rechner mit Agenten läuft ein **Relay**.
+
+**Daemon starten** (im Ordner `apps/quiet-hub`, Einzelheiten im README dort):
+
+```bash
+npm run pi:start          # legt .env-hub mit zufälligem Token an, startet alles, zeigt einen QR-Code
+```
+
+Per https erreichbar machen (eigene Nummer, nie `reset`):
+
+```bash
+tailscale serve --bg --https=8453 8787
+```
+
+**Am Handy eintragen:** QR-Code scannen, oder
+
+| Feld in der App | Was rein | Beispiel |
+|---|---|---|
+| Server-Adresse | die https-Adresse | `https://<dein-rechner>.<dein-tailnet>.ts.net:8453` |
+| Zugangs-Token | `HUB_TOKEN` aus `.env-hub` | – |
+
+**Weiteren Rechner/Agenten anbinden:** `relay.json` anlegen (Vorlage
+`apps/quiet-hub/examples/relay.example.json`) und starten:
+
+```bash
+HUB_TOKEN=<token> node quiet-hub-relay.mjs --hub https://<dein-rechner>.<dein-tailnet>.ts.net:8453 --config relay.json
+```
+
+Der Agent erscheint auf der Brille unter „Agent“ mit grünem Punkt. Modus `ask`
+fragt bei jeder Aktion auf der Brille nach, `auto` fragt nie.
+
+**Optional in `.env-hub`:**
+
+| Variable | Bedeutung |
+|---|---|
+| `WHISPER_URL` | Sprache-zu-Text (OpenAI-kompatibel, `/v1/audio/transcriptions`) |
+| `HA_URL`, `HA_TOKEN`, `HA_DEVICES` | Home Assistant (Token: Profil → Sicherheit → Langlebiges Zugriffstoken); `HA_DEVICES` ist die Erlaubnisliste |
+| `MOONRAKER_URL` | Drucker, z. B. `http://<drucker>:7125` (`node scripts/find-moonraker.mjs` sucht ihn) |
+
+Ohne HA/Moonraker zeigen „Zuhause“ und „Drucker“ klar gekennzeichnete DEMO-Daten.
+
+**So prüfst du, dass es läuft:** Unter „Agent“ steht jeder Agent mit Punkt
+(an = online). Halten auf der Brille nimmt eine Sprachfrage auf.
 
 ### Shoot Day
 

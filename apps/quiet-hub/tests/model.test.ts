@@ -7,7 +7,7 @@ import { ROW_WIDTH, MAX_BODY_ROWS } from "../src/glasses/screen";
 const T0 = 1_000_000;
 
 function model(report: HubReport = demoReport()): HubModel {
-  return { ...createModel(report), screen: "agent" };
+  return { ...createModel(report), screen: "agent", agentView: "ask" };
 }
 
 describe("decide", () => {
@@ -35,7 +35,7 @@ describe("decide", () => {
 
   it("swipe selects the next question without activating anything", () => {
     const next = decide(model(), "scrollDown", T0);
-    expect(next.model.report.agent.selected).toBe(1);
+    expect(next.model.questionIndex).toBe(1);
     expect(next.effect).toBeUndefined();
     expect(next.model.confirm).toBeNull();
   });
@@ -44,25 +44,26 @@ describe("decide", () => {
     const empty: HubReport = {
       ...demoReport(),
       agent: { provider: "Hermes", questions: [], selected: 0, answer: null, busy: false, suggestions: [] },
+      agents: demoReport().agents.map((a) => ({ ...a, suggestions: [] })),
     };
     const next = decide(model(empty), "scrollDown", T0);
-    expect(next.model.report.agent.selected).toBe(0);
+    expect(next.model.questionIndex).toBe(0);
     expect(next.effect).toBeUndefined();
   });
 
   it("asking the agent is immediate — the agent is not an outward action", () => {
     // Without suggestions the saved questions are what gets asked.
-    const plain: HubReport = { ...demoReport(), agent: { ...demoReport().agent, suggestions: [] } };
+    const plain: HubReport = { ...demoReport(), agents: demoReport().agents.map((a) => ({ ...a, suggestions: [] })) };
     const outcome = decide(model(plain), "click", T0);
-    expect(outcome.effect).toEqual({ kind: "ask", question: "Drucker fertig?" });
-    expect(outcome.model.report.agent.busy).toBe(true);
-    expect(outcome.model.report.agent.answer).toBeNull();
+    expect(outcome.effect).toEqual({ kind: "ask", agentId: "hermes-spark", question: "Drucker fertig?" });
+    expect(outcome.model.report.agents[0]?.busy).toBe(true);
+    expect(outcome.model.report.agents[0]?.answer).toBeNull();
   });
 
   it("follow-up suggestions replace the questions as the tappable list", () => {
-    expect(demoReport().agent.suggestions.length).toBeGreaterThan(0);
+    expect(demoReport().agents[0]?.suggestions.length).toBeGreaterThan(0);
     const outcome = decide(model(), "click", T0);
-    expect(outcome.effect).toEqual({ kind: "ask", question: "Mehr Details" });
+    expect(outcome.effect).toEqual({ kind: "ask", agentId: "hermes-spark", question: "Mehr Details" });
   });
 
   it("switching a device needs a second double tap within the window", () => {
@@ -147,9 +148,11 @@ describe("buildView", () => {
     expect(text).toContain("esp32_gehaeuse.stl");
     expect(text).toContain("72 %");
     expect(text).toContain("148 / 205");
+    expect(view.body.some((row) => row.includes("Pause"))).toBe(true);
+    expect(view.body.some((row) => row.includes("Abbrechen"))).toBe(true);
   });
 
-  it("an unanswered question shows the stored answer area only when present", () => {
+  it("shows the streaming answer of the selected agent", () => {
     const view = buildView(model(), "de", T0);
     expect(view.body.join("\n")).toContain("41 Minuten");
   });

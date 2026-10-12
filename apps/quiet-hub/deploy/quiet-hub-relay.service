@@ -1,0 +1,23 @@
+# Linux user service for the Quiet Hub relay (one per machine that has agents).
+#   mkdir -p ~/.config/quiet-hub ~/.config/systemd/user
+#   cp examples/relay.example.json ~/.config/quiet-hub/relay.json   # then edit
+#   printf 'HUB_TOKEN=<token>\nQUIET_HUB_URL=https://<hub>\n' > ~/.config/quiet-hub/relay.env
+#   chmod 600 ~/.config/quiet-hub/relay.env
+#   cp deploy/quiet-hub-relay.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now quiet-hub-relay
+#   loginctl enable-linger $USER      # keep it running without a login session
+[Unit]
+Description=Quiet Hub relay - connects local agents to the hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=%h/.local/bin:%h/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/quiet-hub/relay.env
+ExecStart=/usr/bin/env node %h/quietglass-g2/apps/quiet-hub/examples/quiet-hub-relay.mjs --config %h/.config/quiet-hub/relay.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

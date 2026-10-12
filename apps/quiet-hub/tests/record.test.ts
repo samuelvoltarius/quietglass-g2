@@ -11,7 +11,7 @@ import { buildView, createModel, decide } from "../src/hub/model";
 import { demoReport } from "../src/api/demo";
 
 function agentModel() {
-  return { ...createModel(demoReport()), screen: "agent" as const };
+  return { ...createModel(demoReport()), screen: "agent" as const, agentView: "ask" as const };
 }
 
 describe("buildWav", () => {
@@ -57,7 +57,7 @@ describe("hold-to-speak", () => {
     const recording = decide(model, "longPress", 1000).model;
     const out = decide(recording, "longPressRelease", 1500);
     expect(out.model.recording).toBe(false);
-    expect(out.effect).toEqual({ kind: "recordStop" });
+    expect(out.effect).toEqual({ kind: "recordStop", agentId: "hermes-spark" });
   });
 
   it("swallows every other gesture while recording", () => {

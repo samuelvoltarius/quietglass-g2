@@ -12,7 +12,7 @@ const INBOX = ["######", "#....#", "#....#", "#.##.#", "######", "......"];
 
 export function pixelIconFor(model: HubModel): PixelIcon {
   if (model.screen === "root") return HUB;
-  if (model.screen === "agent") return AGENT;
+  if (model.screen === "agent") return model.report.approvals.length > 0 ? WAIT : AGENT;
   if (model.screen === "home") return HOME;
   if (model.screen === "printer") return PRINTER;
   const event = model.report.inbox.events[model.report.inbox.selected];

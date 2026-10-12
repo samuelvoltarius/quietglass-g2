@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/quiet-hub",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Quietglass Quiet Hub — One hub for your agents, home and printer",
   "author": "Quietglass",
   "license": "MIT",
@@ -14,7 +14,9 @@
     "test:watch": "vitest",
     "sim": "evenhub-simulator --automation-port 9910 http://127.0.0.1:5210",
     "pack": "evenhub pack app.json dist -o quiet-hub.ehpk --sdk-ver 0.0.16",
-    "pi:start": "sh scripts/start-pi.sh"
+    "pi:start": "sh scripts/start-pi.sh",
+    "relay": "node examples/quiet-hub-relay.mjs",
+    "find:printer": "node scripts/find-moonraker.mjs"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.16",

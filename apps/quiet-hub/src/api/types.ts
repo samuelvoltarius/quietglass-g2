@@ -26,6 +26,38 @@ export interface AgentSnapshot {
   readonly suggestions: readonly string[];
 }
 
+export type AgentKind = "hermes" | "openclaw" | "codex" | "claude" | "other";
+
+/** One agent known to the hub — local to the daemon or on another machine via a relay. */
+export interface AgentInfo {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: AgentKind | string;
+  readonly machine: string;
+  readonly online: boolean;
+  readonly busy: boolean;
+  /** ask = permissions are decided on the glasses; auto = bypass; others see README. */
+  readonly mode: string;
+  /** What the agent is doing right now ("Edit: foo.ts"); empty when idle. */
+  readonly activity: string;
+  readonly error: string | null;
+  /** Streaming or final answer of the last question. */
+  readonly answer: string | null;
+  readonly lastQuestion: string | null;
+  readonly suggestions: readonly string[];
+}
+
+/** A permission request waiting for a yes/no on the glasses. */
+export interface Approval {
+  readonly id: string;
+  readonly agentId: string;
+  /** Tool plus short command or file, e.g. "Bash: npm test". */
+  readonly title: string;
+  readonly detail: string | null;
+  readonly createdAt: string;
+  readonly expiresAt: number;
+}
+
 export type AgentEventStatus = "done" | "waiting" | "error";
 
 /** A completion pushed by Hermes, Claude, Codex or OpenClaw to the daemon. */
@@ -59,6 +91,8 @@ export interface DeviceSnapshot {
 export interface HomeSnapshot {
   readonly devices: readonly DeviceSnapshot[];
   readonly selected: number;
+  /** True when the daemon has no Home Assistant configured and shows stand-ins. */
+  readonly demo?: boolean;
 }
 
 export interface PrinterSnapshot {
@@ -70,11 +104,20 @@ export interface PrinterSnapshot {
   readonly nozzleC: number;
   readonly bedC: number;
   readonly selected: number;
+  /** 0-100; preferred over layer/layers when present. */
+  readonly progress?: number;
+  /** Moonraker could not be reached. */
+  readonly offline?: boolean;
+  /** Stand-in data, not a real printer. */
+  readonly demo?: boolean;
 }
 
 export interface HubReport {
   readonly connection: ConnectionState;
+  /** Legacy single-agent view (the default agent) plus the saved questions. */
   readonly agent: AgentSnapshot;
+  readonly agents: readonly AgentInfo[];
+  readonly approvals: readonly Approval[];
   readonly home: HomeSnapshot;
   readonly printer: PrinterSnapshot;
   readonly inbox: InboxSnapshot;
@@ -83,9 +126,12 @@ export interface HubReport {
 /** One daemon endpoint per side effect — the bridge fans out from here. */
 export interface HubApi {
   report(): Promise<HubReport>;
-  ask(question: string): Promise<string>;
-  /** Voice note → transcript + answer, straight through the self-hosted Whisper. */
-  voice(audioBase64: string, mime: string): Promise<{ question: string; answer: string }>;
+  /** Starts a question; the answer streams into the next reports. */
+  ask(question: string, agentId?: string): Promise<void>;
+  /** WAV bytes from the glasses → transcript (self-hosted Whisper) → asked. */
+  voice(wav: Uint8Array, agentId?: string): Promise<{ question: string }>;
+  approve(cardId: string, decision: "allow" | "deny"): Promise<void>;
+  cancel(agentId: string): Promise<void>;
   toggle(deviceId: string): Promise<void>;
   printer(action: "pause" | "resume" | "cancel"): Promise<void>;
   readEvent(id: string): Promise<void>;

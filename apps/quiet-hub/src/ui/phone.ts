@@ -22,7 +22,7 @@ export interface PhoneHandlers {
 
 const copy = {
   de: {
-    connected: "Verbunden", disconnected: "Nicht verbunden", devices: "Geräte", notifications: "Meldungen",
+    agentsOnline: "Agenten online", connected: "Verbunden", disconnected: "Nicht verbunden", devices: "Geräte", notifications: "Meldungen",
     setup: "Einrichtung", scan: "▦ QR-Code vom Pi scannen", scanHint: "Öffnet die Handykamera. Server und Token werden aus dem QR-Code übernommen.", manual: "oder manuell",
     server: "Server-Adresse", token: "Zugangs-Token", save: "Speichern & Verbindung testen",
     display: "Anzeige", language: "Sprache", auto: "Neue Agenten-Meldung automatisch öffnen",
@@ -34,7 +34,7 @@ const copy = {
     scanned: "✓ QR-Code erkannt und verbunden", unreachable: "QR erkannt, Server aber nicht erreichbar", scanFailed: "QR-Code konnte nicht gelesen werden",
   },
   en: {
-    connected: "Connected", disconnected: "Not connected", devices: "devices", notifications: "notifications",
+    agentsOnline: "agents online", connected: "Connected", disconnected: "Not connected", devices: "devices", notifications: "notifications",
     setup: "Setup", scan: "▦ Scan QR code from Pi", scanHint: "Opens the phone camera and imports the server and access token.", manual: "or enter manually",
     server: "Server address", token: "Access token", save: "Save & test connection",
     display: "Display", language: "Language", auto: "Open new agent notifications automatically",
@@ -70,7 +70,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
       <header class="brand"><span class="pixel-logo" aria-hidden="true">▦</span><div><div class="brand-mark">QUIETGLASS</div><h1>Quiet Hub</h1></div></header>
       <section class="card status-card">
         <div><span class="dot ${connected ? "ok" : "bad"}"></span><strong>${connected ? c.connected : c.disconnected}</strong></div>
-        <div class="metrics"><span>${esc(model.report.agent.provider)}</span><span>${model.report.home.devices.length} ${c.devices}</span><span>${unread} ${c.notifications}</span></div>
+        <div class="metrics"><span>${model.report.agents.filter((agent) => agent.online).length}/${model.report.agents.length} ${c.agentsOnline}</span><span>${model.report.home.devices.length} ${c.devices}</span><span>${unread} ${c.notifications}</span></div>
       </section>
       <section class="card">
         <h2>${c.setup}</h2>

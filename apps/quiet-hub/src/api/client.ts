@@ -2,10 +2,12 @@
  * Client for the one Quiet Hub daemon.
  *
  * All three backends sit behind this single origin: the daemon adapts
- * Hermes, Home Assistant and Moonraker, holds the tokens, and the glasses see
- * only `/report`, `/agent/ask`, `/events/read`, `/home/toggle`, `/printer`. No cloud, no
+ * the agents (local and via relays), Home Assistant and Moonraker, holds the
+ * tokens, and the glasses see only `/report`, `/agent/*`, `/events/read`,
+ * `/home/toggle`, `/printer`. No cloud, no
  * API keys on the device.
  */
+import { normalizeReport } from "./normalize";
 import type { HubApi, HubReport } from "./types";
 
 export class ApiError extends Error {
@@ -39,15 +41,24 @@ export function createClient(options: ClientOptions): HubApi {
   };
 
   return {
-    report: () => call<HubReport>("/report"),
-    ask: async (question) => (await call<{ answer: string }>("/agent/ask", {
-      method: "POST",
-      body: JSON.stringify({ question }),
-    })).answer,
-    voice: async (audio, mime) => call<{ question: string; answer: string }>("/agent/voice", {
-      method: "POST",
-      body: JSON.stringify({ audio, mime }),
-    }),
+    report: async () => normalizeReport(await call<HubReport>("/report")),
+    ask: async (question, agentId) => {
+      await call("/agent/ask", { method: "POST", body: JSON.stringify({ question, agentId, wait: false }) });
+    },
+    voice: async (wav, agentId) => {
+      const query = `?wait=0${agentId !== undefined ? `&agentId=${encodeURIComponent(agentId)}` : ""}`;
+      return call<{ question: string }>(`/agent/voice${query}`, {
+        method: "POST",
+        headers: { "Content-Type": "audio/wav" },
+        body: new Blob([wav.slice().buffer], { type: "audio/wav" }),
+      });
+    },
+    approve: async (cardId, decision) => {
+      await call("/agent/approve", { method: "POST", body: JSON.stringify({ cardId, decision }) });
+    },
+    cancel: async (agentId) => {
+      await call("/agent/cancel", { method: "POST", body: JSON.stringify({ agentId }) });
+    },
     toggle: async (device) => {
       await call("/home/toggle", { method: "POST", body: JSON.stringify({ device }) });
     },

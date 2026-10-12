@@ -6,19 +6,21 @@ import { getLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
-import { buildView, createModel, decide, MESSAGE_MS, SCREENS, type Effect, type HubModel, type Screen } from "./hub/model";
+import { buildView, createModel, decide, mergeReport, MESSAGE_MS, SCREENS, type Effect, type HubModel, type Screen } from "./hub/model";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import { pixelIconFor } from "./glasses/icons";
 import type { ScreenView } from "./glasses/screen";
-import { buildWav, toBase64 } from "./audio/wav";
+import { buildWav } from "./audio/wav";
 import { mountPhoneUi, type AppSettings } from "./ui/phone";
 import { decodeQr, parseSetupQr } from "./setup/qr";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const POLL_MS = 5000;
+/** Faster while an agent works or a permission card waits, so answers stream. */
+const POLL_FAST_MS = 1500;
 const RETRY_MS = 5000;
-const BUILD = "0.2.0";
+const BUILD = "0.3.0";
 
 /** Map the shared gesture vocabulary onto the hub's page language. */
 function hubGesture(gesture: Gesture): "click" | "doubleClick" | "scrollUp" | "scrollDown" | "longPress" | "longPressRelease" | null {
@@ -71,6 +73,7 @@ async function boot(): Promise<void> {
   let refreshPhone: () => void = () => undefined;
   let closed = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let fast = false;
   let newestEventId: string | null = model.report.inbox.events[0]?.id ?? null;
 
   // ---- microphone (voice notes) ------------------------------------------
@@ -152,12 +155,15 @@ async function boot(): Promise<void> {
       const report = await api.report();
       const nextId = report.inbox.events[0]?.id ?? null;
       const isNew = nextId !== null && nextId !== newestEventId;
+      const newCard = report.approvals.length > 0 && model.report.approvals.length === 0;
       newestEventId = nextId;
-      model = {
-        ...model,
-        report,
-        ...(isNew && settings.autoOpenNotifications ? { screen: "inbox" as const, confirm: null } : {}),
-      };
+      model = mergeReport(model, report);
+      if ((isNew || newCard) && settings.autoOpenNotifications && !model.recording) {
+        model = newCard
+          ? { ...model, screen: "agent", agentView: "list", confirm: null }
+          : { ...model, screen: "inbox", confirm: null };
+      }
+      fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
     } catch (error) {
       if (!(error instanceof ApiError)) console.warn("[quiethub] poll failed:", error);
       pollTimer = setTimeout(() => void poll(), RETRY_MS);
@@ -165,7 +171,7 @@ async function boot(): Promise<void> {
     }
     await draw();
     refreshPhone();
-    pollTimer = setTimeout(() => void poll(), POLL_MS);
+    pollTimer = setTimeout(() => void poll(), fast ? POLL_FAST_MS : POLL_MS);
   };
 
   const runEffect = async (effect: Effect | undefined): Promise<void> => {
@@ -190,14 +196,18 @@ async function boot(): Promise<void> {
             message: { text: tr(messages, locale, "voice.empty"), until: Date.now() + MESSAGE_MS },
           };
         } else {
-          const heard = await api.voice(toBase64(wav), "audio/wav");
+          const heard = await api.voice(wav, effect.agentId);
           model = {
             ...model,
             message: { text: tr(messages, locale, "voice.heard", { text: heard.question }), until: Date.now() + MESSAGE_MS },
           };
         }
       } else if (effect.kind === "ask") {
-        await api.ask(effect.question);
+        await api.ask(effect.question, effect.agentId);
+      } else if (effect.kind === "approve") {
+        await api.approve(effect.cardId, effect.decision);
+      } else if (effect.kind === "cancel") {
+        await api.cancel(effect.agentId);
       } else if (effect.kind === "readEvent") {
         await api.readEvent(effect.id);
       } else if (effect.kind === "toggle") {
@@ -207,7 +217,9 @@ async function boot(): Promise<void> {
       }
       const report = await api.report();
       newestEventId = report.inbox.events[0]?.id ?? newestEventId;
-      model = { ...model, report };
+      model = mergeReport(model, report);
+      fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
+      if (fast && pollTimer !== null) { clearTimeout(pollTimer); pollTimer = setTimeout(() => void poll(), POLL_FAST_MS); }
     } catch (error) {
       console.warn("[quiethub] effect failed:", error);
     }
@@ -297,7 +309,7 @@ async function boot(): Promise<void> {
         api = createClient({ baseUrl: settings.serverUrl, token: settings.token });
         try {
           const report = await api.report();
-          model = { ...model, report };
+          model = mergeReport(model, report);
           await draw();
           return true;
         } catch {

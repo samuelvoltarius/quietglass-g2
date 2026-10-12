@@ -17,3 +17,7 @@ release/
 
 # Private Einrichtung (nie committen)
 SETUP-PRIVAT.md
+
+# Quiet Hub relay: per-machine agent lists and tokens stay local
+relay*.json
+!relay.example.json

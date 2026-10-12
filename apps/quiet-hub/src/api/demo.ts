@@ -7,7 +7,7 @@
  * or the English screenshots would show German content.
  */
 import type { Locale } from "../i18n";
-import type { HubApi, HubReport } from "./types";
+import type { AgentInfo, HubApi, HubReport } from "./types";
 
 interface DemoDevice {
   readonly id: string;
@@ -64,18 +64,31 @@ const STRINGS: Record<Locale, DemoStrings> = {
   },
 };
 
+function demoAgents(strings: DemoStrings): AgentInfo[] {
+  const base = { error: null, activity: "", lastQuestion: null, suggestions: [] as string[], busy: false };
+  return [
+    { ...base, id: "hermes-spark", label: "hermes-spark", kind: "hermes", machine: "spark", online: true, mode: "auto",
+      answer: strings.answers[strings.questions[0] ?? ""] ?? null, suggestions: [...strings.suggestions] },
+    { ...base, id: "claude-win", label: "claude-win", kind: "claude", machine: "windows-pc", online: true, mode: "ask", answer: null },
+    { ...base, id: "codex-win", label: "codex-win", kind: "codex", machine: "windows-pc", online: false, mode: "ask", answer: null },
+  ];
+}
+
 export function demoReport(locale: Locale = "de"): HubReport {
   const strings = STRINGS[locale];
+  const agents = demoAgents(strings);
   return {
     connection: "demo",
     agent: {
-      provider: "Hermes",
+      provider: "hermes-spark",
       questions: strings.questions,
       selected: 0,
-      answer: strings.answers[strings.questions[0] ?? ""] ?? null,
+      answer: agents[0]?.answer ?? null,
       busy: false,
       suggestions: strings.suggestions,
     },
+    agents,
+    approvals: [],
     home: {
       selected: 0,
       devices: strings.devices,
@@ -85,6 +98,7 @@ export function demoReport(locale: Locale = "de"): HubReport {
       state: "printing",
       layer: 148,
       layers: 205,
+      progress: 72,
       etaMin: 41,
       nozzleC: 210,
       bedC: 60,
@@ -111,24 +125,27 @@ export function demoReport(locale: Locale = "de"): HubReport {
 export function createDemoApi(locale: Locale = "de"): HubApi {
   const strings = STRINGS[locale];
   let report = demoReport(locale);
+  const answerFor = (agentId: string, answer: string, question: string): void => {
+    report = {
+      ...report,
+      agents: report.agents.map((a) => a.id === agentId ? { ...a, busy: false, answer, lastQuestion: question } : a),
+    };
+  };
   return {
     report: async () => report,
-    ask: async (question: string) => {
-      const answer = strings.answers[question] ?? strings.fallback;
-      report = {
-        ...report,
-        agent: { ...report.agent, busy: false, answer, selected: report.agent.questions.indexOf(question) },
-      };
-      return answer;
+    ask: async (question: string, agentId = "hermes-spark") => {
+      answerFor(agentId, strings.answers[question] ?? strings.fallback, question);
     },
-    voice: async () => {
+    voice: async (_wav, agentId = "hermes-spark") => {
       const question = strings.questions[1] ?? "";
-      const answer = strings.answers[question] ?? strings.fallback;
-      report = {
-        ...report,
-        agent: { ...report.agent, busy: false, answer },
-      };
-      return { question, answer };
+      answerFor(agentId, strings.answers[question] ?? strings.fallback, question);
+      return { question };
+    },
+    approve: async (cardId) => {
+      report = { ...report, approvals: report.approvals.filter((card) => card.id !== cardId) };
+    },
+    cancel: async (agentId) => {
+      report = { ...report, agents: report.agents.map((a) => a.id === agentId ? { ...a, busy: false } : a) };
     },
     toggle: async (deviceId: string) => {
       report = {

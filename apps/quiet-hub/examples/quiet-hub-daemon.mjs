@@ -1,378 +1,669 @@
 #!/usr/bin/env node
 /**
- * Quiet Hub daemon — one process, three adapters.
+ * Quiet Hub daemon — one process, many agents, home and printer.
  *
- * The glasses see four endpoints and nothing else; every token lives here.
- * The agent adapter is REAL: a question on the glasses runs `hermes chat -q`
- * against the same Hermes installation the user chats with — same profile,
- * same memory, same assistant. Voice notes take the same path after a stop
- * at the self-hosted Whisper server.
+ * The glasses talk to this daemon and nothing else; every token lives here.
+ *
+ *  - Agents: the daemon's own Hermes (`hermes chat -q`, id hermes-pi5 by
+ *    default) plus any number of agents on other machines. Those connect
+ *    OUTWARD with quiet-hub-relay.mjs (HTTPS long-poll), register their agents
+ *    and receive prompts. Permission questions of Claude Code become cards.
+ *  - Home Assistant (HA_URL + HA_TOKEN + HA_DEVICES) or a labelled DEMO.
+ *  - Moonraker (MOONRAKER_URL) or a labelled DEMO.
  *
  *   node quiet-hub-daemon.mjs        # listens on :8787 (PORT env to change)
  *
- * Env:
- *   PORT        listen port (default 8787)
- *   HERMES_BIN  hermes executable (default "hermes" from PATH)
- *   ASK_TIMEOUT_MS    hard cap per question (default 300000)
- *   WHISPER_URL       OpenAI-compatible transcriptions endpoint
+ * Env (see .env-hub.example): PORT, HOST, HUB_TOKEN, HERMES_BIN, LOCAL_AGENT_ID,
+ * ASK_TIMEOUT_MS, APPROVAL_TIMEOUT_MS, WHISPER_URL, VLLM_URL, HA_URL, HA_TOKEN,
+ * HA_DEVICES, MOONRAKER_URL, QUIET_HUB_STATE_FILE.
  */
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-
-const PORT = Number(process.env.PORT ?? 8787);
-// Listen address. 0.0.0.0 so the phone (LAN or Tailscale) can reach the
-// daemon; set HOST=127.0.0.1 to keep it on this machine only.
-const HOST = process.env.HOST ?? "0.0.0.0";
-// Optional shared secret: when set, every request needs `Authorization: Bearer …`.
-const HUB_TOKEN = process.env.HUB_TOKEN ?? "";
-const HERMES_BIN = process.env.HERMES_BIN ?? "hermes";
-const ASK_TIMEOUT_MS = Number(process.env.ASK_TIMEOUT_MS ?? 300_000);
-const STATE_FILE = process.env.QUIET_HUB_STATE_FILE ?? join(homedir(), ".local", "state", "quiet-hub", "state.json");
-const WHISPER_URL =
-  process.env.WHISPER_URL ?? "http://100.86.70.71:8015/v1/audio/transcriptions";
-
-// ---- state: the hub snapshot. HA/Moonraker adapters replace these. ----
-const state = {
-  answer: /** @type {string|null} */ (null),
-  lastQuestion: /** @type {string|null} */ (null),
-  busy: false,
-  events: loadEvents(),
-  // Follow-up suggestions of the last answer; shown as tappable list.
-  suggestions: /** @type {string[]} */ ([]),
-  home: {
-    selected: 0,
-    devices: [
-      { id: "light_office", label: "Büro · Licht", kind: "switch", state: "an", on: true, writable: true },
-      { id: "light_living", label: "Wohnzimmer · Licht", kind: "switch", state: "aus", on: false, writable: true },
-      { id: "heat_kitchen", label: "Heizung · Küche", kind: "climate", state: "21,5°", on: true, writable: true },
-      { id: "shade_office", label: "Jalousie · Büro", kind: "cover", state: "offen", on: false, writable: true },
-      { id: "plug_printer", label: "Steckdose · Drucker", kind: "switch", state: "an", on: true, writable: true },
-    ],
-  },
-  printer: {
-    job: "esp32_gehaeuse.stl",
-    state: "printing",
-    layer: 148,
-    layers: 205,
-    etaMin: 41,
-    nozzleC: 210,
-    bedC: 60,
-    selected: 0,
-  },
-};
-
-function loadEvents() {
-  try {
-    const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8"));
-    return Array.isArray(parsed.events) ? parsed.events.slice(0, 50) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveEvents() {
-  try {
-    mkdirSync(dirname(STATE_FILE), { recursive: true });
-    const temporary = `${STATE_FILE}.tmp`;
-    writeFileSync(temporary, JSON.stringify({ events: state.events }, null, 2), { mode: 0o600 });
-    renameSync(temporary, STATE_FILE);
-  } catch (error) {
-    console.error("[daemon] state save failed:", String(error).slice(0, 200));
-  }
-}
-
-function addEvent(provider, status, title, detail = null) {
-  const event = {
-    id: `${Date.now()}-${randomUUID().slice(0, 8)}`,
-    provider: String(provider).slice(0, 32),
-    status,
-    title: String(title).slice(0, 180),
-    detail: detail == null || detail === "" ? null : String(detail).slice(0, 300),
-    createdAt: new Date().toISOString(),
-    read: false,
-  };
-  state.events = [event, ...state.events].slice(0, 50);
-  saveEvents();
-  return event;
-}
+import { pathToFileURL } from "node:url";
+import { createHomeAssistant, createMoonraker, parseDevices } from "./quiet-hub-adapters.mjs";
 
 const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den Tag zusammen"];
+const MAX_AUDIO = 12 * 1024 * 1024;
+const RELAY_STALE_MS = 45_000;
+const POLL_HOLD_MS = 25_000;
 
-function report() {
-  return {
-    connection: "connected",
-    agent: {
-      provider: "Hermes",
-      questions: QUESTIONS,
-      selected: 0,
-      answer: state.answer,
-      lastQuestion: state.lastQuestion,
-      busy: state.busy,
-      suggestions: state.suggestions,
-    },
-    home: state.home,
-    printer: state.printer,
-    inbox: { events: state.events, selected: 0 },
+const digest = (text) => createHash("sha256").update(text).digest();
+const clipTail = (text, max) => (text.length > max ? text.slice(text.length - max) : text);
+
+export function createHub(options = {}) {
+  const env = options.env ?? process.env;
+  const cfg = {
+    token: options.token ?? env.HUB_TOKEN ?? "",
+    hermesBin: options.hermesBin ?? env.HERMES_BIN ?? "hermes",
+    localAgentId: options.localAgentId ?? env.LOCAL_AGENT_ID ?? "hermes-pi5",
+    localAgent: options.localAgent ?? env.LOCAL_AGENT !== "off",
+    askTimeoutMs: Number(options.askTimeoutMs ?? env.ASK_TIMEOUT_MS ?? 300_000),
+    approvalTimeoutMs: Number(options.approvalTimeoutMs ?? env.APPROVAL_TIMEOUT_MS ?? 120_000),
+    stateFile: options.stateFile ?? env.QUIET_HUB_STATE_FILE ?? join(homedir(), ".local", "state", "quiet-hub", "state.json"),
+    whisperUrl: options.whisperUrl ?? env.WHISPER_URL ?? "http://127.0.0.1:8017/v1/audio/transcriptions",
+    whisperModel: options.whisperModel ?? env.WHISPER_MODEL ?? "whisper-1",
+    whisperLang: options.whisperLang ?? env.WHISPER_LANG ?? "de",
+    vllmUrl: options.vllmUrl ?? env.VLLM_URL ?? "http://127.0.0.1:8000/v1",
+    vllmModel: options.vllmModel ?? env.VLLM_MODEL ?? "qwen",
+    suggestions: options.suggestions ?? env.VLLM_URL !== "off",
+    lang: options.lang ?? env.HUB_LANG ?? "de",
   };
-}
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const execFileImpl = options.execFileImpl ?? execFile;
+  const log = options.log ?? ((...args) => console.log("[daemon]", ...args));
+  const now = options.now ?? (() => Date.now());
 
-/**
- * The assistant may answer as {"reply": "...", "suggestions": ["...", ...]}.
- * Parse tolerantly: plain text stays the reply, suggestions then stay empty.
- */
-const VLLM_URL = process.env.VLLM_URL ?? "http://100.86.70.71:8000/v1";
-const VLLM_MODEL = process.env.VLLM_MODEL ?? "qwen";
-
-/**
- * Follow-up suggestions come from the LOCAL vLLM (qwen) — the main model
- * only ever writes the answer. Cheap tokens, fast, and offline-capable.
- */
-async function suggestFor(question, answer) {
-  try {
-    const res = await fetch(`${VLLM_URL}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: VLLM_MODEL,
-        messages: [{
-          role: "user",
-          content: `Frage: "${question}"\nAntwort: "${answer}"\nNenne 3 sehr kurze Folgefragen darauf (je max 24 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`,
-        }],
-        temperature: 0.7,
-        // qwen3 is a reasoning model — without this the thinking eats all
-        // max_tokens and content stays null.
-        chat_template_kwargs: { enable_thinking: false },
-        max_tokens: 400,
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const text = String(data.choices?.[0]?.message?.content ?? "");
-    const start = text.indexOf("[");
-    const end = text.lastIndexOf("]");
-    if (start < 0 || end <= start) return [];
-    const list = JSON.parse(text.slice(start, end + 1));
-    return Array.isArray(list) ? list.map((s) => String(s).trim()).filter(Boolean).slice(0, 4) : [];
-  } catch (error) {
-    console.error("[daemon] suggestions failed:", String(error).slice(0, 200));
-    return [];
-  }
-}
-
-function parseAgentEnvelope(out) {
-  const start = out.indexOf("{");
-  const end = out.lastIndexOf("}");
-  if (start >= 0 && end > start) {
+  // ------------------------------------------------------------- events
+  const loadEvents = () => {
     try {
-      const parsed = JSON.parse(out.slice(start, end + 1));
-      const reply = String(parsed.reply ?? parsed.answer ?? "").trim();
-      const list = Array.isArray(parsed.suggestions)
-        ? parsed.suggestions.map((s) => String(s).trim()).filter((s) => s !== "").slice(0, 4)
-        : [];
-      if (reply !== "") {
-        state.suggestions = list;
-        return reply;
-      }
-    } catch { /* fall through to plain text */ }
+      const parsed = JSON.parse(readFileSync(cfg.stateFile, "utf8"));
+      return Array.isArray(parsed.events) ? parsed.events.slice(0, 50) : [];
+    } catch { return []; }
+  };
+  const state = { events: loadEvents() };
+  const saveEvents = () => {
+    try {
+      mkdirSync(dirname(cfg.stateFile), { recursive: true });
+      const temporary = `${cfg.stateFile}.tmp`;
+      writeFileSync(temporary, JSON.stringify({ events: state.events }, null, 2), { mode: 0o600 });
+      renameSync(temporary, cfg.stateFile);
+    } catch (error) {
+      console.error("[daemon] state save failed:", String(error).slice(0, 200));
+    }
+  };
+  function addEvent(provider, status, title, detail = null) {
+    const event = {
+      id: `${now()}-${randomUUID().slice(0, 8)}`,
+      provider: String(provider).slice(0, 32),
+      status,
+      title: String(title).slice(0, 180),
+      detail: detail == null || detail === "" ? null : String(detail).slice(0, 300),
+      createdAt: new Date(now()).toISOString(),
+      read: false,
+    };
+    state.events = [event, ...state.events].slice(0, 50);
+    saveEvents();
+    return event;
   }
-  state.suggestions = [];
-  return out;
-}
 
-/** Ask the real assistant. Same install, same memory as the chat. */
-function askHermes(question) {
-  return new Promise((resolve) => {
-    // Keep glasses answers short: three wrapped rows at most (138 chars).
-    const prompt = `${question}\n\n(Antworte auf Deutsch in einem kurzen Satz von höchstens 110 Zeichen. Schreibe keine Zeichenzahl und keine Meta-Kommentare in die Antwort.)`;
-    execFile(
-      HERMES_BIN,
+  // ------------------------------------------------------------- registry
+  /** agentId -> agent record. relayId === null means "runs inside the daemon". */
+  const agents = new Map();
+  const relays = new Map();
+  const jobs = new Map();
+  const approvals = new Map();
+  const localChildren = new Map();
+
+  function upsertAgent(spec, relayId, machine) {
+    const old = agents.get(spec.id);
+    agents.set(spec.id, {
+      id: spec.id,
+      label: String(spec.label ?? spec.id).slice(0, 32),
+      kind: String(spec.kind ?? "other").slice(0, 16),
+      machine: String(machine ?? "").slice(0, 40),
+      mode: String(spec.mode ?? "auto").slice(0, 12),
+      relayId,
+      answer: old?.answer ?? null,
+      lastQuestion: old?.lastQuestion ?? null,
+      suggestions: old?.suggestions ?? [],
+      busy: false,
+      activity: "",
+      error: null,
+      jobId: null,
+    });
+  }
+  if (cfg.localAgent) upsertAgent({ id: cfg.localAgentId, kind: "hermes", mode: "auto" }, null, "hub");
+
+  const isOnline = (agent) => {
+    if (agent.relayId === null) return true;
+    const relay = relays.get(agent.relayId);
+    return relay !== undefined && (relay.waiter !== null || now() - relay.lastSeen < RELAY_STALE_MS);
+  };
+
+  const defaultAgentId = () => (agents.has(cfg.localAgentId) ? cfg.localAgentId : ([...agents.keys()][0] ?? null));
+
+  // ------------------------------------------------------------- Home / printer
+  const haConfigured = (env.HA_URL ?? options.haUrl) && (env.HA_TOKEN ?? options.haToken);
+  const ha = haConfigured
+    ? createHomeAssistant({
+      url: options.haUrl ?? env.HA_URL, token: options.haToken ?? env.HA_TOKEN,
+      devices: options.haDevices ?? parseDevices(env.HA_DEVICES), fetchImpl, lang: cfg.lang,
+    })
+    : null;
+  if (ha && parseDevices(env.HA_DEVICES).length === 0 && !options.haDevices) log("HA_URL set but HA_DEVICES is empty: no devices are exposed");
+  const demoDevices = [
+    { id: "light_office", label: "DEMO · Büro Licht", kind: "switch", state: "an", on: true, writable: true },
+    { id: "light_living", label: "DEMO · Wohnzimmer Licht", kind: "switch", state: "aus", on: false, writable: true },
+    { id: "plug_printer", label: "DEMO · Steckdose Drucker", kind: "switch", state: "an", on: true, writable: true },
+  ];
+  let homeDemo = demoDevices;
+
+  const moonUrl = options.moonrakerUrl ?? env.MOONRAKER_URL;
+  const moon = moonUrl ? createMoonraker({ url: moonUrl, fetchImpl }) : null;
+  let printerDemo = { job: "DEMO esp32_gehaeuse.stl", state: "printing", layer: 148, layers: 205, progress: 72, etaMin: 41, nozzleC: 210, bedC: 60, selected: 0, demo: true };
+
+  const timers = [];
+  function startBackground() {
+    if (ha) { void ha.refresh(); timers.push(setInterval(() => void ha.refresh(), 10_000)); }
+    if (moon) { void moon.refresh(); timers.push(setInterval(() => void moon.refresh(), 5_000)); }
+    timers.push(setInterval(sweep, 10_000));
+    for (const t of timers) t.unref?.();
+  }
+
+  // ------------------------------------------------------------- jobs
+  function finishJob(job, status, text, error) {
+    if (job.done) return;
+    job.done = true;
+    job.status = status;
+    const agent = agents.get(job.agentId);
+    if (agent && agent.jobId === job.id) {
+      agent.busy = false;
+      agent.activity = "";
+      agent.jobId = null;
+      agent.error = status === "error" ? String(error ?? "error").slice(0, 160) : null;
+      const finalText = status === "cancelled" ? "(abgebrochen)" : (status === "error" && !text ? `Fehler: ${agent.error}` : text);
+      agent.answer = clipTail(finalText ?? "", 4000);
+      if (status === "done" && cfg.suggestions) {
+        const question = job.question;
+        void suggestFor(question, agent.answer).then((list) => {
+          if (agent.jobId === null && agent.lastQuestion === question) agent.suggestions = list;
+        });
+      } else {
+        agent.suggestions = [];
+      }
+    }
+    job.waiters.forEach((resolve) => resolve({ status, text: agent?.answer ?? text ?? "" }));
+    job.waiters.length = 0;
+    setTimeout(() => jobs.delete(job.id), 60_000).unref?.();
+  }
+
+  function sweep() {
+    const t = now();
+    for (const job of jobs.values()) {
+      if (job.done) continue;
+      const agent = agents.get(job.agentId);
+      if (agent && agent.relayId !== null && !isOnline(agent)) finishJob(job, "error", "", "relay offline");
+      else if (t - job.startedAt > cfg.askTimeoutMs * 2) finishJob(job, "error", "", "timeout");
+    }
+    for (const card of approvals.values()) {
+      if (t >= card.expiresAt) settleApproval(card.id, "deny");
+    }
+  }
+
+  function enqueue(relay, command) {
+    relay.queue.push(command);
+    if (relay.waiter) {
+      const { res, timer } = relay.waiter;
+      clearTimeout(timer);
+      relay.waiter = null;
+      const commands = relay.queue.splice(0);
+      sendJson(res, 200, { commands });
+    }
+  }
+
+  /** Starts a question; returns {job} or {error,status}. */
+  function startAsk(agentId, question) {
+    const id = agentId || defaultAgentId();
+    const agent = id ? agents.get(id) : undefined;
+    if (!agent) return { status: 404, error: "unknown agent" };
+    if (!isOnline(agent)) return { status: 503, error: "agent offline" };
+    if (agent.busy) return { status: 409, error: "agent busy" };
+    const job = { id: randomUUID(), agentId: agent.id, question, status: "running", done: false, waiters: [], startedAt: now() };
+    jobs.set(job.id, job);
+    agent.busy = true;
+    agent.jobId = job.id;
+    agent.answer = "";
+    agent.activity = "";
+    agent.error = null;
+    agent.suggestions = [];
+    agent.lastQuestion = question;
+    if (agent.relayId === null) {
+      runLocal(job, agent);
+    } else {
+      const relay = relays.get(agent.relayId);
+      enqueue(relay, { type: "ask", jobId: job.id, agentId: agent.id, prompt: question });
+    }
+    return { job };
+  }
+
+  function runLocal(job, agent) {
+    // Keep glasses answers short: three wrapped rows at most.
+    const prompt = `${job.question}\n\n(Antworte auf Deutsch in einem kurzen Satz von höchstens 110 Zeichen. Schreibe keine Zeichenzahl und keine Meta-Kommentare in die Antwort.)`;
+    const child = execFileImpl(
+      cfg.hermesBin,
       ["chat", "-q", prompt, "-Q", "--format", "text"],
-      { timeout: ASK_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      { timeout: cfg.askTimeoutMs, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
+        localChildren.delete(agent.id);
+        if (job.done) return;
         const out = String(stdout ?? "").trim();
         if (error && out === "") {
           console.error("[daemon] hermes failed:", String(stderr || error).slice(0, 400));
-          resolve("Keine Antwort vom Assistenten.");
+          addEvent(agent.id, "error", "Keine Antwort vom Assistenten", job.question);
+          finishJob(job, "error", "", "Keine Antwort vom Assistenten.");
           return;
         }
-        resolve(out === "" ? "Keine Antwort." : out);
+        addEvent(agent.id, "done", "Antwort fertig", job.question);
+        finishJob(job, "done", out === "" ? "Keine Antwort." : out);
       },
     );
+    if (child) localChildren.set(agent.id, child);
+  }
+
+  function waitFor(job, ms) {
+    return new Promise((resolve) => {
+      if (job.done) { resolve({ status: job.status, text: agents.get(job.agentId)?.answer ?? "" }); return; }
+      const timer = setTimeout(() => resolve({ status: "running", text: "" }), ms);
+      timer.unref?.();
+      job.waiters.push((value) => { clearTimeout(timer); resolve(value); });
+    });
+  }
+
+  function cancelAgent(agentId) {
+    const agent = agents.get(agentId);
+    if (!agent) return { status: 404, error: "unknown agent" };
+    if (!agent.busy) return { status: 200, ok: true, note: "nothing running" };
+    const job = jobs.get(agent.jobId);
+    if (agent.relayId === null) {
+      localChildren.get(agent.id)?.kill?.();
+    } else {
+      const relay = relays.get(agent.relayId);
+      if (relay) enqueue(relay, { type: "cancel", agentId: agent.id, jobId: agent.jobId });
+    }
+    if (job) finishJob(job, "cancelled", "");
+    return { status: 200, ok: true };
+  }
+
+  // ------------------------------------------------------------- approvals
+  function createApproval(agentId, tool, summary) {
+    const card = {
+      id: randomUUID().slice(0, 12),
+      agentId,
+      title: `${tool}${summary ? `: ${summary}` : ""}`.slice(0, 160),
+      detail: summary ? summary.slice(0, 300) : null,
+      tool,
+      createdAt: new Date(now()).toISOString(),
+      expiresAt: now() + cfg.approvalTimeoutMs,
+      resolve: null,
+    };
+    const promise = new Promise((resolve) => { card.resolve = resolve; });
+    approvals.set(card.id, card);
+    addEvent(agentId, "waiting", `Freigabe: ${card.title}`.slice(0, 180), null);
+    const timer = setTimeout(() => settleApproval(card.id, "deny"), cfg.approvalTimeoutMs);
+    timer.unref?.();
+    card.timer = timer;
+    return { card, promise };
+  }
+
+  function settleApproval(cardId, decision) {
+    const card = approvals.get(cardId);
+    if (!card) return false;
+    approvals.delete(cardId);
+    clearTimeout(card.timer);
+    card.resolve(decision === "allow" ? "allow" : "deny");
+    return true;
+  }
+
+  // ------------------------------------------------------------- speech / AI helpers
+  async function suggestFor(question, answer) {
+    try {
+      const res = await fetchImpl(`${cfg.vllmUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({
+          model: cfg.vllmModel,
+          messages: [{
+            role: "user",
+            content: `Frage: "${question}"\nAntwort: "${answer}"\nNenne 3 sehr kurze Folgefragen darauf (je max 24 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`,
+          }],
+          temperature: 0.7,
+          chat_template_kwargs: { enable_thinking: false },
+          max_tokens: 400,
+        }),
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const text = String(data.choices?.[0]?.message?.content ?? "");
+      const start = text.indexOf("[");
+      const end = text.lastIndexOf("]");
+      if (start < 0 || end <= start) return [];
+      const list = JSON.parse(text.slice(start, end + 1));
+      return Array.isArray(list) ? list.map((s) => String(s).trim()).filter(Boolean).slice(0, 4) : [];
+    } catch (error) {
+      console.error("[daemon] suggestions failed:", String(error).slice(0, 200));
+      return [];
+    }
+  }
+
+  /** Self-hosted Whisper (OpenAI-compatible). Audio goes nowhere else. */
+  async function transcribe(bytes, mime) {
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: mime || "audio/wav" }), mime?.includes("wav") || !mime ? "voice.wav" : "voice-note");
+    form.append("model", cfg.whisperModel);
+    form.append("language", cfg.whisperLang);
+    const res = await fetchImpl(cfg.whisperUrl, { method: "POST", body: form, signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`whisper http ${res.status}`);
+    const data = await res.json();
+    return String(data.text ?? "").trim();
+  }
+
+  // ------------------------------------------------------------- report
+  const agentInfo = (agent) => ({
+    id: agent.id, label: agent.label, kind: agent.kind, machine: agent.machine, mode: agent.mode,
+    online: isOnline(agent), busy: agent.busy, activity: agent.activity, error: agent.error,
+    answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions,
   });
-}
 
-/** Self-hosted Whisper (OpenAI-compatible). Audio goes nowhere else. */
-async function transcribe(base64Audio, mime) {
-  const bytes = Buffer.from(base64Audio, "base64");
-  const form = new FormData();
-  form.append("file", new Blob([bytes], { type: mime || "audio/mpeg" }), "voice-note");
-  form.append("model", "whisper-1");
-  form.append("language", "de");
-  const res = await fetch(WHISPER_URL, { method: "POST", body: form });
-  if (!res.ok) throw new Error(`whisper http ${res.status}`);
-  const data = await res.json();
-  return String(data.text ?? "").trim();
-}
+  function report() {
+    const list = [...agents.values()].map(agentInfo);
+    const main = agents.get(defaultAgentId() ?? "");
+    return {
+      connection: "connected",
+      agent: {
+        provider: main?.label ?? "Agent",
+        questions: QUESTIONS,
+        selected: 0,
+        answer: main?.answer ?? null,
+        lastQuestion: main?.lastQuestion ?? null,
+        busy: main?.busy ?? false,
+        suggestions: main?.suggestions ?? [],
+      },
+      agents: list,
+      approvals: [...approvals.values()].map(({ id, agentId, title, detail, createdAt, expiresAt }) => ({ id, agentId, title, detail, createdAt, expiresAt })),
+      home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
+      printer: moon ? moon.printer() : printerDemo,
+      inbox: { events: state.events, selected: 0 },
+    };
+  }
 
-function json(res, status, body) {
-  const data = JSON.stringify(body);
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(data),
-    // The app is served from another origin (vite / simulator webview).
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  });
-  res.end(data);
-}
+  // ------------------------------------------------------------- HTTP
+  function sendJson(res, status, body) {
+    const data = JSON.stringify(body);
+    res.writeHead(status, {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(data),
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    });
+    res.end(data);
+  }
 
-function readBody(req) {
-  return new Promise((resolve) => {
-    let raw = "";
-    req.on("data", (chunk) => { raw += chunk; });
-    req.on("end", () => {
-      try { resolve(JSON.parse(raw || "{}")); } catch { resolve({}); }
+  function readRaw(req, limit) {
+    return new Promise((resolve) => {
+      const chunks = [];
+      let size = 0;
+      req.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > limit) { resolve(null); req.destroy(); return; }
+        chunks.push(chunk);
+      });
+      req.on("end", () => resolve(Buffer.concat(chunks)));
+      req.on("error", () => resolve(null));
+    });
+  }
+  async function readJson(req, limit = 24 * 1024 * 1024) {
+    const raw = await readRaw(req, limit);
+    if (raw === null) return {};
+    try { return JSON.parse(raw.toString("utf8") || "{}"); } catch { return {}; }
+  }
+
+  const authorized = (req) => {
+    if (cfg.token === "") return true;
+    return timingSafeEqual(digest(req.headers.authorization ?? ""), digest(`Bearer ${cfg.token}`));
+  };
+
+  async function handle(req, res) {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const path = url.pathname;
+    const post = req.method === "POST";
+    if (req.method === "OPTIONS") { sendJson(res, 204, {}); return; }
+    if (!authorized(req)) { sendJson(res, 401, { error: "unauthorized" }); return; }
+
+    if (req.method === "GET" && path === "/report") { sendJson(res, 200, report()); return; }
+    if (req.method === "GET" && path === "/health") {
+      sendJson(res, 200, { ok: true, events: state.events.length, agents: agents.size, busy: [...agents.values()].some((a) => a.busy) });
+      return;
+    }
+    if (req.method === "GET" && path === "/agents") { sendJson(res, 200, { agents: [...agents.values()].map(agentInfo) }); return; }
+
+    // ---- completion hook (Hermes, Claude, Codex, OpenClaw)
+    if (post && path === "/events") {
+      const { provider, status, title, detail } = await readJson(req);
+      if (typeof provider !== "string" || provider.trim() === "" || typeof title !== "string" || title.trim() === "" ||
+          typeof status !== "string" || !["done", "waiting", "error"].includes(status)) {
+        sendJson(res, 400, { error: "provider, title and status (done|waiting|error) required" });
+        return;
+      }
+      const event = addEvent(provider.trim(), status, title.trim(), typeof detail === "string" ? detail.trim() : null);
+      log("event:", event.provider, event.status, event.title);
+      sendJson(res, 201, { event });
+      return;
+    }
+    if (post && path === "/events/read") {
+      const { id } = await readJson(req);
+      if (typeof id !== "string" || id === "") { sendJson(res, 400, { error: "id required" }); return; }
+      state.events = state.events.map((event) => (event.id === id ? { ...event, read: true } : event));
+      saveEvents();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    // ---- agents
+    if (post && path === "/agent/ask") {
+      const body = await readJson(req);
+      const question = typeof body.question === "string" ? body.question.trim() : "";
+      if (question === "") { sendJson(res, 400, { error: "question required" }); return; }
+      const started = startAsk(typeof body.agentId === "string" ? body.agentId : "", question);
+      if (!started.job) { sendJson(res, started.status, { error: started.error }); return; }
+      log("ask:", started.job.agentId, question.slice(0, 80));
+      if (body.wait === false) { sendJson(res, 202, { accepted: true, jobId: started.job.id, agentId: started.job.agentId }); return; }
+      const outcome = await waitFor(started.job, cfg.askTimeoutMs);
+      const agent = agents.get(started.job.agentId);
+      sendJson(res, 200, { answer: outcome.text, status: outcome.status, suggestions: agent?.suggestions ?? [] });
+      return;
+    }
+
+    if (post && path === "/agent/voice") {
+      const type = String(req.headers["content-type"] ?? "");
+      let bytes;
+      let mime = "audio/wav";
+      let body = {};
+      if (type.startsWith("audio/") || type.startsWith("application/octet-stream")) {
+        bytes = await readRaw(req, MAX_AUDIO);
+        mime = type.split(";")[0] || "audio/wav";
+      } else {
+        body = await readJson(req);
+        if (typeof body.audio === "string" && body.audio !== "") {
+          bytes = Buffer.from(body.audio, "base64");
+          mime = typeof body.mime === "string" && body.mime !== "" ? body.mime : "audio/wav";
+        }
+      }
+      if (!bytes || bytes.length < 45) { sendJson(res, 400, { error: "audio required" }); return; }
+      const agentId = url.searchParams.get("agentId") ?? (typeof body.agentId === "string" ? body.agentId : "");
+      const target = agentId || defaultAgentId() || "";
+      const agent = agents.get(target);
+      if (!agent) { sendJson(res, 404, { error: "unknown agent" }); return; }
+      if (!isOnline(agent)) { sendJson(res, 503, { error: "agent offline" }); return; }
+      log("voice note:", bytes.length, "bytes ->", target);
+      let question;
+      try {
+        question = await transcribe(bytes, mime);
+      } catch (error) {
+        console.error("[daemon] whisper failed:", String(error).slice(0, 200));
+        sendJson(res, 502, { error: "transcription failed" });
+        return;
+      }
+      if (question === "") { sendJson(res, 422, { error: "nichts verstanden" }); return; }
+      log("heard:", question.slice(0, 80));
+      const started = startAsk(target, question);
+      if (!started.job) { sendJson(res, started.status, { error: started.error, question }); return; }
+      const wait = url.searchParams.get("wait") !== "0" && body.wait !== false && url.searchParams.get("wait") !== "false";
+      if (!wait) { sendJson(res, 202, { question, accepted: true, jobId: started.job.id, agentId: target }); return; }
+      const outcome = await waitFor(started.job, cfg.askTimeoutMs);
+      sendJson(res, 200, { question, answer: outcome.text, status: outcome.status, suggestions: agents.get(target)?.suggestions ?? [] });
+      return;
+    }
+
+    if (post && path === "/agent/approve") {
+      const { cardId, decision } = await readJson(req);
+      if (typeof cardId !== "string" || (decision !== "allow" && decision !== "deny")) {
+        sendJson(res, 400, { error: "cardId and decision (allow|deny) required" });
+        return;
+      }
+      if (!settleApproval(cardId, decision)) { sendJson(res, 404, { error: "unknown or expired card" }); return; }
+      log("approval", cardId, decision);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (post && path === "/agent/cancel") {
+      const { agentId } = await readJson(req);
+      const outcome = cancelAgent(typeof agentId === "string" ? agentId : defaultAgentId() ?? "");
+      sendJson(res, outcome.status, outcome.error ? { error: outcome.error } : { ok: true });
+      return;
+    }
+
+    // ---- relay protocol (outbound from other machines)
+    if (post && path === "/relay/register") {
+      const { machine, agents: specs } = await readJson(req);
+      const name = String(machine ?? "").replace(/[^\w.-]/g, "-").slice(0, 40);
+      if (name === "" || !Array.isArray(specs) || specs.length === 0 || specs.length > 32) {
+        sendJson(res, 400, { error: "machine and agents[] required" });
+        return;
+      }
+      const clean = specs.filter((s) => s && typeof s.id === "string" && /^[\w.-]{1,40}$/.test(s.id));
+      const taken = clean.find((s) => agents.get(s.id) && agents.get(s.id).relayId !== name);
+      if (taken) { sendJson(res, 409, { error: `agent id already used by another machine: ${taken.id}` }); return; }
+      const previous = relays.get(name);
+      if (previous?.waiter) { clearTimeout(previous.waiter.timer); sendJson(previous.waiter.res, 200, { commands: [] }); }
+      for (const [id, agent] of agents) if (agent.relayId === name && !clean.some((s) => s.id === id)) agents.delete(id);
+      relays.set(name, { id: name, machine: name, queue: [], waiter: null, lastSeen: now() });
+      for (const spec of clean) upsertAgent(spec, name, name);
+      log(`relay "${name}" registered: ${clean.map((s) => s.id).join(", ")}`);
+      sendJson(res, 200, { relayId: name });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/relay/poll") {
+      const relay = relays.get(url.searchParams.get("relay") ?? "");
+      if (!relay) { sendJson(res, 404, { error: "unknown relay" }); return; }
+      relay.lastSeen = now();
+      if (relay.waiter) { clearTimeout(relay.waiter.timer); sendJson(relay.waiter.res, 200, { commands: [] }); relay.waiter = null; }
+      if (relay.queue.length > 0) { sendJson(res, 200, { commands: relay.queue.splice(0) }); return; }
+      const timer = setTimeout(() => {
+        relay.waiter = null;
+        relay.lastSeen = now();
+        sendJson(res, 200, { commands: [] });
+      }, options.pollHoldMs ?? POLL_HOLD_MS);
+      relay.waiter = { res, timer };
+      res.on("close", () => {
+        if (relay.waiter?.res === res) { clearTimeout(timer); relay.waiter = null; relay.lastSeen = now(); }
+      });
+      return;
+    }
+
+    if (post && path === "/relay/result") {
+      const { jobId, status, text, activity, error } = await readJson(req);
+      const job = jobs.get(jobId);
+      if (!job) { sendJson(res, 404, { error: "unknown job" }); return; }
+      const agent = agents.get(job.agentId);
+      const body = typeof text === "string" ? clipTail(text, 4000) : "";
+      if (status === "running") {
+        if (agent && !job.done) { agent.answer = body; agent.activity = typeof activity === "string" ? activity.slice(0, 80) : ""; }
+      } else if (status === "done" || status === "error" || status === "cancelled") {
+        finishJob(job, status, body, typeof error === "string" ? error : null);
+      } else {
+        sendJson(res, 400, { error: "bad status" });
+        return;
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (post && path === "/relay/permission") {
+      const { agentId, tool, summary } = await readJson(req);
+      if (typeof agentId !== "string" || !agents.has(agentId)) { sendJson(res, 404, { error: "unknown agent" }); return; }
+      const { card, promise } = createApproval(agentId, String(tool ?? "tool").slice(0, 40), String(summary ?? "").slice(0, 200));
+      res.on("close", () => { if (!res.writableEnded) settleApproval(card.id, "deny"); });
+      const decision = await promise;
+      sendJson(res, 200, { decision });
+      return;
+    }
+
+    // ---- home / printer
+    if (post && path === "/home/toggle") {
+      const { device } = await readJson(req);
+      if (ha) {
+        const outcome = await ha.toggle(String(device ?? ""));
+        sendJson(res, outcome.status, outcome.ok ? { ok: true } : { error: outcome.error });
+        return;
+      }
+      homeDemo = homeDemo.map((d) => (d.id === device ? { ...d, on: !d.on, state: !d.on ? "an" : "aus" } : d));
+      sendJson(res, 200, { ok: true, demo: true });
+      return;
+    }
+
+    if (post && path === "/printer") {
+      const { action } = await readJson(req);
+      if (moon) {
+        const outcome = await moon.control(String(action ?? ""));
+        sendJson(res, outcome.status, outcome.ok ? { ok: true } : { error: outcome.error });
+        return;
+      }
+      printerDemo = {
+        ...printerDemo,
+        state: action === "cancel" ? "ready" : action === "pause" ? "paused" : "printing",
+        job: action === "cancel" ? null : printerDemo.job,
+      };
+      sendJson(res, 200, { ok: true, demo: true });
+      return;
+    }
+
+    sendJson(res, 404, { error: "not found" });
+  }
+
+  const server = createServer((req, res) => {
+    handle(req, res).catch((error) => {
+      console.error("[daemon] handler error:", String(error).slice(0, 200));
+      if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
     });
   });
+
+  return {
+    server,
+    state,
+    agents,
+    relays,
+    approvals,
+    report,
+    listen(port, host) {
+      startBackground();
+      return new Promise((resolve) => server.listen(port, host, () => resolve(server.address())));
+    },
+    close() {
+      for (const t of timers) clearInterval(t);
+      for (const relay of relays.values()) if (relay.waiter) clearTimeout(relay.waiter.timer);
+      for (const card of approvals.values()) clearTimeout(card.timer);
+      server.closeAllConnections?.();
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
+    describe: () => ({ whisper: cfg.whisperUrl, ha: ha !== null, moonraker: moon !== null, localAgent: cfg.localAgent ? cfg.localAgentId : null, auth: cfg.token !== "" }),
+  };
 }
 
-createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
-  if (req.method === "OPTIONS") { json(res, 204, {}); return; }
-
-  if (HUB_TOKEN !== "") {
-    const auth = req.headers.authorization ?? "";
-    if (auth !== `Bearer ${HUB_TOKEN}`) {
-      json(res, 401, { error: "unauthorized" });
-      return;
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/report") {
-    json(res, 200, report());
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/health") {
-    json(res, 200, { ok: true, events: state.events.length, busy: state.busy });
-    return;
-  }
-
-  // Completion hook for Hermes, Claude, Codex and OpenClaw. Keep this generic:
-  // every runner only needs one authenticated HTTP POST when it finishes or
-  // needs user input.
-  if (req.method === "POST" && url.pathname === "/events") {
-    const { provider, status, title, detail } = await readBody(req);
-    const allowed = new Set(["done", "waiting", "error"]);
-    if (typeof provider !== "string" || provider.trim() === "" ||
-        typeof title !== "string" || title.trim() === "" ||
-        typeof status !== "string" || !allowed.has(status)) {
-      json(res, 400, { error: "provider, title and status (done|waiting|error) required" });
-      return;
-    }
-    const event = addEvent(provider.trim(), status, title.trim(), typeof detail === "string" ? detail.trim() : null);
-    console.log("[daemon] event:", event.provider, event.status, event.title);
-    json(res, 201, { event });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/events/read") {
-    const { id } = await readBody(req);
-    if (typeof id !== "string" || id === "") {
-      json(res, 400, { error: "id required" });
-      return;
-    }
-    state.events = state.events.map((event) => event.id === id ? { ...event, read: true } : event);
-    saveEvents();
-    json(res, 200, { ok: true });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/agent/ask") {
-    const { question } = await readBody(req);
-    if (typeof question !== "string" || question.trim() === "") {
-      json(res, 400, { error: "question required" });
-      return;
-    }
-    console.log("[daemon] ask:", question);
-    state.busy = true;
-    let answer;
-    try {
-      answer = await askHermes(question.trim());
-    } finally {
-      state.busy = false;
-    }
-    console.log("[daemon] answer:", answer.slice(0, 120));
-    state.lastQuestion = question.trim();
-    state.answer = answer;
-    state.suggestions = await suggestFor(question.trim(), answer);
-    addEvent("Hermes", "done", "Antwort fertig", question.trim());
-    json(res, 200, { answer, suggestions: state.suggestions });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/agent/voice") {
-    const { audio, mime } = await readBody(req);
-    if (typeof audio !== "string" || audio === "") {
-      json(res, 400, { error: "audio (base64) required" });
-      return;
-    }
-    console.log("[daemon] voice note:", Math.round((audio.length * 3) / 4), "bytes");
-    let question;
-    try {
-      question = await transcribe(audio, typeof mime === "string" ? mime : "");
-    } catch (error) {
-      console.error("[daemon] whisper failed:", String(error).slice(0, 200));
-      json(res, 502, { error: "transcription failed" });
-      return;
-    }
-    if (question === "") {
-      json(res, 422, { error: "nichts verstanden" });
-      return;
-    }
-    console.log("[daemon] heard:", question);
-    state.busy = true;
-    let answer;
-    try {
-      answer = await askHermes(question);
-    } finally {
-      state.busy = false;
-    }
-    console.log("[daemon] answer:", answer.slice(0, 120));
-    state.lastQuestion = question;
-    state.answer = answer;
-    state.suggestions = await suggestFor(question, answer);
-    addEvent("Hermes", "done", "Sprachantwort fertig", question);
-    json(res, 200, { question, answer, suggestions: state.suggestions });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/home/toggle") {
-    const { device } = await readBody(req);
-    state.home.devices = state.home.devices.map((d) =>
-      d.id === device ? { ...d, on: !d.on, state: !d.on ? "an" : "aus" } : d,
-    );
-    json(res, 200, { ok: true });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/printer") {
-    const { action } = await readBody(req);
-    state.printer = {
-      ...state.printer,
-      state: action === "cancel" ? "ready" : action === "pause" ? "paused" : "printing",
-      job: action === "cancel" ? null : state.printer.job,
-    };
-    json(res, 200, { ok: true });
-    return;
-  }
-
-  json(res, 404, { error: "not found" });
-}).listen(PORT, HOST, () => {
-  console.log(`[daemon] Quiet Hub daemon on http://${HOST}:${PORT} (agent: ${HERMES_BIN}, whisper: ${WHISPER_URL}${HUB_TOKEN ? ", auth: bearer" : ""})`);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const port = Number(process.env.PORT ?? 8787);
+  // 0.0.0.0 so the phone (LAN or Tailscale) can reach the daemon; HOST=127.0.0.1 keeps it local.
+  const host = process.env.HOST ?? "0.0.0.0";
+  const hub = createHub();
+  hub.listen(port, host).then(() => {
+    const d = hub.describe();
+    console.log(`[daemon] Quiet Hub daemon on http://${host}:${port} (local agent: ${d.localAgent ?? "off"}, whisper: ${d.whisper}, home: ${d.ha ? "Home Assistant" : "DEMO"}, printer: ${d.moonraker ? "Moonraker" : "DEMO"}, auth: ${d.auth ? "bearer" : "none"})`);
+  });
+}
