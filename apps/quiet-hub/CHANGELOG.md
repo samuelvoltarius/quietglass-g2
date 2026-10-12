@@ -24,6 +24,7 @@ Never show demo data when disconnected; connection diagnostics.
 - **Daemon CORS preflight fixed.** The `OPTIONS` answer was a 204 with a body and
   `Content-Length: 2`; WebKit (iPhone) treats that as a failed preflight, so the
   real request never followed. Now a clean 204 plus `Access-Control-Max-Age`.
+- Phone page shows the raw error of the last failed request ("Technisch: ...").
 - Failed actions (send, approve ...) now say why on the glasses.
 
 ## 0.5.0

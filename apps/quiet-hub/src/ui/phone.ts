@@ -24,6 +24,8 @@ export interface ConnView {
   readonly problem: ConnProblem | null;
   readonly lastErrorAt: number | null;
   readonly fails: number;
+  /** Raw error text of the last failed request (e.g. "TypeError: Load failed"). */
+  readonly raw?: string;
 }
 
 export interface SettingsResult {
@@ -65,6 +67,7 @@ const copy = {
     private: "Konfiguration bleibt auf diesem Gerät.", checking: "Verbindung wird geprüft …", camera: "Kamera wird geöffnet …",
     saved: "✓ Verbunden und gespeichert", failed: "Verbindung fehlgeschlagen – Daten sind gespeichert",
     scanned: "✓ QR-Code erkannt und verbunden", unreachable: "QR erkannt, Server aber nicht erreichbar", scanFailed: "QR-Code konnte nicht gelesen werden",
+    technical: "Technisch",
     test: "Verbindung testen", testing: "Teste …", testOk: "✓ Verbindung ok", notSaved: "⚠ Konnte nicht dauerhaft gespeichert werden",
     notConnectedServer: "Nicht verbunden · Server fehlt", scanFirst: "Zum Verbinden zuerst den QR-Code vom Pi scannen.",
     serverLabel: "Server", lastOk: "Letzter Erfolg", never: "noch nie", lastError: "Letzter Fehler", none: "keiner", tries: "Fehlversuche in Folge",
@@ -82,6 +85,7 @@ const copy = {
     private: "Configuration stays on this device.", checking: "Testing connection …", camera: "Opening camera …",
     saved: "✓ Connected and saved", failed: "Connection failed – settings were saved",
     scanned: "✓ QR code imported and connected", unreachable: "QR imported, but server is unreachable", scanFailed: "QR code could not be read",
+    technical: "Technical",
     test: "Test connection", testing: "Testing …", testOk: "✓ Connection ok", notSaved: "⚠ Could not be stored permanently",
     notConnectedServer: "Not connected · server missing", scanFirst: "To connect, scan the QR code from the Pi first.",
     serverLabel: "Server", lastOk: "Last success", never: "never", lastError: "Last error", none: "none", tries: "Failed attempts in a row",
@@ -131,7 +135,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
       <header class="brand"><span class="pixel-logo" aria-hidden="true">▦</span><div><div class="brand-mark">QUIETGLASS</div><h1>Quiet Hub</h1></div></header>
       <section class="card status-card">
         <div><span class="dot ${connected ? "ok" : "bad"}"></span><strong>${esc(title)}</strong></div>
-        <div class="metrics"><span>${c.serverLabel}: ${esc(conn.host || "–")}</span><span>${c.lastOk}: ${conn.lastOkAt === null ? c.never : clock(conn.lastOkAt)}</span><span>${c.lastError}: ${conn.problem === null ? c.none : `${esc(String(reason))}${conn.lastErrorAt === null ? "" : ` (${clock(conn.lastErrorAt)})`}`}</span>${conn.fails > 0 ? `<span>${c.tries}: ${conn.fails}</span>` : ""}</div>
+        <div class="metrics"><span>${c.serverLabel}: ${esc(conn.host || "–")}</span><span>${c.lastOk}: ${conn.lastOkAt === null ? c.never : clock(conn.lastOkAt)}</span><span>${c.lastError}: ${conn.problem === null ? c.none : `${esc(String(reason))}${conn.lastErrorAt === null ? "" : ` (${clock(conn.lastErrorAt)})`}`}</span>${conn.fails > 0 ? `<span>${c.tries}: ${conn.fails}</span>` : ""}${conn.raw ? `<span>${c.technical}: ${esc(conn.raw)}</span>` : ""}</div>
         ${connected ? "" : scanBlock}
         <div class="metrics"><span>${model.report.agents.filter((agent) => agent.online).length}/${model.report.agents.length} ${c.agentsOnline}</span><span>${model.report.home.devices.length} ${c.devices}</span><span>${unread} ${c.notifications}</span></div>
       </section>

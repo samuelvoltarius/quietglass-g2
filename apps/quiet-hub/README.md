@@ -400,6 +400,16 @@ mappings it falls back to `http://` with a printed warning - fine for the
 simulator or a desktop browser, not for the installed app. The script never
 changes your `tailscale serve` setup.
 
+**Network whitelist.** Per the Even Hub docs the app's `app.json` network
+whitelist takes one full origin per entry; bare hostnames and wildcards are not
+supported, and the Even App blocks everything not listed (no traffic at all). The
+repository ships generic `http://*` / `https://*` entries; for an installed build
+repack with your exact server origin, e.g. `"https://<pi>.<tailnet>.ts.net:8443"`
+(and the origin without port if you serve on 443), without committing it. On
+failure the phone page shows the raw error text ("Technisch: ...") so a whitelist
+block ("Load failed" with no request in the daemon's access log) can be told from
+a network error.
+
 The Overview never shows demo data when the daemon cannot be reached: it says
 "Nicht verbunden", the exact reason (server missing, unreachable, wrong token,
 timeout, not https) and the server host, retries by itself (2, 5, 10, then every

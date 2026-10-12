@@ -61,7 +61,7 @@ async function boot(): Promise<void> {
   let api: HubApi = DEMO ? createDemoApi(locale, DEMO_SCENE) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
 
   // ---- connection state: real data or an honest reason, never demo data ----
-  const conn = { lastOkAt: null as number | null, lastProblem: null as LinkProblem | "missing" | null, lastAt: null as number | null, fails: 0, hadData: DEMO };
+  const conn = { lastOkAt: null as number | null, lastProblem: null as LinkProblem | "missing" | null, lastAt: null as number | null, raw: "" as string, fails: 0, hadData: DEMO };
   const problemFor = (error: unknown): LinkProblem | "missing" => {
     if (settings.serverUrl.trim() === "") return "missing";
     if (insecureServer(settings.serverUrl, globalThis.location?.protocol)) return "insecure";
@@ -73,6 +73,7 @@ async function boot(): Promise<void> {
     conn.fails += 1;
     conn.lastProblem = problem;
     conn.lastAt = Date.now();
+    conn.raw = rawText(error);
     model = withLink(model, { problem, host: serverHost(settings.serverUrl), fails: conn.fails, hadData: conn.hadData });
   };
   const markOk = (): void => {
@@ -446,6 +447,7 @@ async function boot(): Promise<void> {
       lastOkAt: conn.lastOkAt,
       problem: conn.lastProblem,
       lastErrorAt: conn.lastAt,
+      raw: conn.raw,
       fails: conn.fails,
     });
     /** Applies new settings at once: persist (SDK store), rebuild the client, poll right now. */
@@ -491,6 +493,7 @@ async function boot(): Promise<void> {
           await createClient({ baseUrl: candidate.serverUrl, token: candidate.token }).report();
           return { ok: true, problem: null, ms: Date.now() - started };
         } catch (error) {
+          conn.raw = rawText(error);
           return { ok: false, problem: classifyError(error), ms: Date.now() - started };
         }
       },
@@ -505,6 +508,13 @@ async function boot(): Promise<void> {
 
   await draw();
   void poll();
+}
+
+/** The exact error text of a failed request ("Load failed", "Failed to fetch", "HTTP 401" ...) - tells a whitelist block from a network error. */
+function rawText(error: unknown): string {
+  if (error === null || error === undefined) return "";
+  if (error instanceof ApiError) return `${error.kind}: ${error.message}${error.status !== undefined ? ` (HTTP ${error.status})` : ""}`;
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen; rootSelected?: number } | null> {
