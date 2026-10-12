@@ -16,7 +16,7 @@ import { load, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { explainFailure, glassesText, noStopsHint, type Explanation } from "./text";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 
 /**
  * NextStop.
@@ -64,7 +64,8 @@ async function boot(): Promise<void> {
   let departures: readonly Departure[] = [];
   let selected = 0;
 
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
+  setLocale(locale);
 
   /**
    * What the glasses say is kept as a function of the language rather than as
@@ -333,7 +334,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       void draw();
     },
     getSettings: () => settings,
