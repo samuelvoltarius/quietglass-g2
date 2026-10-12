@@ -77,7 +77,7 @@ function ear(step: number): PixelIcon {
   const waves = step % 2 === 0 ? ["..", "..", "#.", "#.", "..", "..", ".."] : ["..", ".#", "#.", "#.", ".#", "..", ".."];
   const eye: Eye = ["......", "...##.", "...##.", "......"];
   const lens = [".######.", `#${eye[0]}#`, `#${eye[1]}#`, `#${eye[2]}#`, `#${eye[3]}#`, ".######.", "........"];
-  const rows = lens.map((left, i) => `${left}${i === 2 ? "#" : "."}${shell[i]}.${waves[i].slice(0, 1)}${waves[i].slice(1)}`.slice(0, 18));
+  const rows = lens.map((left, i) => `${left}${i === 2 ? "#" : "."}${shell[i] ?? "......"}.${waves[i] ?? ".."}`.slice(0, 18));
   return [...rows, "..................", ".................."];
 }
 
