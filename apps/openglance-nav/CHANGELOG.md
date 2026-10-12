@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1] — 2026-10-12
+
+### Changed
+
+- Even lifecycle alignment (system exit handling and shared runtime updates).
+
 ## [Unreleased]
 
 ### Added

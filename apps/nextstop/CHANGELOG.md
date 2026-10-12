@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] — 2026-10-12
+
+### Changed
+
+- Even lifecycle alignment (system exit handling and shared runtime updates).
+
 Alle nennenswerten Änderungen an NextStop.
 
 ## [0.2.0] — 2026-10-07

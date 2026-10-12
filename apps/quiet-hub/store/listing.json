@@ -1,0 +1,31 @@
+{
+  "category": "Productivity",
+  "tagline": "Agent alerts, home & printer on one screen.",
+  "about": "Quiet Hub merges five glances into one: completion alerts from your AI agents, your Home Assistant devices and your Klipper printer share a single screen.\n\n• ASK: pick a saved question or hold to speak; your own Whisper transcribes it\n• ALERTS: a persistent check, exclamation mark or cross shows when an agent finished, needs input or failed\n• HOME: lights, plugs and more as one list; every change needs a confirming second tap\n• PRINTER: job, progress, layer, temperatures and time left, with pause, resume and cancel behind the same two-tap safety\n\nHow to start:\n1) Run the small Quiet Hub daemon on your own computer or Raspberry Pi.\n2) Open Quiet Hub in the Even app and tap Scan QR (or enter the address and token by hand).\n3) Done.\n\nRequires your own server (the Quiet Hub daemon). Setup: https://github.com/samuelvoltarius/quietglass-g2\n\nFree. No account, no tracking, nothing leaves your network.\n\n— Deutsch —\n\nQuiet Hub vereint fünf Blicke in einem: Fertig-Meldungen deiner KI-Agenten, deine Home-Assistant-Geräte und dein Klipper-Drucker teilen sich einen Bildschirm.\n\n• FRAGEN: gespeicherte Frage wählen oder halten und sprechen; dein eigenes Whisper transkribiert\n• MELDUNGEN: ein bleibendes Häkchen, Ausrufezeichen oder Kreuz zeigt, wenn ein Agent fertig ist, eine Eingabe braucht oder scheiterte\n• ZUHAUSE: Lichter, Steckdosen und mehr als eine Liste; jede Änderung braucht einen bestätigenden zweiten Tipp\n• DRUCKER: Auftrag, Fortschritt, Schicht, Temperaturen und Restzeit, Pause, Fortsetzen und Abbrechen mit derselben Zwei-Tipp-Sicherung\n\nSo startest du:\n1) Den kleinen Quiet-Hub-Daemon auf deinem eigenen Rechner oder Raspberry Pi starten.\n2) Quiet Hub in der Even-App öffnen und „QR scannen“ tippen (oder Adresse und Token von Hand eintragen).\n3) Fertig.\n\nBraucht einen eigenen Server (den Quiet-Hub-Daemon). Anleitung: https://github.com/samuelvoltarius/quietglass-g2\n\nKostenlos. Kein Konto, kein Tracking, nichts verlässt dein Netz.",
+  "tags": [
+    "agents",
+    "smart home",
+    "3d printer",
+    "home assistant",
+    "voice"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Connects only to the Quiet Hub daemon address you enter. The whitelist is broad because that address is yours to choose.",
+      "why_de": "Verbindet sich nur mit der Quiet-Hub-Daemon-Adresse, die du einträgst. Die Freigabe ist breit, weil du die Adresse selbst wählst."
+    },
+    {
+      "name": "g2-microphone",
+      "why_en": "Records a voice question only while you hold the touchpad on the Agent page.",
+      "why_de": "Nimmt eine Sprachfrage nur auf, solange du auf der Agent-Seite das Touchpad hältst."
+    },
+    {
+      "name": "camera",
+      "why_en": "Opens the phone camera only when you tap Scan QR, to read the private Quiet Hub setup code.",
+      "why_de": "Öffnet die Handykamera nur, wenn du QR scannen tippst, um den privaten Quiet-Hub-Einrichtungscode zu lesen."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/quiet-hub/README.md",
+  "screenshot": "release/quiet-hub/screenshot.png"
+}

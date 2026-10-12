@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1] — 2026-10-12
+
+### Changed
+
+- Even lifecycle alignment (system exit handling and shared runtime updates).
+
 All notable changes to Shoot Day are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
