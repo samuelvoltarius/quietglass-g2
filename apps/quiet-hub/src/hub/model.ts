@@ -19,6 +19,7 @@
  */
 import type { ScreenView } from "../glasses/screen";
 import { fit, marked, wrap } from "../glasses/screen";
+import { describeActivity, elapsedShort, workingDots } from "./activity";
 import { tr, type Locale } from "../i18n";
 import { messages } from "../messages";
 import type { AgentEvent, AgentInfo, Approval, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot, SessionInfo } from "../api/types";
@@ -665,14 +666,14 @@ function agentDot(agent: AgentInfo, waiting: Set<string>): string {
   return agent.busy ? "*" : "●";
 }
 
-function agentListRows(model: HubModel, locale: Locale): string[] {
+function agentListRows(model: HubModel, locale: Locale, now: number): string[] {
   const agents = model.report.agents;
   if (agents.length === 0) return [tr(messages, locale, "agent.none"), tr(messages, locale, "root.hintNoAgents")];
   const waiting = waitingAgents(model.report);
   const rows = agents.map((agent) => {
     const state = !agent.online ? tr(messages, locale, "agent.off")
       : waiting.has(agent.id) ? tr(messages, locale, "agent.state.wait")
-        : agent.busy ? tr(messages, locale, "agent.state.busy")
+        : agent.busy ? busyShort(agent, locale, now)
           : agent.stopped === true ? tr(messages, locale, "agent.stopped") : "";
     return fit(`${agentDot(agent, waiting)} ${agent.label}${state ? ` · ${state}` : ""}${agent.machine ? ` · ${agent.machine}` : ""}`);
   });
@@ -704,7 +705,7 @@ function sessionRows(model: HubModel, locale: Locale): string[] {
   return [head, ...list, ...(note === null ? [] : [fit(note)])];
 }
 
-function agentAskRows(model: HubModel, locale: Locale): string[] {
+function agentAskRows(model: HubModel, locale: Locale, now: number): string[] {
   const agent = selectedAgent(model);
   if (agent === undefined) return [tr(messages, locale, "agent.none")];
   const items = agentItems(agent, model.report.agent.questions);
@@ -739,7 +740,7 @@ function agentAskRows(model: HubModel, locale: Locale): string[] {
     const answer = (agent.answer ?? "") !== ""
       ? wrap(agent.answer ?? "")
       : agent.error !== null ? wrap(agent.error) : [];
-    const tool = agent.busy ? [fit(agent.activity !== "" ? tr(messages, locale, "tool.line", { text: agent.activity }) : tr(messages, locale, "tool.thinking"))] : [];
+    const tool = agent.busy ? [workingLine(agent, locale, now)] : [];
     // The newest words matter while streaming: show the tail.
     const room = 7 - rows.length - (agent.stopped === true ? 1 : 0) - tool.length;
     if (room > 0) rows.push(...answer.slice(-room));
@@ -932,13 +933,13 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       body = approvalRows(card, report.approvals.length, locale);
       footer = tr(messages, locale, "approval.hint");
     } else if (model.agentView === "list") {
-      body = agentListRows(model, locale);
+      body = agentListRows(model, locale, now);
       footer = tr(messages, locale, "agent.list");
     } else if (model.agentView === "sessions") {
       body = sessionRows(model, locale);
       footer = tr(messages, locale, "sessions.help");
     } else {
-      body = agentAskRows(model, locale);
+      body = agentAskRows(model, locale, now);
       const paged = agent !== undefined && pageCount(agent) > 0;
       footer = tr(messages, locale, agent?.busy === true ? "agent.running"
         : agent?.stopped === true ? "agent.stoppedHelp"
@@ -972,4 +973,17 @@ function emptyRow(agent: AgentInfo, locale: Locale): string {
   if (agent.suggesting === true) return tr(messages, locale, "agent.suggesting");
   if ((agent.answer ?? "") !== "" && !agent.busy) return tr(messages, locale, "agent.noSuggestions");
   return agent.busy ? "" : tr(messages, locale, "agent.empty");
+}
+
+/** "» Führt Tests aus.. · 23 s · npm test" — what a working agent is doing, animated. */
+export function workingLine(agent: AgentInfo, locale: Locale, now: number): string {
+  const activity = describeActivity(agent.activity, locale);
+  const since = typeof agent.busySince === "number" && agent.busySince > 0 ? ` · ${elapsedShort(now - agent.busySince)}` : "";
+  return fit(`» ${activity.label}${workingDots(now)}${since}${activity.detail !== "" ? ` · ${activity.detail}` : ""}`);
+}
+
+/** "Sucht im Web · 23 s" — the busy state in the agent list. */
+function busyShort(agent: AgentInfo, locale: Locale, now: number): string {
+  const label = describeActivity(agent.activity, locale).label;
+  return typeof agent.busySince === "number" && agent.busySince > 0 ? `${label} · ${elapsedShort(now - agent.busySince)}` : label;
 }

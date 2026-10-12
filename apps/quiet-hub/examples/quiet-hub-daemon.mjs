@@ -289,6 +289,7 @@ export function createHub(options = {}) {
     const job = { id: randomUUID(), agentId: agent.id, question, status: "running", done: false, waiters: [], startedAt: now() };
     jobs.set(job.id, job);
     agent.busy = true;
+    agent.busySince = job.startedAt;
     agent.jobId = job.id;
     agent.answer = "";
     agent.activity = "";
@@ -494,7 +495,7 @@ export function createHub(options = {}) {
   // ------------------------------------------------------------- report
   const agentInfo = (agent) => ({
     id: agent.id, label: agent.label, kind: agent.kind, machine: agent.machine, mode: agent.mode,
-    online: isOnline(agent), busy: agent.busy, activity: agent.activity, error: agent.error,
+    online: isOnline(agent), busy: agent.busy, busySince: agent.busy ? agent.busySince ?? null : null, activity: agent.activity, error: agent.error,
     answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions, suggesting: agent.suggesting === true,
     transport: agent.transport, sessionsSupported: agent.sessionsSupported,
     session: agent.session ? { id: agent.session.id, title: agent.session.title } : null,

@@ -25,7 +25,7 @@ const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) 
 const POLL_MS = 5000;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.5.4";
+const BUILD = "0.5.5";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -223,6 +223,13 @@ async function boot(): Promise<void> {
       });
     return drawing;
   };
+
+  // While the agent on the glasses works, redraw once a second: the dots move and
+  // the elapsed time counts up. textContainerUpgrade is cheap and sameView skips no-ops.
+  setInterval(() => {
+    if (closed || model.screen !== "agent") return;
+    if (model.agentView === "ask" ? selectedAgent(model)?.busy === true : model.report.agents.some((agent) => agent.busy)) void draw();
+  }, 1000);
 
   // ---- data --------------------------------------------------------------
   const poll = async (): Promise<void> => {

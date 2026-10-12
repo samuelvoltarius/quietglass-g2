@@ -89,7 +89,7 @@ export function demoReport(locale: Locale = "de", scene: DemoScene = "default"):
     }] };
   }
   if (scene === "busy") {
-    return { ...report, agents: patchAgent("claude-win", { busy: true, activity: "Edit: src/hub/model.ts", lastQuestion: de ? "Baue das Menü" : "Build the menu", answer: de ? "Ich lese zuerst model.ts und passe dann die Menüaktionen an." : "I read model.ts first and then adapt the menu actions." }) };
+    return { ...report, agents: patchAgent("claude-win", { busy: true, busySince: Date.now() - 23_000, activity: "Edit: src/hub/model.ts", lastQuestion: de ? "Baue das Menü" : "Build the menu", answer: de ? "Ich lese zuerst model.ts und passe dann die Menüaktionen an." : "I read model.ts first and then adapt the menu actions." }) };
   }
   if (scene === "long") {
     const text = de

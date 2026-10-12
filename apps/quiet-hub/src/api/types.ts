@@ -36,6 +36,8 @@ export interface AgentInfo {
   readonly machine: string;
   readonly online: boolean;
   readonly busy: boolean;
+  /** Epoch ms when the running question started (daemon clock); null when idle. */
+  readonly busySince?: number | null;
   /** ask = permissions are decided on the glasses; auto = bypass; others see README. */
   readonly mode: string;
   /** What the agent is doing right now ("Edit: foo.ts"); empty when idle. */

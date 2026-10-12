@@ -190,7 +190,7 @@ describe("session picker", () => {
     const report = patchAgents(demoReport(), (a) => (a.id === "claude-win" ? { busy: true } : {}));
     const list = buildView({ ...model("agent", report), agentView: "list" }, "de", T0).body;
     expect(list[0]).toMatch(/^> ● hermes-spark/);
-    expect(list[1]).toMatch(/^ {2}\* claude-win · läuft/);
+    expect(list[1]).toMatch(/^ {2}\* claude-win · Denkt nach/);
     expect(list[2]).toMatch(/^ {2}○ codex-win · offline/);
     const opened = decide({ ...model("agent"), agentView: "list" }, "click", T0).model;
     expect(buildView(opened, "de", T0).body[1]).toContain("+ Neue Sitzung");
@@ -446,9 +446,9 @@ describe("tool lines and permission cards", () => {
   it("shows the running tool as one line while the agent works", () => {
     const report = patchAgents(demoReport(), (_a, i) => (i === 0 ? { busy: true, activity: "Bash: npm test", answer: null, lastQuestion: "Teste" } : {}));
     const rows = buildView({ ...model("agent", report), agentView: "ask" }, "de", T0).body;
-    expect(rows).toContain("» Bash: npm test");
+    expect(rows.find((r) => r.startsWith("» Führt Tests aus"))).toContain("npm test");
     const thinking = patchAgents(report, (_a, i) => (i === 0 ? { activity: "" } : {}));
-    expect(buildView({ ...model("agent", thinking), agentView: "ask" }, "de", T0).body).toContain("» denkt nach …");
+    expect(buildView({ ...model("agent", thinking), agentView: "ask" }, "de", T0).body.some((r) => r.startsWith("» Denkt nach"))).toBe(true);
   });
 
   it("a card shows who asks, the tool, the command and the choice", () => {
