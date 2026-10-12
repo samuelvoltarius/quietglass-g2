@@ -104,7 +104,7 @@ describe("QR import persists through the SDK store", () => {
 
   it("a scanned QR is written to the SDK store and read back", async () => {
     const parsed = parseSetupQr("https://pi.ts.net:8444/#server=https%3A%2F%2Fpi.ts.net%3A8443&token=abc", true);
-    const settings = { ...parsed, invertScroll: false, voiceAutoSend: false };
+    const settings = { ...parsed, invertScroll: false, voiceAutoSend: false, speakAnswers: false };
     const { bridge, store } = sdk();
     const web = mirror();
     expect(await saveSettings(bridge, settings, web)).toEqual({ persisted: true });

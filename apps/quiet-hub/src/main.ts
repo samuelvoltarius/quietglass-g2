@@ -7,7 +7,7 @@ import { getLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
-import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, withLink, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, selectedAgent, withLink, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
 import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
@@ -17,6 +17,7 @@ import { buildWav } from "./audio/wav";
 import { mountPhoneUi, type ConnView, type SettingsResult } from "./ui/phone";
 import { loadSettings, saveSettings } from "./setup/settings";
 import { decodeQr, parseSetupQr } from "./setup/qr";
+import { createBrowserSpeechEngine, HubNarrator } from "./speech/narrator";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
@@ -24,7 +25,7 @@ const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) 
 const POLL_MS = 5000;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.5.3";
+const BUILD = "0.5.4";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -109,9 +110,12 @@ async function boot(): Promise<void> {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let fast = false;
   let newestEventId: string | null = model.report.inbox.events[0]?.id ?? null;
+  // Spoken answers on the phone (AirPods / headphones), opt-in on the phone page.
+  const narrator = new HubNarrator(createBrowserSpeechEngine(), () => settings.speakAnswers, () => locale);
   const applyReport = (report: Awaited<ReturnType<HubApi["report"]>>): void => {
     markOk();
     model = mergeReport(model, report);
+    narrator.observe(selectedAgent(model), model.report.approvals);
   };
 
   // ---- microphone (voice notes) ------------------------------------------
@@ -476,7 +480,8 @@ async function boot(): Promise<void> {
         return { ok: false, persisted: saved.persisted, problem: conn.lastProblem };
       }
     };
-    refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings, conn: connView() }), {
+    refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings, conn: connView(), speech: narrator.status() }), {
+      onSpeechActivate: () => { narrator.activate(); },
       onLocale: (next) => {
         locale = next;
         setLocale(next);
@@ -501,7 +506,7 @@ async function boot(): Promise<void> {
         const asset = await bridge.captureImageFromCamera().catch(() => null);
         if (asset === null || asset.base64 === "") throw new Error("Kamera abgebrochen");
         const value = await decodeQr(asset.base64, asset.mimeType || "image/jpeg");
-        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend };
+        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend, speakAnswers: settings.speakAnswers };
       },
     });
   }
