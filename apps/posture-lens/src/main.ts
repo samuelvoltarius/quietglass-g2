@@ -15,7 +15,7 @@ import { encodePng } from "./glasses/pixel";
 import { load, save, type PostureData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 
 /**
  * IMU sampling rate. 500 ms is plenty for posture, which changes over minutes,
@@ -41,7 +41,8 @@ async function boot(): Promise<void> {
   let tick: ReturnType<typeof setInterval> | undefined;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
+  setLocale(locale);
   let sensorOff = false;
   /** A tap that arrived before the first IMU sample; it calibrates on that sample. */
   let calibratePending = false;
@@ -196,7 +197,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       void draw();
     },
     getSensorOff: () => sensorOff,
