@@ -2,7 +2,7 @@ import { tr, type Locale, type Messages } from "./i18n";
 
 /**
  * Every user-facing string, German and English. Keys starting with `g.` go to
- * the glasses and must fit one display row (46 characters); the tests check
+ * the glasses and must fit one display row (56 characters); the tests check
  * every variant against that with worst-case values.
  */
 export const messages: Messages = {
@@ -32,7 +32,8 @@ export const messages: Messages = {
     "g.list.footer": "wischen = wählen · tippen = ok · 2× = zurück",
 
     // Glasses — takes
-    "g.takes.header": "TAKES · Shot {n}/{total} · Szene {scene}",
+    "g.takes.header": "TAKES · {n} von {total}",
+    "g.takes.id": "Szene {scene} · Shot {shot}",
     "g.takes.counts": "OK {ok} · NG {ng}",
     "g.takes.last": "Letzter: T{n} {status} {time} {note}",
     "g.takes.none": "Noch kein Take.",
@@ -170,7 +171,8 @@ export const messages: Messages = {
     "g.err.bad-reply": "unreadable reply",
     "g.list.footer": "swipe = choose · tap = ok · 2× = back",
 
-    "g.takes.header": "TAKES · shot {n}/{total} · scene {scene}",
+    "g.takes.header": "TAKES · {n} of {total}",
+    "g.takes.id": "Scene {scene} · shot {shot}",
     "g.takes.counts": "OK {ok} · NG {ng}",
     "g.takes.last": "Last: T{n} {status} {time} {note}",
     "g.takes.none": "No take yet.",

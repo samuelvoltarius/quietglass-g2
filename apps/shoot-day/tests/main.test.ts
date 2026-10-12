@@ -198,11 +198,11 @@ describe("Shoot Day lifecycle", () => {
     const fake = fakeBridge(configured());
     await boot(fake);
     fake.emit(CLICK);                                       // open Takes
-    await vi.waitFor(() => expect(fake.header()).toBe("TAKES · Shot 1/2 · Szene 1"));
+    await vi.waitFor(() => expect(fake.header()).toBe("TAKES · 1 von 2"));
     fake.emit(CLICK);                                       // actions
     await vi.waitFor(() => expect(fake.body()).toContain("> Take OK"));
     fake.emit(DOUBLE);                                      // back to the card
-    await vi.waitFor(() => expect(fake.header()).toBe("TAKES · Shot 1/2 · Szene 1"));
+    await vi.waitFor(() => expect(fake.header()).toBe("TAKES · 1 von 2"));
     fake.emit(DOUBLE);                                      // back to the menu
     await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY"));
     expect(fake.exit.calls).toEqual([]);

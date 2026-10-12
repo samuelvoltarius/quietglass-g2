@@ -55,7 +55,7 @@ function expectFits(view: ScreenView, label: string): void {
   for (const row of [view.header, view.footer, ...view.body]) expect(row, label).not.toContain("▸");
 }
 
-describe("every glasses view fits 7 rows × 46 characters", () => {
+describe("every glasses view fits 7 rows × 56 characters", () => {
   const modes: Mode[] = ["menu", ...MENU];
   const loads: LoadStatus[] = [{ kind: "ready" }, { kind: "loading" }, { kind: "error", code: "http", status: 503 }, { kind: "error", code: "auth" }];
   for (const locale of locales) {
@@ -118,8 +118,8 @@ describe("what the glasses say", () => {
         cursor: 0, ok: 2, ng: 1, last: { n: 3, status: "OK", note: "great", ts: new Date(2026, 0, 1, 14, 5).getTime(), pending: false },
       },
     }));
-    expect(view.header).toBe("TAKES · shot 1/1 · scene 2");
-    expect(view.body).toEqual(["2 · B   MCU", "Over the shoulder", "", "OK 2 · NG 1", "Last: T3 OK 14:05 great", "", ""]);
+    expect(view.header).toBe("TAKES · 1 of 1");
+    expect(view.body).toEqual(["Scene 2 · shot B · MCU", "Over the shoulder", "", "OK 2 · NG 1", "Last: T3 OK 14:05 great", "", ""]);
     expect(view.footer).toBe("swipe = shot · tap = take · 2× = menu");
   });
 

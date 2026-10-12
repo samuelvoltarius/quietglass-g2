@@ -162,7 +162,7 @@ function takesView(state: ViewState): ScreenView {
     : L("g.takes.none");
   const desc = shot.desc.trim();
   const body = [
-    `${shot.scene} · ${shot.shot}${shot.size ? "   " + shot.size : ""}`,
+    L("g.takes.id", { scene: shot.scene, shot: shot.shot }) + (shot.size ? " · " + shot.size : ""),
     desc,
     "",
     L("g.takes.counts", { ok: state.takes.ok, ng: state.takes.ng }),

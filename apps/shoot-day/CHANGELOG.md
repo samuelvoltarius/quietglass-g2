@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4] — 2026-10-13
+
+### Changed
+
+- Glasses rows use the full display width (56 instead of 46 characters): teleprompter, schedule, packing list and take notes.
+- Take card: first row reads "Szene 1 · Shot A · WS" (scene, shot letter, size) instead of the bare "1 · A   WS"; header shows the position ("1 von 5") without repeating the scene.
+
 ## [0.1.3] — 2026-10-13
 
 ### Fixed
