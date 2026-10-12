@@ -551,3 +551,14 @@ describe("misc", () => {
     expect(whenShort(0, now)).toBe("");
   });
 });
+
+describe("hermes stream-json lines", () => {
+  it("parses tool steps, deltas, result and session id", async () => {
+    const { parseHermesStreamLine } = await import("../examples/quiet-hub-agents.mjs");
+    expect(parseHermesStreamLine('{"type":"tool_use","name":"terminal","input":{"command":"ls"}}')).toEqual({ activity: "terminal: ls" });
+    expect(parseHermesStreamLine('{"type":"text","text":"Hi"}')).toEqual({ delta: "Hi" });
+    expect(parseHermesStreamLine('{"type":"result","session_id":"S","text":"Fertig"}')).toEqual({ final: "Fertig", sessionId: "S" });
+    expect(parseHermesStreamLine('{"type":"system","session_id":"S"}')).toEqual({ sessionId: "S" });
+    expect(parseHermesStreamLine("kein json")).toBeNull();
+  });
+});

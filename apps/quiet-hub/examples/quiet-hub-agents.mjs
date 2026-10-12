@@ -321,6 +321,26 @@ export function createBridgeClient(options) {
 
 // ------------------------------------------------------------ Hermes
 
+/**
+ * One line of `hermes chat --format stream-json`: text deltas, tool steps,
+ * the final result and the session id. Returns null for anything else.
+ */
+export function parseHermesStreamLine(line) {
+  let m;
+  try { m = JSON.parse(line); } catch { return null; }
+  if (m === null || typeof m !== "object") return null;
+  if (m.type === "system") return typeof m.session_id === "string" ? { sessionId: m.session_id } : null;
+  if (m.type === "text" && typeof m.text === "string") return { delta: m.text };
+  if (m.type === "tool_use") {
+    const input = m.input && typeof m.input === "object" ? m.input : {};
+    const detail = input.command ?? input.path ?? input.file_path ?? input.query ?? input.pattern ?? input.url ?? input.goal ?? "";
+    return { activity: oneLine(`${m.name ?? "tool"}: ${typeof detail === "string" ? detail : ""}`, 80) };
+  }
+  if (m.type === "tool_result") return { activity: "" };
+  if (m.type === "result") return { final: typeof m.text === "string" ? m.text : "", sessionId: typeof m.session_id === "string" ? m.session_id : undefined };
+  return null;
+}
+
 /** Parses `hermes sessions list` (Title / Workspace / Last Active / ID columns). */
 export function parseHermesSessions(stdout) {
   const items = [];
@@ -439,14 +459,27 @@ export function createHermesController(agent, ctx) {
     });
   }
 
+  // stream-json (default): live tool steps and text deltas; "text" for Hermes builds without --format.
+  let cliFormat = agent.format ?? "stream-json";
+
   async function runCliChat(job, emit) {
     let out = "";
     let captured = null;
     const resume = job.fresh ? null : (job.sessionId ?? cliSession);
-    const args = ["chat", "-q", job.prompt, "-Q", ...(agent.format ? ["--format", String(agent.format)] : []), ...(resume ? ["--resume", resume] : [])];
+    const streaming = cliFormat === "stream-json";
+    const args = ["chat", "-q", job.prompt, "-Q", ...(cliFormat !== "text" ? ["--format", String(cliFormat)] : []), ...(resume ? ["--resume", resume] : [])];
     const res = await runCli(args, {
       signal: job.signal,
       onLine: (line) => {
+        if (streaming && line.trimStart().startsWith("{")) {
+          const ev = parseHermesStreamLine(line);
+          if (ev === null) return;
+          if (ev.sessionId) captured = ev.sessionId;
+          if (ev.final !== undefined) out = clip(ev.final, MAX_TEXT);
+          else if (ev.delta) out = clip(out + ev.delta, MAX_TEXT);
+          emit({ text: out.replace(/^\s+/, ""), activity: ev.activity ?? "" });
+          return;
+        }
         // -Q prints a "session_id: ..." line on some Hermes versions: keep the id, hide the line.
         const m = /^session_id:\s*(\S+)\s*$/.exec(line);
         if (m) { captured = m[1]; return; }
@@ -454,6 +487,12 @@ export function createHermesController(agent, ctx) {
         emit({ text: out, activity: "" });
       },
     });
+    if (streaming && res.code === 2 && out === "" && /--format|unrecognized arguments/i.test(res.stderr ?? "")) {
+      // An older Hermes without --format: remember and run the same question as plain text.
+      cliFormat = "text";
+      return runCliChat(job, emit);
+    }
+    out = out.replace(/^\s+/, "");
     if (!captured && !resume && !res.cancelled) {
       // The CLI did not tell: the newest session in the store is the one just created.
       captured = (await cliSessions().catch(() => []))[0]?.id ?? null;

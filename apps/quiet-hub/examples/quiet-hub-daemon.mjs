@@ -44,7 +44,7 @@ export function createHub(options = {}) {
     hermesBin: options.hermesBin ?? env.HERMES_BIN ?? "hermes",
     // Optional hermes-evenhub-bridge for the daemon's own Hermes (token read at runtime, never stored).
     bridgeUrl: options.bridgeUrl ?? env.HERMES_BRIDGE_URL ?? "",
-    hermesFormat: options.hermesFormat ?? env.HERMES_FORMAT ?? "text",
+    hermesFormat: options.hermesFormat ?? env.HERMES_FORMAT ?? "stream-json",
     bridgeTokenEnv: options.bridgeTokenEnv ?? env.HERMES_BRIDGE_TOKEN_ENV ?? "EVENHUB_BRIDGE_TOKEN",
     localAgentId: options.localAgentId ?? env.LOCAL_AGENT_ID ?? "hermes-pi5",
     localAgent: options.localAgent ?? env.LOCAL_AGENT !== "off",

@@ -182,7 +182,31 @@ describe("relay protocol with a mocked claude", () => {
     await until(async () => (await h.api("/agents")).json.agents[0].answer === "OK");
     expect(seen.slice(0, 2)).toEqual(["chat", "-q"]);
     expect(seen).toContain("-Q");
-    expect(seen).not.toContain("--format");
+    expect(seen).toEqual(expect.arrayContaining(["--format", "stream-json"]));
+  });
+
+  it("hermes stream-json: tool steps become activity, text streams, result and session id are kept", async () => {
+    const lines = [
+      { type: "system", subtype: "init", session_id: "S1" },
+      { type: "tool_use", name: "terminal", input: { command: "ls /etc | wc -l" } },
+      { type: "tool_result", name: "terminal", output: "{}" },
+      { type: "text", text: "\n\nIn /etc " },
+      { type: "text", text: "liegen 12 Dateien." },
+      { type: "result", session_id: "S1", text: "In /etc liegen 12 Dateien." },
+    ];
+    const activities = [];
+    const spawnImpl = (bin) => {
+      const c = fakeChild();
+      if (bin !== "taskkill") setImmediate(() => { c.emitLines(...lines.map((l) => JSON.stringify(l))); c.exit(0); });
+      return c;
+    };
+    const { h } = await setup([{ id: "hermes-spark", kind: "hermes", bin: "hermes" }], spawnImpl);
+    await h.api("/agent/ask", { agentId: "hermes-spark", question: "Zähl", wait: false });
+    await until(async () => {
+      const a = (await h.api("/agents")).json.agents[0];
+      if (a.activity) activities.push(a.activity);
+      return a.answer === "In /etc liegen 12 Dateien." && a.busy === false;
+    });
   });
 
   it("codex app-server: approval request becomes a glasses card, accept/decline is returned", async () => {
