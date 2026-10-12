@@ -59,4 +59,6 @@ PY
 url="http://$host:5210/#$fragment"
 
 echo "Quiet Hub services are running. Scan this QR in the Even App:"
-npx evenhub qr --url "$url"
+# evenhub-cli prints the full URL (including our token) before the QR. Keep the
+# terminal useful without leaking that credential into shell logs/history.
+npx evenhub qr --url "$url" | sed '/^http.*#server=/d'
