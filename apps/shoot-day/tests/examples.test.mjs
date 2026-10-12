@@ -91,6 +91,16 @@ describe("the Shoot Day server example", () => {
     expect((await fetch(base + "/api/shotlist", { headers: { Authorization: "Bearer s3cret" } })).status).toBe(200);
   }, 10000);
 
+  it("lets an allowed Tailscale login in without the token (loopback only), anyone else still needs it", async () => {
+    const { base } = await start({ TOKEN: "s3cret", SD_TAILSCALE_USERS: "Me@Example.com" }, cleanup);
+    expect((await fetch(base + "/api/shotlist", { headers: { "Tailscale-User-Login": "me@example.com" } })).status).toBe(200);
+    expect((await fetch(base + "/api/shotlist", { headers: { "Tailscale-User-Login": "stranger@example.com" } })).status).toBe(401);
+    expect((await fetch(base + "/api/shotlist")).status).toBe(401);
+    const preflight = await fetch(base + "/api/shotlist", { method: "OPTIONS", headers: { Origin: "https://phone.example", "Access-Control-Request-Method": "GET" } });
+    expect(preflight.status).toBe(204);
+    expect(await preflight.text()).toBe("");
+  }, 10000);
+
   it("refuses to listen beyond this machine without a TOKEN", async () => {
     const port = await freePort();
     const result = spawnSync(process.execPath, [example("shoot-day-server.mjs")], {

@@ -64,6 +64,9 @@ export interface SttConfig {
  *
  * `faster-whisper` behind a dozen lines of Python speaks this happily.
  */
+/** How long one connection attempt may take before it is abandoned and retried. */
+const CONNECT_TIMEOUT_MS = 8_000;
+
 export function createWebSocketStt(config: SttConfig): SttProvider {
   const WS = config.WS ?? WebSocket;
   let socket: WebSocket | undefined;
@@ -83,8 +86,12 @@ export function createWebSocketStt(config: SttConfig): SttProvider {
       setStatus(retry === 0 ? "connecting" : "reconnecting");
       const ws = new WS(config.url);
       socket = ws as unknown as WebSocket;
+      // A handshake that never completes (blocked origin, unreachable host) would
+      // otherwise hang for a minute with no message; give up and let onclose retry.
+      const connectTimer = setTimeout(() => { try { (ws as WebSocket).close(); } catch { /* already closed */ } }, CONNECT_TIMEOUT_MS);
 
       (ws as WebSocket).onopen = () => {
+        clearTimeout(connectTimer);
         retry = 0;
         setStatus("ready");
         (ws as WebSocket).send(JSON.stringify({
@@ -105,6 +112,7 @@ export function createWebSocketStt(config: SttConfig): SttProvider {
       (ws as WebSocket).onerror = () => { setStatus("error"); };
 
       (ws as WebSocket).onclose = () => {
+        clearTimeout(connectTimer);
         socket = undefined;
         if (closing) { setStatus("idle"); return; }
         // Captions are live: a dropped connection must reconnect by itself,

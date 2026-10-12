@@ -50,6 +50,24 @@ describe("the example sources", () => {
     expect(ok.status).toBe(200);
   }, 10000);
 
+  it("reference server: an allowed Tailscale login needs no token, anyone else does", async () => {
+    const { base } = await start("reference-server.mjs", { TOKEN: "s3cret", STATUS_TAILSCALE_USERS: "Me@Example.com, other@example.com" }, cleanup);
+    expect((await fetch(base + "/status", { headers: { "Tailscale-User-Login": "me@example.com" } })).status).toBe(200);
+    expect((await fetch(base + "/status", { headers: { "Tailscale-User-Login": "stranger@example.com" } })).status).toBe(401);
+    expect((await fetch(base + "/status")).status).toBe(401);
+    expect((await fetch(base + "/status", { headers: { Authorization: "Bearer s3cret" } })).status).toBe(200);
+  }, 10000);
+
+  it("reference server: with only an allow-list (no TOKEN), only listed logins get in; preflight is 204 without a body", async () => {
+    const { base } = await start("reference-server.mjs", { TOKEN: "", STATUS_TAILSCALE_USERS: "me@example.com" }, cleanup);
+    expect((await fetch(base + "/status")).status).toBe(401);
+    expect((await fetch(base + "/status", { headers: { "Tailscale-User-Login": "me@example.com" } })).status).toBe(200);
+    const preflight = await fetch(base + "/status", { method: "OPTIONS", headers: { Origin: "https://phone.example", "Access-Control-Request-Method": "GET" } });
+    expect(preflight.status).toBe(204);
+    expect(await preflight.text()).toBe("");
+    expect(preflight.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("content-type");
+  }, 10000);
+
   it("Home Assistant adapter: a hung Home Assistant gives a 502, and the token stays out of the logs", async () => {
     // Regression: the call to Home Assistant had no timeout, so one hung
     // request held /status open until the glasses gave up.

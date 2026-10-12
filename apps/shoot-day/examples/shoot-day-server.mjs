@@ -11,6 +11,8 @@
  * Environment
  *   PORT          port (default 8899)
  *   HOST          address to bind (default 127.0.0.1 — this machine only)
+ *   SD_TAILSCALE_USERS  Tailscale logins (comma list) that need no token when
+ *                 `tailscale serve` proxies the request (loopback only)
  *   TOKEN         bearer token required on every /api request (recommended,
  *                 required in practice once HOST is not loopback)
  *   DATA_FILE     where projects are stored (default ./shoot-day-data.json)
@@ -176,10 +178,25 @@ function send(response, status, body, type = "application/json; charset=utf-8") 
   response.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
+/**
+ * `tailscale serve` connects from loopback and sets Tailscale-User-Login to the
+ * signed-in tailnet user. A LAN client cannot reach a loopback-bound server, so
+ * the header is only trusted from loopback and only for the logins in
+ * SD_TAILSCALE_USERS (comma list). The TOKEN keeps working as the alternative.
+ */
+const TAILSCALE_USERS = String(process.env["SD_TAILSCALE_USERS"] ?? "").split(",").map((u) => u.trim().toLowerCase()).filter(Boolean);
+function tailscaleUser(request) {
+  const peer = String(request.socket?.remoteAddress ?? "").replace(/^::ffff:/, "");
+  if (peer !== "127.0.0.1" && peer !== "::1") return "";
+  const login = String(request.headers["tailscale-user-login"] ?? "").trim().toLowerCase();
+  return TAILSCALE_USERS.includes(login) ? login : "";
+}
+
 const digest = (text) => createHash("sha256").update(text).digest();
 /** Constant-time check, so response timing does not leak the TOKEN. */
 function authorised(request) {
   if (!TOKEN) return true;
+  if (tailscaleUser(request) !== "") return true;
   return timingSafeEqual(digest(request.headers["authorization"] ?? ""), digest("Bearer " + TOKEN));
 }
 

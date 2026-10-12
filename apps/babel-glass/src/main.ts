@@ -135,12 +135,16 @@ async function boot(): Promise<void> {
           onStatus: (s) => { status = s; void draw(); },
         });
 
-    await stt.start();
+    // The microphone must not wait for the server: a recogniser that is slow or
+    // unreachable used to keep the mic closed (looking like "no microphone").
+    // The connection comes up in the background and shows its own status.
+    const opening = stt.start().catch((error: unknown) => { console.warn("[babelglass] stt start failed:", error); });
 
     const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
     if (!ok) {
       console.warn("[babelglass] microphone was refused");
       await stt.stop();
+      await opening;
       stt = null;
       return;
     }

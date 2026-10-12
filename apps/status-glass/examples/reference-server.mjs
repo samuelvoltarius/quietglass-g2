@@ -10,6 +10,9 @@
  *   node reference-server.mjs                 # http://127.0.0.1:8099/status
  *   PORT=9000 TOKEN=secret node reference-server.mjs
  *
+ * STATUS_TAILSCALE_USERS (comma list of Tailscale logins) lets those users in
+ * without a token when `tailscale serve` proxies the request from loopback.
+ *
  * The values below come from Node's own os module, so it runs anywhere without
  * installing anything.
  */
@@ -20,6 +23,15 @@ const PORT = Number(process.env["PORT"] ?? 8099);
 const HOST = process.env["HOST"] ?? "127.0.0.1";
 const TOKEN = process.env["TOKEN"] ?? "";
 const NAME = process.env["NAME"] ?? "reference";
+const TAILSCALE_USERS = String(process.env["STATUS_TAILSCALE_USERS"] ?? "").split(",").map((u) => u.trim().toLowerCase()).filter(Boolean);
+
+/** `tailscale serve` connects from loopback and sets Tailscale-User-Login; a LAN client cannot spoof it. */
+function tailscaleUser(request) {
+  const peer = String(request.socket?.remoteAddress ?? "").replace(/^::ffff:/, "");
+  if (peer !== "127.0.0.1" && peer !== "::1") return "";
+  const login = String(request.headers["tailscale-user-login"] ?? "").trim().toLowerCase();
+  return TAILSCALE_USERS.includes(login) ? login : "";
+}
 
 /**
  * Build the report.
@@ -83,7 +95,7 @@ function collect() {
 const CORS = {
   // Status Glass runs in a WebView; allow it to read this.
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Authorization",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
@@ -105,9 +117,9 @@ const server = createServer((request, response) => {
   }
 
   // Constant-time-ish check is overkill here, but never log the token.
-  if (TOKEN) {
+  if ((TOKEN || TAILSCALE_USERS.length > 0) && tailscaleUser(request) === "") {
     const header = request.headers["authorization"] ?? "";
-    if (header !== "Bearer " + TOKEN) {
+    if (!TOKEN || header !== "Bearer " + TOKEN) {
       response.writeHead(401, { ...CORS, "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "unauthorized" }));
       return;
@@ -125,6 +137,6 @@ const server = createServer((request, response) => {
 
 server.listen(PORT, HOST, () => {
   console.log("Status Glass reference server on http://" + HOST + ":" + PORT + "/status");
-  if (!TOKEN) console.log("No TOKEN set: this endpoint is unauthenticated.");
+  if (!TOKEN && TAILSCALE_USERS.length === 0) console.log("No TOKEN set: this endpoint is unauthenticated.");
   if (HOST === "0.0.0.0") console.log("Bound to all interfaces. Set a TOKEN and prefer TLS.");
 });

@@ -16,6 +16,8 @@
  *   PORT                port (default 8898)
  *   HOST                address to bind (default 127.0.0.1 — this machine only)
  *   TOKEN               bearer token required on every /api request when set
+ *   KL_TAILSCALE_USERS  Tailscale logins (comma list) that need no token when
+ *                       `tailscale serve` proxies the request (loopback only)
  *   KL_MOONRAKER        fixed Moonraker address; without it the bridge searches
  *   KL_SCAN_NET         /24 to search, e.g. 192.168.1 (default: this machine's
  *                       private networks)
@@ -39,11 +41,24 @@ const MOON_PORT = Number(process.env["KL_MOONRAKER_PORT"] ?? 7125);
 const RESCAN_MS = Number(process.env["KL_RESCAN_MS"] ?? 45000);
 const LOOPBACK = HOST === "127.0.0.1" || HOST === "::1" || HOST === "localhost";
 /**
+ * `tailscale serve` connects from loopback and sets Tailscale-User-Login to the
+ * signed-in tailnet user. A LAN client cannot reach a loopback-bound server, so
+ * the header is only trusted from loopback and only for the logins in
+ * KL_TAILSCALE_USERS (comma list). The TOKEN keeps working as the alternative.
+ */
+const TAILSCALE_USERS = String(process.env["KL_TAILSCALE_USERS"] ?? "").split(",").map((u) => u.trim().toLowerCase()).filter(Boolean);
+function tailscaleUser(request) {
+  const peer = String(request.socket?.remoteAddress ?? "").replace(/^::ffff:/, "");
+  if (peer !== "127.0.0.1" && peer !== "::1") return "";
+  const login = String(request.headers["tailscale-user-login"] ?? "").trim().toLowerCase();
+  return TAILSCALE_USERS.includes(login) ? login : "";
+}
+/**
  * Pausing or cancelling a print is consequential, and CORS is open to every
  * origin (the glasses app has no fixed one). So control needs an explicit
  * switch AND, as soon as the bridge is reachable from other machines, a token.
  */
-const CONTROL = process.env["KL_ALLOW_CONTROL"] === "1" && TOKEN !== "";
+const CONTROL = process.env["KL_ALLOW_CONTROL"] === "1" && (TOKEN !== "" || TAILSCALE_USERS.length > 0);
 const CONTROL_BLOCKED = process.env["KL_ALLOW_CONTROL"] === "1" && !CONTROL;
 
 /** The /24 networks to search: KL_SCAN_NET, or every private IPv4 network of this machine. */
@@ -180,7 +195,9 @@ function send(response, code, body) {
 const digest = (text) => createHash("sha256").update(text).digest();
 /** Constant-time check, so response timing does not leak the TOKEN. */
 function authorised(request) {
-  if (!TOKEN) return true;
+  if (tailscaleUser(request) !== "") return true;
+  // With an allow-list and no TOKEN, only the listed tailnet users get in.
+  if (!TOKEN) return TAILSCALE_USERS.length === 0;
   return timingSafeEqual(digest(request.headers["authorization"] ?? ""), digest("Bearer " + TOKEN));
 }
 
@@ -228,6 +245,6 @@ server.listen(PORT, HOST, () => {
   console.log("Klipper Glance bridge on http://" + HOST + ":" + PORT + "/api/printer");
   console.log("  printer: " + (FIXED || "search " + (scanNets().map((n) => n + ".x").join(", ") || "(no private network found)") + ":" + MOON_PORT));
   console.log("  control: " + (CONTROL ? "on" : "off"));
-  if (CONTROL_BLOCKED) console.log("  KL_ALLOW_CONTROL=1 ignored: printer control needs a TOKEN.");
-  if (!TOKEN) console.log("  No TOKEN set: anyone who can reach this port can read the printer status.");
+  if (CONTROL_BLOCKED) console.log("  KL_ALLOW_CONTROL=1 ignored: printer control needs a TOKEN or KL_TAILSCALE_USERS.");
+  if (!TOKEN && TAILSCALE_USERS.length === 0) console.log("  No TOKEN set: anyone who can reach this port can read the printer status.");
 });

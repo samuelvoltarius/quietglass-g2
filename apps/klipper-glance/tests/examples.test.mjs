@@ -105,6 +105,20 @@ describe("the Klipper Glance bridge example", () => {
     expect((await fetch(bridge.base + "/api/printer")).status).toBe(401);
   }, 15000);
 
+  it("an allowed Tailscale login reads and controls without a token; others get 401", async () => {
+    const { printer, bridge } = await printerAndBridge({ KL_ALLOW_CONTROL: "1", KL_TAILSCALE_USERS: "Me@Example.com" }, cleanup);
+    const me = { "Tailscale-User-Login": "me@example.com" };
+    expect((await fetch(bridge.base + "/api/printer")).status).toBe(401);
+    expect((await fetch(bridge.base + "/api/printer", { headers: { "Tailscale-User-Login": "stranger@example.com" } })).status).toBe(401);
+    expect((await command(bridge.base, "pause", { Origin: "https://evil.example" })).status).toBe(401);
+    expect(await (await fetch(bridge.base + "/api/printer", { headers: me })).json()).toMatchObject({ online: true, controllable: true });
+    expect(await (await command(bridge.base, "pause", me)).json()).toEqual({ ok: true, command: "pause" });
+    expect((await (await fetch(printer.base + "/mock/commands")).json()).commands).toEqual(["pause"]);
+    const preflight = await fetch(bridge.base + "/api/printer", { method: "OPTIONS", headers: { Origin: "https://phone.example", "Access-Control-Request-Method": "GET" } });
+    expect(preflight.status).toBe(204);
+    expect(await preflight.text()).toBe("");
+  }, 15000);
+
   it("a silent printer at a fixed address reads as offline, and an oversized body gets a 413", async () => {
     const dead = await freePort();
     const { base } = await start("klipper-bridge.mjs", { KL_MOONRAKER: `http://127.0.0.1:${dead}`, KL_ALLOW_CONTROL: "1" }, cleanup);

@@ -11,14 +11,14 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
 
-function fakeBridge() {
+function fakeBridge(stored = "") {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { modes: [] as (number | undefined)[], answer: (): Promise<boolean> => Promise.resolve(true) };
   const mic = { open: false, calls: [] as boolean[] };
   const writes = { count: 0, body: "" };
   const bridge = {
-    getLocalStorage: async () => "",
+    getLocalStorage: async () => stored,
     setLocalStorage: async () => true,
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async () => { writes.count += 1; return 0; },
@@ -102,6 +102,35 @@ describe("babel-glass exit dialog", () => {
     nodeProcess.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.modes).toEqual([1]);
+    expect(fake.mic.open).toBe(true);
+  });
+});
+
+describe("babel-glass microphone with an unreachable recogniser", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+    vi.useFakeTimers();
+    vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("opens the microphone even though the WebSocket handshake never completes", async () => {
+    // A socket that stays in CONNECTING forever: no open, no error, no close.
+    class HangingSocket {
+      readyState = 0;
+      onopen: unknown; onmessage: unknown; onerror: unknown; onclose: unknown;
+      send(): void { /* never connected */ }
+      close(): void { /* nothing to close */ }
+    }
+    vi.stubGlobal("WebSocket", HangingSocket);
+    const fake = fakeBridge(JSON.stringify({ sttUrl: "wss://speech.example:8449" }));
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    fake.emit(0); // tap: start captions
+    await vi.advanceTimersByTimeAsync(10);
     expect(fake.mic.open).toBe(true);
   });
 });
