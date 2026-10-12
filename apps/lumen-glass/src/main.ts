@@ -9,7 +9,7 @@ import { createPage, updatePage } from "./glasses/render";
 import { load, save, type LumenData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 
 const PIXEL_ICON = [
@@ -32,7 +32,7 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: LumenData = await load(bridge);
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
   let status: LumenStatus | null = DEMO ? { moth: { light: 72, state: "wach", gesture: "circling in the light", streak: 6 }, quest: { id: 1, title: "Reflected Light", task: "Photograph a reflection that changes the scene.", medium: "foto", minutes: 15, checkable: null }, openQuests: 1, window: { kind: "golden", minutesAway: 24 } } : null;
   let phase: Phase = "idle";
   let result: { ok: boolean; text: string } | null = null;
@@ -209,7 +209,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       void draw();
     },
     getData: () => data,

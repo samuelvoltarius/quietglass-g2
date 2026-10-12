@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.5] — 2026-10-13
+
+### Fixed
+
+- Start language: an explicit choice is kept in the Even SDK store (the WebView's localStorage may not survive a relaunch); without one, a German-speaking Even account country (AT/DE/CH/LI/LU) starts the app in German, even when the WebView reports English.
+
 ## [0.3.4] — 2026-10-13
 
 ### Changed
