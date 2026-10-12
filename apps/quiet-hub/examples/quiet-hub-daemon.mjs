@@ -15,7 +15,7 @@
  *
  * Env (see .env-hub.example): PORT, HOST, HUB_TOKEN, HERMES_BIN, LOCAL_AGENT_ID,
  * ASK_TIMEOUT_MS, APPROVAL_TIMEOUT_MS, WHISPER_URL, VLLM_URL, HA_URL, HA_TOKEN,
- * HA_DEVICES, MOONRAKER_URL, QUIET_HUB_STATE_FILE.
+ * HA_DEVICES, MOONRAKER_URL, QUIET_HUB_STATE_FILE, HUB_TAILSCALE_USERS.
  */
 import { createServer } from "node:http";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
@@ -39,6 +39,8 @@ export function createHub(options = {}) {
   const env = options.env ?? process.env;
   const cfg = {
     token: options.token ?? env.HUB_TOKEN ?? "",
+    // Tailscale logins (comma list) that need no token when `tailscale serve` proxies the request.
+    tailscaleUsers: String(options.tailscaleUsers ?? env.HUB_TAILSCALE_USERS ?? "").split(",").map((u) => u.trim().toLowerCase()).filter(Boolean),
     hermesBin: options.hermesBin ?? env.HERMES_BIN ?? "hermes",
     // Optional hermes-evenhub-bridge for the daemon's own Hermes (token read at runtime, never stored).
     bridgeUrl: options.bridgeUrl ?? env.HERMES_BRIDGE_URL ?? "",
@@ -556,8 +558,17 @@ export function createHub(options = {}) {
     try { return JSON.parse(raw.toString("utf8") || "{}"); } catch { return {}; }
   }
 
+  // `tailscale serve` connects from loopback and sets Tailscale-User-Login to the
+  // authenticated tailnet user; a LAN client cannot reach us via loopback to spoof it.
+  const tailscaleUser = (req) => {
+    const peer = String(req.socket?.remoteAddress ?? "").replace(/^::ffff:/, "");
+    if (peer !== "127.0.0.1" && peer !== "::1") return "";
+    const login = String(req.headers["tailscale-user-login"] ?? "").trim().toLowerCase();
+    return cfg.tailscaleUsers.includes(login) ? login : "";
+  };
   const authorized = (req) => {
     if (cfg.token === "") return true;
+    if (tailscaleUser(req) !== "") return true;
     return timingSafeEqual(digest(req.headers.authorization ?? ""), digest(`Bearer ${cfg.token}`));
   };
 
@@ -857,7 +868,14 @@ export function createHub(options = {}) {
     const path = (req.url ?? "/").split("?")[0].slice(0, 120);
     if (accessLog && !quietPath(path)) {
       res.on("finish", () => {
-        accessLog(`${new Date(started).toISOString()} ${clientIp(req)} ${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`);
+        // Auth shape only (scheme + token length), never the value: tells a missing
+        // or mangled header apart from a wrong token when a client gets 401.
+        const auth = String(req.headers.authorization ?? "");
+        let authShape = auth === "" ? "auth=none" : `auth=len${Math.max(0, auth.length - auth.indexOf(" ") - 1)}`;
+        if (auth === "" && tailscaleUser(req) !== "") authShape = "auth=tailscale";
+        // On 401 add a short one-way fingerprint so a stale or mixed-up token can be identified.
+        if (res.statusCode === 401 && auth !== "") authShape += ` fp=${digest(auth.slice(auth.indexOf(" ") + 1)).toString("hex").slice(0, 8)}`;
+        accessLog(`${new Date(started).toISOString()} ${clientIp(req)} ${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms ${authShape}`);
       });
     }
     handle(req, res).catch((error) => {

@@ -20,6 +20,16 @@ describe("auth", () => {
     const ok = await fetch(`${h.url}/report`, { headers: { Authorization: `Bearer ${TOKEN}` } });
     expect(ok.status).toBe(200);
   });
+
+  it("accepts an allowed Tailscale login proxied over loopback without a token", async () => {
+    const h = await hub({ tailscaleUsers: "Owner@example.com" });
+    const ok = await fetch(`${h.url}/report`, { headers: { "Tailscale-User-Login": "owner@example.com" } });
+    expect(ok.status).toBe(200);
+    const stale = await fetch(`${h.url}/report`, { headers: { "Tailscale-User-Login": "owner@example.com", Authorization: "Bearer stale" } });
+    expect(stale.status).toBe(200);
+    const other = await fetch(`${h.url}/report`, { headers: { "Tailscale-User-Login": "someone@example.com" } });
+    expect(other.status).toBe(401);
+  });
 });
 
 describe("registry and routing", () => {
@@ -302,6 +312,6 @@ describe("access log", () => {
     expect(lines.some((l) => l.includes(" GET /report 401"))).toBe(true);
     expect(lines.join("\n")).not.toMatch(/SECRET|Bearer|test-token/);
     expect(lines.some((l) => l.includes("/relay/poll") || l.includes("/relay/register"))).toBe(false);
-    expect(lines.every((l) => /ms$/.test(l))).toBe(true);
+    expect(lines.every((l) => / \d+ms auth=(none|tailscale|len\d+( fp=[0-9a-f]{8})?)$/.test(l))).toBe(true);
   });
 });
