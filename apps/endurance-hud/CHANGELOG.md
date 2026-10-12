@@ -3,6 +3,14 @@
 All notable changes to Endurance HUD are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-10-13
+
+### Fixed
+
+- Start language: the Even app's WebView reports English even on a German phone.
+  An explicit language choice is now kept in the SDK store; without one, a German-speaking
+  Even account country (AT/DE/CH/LI/LU) starts the app in German.
+
 ## [0.3.0] — 2026-10-07
 
 ### Changed
