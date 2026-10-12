@@ -2,7 +2,7 @@ import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@eve
 import { createClient, toApiError, type ShootDayApi } from "./api/client";
 import { createDemoApi } from "./api/demo";
 import type { CallSheet, EquipmentItem, Shot, Take, TakeStatus } from "./api/types";
-import { getLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
 import { takeNotes, t } from "./messages";
 import { sameView } from "./glasses/diff";
@@ -53,7 +53,7 @@ async function boot(): Promise<void> {
 
   let settings: Settings = await loadSettings(bridge);
   let outbox: PendingTake[] = await loadOutbox(bridge);
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
 
   const makeApi = (): ShootDayApi | null => {
     if (DEMO) return createDemoApi(locale);
@@ -790,6 +790,7 @@ async function boot(): Promise<void> {
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
+      rememberLocale(bridge, next);
       void draw();
     },
   });
