@@ -18,6 +18,10 @@
     {
       "name": "g2-microphone",
       "desc": "Record a voice question only while the user holds the touchpad on the Agent page."
+    },
+    {
+      "name": "camera",
+      "desc": "Open the phone camera only when the user taps Scan QR, to read the private Quiet Hub setup code."
     }
   ],
   "supported_languages": [
