@@ -1,7 +1,7 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { appStore } from "./storage/kv";
 import { createTextPage, updateTextPage, type TextView } from "./glasses/text";
-import { getLocale, languageSelect, setLocale, tr, type Locale } from "./i18n";
+import { languageSelect, rememberLocale, resolveLocale, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent } from "./input/gestures";
 import { createExitRequest } from "./exit";
 import { messages } from "./messages";
@@ -17,7 +17,7 @@ const SOURCE_TAG: Record<Source, string> = { DEMO: "tagDemo", FILE: "tagFile", R
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
-  await appStore.init(bridge, ["quietglass.locale", "podcaption.bridge"]); let locale = getLocale();
+  await appStore.init(bridge, ["quietglass.locale", "podcaption.bridge"]); let locale = await resolveLocale(bridge); setLocale(locale);
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   /** The first-run captions are a how-to in the user's language, not sample podcast text. */
   const demo = (): Caption[] => demoCaptions([t("demo1"), t("demo2"), t("demo3"), t("demo4")]);
@@ -43,7 +43,7 @@ async function boot(): Promise<void> {
     const playerCard = `<section class="card"><div class="status-row"><span class="status-dot ${source === "DEMO" ? "warn" : ""}"></span><strong>${t(source === "DEMO" ? "demo" : "connected")}</strong></div>${failure ? `<p class="error">${t("error")}: ${escapeHtml(errorText())}</p>` : ""}<h2>${escapeHtml(episode)}</h2><div class="caption-preview">${previewHtml()}</div><button id="toggle">${t(player.playing ? "pause" : "play")}</button></section>`;
     const advanced = `<details class="card advanced"><summary>${t("advanced")}</summary><h2>${t("bridge")}</h2><p class="hint">${t("bridgeHelp")}</p><label>${t("endpoint")}<input id="endpoint" type="text" value="${escapeHtml(appStore.get("podcaption.bridge") || DEFAULT_API)}"></label><button id="connect">${t("connect")}</button></details>`;
     app.innerHTML = `<header class="brand"><div class="brand-mark">QUIETGLASS / ACCESSIBILITY</div><h1>PodCaption</h1><p class="lede">${t("lede")}</p></header><p class="next">${escapeHtml(nextStep())}</p>${source === "DEMO" ? open + playerCard : playerCard + open}<section class="card compact">${languageSelect(locale)}</section>${advanced}`;
-    document.querySelector("#language")?.addEventListener("change", (event) => { locale = (event.target as HTMLSelectElement).value as Locale; setLocale(locale); if (source === "DEMO") { captions = demo(); episode = t("demoTitle"); } last = ""; void draw(); renderPhone(); });
+    document.querySelector("#language")?.addEventListener("change", (event) => { locale = (event.target as HTMLSelectElement).value as Locale; rememberLocale(bridge, locale); if (source === "DEMO") { captions = demo(); episode = t("demoTitle"); } last = ""; void draw(); renderPhone(); });
     document.querySelector("#toggle")?.addEventListener("click", toggle);
     const titleFor = (fallback: string): string => document.querySelector<HTMLInputElement>("#title")?.value.trim() || fallback;
     document.querySelector("#transcript-file")?.addEventListener("change", async (event) => { const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return; const title = titleFor(file.name.replace(/\.[^.]+$/, "")); const mime = file.type || (file.name.endsWith(".json") ? "application/json" : "text/vtt"); try { await useCaptions(readTranscript(await file.text(), mime), title, "FILE"); } catch (cause) { fail(cause); } });
