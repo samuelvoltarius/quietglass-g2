@@ -18,7 +18,7 @@ import {
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -41,7 +41,7 @@ async function boot(): Promise<void> {
 
   let data: BabelData = await load(bridge);
   /** UI language of glasses and phone; independent of the caption languages. */
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
   let buffer: CaptionBuffer = createBuffer();
   let stt: SttProvider | null = null;
   let translator: TranslationProvider = createPassthroughTranslator();
@@ -234,7 +234,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       // The glasses follow at once, not with the next caption.
       void draw();
     },
