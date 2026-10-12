@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr, type Locale } from "../src/i18n";
 import { messages } from "../src/messages";
-import { BODY_COLS, LINE_COLS, MAX_BODY_ROWS, buildView, windowLabel, type LumenView, type ViewOptions } from "../src/glasses/view";
+import { BODY_COLS, HEADER_COLS, LINE_COLS, MAX_BODY_ROWS, buildView, windowLabel, type LumenView, type ViewOptions } from "../src/glasses/view";
 import { parseStatus, type LumenStatus } from "../src/lumen/client";
 import { mountPhoneUi } from "../src/ui/phone";
 import { EMPTY_DATA } from "../src/storage/persist";
@@ -12,7 +12,7 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
-vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8Array([1]) }));
+vi.mock("../src/glasses/pixel", () => ({ ICON_WIDTH: 64, ICON_HEIGHT: 30, renderPixelIcon: async () => new Uint8Array([1]) }));
 
 const vars = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 
@@ -118,9 +118,9 @@ function screens(locale: Locale): LumenView[] {
 
 describe("glasses text budget", () => {
   for (const locale of ["de", "en"] as const) {
-    it(`fits every ${locale} screen: ${MAX_BODY_ROWS} rows of ${BODY_COLS} beside the pixel moth, ${LINE_COLS} for header and footer`, () => {
+    it(`fits every ${locale} screen: ${MAX_BODY_ROWS} rows of ${BODY_COLS} full width, ${HEADER_COLS} for the header beside the pixel moth, ${LINE_COLS} for the footer`, () => {
       for (const view of screens(locale)) {
-        expect(view.header.length, view.header).toBeLessThanOrEqual(LINE_COLS);
+        expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_COLS);
         expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_COLS);
         expect(view.body.length, view.body.join("|")).toBeLessThanOrEqual(MAX_BODY_ROWS);
         for (const line of view.body) expect(line.length, line).toBeLessThanOrEqual(BODY_COLS);

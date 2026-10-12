@@ -281,7 +281,7 @@ describe("the display", () => {
     });
     const view = buildView(bright, idle);
     expect(view.body.length).toBeLessThanOrEqual(7);
-    expect(view.body.every((line) => line.length <= 46)).toBe(true);
+    expect(view.body.every((line) => line.length <= 56)).toBe(true);
     expect(view.body.at(-1)).toContain("FOTO");
     expect(view.body.join(" ")).toContain("…");
 

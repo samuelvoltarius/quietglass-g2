@@ -10,7 +10,7 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { LumenView } from "./view";
-import { renderPixelIcon, type PixelIcon } from "./pixel";
+import { ICON_HEIGHT, ICON_WIDTH, renderPixelIcon, type PixelIcon } from "./pixel";
 
 /**
  * Renders the moth and quest onto the G2.
@@ -47,12 +47,13 @@ export function buildPage(view: LumenView, icon?: PixelIcon): CreateStartUpPageC
   return new CreateStartUpPageContainer({
     containerTotalNum: icon ? 4 : 3,
     textObject: [
-      text(CONTAINER.header, view.header, 1, false),
+      // The header leaves the top-right corner to the moth; the body runs full width below it.
+      text(CONTAINER.header, view.header, 1, false, icon ? ICON_WIDTH : 0),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, Boolean(icon)),
+      text(CONTAINER.body, view.body.join("\n"), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: 0, yPosition: 36, width: 96, height: 144, zOrderIndex: 4 })] : [],
+    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: SCREEN_WIDTH - ICON_WIDTH, yPosition: 1, width: ICON_WIDTH, height: ICON_HEIGHT, zOrderIndex: 4 })] : [],
   });
 }
 
@@ -61,14 +62,14 @@ function text(
   content: string,
   zOrderIndex: number,
   captureEvents: boolean,
-  compact = false,
+  rightGap = 0,
 ): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: compact ? 104 : 0,
+    xPosition: 0,
     yPosition: spec.y,
-    width: compact ? SCREEN_WIDTH - 104 : SCREEN_WIDTH,
+    width: SCREEN_WIDTH - rightGap,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,

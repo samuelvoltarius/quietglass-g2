@@ -29,12 +29,13 @@ export interface ViewOptions {
 }
 
 /**
- * Header and footer span the full 576 px display: about 46 characters.
- * The body sits right of the 96 px pixel moth (x 104, 472 px wide), which
- * leaves room for about 37.
+ * Body and footer span the full 576 px display: about 56 characters.
+ * The header leaves its top-right 64 px to the pixel moth, which leaves
+ * room for about 48.
  */
-export const LINE_COLS = 46;
-export const BODY_COLS = 37;
+export const LINE_COLS = 56;
+export const HEADER_COLS = 48;
+export const BODY_COLS = 56;
 const DEFAULT_WIDTH = BODY_COLS;
 
 /** Lines the body container shows before the text runs into the footer. */

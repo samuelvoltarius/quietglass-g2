@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.4] — 2026-10-13
+
+### Changed
+
+- The pixel moth moved from beside the text to the top-right corner of the header; the body now uses the full display width (56 characters per row).
+
 ## [0.3.1] — 2026-10-12
 
 ### Changed

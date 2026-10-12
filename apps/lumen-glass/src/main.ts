@@ -12,7 +12,17 @@ import { createExitRequest } from "./exit";
 import { getLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 
-const PIXEL_ICON = ["#........#", "###....###", ".###..###.", "..######..", "...####...", "....##....", "...####...", "..##..##..", ".##....##.", "##......##"] as const;
+const PIXEL_ICON = [
+  "......#..#......",
+  ".......##.......",
+  "####...##...####",
+  "######.##.######",
+  ".#####.##.#####.",
+  "..####.##.####..",
+  "...###.##.###...",
+  "....##.##.##....",
+  ".....#.##.#.....",
+] as const;
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 /** How often the moth and the light window refresh. */

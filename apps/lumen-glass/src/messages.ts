@@ -2,8 +2,8 @@ import { tr, type Locale, type Messages } from "./i18n";
 
 /**
  * Every string Lumen Glass shows. Keys starting with `g.` go to the glasses and
- * must fit the text budget in src/glasses/view.ts (BODY_COLS for the body next
- * to the pixel moth, LINE_COLS for header and footer); tests/i18n.test.ts
+ * must fit the text budget in src/glasses/view.ts (BODY_COLS for the body,
+ * HEADER_COLS beside the pixel moth, LINE_COLS for the footer); tests/i18n.test.ts
  * checks both languages. `p.` is the phone page.
  *
  * Not in here, on purpose: whatever LUMEN itself sends (the moth's state and

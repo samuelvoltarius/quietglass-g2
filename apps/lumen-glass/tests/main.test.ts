@@ -8,7 +8,7 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   waitForEvenAppBridge: async () => harness.bridge,
 }));
 // Canvas is unavailable in node; the icon is not what these tests are about.
-vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8Array([1]) }));
+vi.mock("../src/glasses/pixel", () => ({ ICON_WIDTH: 64, ICON_HEIGHT: 30, renderPixelIcon: async () => new Uint8Array([1]) }));
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
