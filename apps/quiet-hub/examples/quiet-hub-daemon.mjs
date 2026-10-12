@@ -56,7 +56,7 @@ export function createHub(options = {}) {
     whisperLang: options.whisperLang ?? env.WHISPER_LANG ?? "de",
     vllmUrl: options.vllmUrl ?? env.VLLM_URL ?? "http://127.0.0.1:8000/v1",
     vllmModel: options.vllmModel ?? env.VLLM_MODEL ?? "qwen",
-    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 15000),
+    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 30000),
     suggestions: options.suggestions ?? (env.VLLM_URL !== "off"),
     lang: options.lang ?? env.HUB_LANG ?? "de",
   };
@@ -240,11 +240,14 @@ export function createHub(options = {}) {
       agent.answer = clipTail(finalText ?? "", 4000);
       if (status === "done" && cfg.suggestions) {
         const question = job.question;
+        agent.suggestions = [];
+        agent.suggesting = true;
         void suggestFor(question, agent.answer).then((list) => {
-          if (agent.jobId === null && agent.lastQuestion === question) agent.suggestions = list;
+          if (agent.jobId === null && agent.lastQuestion === question) { agent.suggestions = list; agent.suggesting = false; }
         });
       } else {
         agent.suggestions = [];
+        agent.suggesting = false;
       }
     }
     job.waiters.forEach((resolve) => resolve({ status, text: agent?.answer ?? text ?? "" }));
@@ -291,6 +294,7 @@ export function createHub(options = {}) {
     agent.activity = "";
     agent.error = null;
     agent.suggestions = [];
+    agent.suggesting = false;
     agent.lastQuestion = question;
     agent.stopped = false;
     agent.stopConfirmed = false;
@@ -491,7 +495,7 @@ export function createHub(options = {}) {
   const agentInfo = (agent) => ({
     id: agent.id, label: agent.label, kind: agent.kind, machine: agent.machine, mode: agent.mode,
     online: isOnline(agent), busy: agent.busy, activity: agent.activity, error: agent.error,
-    answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions,
+    answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions, suggesting: agent.suggesting === true,
     transport: agent.transport, sessionsSupported: agent.sessionsSupported,
     session: agent.session ? { id: agent.session.id, title: agent.session.title } : null,
     stopped: agent.stopped, stopConfirmed: agent.stopConfirmed,
@@ -728,6 +732,7 @@ export function createHub(options = {}) {
       agent.error = null;
       agent.activity = "";
       agent.suggestions = [];
+      agent.suggesting = false;
       if (isNew) {
         const id = typeof data.id === "string" && data.id !== "" ? data.id : null;
         setSession(agent, { id, title: "", fresh: id === null });

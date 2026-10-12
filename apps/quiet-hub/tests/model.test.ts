@@ -53,7 +53,7 @@ describe("decide", () => {
 
   it("asking the agent is immediate — the agent is not an outward action", () => {
     // Without suggestions the saved questions are what gets asked.
-    const plain: HubReport = { ...demoReport(), agents: demoReport().agents.map((a) => ({ ...a, suggestions: [] })) };
+    const plain: HubReport = { ...demoReport(), agents: demoReport().agents.map((a) => ({ ...a, suggestions: [], answer: null, lastQuestion: null })) };
     const outcome = decide(model(plain), "click", T0);
     expect(outcome.effect).toEqual({ kind: "ask", agentId: "hermes-spark", question: "Drucker fertig?" });
     expect(outcome.model.report.agents[0]?.busy).toBe(true);
@@ -161,5 +161,17 @@ describe("buildView", () => {
     const inbox = { ...model(), screen: "inbox" as const };
     const outcome = decide(inbox, "click", T0);
     expect(outcome.effect).toEqual({ kind: "readEvent", id: "demo-codex-1" });
+  });
+});
+
+describe("suggestions after an answer", () => {
+  it("never falls back to the saved starters once there is an answer; shows that vLLM is still writing", () => {
+    const base = demoReport();
+    const waiting: HubReport = { ...base, agents: base.agents.map((a, i) => (i === 0 ? { ...a, suggestions: [], suggesting: true } : a)) };
+    const m = { ...model(waiting), screen: "agent" as const, agentView: "ask" as const };
+    expect(decide(m, "click", T0).effect).toBeUndefined();
+    expect(buildView(m, "de", T0).body.join(" ")).toContain("Vorschläge kommen");
+    const none: HubReport = { ...base, agents: base.agents.map((a, i) => (i === 0 ? { ...a, suggestions: [], suggesting: false } : a)) };
+    expect(buildView({ ...m, report: none }, "de", T0).body.join(" ")).toContain("Keine Vorschläge");
   });
 });

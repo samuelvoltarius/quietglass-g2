@@ -45,6 +45,8 @@ export interface AgentInfo {
   readonly answer: string | null;
   readonly lastQuestion: string | null;
   readonly suggestions: readonly string[];
+  /** The Spark vLLM is still writing follow-up suggestions for the last answer. */
+  readonly suggesting?: boolean;
   /** "bridge" (Hermes evenhub-bridge), "cli", "app-server", "exec" or "http"; empty when unknown. */
   readonly transport?: string;
   /** The session prompts go to; id null = a new one the first prompt will create. */

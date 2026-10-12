@@ -231,8 +231,20 @@ describe("voice with confirmation", () => {
     const stop = decide(decide(ask(), "longPress", T0).model, "longPressRelease", T0).model;
     expect(decide(stop, "click", T0).effect).toBeUndefined();
     const heard = withVoiceHeard(stop, "hermes-spark", "Test", false, T0);
-    expect(decide(heard, "scrollDown", T0).model.voice).toEqual(heard.voice);
+    expect(decide(heard, "scrollDown", T0).model.voice).toMatchObject({ state: "confirm", text: "Test" });
     expect(decide(heard, "longPress", T0).model.recording).toBe(false);
+  });
+
+  it("a long transcript scrolls while confirming and is sent in full", () => {
+    const stop = decide(decide(ask(), "longPress", T0).model, "longPressRelease", T0).model;
+    const long = Array.from({ length: 40 }, (_, i) => `Wort${i}`).join(" ");
+    const heard = withVoiceHeard(stop, "hermes-spark", long, false, T0);
+    const first = buildView(heard, "de", T0).body.join(" ");
+    expect(first).toContain("Wort0");
+    let m = heard;
+    for (let i = 0; i < 10; i++) m = decide(m, "scrollDown", T0).model;
+    expect(buildView(m, "de", T0).body.join(" ")).toContain("Wort39");
+    expect(decide(m, "click", T0).effect).toMatchObject({ kind: "ask", question: long });
   });
 
   it("auto-send (setting on) just reports what was sent; a discarded note is not resurrected", () => {
@@ -373,7 +385,7 @@ describe("robust input", () => {
 });
 
 describe("pagination of long answers", () => {
-  const longReport = (): HubReport => patchAgents(demoReport(), (_a, i) => (i === 0 ? { answer: LONG, suggestions: [] } : {}));
+  const longReport = (): HubReport => patchAgents(demoReport(), (_a, i) => (i === 0 ? { answer: LONG, suggestions: ["Mehr Details", "Kurzfassung", "Weiter"] } : {}));
   const ask = (): HubModel => ({ ...model("agent", longReport()), agentView: "ask" });
 
   it("splits into pages of PAGE_ROWS rows, none wider than a row", () => {
@@ -409,11 +421,16 @@ describe("pagination of long answers", () => {
     expect(decide(m, "click", T0).effect?.kind).toBe("ask");
   });
 
-  it("wraps from the last page to the first and resets for a new answer", () => {
+  it("pages forward into the questions, swipes select there, swiping up returns to the answer", () => {
     let m = ask();
     const pages = pageCount(m.report.agents[0]!);
-    m = { ...m, answerPage: pages };
-    expect(decide(m, "scrollDown", T0).model.answerPage).toBe(0);
+    expect(decide({ ...m, answerPage: 0 }, "scrollUp", T0).model.answerPage).toBe(0);
+    expect(decide({ ...m, answerPage: pages - 1 }, "scrollDown", T0).model.answerPage).toBe(pages);
+    m = { ...m, answerPage: pages, questionIndex: 0 };
+    const down = decide(m, "scrollDown", T0).model;
+    expect(down.answerPage).toBe(pages);
+    expect(down.questionIndex).toBe(1);
+    expect(decide(m, "scrollUp", T0).model.answerPage).toBe(pages - 1);
     const next = mergeReport({ ...m, answerPage: 2 }, patchAgents(m.report, (_a, i) => (i === 0 ? { lastQuestion: "neu", answer: LONG } : {})));
     expect(next.answerPage).toBe(0);
     const streaming = mergeReport({ ...m, answerPage: 2 }, patchAgents(m.report, (_a, i) => (i === 0 ? { busy: true } : {})));

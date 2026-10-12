@@ -36,13 +36,15 @@ export const MESSAGE_MS = 5000;
 export const PAGE_ROWS = 6;
 /** Answers up to this many rows stay inline next to the questions. */
 const INLINE_ROWS = 3;
+/** Transcript rows shown at once while confirming a voice note; swipe scrolls. */
+const VOICE_ROWS = 5;
 
 export type HubGesture = "click" | "doubleClick" | "scrollUp" | "scrollDown" | "longPress" | "longPressRelease" | "ringDoubleClick";
 
 /** Voice note in flight: transcribing, or transcript waiting for the wearer's tap. */
 export type PendingVoice =
   | { readonly state: "transcribing"; readonly agentId: string }
-  | { readonly state: "confirm"; readonly agentId: string; readonly text: string };
+  | { readonly state: "confirm"; readonly agentId: string; readonly text: string; readonly scroll?: number };
 
 /** Why the hub cannot be used right now; null = the last report succeeded. */
 export interface LinkStatus {
@@ -346,6 +348,11 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
         effect: { kind: "ask", agentId, question: text },
       };
     }
+    if ((gesture === "scrollUp" || gesture === "scrollDown") && model.voice.state === "confirm") {
+      const max = Math.max(0, wrap(model.voice.text).length - VOICE_ROWS);
+      const scroll = Math.min(max, Math.max(0, (model.voice.scroll ?? 0) + (gesture === "scrollUp" ? -1 : 1)));
+      return { model: { ...model, voice: { ...model.voice, scroll } } };
+    }
     return { model };
   }
 
@@ -404,8 +411,14 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
         return { model: { ...model, confirm: null, sessionIndex: cycle(sessionRowCount(model.sessions), model.sessionIndex, step) } };
       }
       const agent = selectedAgent(model);
-      if (agent !== undefined && pageCount(agent) > 0) {
-        return { model: { ...model, confirm: null, answerPage: cycle(pageCount(agent) + 1, model.answerPage, step) } };
+      const pages = agent === undefined ? 0 : pageCount(agent);
+      if (agent !== undefined && pages > 0) {
+        const page = Math.min(model.answerPage, pages);
+        if (page < pages) return { model: { ...model, confirm: null, answerPage: Math.max(0, page + step) } };
+        // Question page: swipe selects; swiping up past the first question goes back into the answer.
+        const count = agentItems(agent, report.agent.questions).length;
+        if (step < 0 && model.questionIndex === 0) return { model: { ...model, confirm: null, answerPage: pages - 1 } };
+        return { model: { ...model, confirm: null, questionIndex: Math.min(Math.max(0, count - 1), Math.max(0, model.questionIndex + step)) } };
       }
       const items = agent === undefined ? [] : agentItems(agent, report.agent.questions);
       return { model: { ...model, confirm: null, questionIndex: cycle(items.length, model.questionIndex, step) } };
@@ -628,7 +641,10 @@ export function withVoiceFailed(model: HubModel, text: string, now: number): Hub
  * rendering can never disagree about which list is live.
  */
 export function agentItems(agent: AgentInfo, questions: readonly string[]): readonly string[] {
-  return agent.suggestions.length > 0 ? agent.suggestions : questions;
+  if (agent.suggestions.length > 0) return agent.suggestions;
+  // After an answer only real vLLM suggestions count; the canned starters are for an empty session.
+  if ((agent.answer ?? "") !== "" || agent.busy) return [];
+  return questions;
 }
 
 /** Rows around the selection, so a long list scrolls instead of overflowing. */
@@ -706,7 +722,7 @@ function agentAskRows(model: HubModel, locale: Locale): string[] {
     }
     const questionRows = items.map((q, i) => marked(q, i === model.questionIndex));
     const rows = [head, ...windowed(questionRows, model.questionIndex, 5)];
-    if (items.length === 0) rows.push(tr(messages, locale, "agent.empty"));
+    if (items.length === 0) rows.push(emptyRow(agent, locale));
     rows.push(fit(tr(messages, locale, "answer.page", { dot: agent.online ? "●" : "○", name: agent.label, n: pages + 1, total: pages + 1 })));
     return rows;
   }
@@ -714,9 +730,12 @@ function agentAskRows(model: HubModel, locale: Locale): string[] {
   const hasAnswer = (agent.answer ?? "") !== "" || agent.busy || agent.error !== null || agent.stopped === true;
   const questionRows = items.map((q, i) => marked(q, i === model.questionIndex));
   const rows = [head, ...windowed(questionRows, model.questionIndex, hasAnswer ? 2 : 5)];
-  if (items.length === 0) rows.push(tr(messages, locale, "agent.empty"));
+  if (items.length === 0) rows.push(emptyRow(agent, locale));
   if (hasAnswer) {
-    if ((agent.lastQuestion ?? "") !== "") rows.push(fit(tr(messages, locale, "agent.you", { text: agent.lastQuestion ?? "" })));
+    if ((agent.lastQuestion ?? "") !== "") {
+      const you = wrap(tr(messages, locale, "agent.you", { text: agent.lastQuestion ?? "" }));
+      rows.push(...(you.length > 2 ? [you[0] ?? "", fit(`${you[1] ?? ""} ${you.slice(2).join(" ")}`)] : you));
+    }
     const answer = (agent.answer ?? "") !== ""
       ? wrap(agent.answer ?? "")
       : agent.error !== null ? wrap(agent.error) : [];
@@ -894,7 +913,10 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       body = [name, "", tr(messages, locale, "voice.processing")];
       footer = tr(messages, locale, "voice.processing");
     } else {
-      body = [name, tr(messages, locale, "voice.understood"), ...wrap(model.voice.text).slice(0, 5)];
+      const lines = wrap(model.voice.text);
+      const from = Math.min(model.voice.scroll ?? 0, Math.max(0, lines.length - VOICE_ROWS));
+      const more = lines.length > VOICE_ROWS ? ` ${from + 1}-${Math.min(lines.length, from + VOICE_ROWS)}/${lines.length}` : "";
+      body = [name, `${tr(messages, locale, "voice.understood")}${more}`, ...lines.slice(from, from + VOICE_ROWS)];
       footer = tr(messages, locale, "voice.confirmHelp");
     }
   } else if (linkBlocks(model.link) && model.link !== null) {
@@ -943,4 +965,11 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
   if (model.recording) footer = tr(messages, locale, "agent.record");
 
   return { header, body: body.slice(0, 7), footer: fit(footer) };
+}
+
+/** What stands in for an empty question list: suggestions on their way, none, or no saved questions. */
+function emptyRow(agent: AgentInfo, locale: Locale): string {
+  if (agent.suggesting === true) return tr(messages, locale, "agent.suggesting");
+  if ((agent.answer ?? "") !== "" && !agent.busy) return tr(messages, locale, "agent.noSuggestions");
+  return agent.busy ? "" : tr(messages, locale, "agent.empty");
 }
