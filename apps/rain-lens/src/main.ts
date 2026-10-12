@@ -4,7 +4,7 @@ import { createImageLane } from "./glasses/lane";
 import { createExitRequest } from "./exit";
 import { encodePng } from "./glasses/pixel";
 import { createTextPage, sendImage, updateTextPage, type TextView } from "./glasses/text";
-import { getLocale, languageSelect, setLocale, tr, type Locale } from "./i18n";
+import { languageSelect, rememberLocale, resolveLocale, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent } from "./input/gestures";
 import { messages } from "./messages";
 import { fetchForecast, parseCoordinates } from "./rain/api";
@@ -23,7 +23,7 @@ async function boot(): Promise<void> {
   await appStore.init(bridge, ["quietglass.locale", ...Object.values(KEYS)]);
   /** Storage view for the helpers in rain/location.ts (sync reads from the KV mirror). */
   const store: Pick<Storage, "getItem"> = { getItem: (key: string) => appStore.get(key) };
-  let locale = getLocale(); let forecast: WeatherForecast = demoWeather(); let loading = false; let failure: ReturnType<typeof errorKey> | null = null; let pageReady = false; let last = ""; let page = 0;
+  let locale = await resolveLocale(bridge); setLocale(locale); let forecast: WeatherForecast = demoWeather(); let loading = false; let failure: ReturnType<typeof errorKey> | null = null; let pageReady = false; let last = ""; let page = 0;
   /** Set once the user confirms the exit dialog: nothing draws on the closed page. */
   let closed = false;
   let status: Status = "loading"; let where: ResolvedLocation | null = null;
@@ -96,7 +96,7 @@ async function boot(): Promise<void> {
     const location = `<section class="card"><h2>${t("settings")}</h2><p class="hint">${escapeHtml(currentSetting())}</p><label class="check"><input id="automatic" type="checkbox"${mode === "phone" ? " checked" : ""}>${t("automatic")}</label><label>${t("place")}<input id="place" type="text" autocomplete="off" placeholder="${escapeHtml(t("placeHint"))}" value="${escapeHtml(query)}"></label><button id="search">${t("search")}</button>${searchNote ? `<p class="hint">${escapeHtml(searchNote)}</p>` : ""}${results.length ? `<div class="place-list">${results.map((place, index) => `<button class="place" data-index="${index}">${escapeHtml(place.label)}</button>`).join("")}</div>` : ""}</section>`;
     const advanced = `<details class="card advanced"${coordNote ? " open" : ""}><summary>${t("advanced")}</summary><label>${t("latitude")}<input id="lat" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lat) ?? "")}"></label><label>${t("longitude")}<input id="lon" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lon) ?? "")}"></label><button id="coords">${t("useCoords")}</button>${coordNote ? `<p class="error">${escapeHtml(coordNote)}</p>` : ""}<p class="hint">${t("help")}</p></details>`;
     app.innerHTML = `<header class="brand"><div class="brand-mark">QUIETGLASS / WEATHER</div><h1>RainLens</h1><p class="lede">${t("lede")}</p></header><p class="next">${escapeHtml(nextStep())}</p>${status === "noLocation" ? location + weather : weather + location}<section class="card"><div class="section-title"><h2>${t("hourly")}</h2><span>${t("chance")}</span></div><div class="hourly-strip">${forecast.hourly.slice(0, 8).map((hour) => `<div><time>${clock(hour.time, locale)}</time><b>${round(hour.temperature)}</b><span>${condition(hour.weatherCode)}</span><em>${Math.round(hour.precipitationProbability)}%</em></div>`).join("")}</div></section><section class="card"><h2>${t("days")}</h2><div class="forecast-list">${forecast.daily.map((day) => `<div><b>${dayName(day.date, locale)}</b><span>${condition(day.weatherCode)}</span><em>${round(day.maximum)} / ${round(day.minimum)}</em><small>${Math.round(day.precipitationProbability)}%</small></div>`).join("")}</div>${today ? `<div class="sun-row"><span>${t("sun")}</span><b>${clock(today.sunrise, locale)} → ${clock(today.sunset, locale)}</b></div>` : ""}</section><section class="card compact">${languageSelect(locale)}</section>${advanced}<p class="credits">${t("credits")}</p>`;
-    document.querySelector("#language")?.addEventListener("change", (event) => { locale = (event.target as HTMLSelectElement).value as Locale; setLocale(locale); last = ""; void draw(); renderPhone(); });
+    document.querySelector("#language")?.addEventListener("change", (event) => { locale = (event.target as HTMLSelectElement).value as Locale; rememberLocale(bridge, locale); last = ""; void draw(); renderPhone(); });
     document.querySelector("#refresh")?.addEventListener("click", () => { void refresh(); });
     document.querySelector("#automatic")?.addEventListener("change", (event) => { const checked = (event.target as HTMLInputElement).checked; const fallback = storedSources(store, async () => null).place ? "place" : "manual"; appStore.set(KEYS.mode, checked ? "phone" : fallback); void refresh(); });
     const search = async (): Promise<void> => {
