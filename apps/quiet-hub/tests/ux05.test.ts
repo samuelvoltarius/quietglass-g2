@@ -18,7 +18,7 @@ import { MAX_BODY_ROWS, ROW_WIDTH } from "../src/glasses/screen";
 import { buildPage, rebuildPage, renderStats, updatePage } from "../src/glasses/render";
 import { pixelIconFor } from "../src/glasses/icons";
 
-vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8Array([1, 2, 3]) }));
+vi.mock("../src/glasses/pixel", () => ({ ICON_WIDTH: 64, ICON_HEIGHT: 30, renderPixelIcon: async () => new Uint8Array([1, 2, 3]) }));
 
 const T0 = 20_000_000;
 const card: Approval = { id: "c1", agentId: "claude-win", tool: "Bash", title: "Bash: npm test -- --run", detail: "npm test -- --run", createdAt: "", expiresAt: T0 + 120_000 };
@@ -45,7 +45,7 @@ describe("overview shows everything at a glance", () => {
     expect(body[2]).toContain("72 %");
     expect(body[2]).toContain("41 min");
     expect(body[3]).toContain("1 neu");
-    expect(body.join("\n")).toContain("claude-win: Edit: foo.ts");
+    expect(body.join("\n")).toContain("claude-win: Bearbeitet Datei");
     expect(body.join("\n")).toContain("hermes-spark fragt");
   });
 
@@ -398,43 +398,24 @@ describe("pagination of long answers", () => {
     expect(pages.flat().join(" ").replace(/\s+/g, " ")).toContain("Das ist eine lange Antwort");
   });
 
-  it("swipe turns the page, the last page is the question list, tap on text goes to the questions", () => {
+  it("shows the conversation newest-last below a divider; swipe up scrolls back, a tap returns", () => {
     let m = ask();
-    const agent = m.report.agents[0]!;
-    const pages = pageCount(agent);
-    expect(pages).toBeGreaterThan(2);
     const first = buildView(m, "de", T0);
+    expect(first.body[0]).toMatch(/^—+$/);
     expect(first.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
-    expect(first.body[first.body.length - 1]).toContain(`1/${pages + 1}`);
-    expect(first.footer).toContain("Wischen: Seite");
+    // At the bottom: the suggestions, the first one selected.
+    expect(first.body.some((r) => r.startsWith("> Mehr Details"))).toBe(true);
     m = decide(m, "scrollDown", T0).model;
-    expect(m.answerPage).toBe(1);
-    expect(buildView(m, "de", T0).body.at(-1)).toContain(`2/${pages + 1}`);
+    expect(m.questionIndex).toBe(1);
     m = decide(m, "scrollUp", T0).model;
-    m = decide(m, "click", T0).model; // from text page -> questions page
-    expect(m.answerPage).toBe(pages);
-    const last = buildView(m, "de", T0 + 6000);
-    expect(last.body.at(-1)).toContain(`${pages + 1}/${pages + 1}`);
-    expect(last.body.some((row) => row.startsWith("> "))).toBe(true);
-    expect(last.footer).toContain("fragen");
-    // the question page asks
-    expect(decide(m, "click", T0).effect?.kind).toBe("ask");
-  });
-
-  it("pages forward into the questions, swipes select there, swiping up returns to the answer", () => {
-    let m = ask();
-    const pages = pageCount(m.report.agents[0]!);
-    expect(decide({ ...m, answerPage: 0 }, "scrollUp", T0).model.answerPage).toBe(0);
-    expect(decide({ ...m, answerPage: pages - 1 }, "scrollDown", T0).model.answerPage).toBe(pages);
-    m = { ...m, answerPage: pages, questionIndex: 0 };
-    const down = decide(m, "scrollDown", T0).model;
-    expect(down.answerPage).toBe(pages);
-    expect(down.questionIndex).toBe(1);
-    expect(decide(m, "scrollUp", T0).model.answerPage).toBe(pages - 1);
-    const next = mergeReport({ ...m, answerPage: 2 }, patchAgents(m.report, (_a, i) => (i === 0 ? { lastQuestion: "neu", answer: LONG } : {})));
-    expect(next.answerPage).toBe(0);
-    const streaming = mergeReport({ ...m, answerPage: 2 }, patchAgents(m.report, (_a, i) => (i === 0 ? { busy: true } : {})));
-    expect(streaming.answerPage).toBe(0);
+    m = decide(m, "scrollUp", T0).model;
+    expect(m.chatScroll).toBeGreaterThan(0);
+    expect(buildView(m, "de", T0).body[0]).toContain("älter");
+    m = decide(m, "click", T0).model;
+    expect(m.chatScroll).toBe(0);
+    const sent = decide(m, "click", T0);
+    expect(sent.effect).toMatchObject({ kind: "ask", question: "Mehr Details" });
+    expect(sent.model.report.agents[0]?.chat?.at(-1)).toEqual({ role: "user", text: "Mehr Details" });
   });
 
   it("short answers stay inline next to the questions (no paging)", () => {
@@ -443,12 +424,14 @@ describe("pagination of long answers", () => {
 });
 
 describe("tool lines and permission cards", () => {
-  it("shows the running tool as one line while the agent works", () => {
+  it("shows what the running agent does in the header, with the time", () => {
     const report = patchAgents(demoReport(), (_a, i) => (i === 0 ? { busy: true, activity: "Bash: npm test", answer: null, lastQuestion: "Teste" } : {}));
-    const rows = buildView({ ...model("agent", report), agentView: "ask" }, "de", T0).body;
-    expect(rows.find((r) => r.startsWith("» Führt Tests aus"))).toContain("npm test");
+    const view = buildView({ ...model("agent", report), agentView: "ask" }, "de", T0);
+    expect(view.header).toMatch(/^Führt Tests aus.* · [0-9]{2}:[0-9]{2}$/);
+    expect(view.body[0]).toMatch(/^—+$/);
+    expect(view.body).toContain("Du: Teste");
     const thinking = patchAgents(report, (_a, i) => (i === 0 ? { activity: "" } : {}));
-    expect(buildView({ ...model("agent", thinking), agentView: "ask" }, "de", T0).body.some((r) => r.startsWith("» Denkt nach"))).toBe(true);
+    expect(buildView({ ...model("agent", thinking), agentView: "ask" }, "de", T0).header.startsWith("Denkt nach")).toBe(true);
   });
 
   it("a card shows who asks, the tool, the command and the choice", () => {

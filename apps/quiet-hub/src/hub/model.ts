@@ -72,6 +72,10 @@ export interface HubModel {
   readonly message: { readonly text: string; readonly until: number } | null;
   /** True while the microphone is recording a voice note. */
   readonly recording: boolean;
+  /** How many chat rows the open conversation is scrolled up from its newest line (0 = bottom). */
+  readonly chatScroll?: number;
+  /** Until when the face smiles because an answer just arrived (epoch ms). */
+  readonly cheerUntil?: number;
   /** Selected agent in the agent list, and which part of the agent page is open. */
   readonly agentIndex: number;
   readonly agentView: "list" | "sessions" | "ask";
@@ -270,7 +274,7 @@ function chooseSession(model: HubModel, agent: AgentInfo, now: number, locale: L
   if (model.sessionIndex === 0) {
     if (agent.busy) return busy;
     return {
-      model: say(withReport(askView, patchAgent(model.report, agent.id, { answer: null, lastQuestion: null, suggestions: [], stopped: false, error: null, session: { id: null, title: "" } })), tr(messages, locale, "ack.newSession"), now),
+      model: say(withReport(askView, patchAgent(model.report, agent.id, { answer: null, lastQuestion: null, suggestions: [], stopped: false, error: null, chat: [], steps: [], session: { id: null, title: "" } })), tr(messages, locale, "ack.newSession"), now),
       effect: { kind: "newSession", agentId: agent.id },
     };
   }
@@ -347,7 +351,7 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       if (agent === undefined || !agent.online) return { model: say({ ...model, voice: null }, t("agent.offline"), now) };
       if (agent.busy) return { model: say(model, t("agent.busy"), now) };
       return {
-        model: say(withReport({ ...model, voice: null }, patchAgent(report, agentId, { busy: true, answer: null, activity: "", error: null, lastQuestion: text })), t("ack.sent", { text: fit(text, 30) }), now),
+        model: say(withReport({ ...model, voice: null }, patchAgent(report, agentId, asked(agent, text))), t("ack.sent", { text: fit(text, 30) }), now),
         effect: { kind: "ask", agentId, question: text },
       };
     }
@@ -414,17 +418,8 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
         return { model: { ...model, confirm: null, sessionIndex: cycle(sessionRowCount(model.sessions), model.sessionIndex, step) } };
       }
       const agent = selectedAgent(model);
-      const pages = agent === undefined ? 0 : pageCount(agent);
-      if (agent !== undefined && pages > 0) {
-        const page = Math.min(model.answerPage, pages);
-        if (page < pages) return { model: { ...model, confirm: null, answerPage: Math.max(0, page + step) } };
-        // Question page: swipe selects; swiping up past the first question goes back into the answer.
-        const count = agentItems(agent, report.agent.questions).length;
-        if (step < 0 && model.questionIndex === 0) return { model: { ...model, confirm: null, answerPage: pages - 1 } };
-        return { model: { ...model, confirm: null, questionIndex: Math.min(Math.max(0, count - 1), Math.max(0, model.questionIndex + step)) } };
-      }
-      const items = agent === undefined ? [] : agentItems(agent, report.agent.questions);
-      return { model: { ...model, confirm: null, questionIndex: cycle(items.length, model.questionIndex, step) } };
+      if (agent === undefined) return { model };
+      return { model: { ...scrollChat(model, agent, step, locale), confirm: null } };
     }
     if (model.screen === "home") {
       const devices = report.home.devices;
@@ -451,15 +446,14 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
         return openSessions({ ...model, message: null }, agent);
       }
       if (model.agentView === "sessions") return chooseSession(model, agent, now, locale);
-      // On an answer page a tap goes on to the questions instead of asking blindly.
-      const pages = pageCount(agent);
-      if (pages > 0 && model.answerPage < pages) return { model: say({ ...model, answerPage: pages }, t("ack.page", { n: pages + 1, total: pages + 1 }), now) };
+      // Scrolled into the history: a tap jumps back to the newest line and the suggestions.
+      if ((model.chatScroll ?? 0) > 0) return { model: { ...model, chatScroll: 0 } };
       if (agent.busy) return { model: say(model, t("agent.busy"), now) };
       if (!agent.online) return { model: say(model, t("agent.offline"), now) };
       const question = agentItems(agent, report.agent.questions)[model.questionIndex];
       if (question === undefined) return { model: say(model, t("ack.nothing"), now) };
       return {
-        model: say(withReport({ ...model, answerPage: 0 }, patchAgent(report, agent.id, { busy: true, answer: null, activity: "", error: null, lastQuestion: question })), t("ack.sent", { text: fit(question, 30) }), now),
+        model: say(withReport({ ...model, answerPage: 0, chatScroll: 0 }, patchAgent(report, agent.id, asked(agent, question))), t("ack.sent", { text: fit(question, 30) }), now),
         effect: { kind: "ask", agentId: agent.id, question },
       };
     }
@@ -717,53 +711,6 @@ function sessionRows(model: HubModel, locale: Locale): string[] {
   return [head, ...list, ...(note === null ? [] : [fit(note)])];
 }
 
-function agentAskRows(model: HubModel, locale: Locale, now: number): string[] {
-  const agent = selectedAgent(model);
-  if (agent === undefined) return [tr(messages, locale, "agent.none")];
-  const items = agentItems(agent, model.report.agent.questions);
-  const title = sessionTitle(agent, locale);
-  const head = fit(`${agent.online ? "●" : "○"} ${agent.label} · ${title || agent.machine || agent.kind}`);
-
-  // Long answer: pages of text, the last page is the question list.
-  const long = pagedRows(agent);
-  if (long !== null) {
-    const pages = Math.ceil(long.length / PAGE_ROWS);
-    const page = Math.min(model.answerPage, pages);
-    if (page < pages) {
-      const text = long.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS);
-      return [...text, fit(tr(messages, locale, "answer.page", { dot: agent.online ? "●" : "○", name: agent.label, n: page + 1, total: pages + 1 }))];
-    }
-    const questionRows = items.map((q, i) => marked(q, i === model.questionIndex));
-    const rows = [head, ...windowed(questionRows, model.questionIndex, 5)];
-    if (items.length === 0) rows.push(emptyRow(agent, locale));
-    rows.push(fit(tr(messages, locale, "answer.page", { dot: agent.online ? "●" : "○", name: agent.label, n: pages + 1, total: pages + 1 })));
-    return rows;
-  }
-
-  const hasAnswer = (agent.answer ?? "") !== "" || agent.busy || agent.error !== null || agent.stopped === true;
-  const questionRows = items.map((q, i) => marked(q, i === model.questionIndex));
-  const rows = [head, ...windowed(questionRows, model.questionIndex, hasAnswer ? 2 : 5)];
-  if (items.length === 0) rows.push(emptyRow(agent, locale));
-  if (hasAnswer) {
-    if ((agent.lastQuestion ?? "") !== "") {
-      const you = wrap(tr(messages, locale, "agent.you", { text: agent.lastQuestion ?? "" }));
-      rows.push(...(you.length > 2 ? [you[0] ?? "", fit(`${you[1] ?? ""} ${you.slice(2).join(" ")}`)] : you));
-    }
-    const answer: string[] = (agent.answer ?? "") !== ""
-      ? wrap(agent.answer ?? "")
-      : agent.error !== null ? wrap(agent.error) : [];
-    const tool = agent.busy ? [workingLine(agent, locale, now)] : [];
-    // No words yet: the finished steps show that the agent is getting somewhere.
-    if (agent.busy && answer.length === 0) answer.push(...doneSteps(agent, locale));
-    // The newest words matter while streaming: show the tail.
-    const room = 7 - rows.length - (agent.stopped === true ? 1 : 0) - tool.length;
-    if (room > 0) rows.push(...answer.slice(-room));
-    rows.push(...tool);
-    if (agent.stopped === true) rows.push(tr(messages, locale, "agent.stopped"));
-  }
-  return rows;
-}
-
 function approvalRows(card: Approval, total: number, locale: Locale): string[] {
   const rows = [fit(`! ${tr(messages, locale, "approval.title")} · ${card.agentId}${total > 1 ? ` (${total})` : ""}`)];
   const tool = card.tool ?? (card.title.includes(":") ? card.title.slice(0, card.title.indexOf(":")) : "");
@@ -832,7 +779,7 @@ function printerSummary(printer: PrinterSnapshot, locale: Locale): string {
   return tr(messages, locale, `printer.state.${printer.state}`);
 }
 
-function rootRows(report: HubReport, selected: number, locale: Locale): string[] {
+function rootRows(report: HubReport, selected: number, locale: Locale, now: number): string[] {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const waiting = waitingAgents(report);
   const online = report.agents.filter((agent) => agent.online).length;
@@ -850,7 +797,7 @@ function rootRows(report: HubReport, selected: number, locale: Locale): string[]
   const notes: string[] = [];
   for (const card of report.approvals.slice(0, 2)) notes.push(fit("  " + t("root.waits", { agent: card.agentId, what: card.title })));
   for (const agent of report.agents.filter((entry) => entry.busy && !waiting.has(entry.id))) {
-    notes.push(fit("  " + t("root.working", { agent: agent.label, what: agent.activity !== "" ? agent.activity : t("agent.busy") })));
+    notes.push(fit("  " + t("root.working", { agent: agent.label, what: busyShort(agent, locale, now) })));
   }
   const alert = report.inbox.events.find((event) => !event.read && (event.status === "error" || (event.status === "waiting" && report.approvals.length === 0)));
   if (alert !== undefined) notes.push(fit("  " + t("root.alert", { provider: alert.provider, title: alert.title })));
@@ -912,7 +859,8 @@ function helpRows(locale: Locale): string[] {
 
 export function buildView(model: HubModel, locale: Locale, now: number): ScreenView {
   const report = model.report;
-  const header = statusLine(model, locale);
+  const askAgent = model.screen === "agent" && model.agentView === "ask" && report.approvals.length === 0 && model.voice === null && !model.recording && !model.help && model.picker === null ? selectedAgent(model) : undefined;
+  const header = askAgent !== undefined ? chatHeader(askAgent, locale, now) : statusLine(model, locale);
 
   let body: readonly string[];
   let footer: string;
@@ -943,7 +891,7 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
     body = linkRows(model.link, locale);
     footer = tr(messages, locale, model.link.problem === "missing" || model.link.problem === "insecure" ? "link.footerMissing" : "link.footerRetry");
   } else if (model.screen === "root") {
-    body = rootRows(report, model.rootSelected, locale);
+    body = rootRows(report, model.rootSelected, locale, now);
     footer = tr(messages, locale, "root.help");
   } else if (model.screen === "agent") {
     const card = pendingApproval(report);
@@ -958,11 +906,10 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       body = sessionRows(model, locale);
       footer = tr(messages, locale, "sessions.help");
     } else {
-      body = agentAskRows(model, locale, now);
-      const paged = agent !== undefined && pageCount(agent) > 0;
+      body = agent === undefined ? [tr(messages, locale, "agent.none")] : chatRows(model, agent, locale);
       footer = tr(messages, locale, agent?.busy === true ? "agent.running"
         : agent?.stopped === true ? "agent.stoppedHelp"
-          : paged ? (model.answerPage < pageCount(agent) ? "answer.pageHelp" : "answer.questionsHelp") : "agent.ask");
+          : (model.chatScroll ?? 0) > 0 ? "chat.scrolledHelp" : "chat.help");
     }
   } else if (model.screen === "home") {
     body = homeRows(report.home, locale);
@@ -1015,4 +962,90 @@ function doneSteps(agent: AgentInfo, locale: Locale): string[] {
     const activity = describeActivity(step, locale);
     return fit(`· ${activity.label}${activity.detail !== "" ? ` · ${activity.detail}` : ""}`);
   });
+}
+
+
+// ---- conversation view -------------------------------------------------------
+
+/** Chat rows visible below the divider. */
+export const CHAT_ROWS = 6;
+const DIVIDER = "—".repeat(37);
+
+/** What a question does to the agent at once, before the daemon answers (shows up in the chat right away). */
+function asked(agent: AgentInfo, question: string): Partial<AgentInfo> {
+  return {
+    busy: true, answer: null, activity: "", error: null, lastQuestion: question, steps: [], busySince: Date.now(),
+    chat: [...(agent.chat ?? []), { role: "user" as const, text: question }],
+  };
+}
+
+/** Header of the open conversation: what the agent is doing (or who it is) and the time. */
+function chatHeader(agent: AgentInfo, locale: Locale, now: number): string {
+  const clock = new Date(now).toLocaleTimeString(locale === "de" ? "de-AT" : "en-GB", { hour: "2-digit", minute: "2-digit" });
+  const title = sessionTitle(agent, locale);
+  const doing = agent.busy
+    ? workingLine(agent, locale, now).replace(/^» /, "")
+    : `${agent.online ? "●" : "○"} ${agent.label}${title ? ` · ${title}` : ""}`;
+  return `${fit(doing, 40)} · ${clock}`;
+}
+
+/** The whole conversation as rows, oldest first; the steps while it works, the suggestions at its end. */
+export function chatLines(agent: AgentInfo, items: readonly string[], selected: number, locale: Locale): string[] {
+  const turns = agent.chat !== undefined && agent.chat.length > 0
+    ? agent.chat
+    : [
+      ...((agent.lastQuestion ?? "") !== "" ? [{ role: "user" as const, text: agent.lastQuestion ?? "" }] : []),
+      ...((agent.answer ?? "") !== "" && !agent.busy ? [{ role: "assistant" as const, text: agent.answer ?? "" }] : []),
+    ];
+  const lines: string[] = [];
+  turns.forEach((turn, i) => {
+    if (turn.role === "user") {
+      if (i > 0) lines.push("");
+      lines.push(...wrap(tr(messages, locale, "agent.you", { text: turn.text })));
+    } else {
+      lines.push(...wrap(turn.text));
+    }
+  });
+  if (agent.busy) {
+    // The words streaming in, then what it has done so far.
+    if ((agent.answer ?? "") !== "") lines.push(...wrap(agent.answer ?? ""));
+    lines.push(...doneSteps(agent, locale));
+  } else if (agent.error !== null) {
+    lines.push(...wrap(agent.error));
+  }
+  if (agent.stopped === true) lines.push(tr(messages, locale, "agent.stopped"));
+  if (!agent.busy) {
+    lines.push("");
+    if (items.length > 0) lines.push(...items.map((q, i) => marked(q, i === selected)));
+    else lines.push(emptyRow(agent, locale));
+  }
+  return lines;
+}
+
+function chatRows(model: HubModel, agent: AgentInfo, locale: Locale): string[] {
+  const items = agentItems(agent, model.report.agent.questions);
+  const lines = chatLines(agent, items, model.questionIndex, locale);
+  const scroll = Math.min(model.chatScroll ?? 0, Math.max(0, lines.length - CHAT_ROWS));
+  const end = lines.length - scroll;
+  const window = lines.slice(Math.max(0, end - CHAT_ROWS), end);
+  const marker = scroll > 0 ? `${DIVIDER.slice(0, 28)} ↑ ${tr(messages, locale, "chat.older")}` : DIVIDER;
+  return [marker, ...window];
+}
+
+/**
+ * Swipe in the conversation: at the bottom it moves through the suggestions;
+ * past the first one (or without any) it scrolls the chat up a screen at a
+ * time, and back down again.
+ */
+function scrollChat(model: HubModel, agent: AgentInfo, step: number, locale: Locale): HubModel {
+  const items = agentItems(agent, model.report.agent.questions);
+  const lines = chatLines(agent, items, model.questionIndex, locale);
+  const maxScroll = Math.max(0, lines.length - CHAT_ROWS);
+  const scroll = Math.min(model.chatScroll ?? 0, maxScroll);
+  if (scroll === 0 && items.length > 0 && !agent.busy) {
+    if (step > 0) return { ...model, questionIndex: Math.min(items.length - 1, model.questionIndex + 1) };
+    if (model.questionIndex > 0) return { ...model, questionIndex: model.questionIndex - 1 };
+  }
+  if (step < 0) return { ...model, chatScroll: Math.min(maxScroll, scroll + CHAT_ROWS - 1) };
+  return { ...model, chatScroll: Math.max(0, scroll - (CHAT_ROWS - 1)) };
 }

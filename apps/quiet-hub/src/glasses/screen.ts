@@ -11,8 +11,8 @@ export interface ScreenView {
 
 /** Rows the body container holds; more are pushed off the display. */
 export const MAX_BODY_ROWS = 7;
-/** Characters one row holds. */
-export const ROW_WIDTH = 46;
+/** Characters one row holds (full display width since the face moved into the header). */
+export const ROW_WIDTH = 56;
 
 /** Cuts a row to the display width, marking the cut with an ellipsis. */
 export function fit(text: string, width = ROW_WIDTH): string {

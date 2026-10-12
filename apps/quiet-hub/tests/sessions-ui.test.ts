@@ -51,7 +51,7 @@ describe("session page", () => {
     expect(out.effect).toEqual({ kind: "newSession", agentId: "hermes-spark" });
     expect(out.model.agentView).toBe("ask");
     expect(out.model.report.agents[0]).toMatchObject({ answer: null, session: { id: null, title: "" }, stopped: false });
-    expect(buildView(out.model, "de", T0).body[0]).toContain("Neue Sitzung");
+    expect(buildView(out.model, "de", T0).header).toContain("Neue Sitzung");
   });
 
   it("'Weiter' just opens the current session without any request", () => {

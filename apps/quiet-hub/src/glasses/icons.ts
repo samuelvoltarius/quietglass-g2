@@ -1,9 +1,7 @@
 import { selectedAgent, type HubModel } from "../hub/model";
-import { describeActivity, type ActivityKind } from "../hub/activity";
 import type { PixelIcon } from "./pixel";
+import { mascotFrame, type Mood } from "./mascot";
 
-const HUB = ["##..##", "##..##", "......", "##..##", "##..##", "......"];
-const AGENT = [".####.", "#....#", "#.##.#", "#....#", ".####.", "..##.."];
 const HOME = ["..##..", ".####.", "######", "##..##", "##..##", "######"];
 const PRINTER = ["######", "#....#", "######", ".####.", ".#..#.", ".####."];
 const CHECK = ["......", ".....#", "....##", "#..##.", ".###..", "..#..."];
@@ -11,28 +9,20 @@ const WAIT = ["..##..", "..##..", "..##..", "..##..", "......", "..##.."];
 const ERROR = ["#....#", ".#..#.", "..##..", "..##..", ".#..#.", "#....#"];
 const INBOX = ["######", "#....#", "#....#", "#.##.#", "######", "......"];
 
-/** What a working agent is doing, as a 6x6 sign next to its text. */
-const ACTIVITY: Readonly<Record<ActivityKind, readonly string[]>> = {
-  think: [".####.", "#....#", "...##.", "..##..", "......", "..##.."],
-  run: ["#.....", ".#....", "..#...", ".#....", "#..###", "......"],
-  test: ["......", ".....#", "....##", "#..##.", ".###..", "..#..."],
-  git: ["#.....", "#...#.", "#..#..", "####..", "#.....", "#....."],
-  edit: ["....##", "...###", "..###.", ".###..", "###...", "##...."],
-  read: ["#####.", "#...##", "#.##.#", "#....#", "#.##.#", "######"],
-  search: [".###..", "#...#.", "#...#.", ".###..", "....#.", ".....#"],
-  web: [".####.", "#.##.#", "######", "######", "#.##.#", ".####."],
-  memory: [".#..#.", "######", ".#..#.", ".#..#.", "######", ".#..#."],
-  agent: ["##..##", "##..##", "..##..", "..##..", "##..##", "##..##"],
-};
+/** How the hub feels right now, for the face on the overview and agent pages. */
+export function moodFor(model: HubModel, now: number): Mood {
+  if (model.link !== null) return "asleep";
+  if (model.report.approvals.length > 0) return "waiting";
+  if (model.recording || model.voice !== null) return "listening";
+  const agent = selectedAgent(model);
+  if (model.screen === "agent" && agent?.error !== null && agent?.error !== undefined && !agent.busy) return "error";
+  if ((model.cheerUntil ?? 0) > now) return "happy";
+  const working = model.screen === "agent" && model.agentView === "ask" ? agent?.busy === true : model.report.agents.some((a) => a.busy);
+  return working ? "working" : "idle";
+}
 
-export function pixelIconFor(model: HubModel): PixelIcon {
-  if (model.screen === "root") return HUB;
-  if (model.screen === "agent") {
-    if (model.report.approvals.length > 0) return WAIT;
-    const agent = selectedAgent(model);
-    if (agent?.busy === true && model.agentView === "ask") return ACTIVITY[describeActivity(agent.activity, "de").kind];
-    return AGENT;
-  }
+export function pixelIconFor(model: HubModel, now: number = Date.now()): PixelIcon {
+  if (model.screen === "root" || model.screen === "agent") return mascotFrame(moodFor(model, now), now);
   if (model.screen === "home") return HOME;
   if (model.screen === "printer") return PRINTER;
   const event = model.report.inbox.events[model.report.inbox.selected];

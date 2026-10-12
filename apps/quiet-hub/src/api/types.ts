@@ -40,6 +40,8 @@ export interface AgentInfo {
   readonly busySince?: number | null;
   /** The last tool steps of the running question (newest last); empty when idle. */
   readonly steps?: readonly string[];
+  /** The conversation of the current session, oldest first (daemon keeps the last turns). */
+  readonly chat?: readonly { readonly role: "user" | "assistant"; readonly text: string }[];
   /** ask = permissions are decided on the glasses; auto = bypass; others see README. */
   readonly mode: string;
   /** What the agent is doing right now ("Edit: foo.ts"); empty when idle. */

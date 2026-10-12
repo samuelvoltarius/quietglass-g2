@@ -12,6 +12,7 @@ import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { pixelIconFor } from "./glasses/icons";
+import { MASCOT_STEP_MS } from "./glasses/mascot";
 import type { ScreenView } from "./glasses/screen";
 import { buildWav } from "./audio/wav";
 import { mountPhoneUi, type ConnView, type SettingsResult } from "./ui/phone";
@@ -27,7 +28,7 @@ const POLL_MS = 5000;
 const BUSY_POLL_MS = 1500;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.5.7";
+const BUILD = "0.6.0";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -116,7 +117,12 @@ async function boot(): Promise<void> {
   const narrator = new HubNarrator(createBrowserSpeechEngine(), () => settings.speakAnswers, () => locale);
   const applyReport = (report: Awaited<ReturnType<HubApi["report"]>>): void => {
     markOk();
+    const wasBusy = new Set(model.report.agents.filter((agent) => agent.busy).map((agent) => agent.id));
     model = mergeReport(model, report);
+    // An agent just finished with an answer: the face smiles for a few seconds.
+    if (report.agents.some((agent) => wasBusy.has(agent.id) && !agent.busy && (agent.answer ?? "") !== "" && agent.error === null)) {
+      model = { ...model, cheerUntil: Date.now() + 4000 };
+    }
     narrator.observe(selectedAgent(model), model.report.approvals);
   };
 
@@ -179,11 +185,14 @@ async function boot(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, MIC_DRAIN_MS));
   };
 
+  let lastIconShown = "";
   const drawOnce = async (): Promise<void> => {
-    const view = buildView(model, locale, Date.now());
+    const now = Date.now();
+    const view = buildView(model, locale, now);
     const menu = menuFor(model, locale);
-    if (sameView(lastView, view) && menu.key === menuKey) return;
-    const icon = pixelIconFor(model);
+    const icon = pixelIconFor(model, now);
+    if (sameView(lastView, view) && menu.key === menuKey && icon.join("/") === lastIconShown) return;
+    lastIconShown = icon.join("/");
     let result;
     if (!pageCreated) {
       result = await createPage(bridge, view, icon, menu);
@@ -228,10 +237,12 @@ async function boot(): Promise<void> {
 
   // While the agent on the glasses works, redraw once a second: the dots move and
   // the elapsed time counts up. textContainerUpgrade is cheap and sameView skips no-ops.
+  // The face blinks and looks around, the working line counts up: redraw twice a
+  // second on the pages that show them. Unchanged frames cost nothing (see drawOnce).
   setInterval(() => {
-    if (closed || model.screen !== "agent") return;
-    if (model.agentView === "ask" ? selectedAgent(model)?.busy === true : model.report.agents.some((agent) => agent.busy)) void draw();
-  }, 1000);
+    if (closed || (model.screen !== "agent" && model.screen !== "root")) return;
+    void draw();
+  }, MASCOT_STEP_MS);
 
   // ---- data --------------------------------------------------------------
   const poll = async (): Promise<void> => {

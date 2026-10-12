@@ -12,7 +12,7 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { ScreenView } from "./screen";
-import { renderPixelIcon, type PixelIcon } from "./pixel";
+import { ICON_HEIGHT, ICON_WIDTH, renderPixelIcon, type PixelIcon } from "./pixel";
 import type { MenuSpec } from "../hub/model";
 
 /**
@@ -63,18 +63,19 @@ function pageParts(view: ScreenView, menu: MenuSpec | null) {
   return {
     containerTotalNum: 4,
     textObject: [
-      text(CONTAINER.header, view.header, 1, false),
+      // The header leaves the top-right corner to the face; the body runs full width below it.
+      text(CONTAINER.header, view.header, 1, false, ICON_WIDTH),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join(NL), 2, true, true),
+      text(CONTAINER.body, view.body.join(NL), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
     imageObject: [new ImageContainerProperty({
       containerID: 4,
       containerName: "pixel-icon",
-      xPosition: 0,
-      yPosition: 44,
-      width: 96,
-      height: 144,
+      xPosition: SCREEN_WIDTH - ICON_WIDTH,
+      yPosition: 1,
+      width: ICON_WIDTH,
+      height: ICON_HEIGHT,
       zOrderIndex: 4,
     })],
     ...(menuObject === undefined ? {} : { menuObject }),
@@ -85,13 +86,13 @@ export function buildPage(view: ScreenView, menu: MenuSpec | null = null): Creat
   return new CreateStartUpPageContainer(pageParts(view, menu));
 }
 
-function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, compact = false): TextContainerProperty {
+function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, rightGap = 0): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: compact ? 104 : 0,
+    xPosition: 0,
     yPosition: spec.y,
-    width: compact ? SCREEN_WIDTH - 104 : SCREEN_WIDTH,
+    width: SCREEN_WIDTH - rightGap,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,

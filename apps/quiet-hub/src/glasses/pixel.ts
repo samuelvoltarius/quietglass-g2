@@ -1,5 +1,9 @@
 export type PixelIcon = readonly string[];
 
+/** The face / page sign sits in the top-right corner of the header. */
+export const ICON_WIDTH = 64;
+export const ICON_HEIGHT = 30;
+
 export interface PixelBitmap {
   readonly width: number;
   readonly height: number;
@@ -7,11 +11,11 @@ export interface PixelBitmap {
 }
 
 /** Builds the blocky icon as an easy-to-test grayscale bitmap. */
-export function rasterizePixelIcon(pattern: PixelIcon, width = 96, height = 144): PixelBitmap {
+export function rasterizePixelIcon(pattern: PixelIcon, width = ICON_WIDTH, height = ICON_HEIGHT, padding = 1): PixelBitmap {
   const pixels = new Uint8Array(width * height);
   const rows = pattern.length;
   const columns = Math.max(1, ...pattern.map((row) => row.length));
-  const scale = Math.max(1, Math.floor(Math.min((width - 16) / columns, (height - 16) / rows)));
+  const scale = Math.max(1, Math.floor(Math.min((width - padding * 2) / columns, (height - padding * 2) / rows)));
   const left = Math.floor((width - columns * scale) / 2);
   const top = Math.floor((height - rows * scale) / 2);
   pattern.forEach((row, y) => {
@@ -36,7 +40,7 @@ export function rasterizePixelIcon(pattern: PixelIcon, width = 96, height = 144)
  * simulator expect encoded image bytes here; the phone host performs the
  * grayscale/Gray4 conversion before sending the image to the glasses.
  */
-export async function renderPixelIcon(pattern: PixelIcon, width = 96, height = 144): Promise<Uint8Array> {
+export async function renderPixelIcon(pattern: PixelIcon, width = ICON_WIDTH, height = ICON_HEIGHT): Promise<Uint8Array> {
   const bitmap = rasterizePixelIcon(pattern, width, height);
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width;

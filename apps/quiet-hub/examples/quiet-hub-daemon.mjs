@@ -241,6 +241,7 @@ export function createHub(options = {}) {
       const finalText = status === "cancelled" ? (agent.answer ?? "") : (status === "error" && !text ? `Fehler: ${agent.error}` : text);
       if (status === "cancelled") agent.stopped = true;
       agent.answer = clipTail(finalText ?? "", 4000);
+      if ((agent.answer ?? "") !== "") pushChat(agent, "assistant", agent.answer);
       if (status === "done" && cfg.suggestions) {
         const question = job.question;
         agent.suggestions = [];
@@ -305,6 +306,7 @@ export function createHub(options = {}) {
     agent.suggestions = [];
     agent.suggesting = false;
     agent.lastQuestion = question;
+    pushChat(agent, "user", question);
     agent.stopped = false;
     agent.stopConfirmed = false;
     if (typeof opts.sessionId === "string" && opts.sessionId !== "" && opts.sessionId !== agent.session?.id) {
@@ -331,14 +333,19 @@ export function createHub(options = {}) {
     }
   }
 
-  /** The reopened session's last answer first, then the turns before it (newest first), so page 1 is what matters. */
-  function withEarlier(last, history) {
-    const turns = Array.isArray(history) ? history.filter((t) => t && typeof t.text === "string" && t.text.trim() !== "") : [];
-    const lastUser = turns.map((t) => t.role).lastIndexOf("user");
-    const earlier = turns.slice(0, Math.max(0, lastUser)).reverse();
-    if (earlier.length === 0) return last;
-    const lines = earlier.map((t) => (t.role === "user" ? `Du: ${t.text.trim()}` : t.text.trim()));
-    return `${last}\n\n— früher —\n\n${lines.join("\n\n")}`;
+  /** The conversation of the agent's current session, as the glasses show it (newest last). */
+  function pushChat(agent, role, text) {
+    agent.chat = [...(agent.chat ?? []), { role, text: clipTail(String(text), 2000) }].slice(-16);
+  }
+
+  /** A reopened session's turns: the full history when the agent gives one, else its last exchange. */
+  function chatFrom(data) {
+    const turns = Array.isArray(data.history) ? data.history.filter((t) => t && (t.role === "user" || t.role === "assistant") && typeof t.text === "string" && t.text.trim() !== "") : [];
+    if (turns.length > 0) return turns.slice(-16).map((t) => ({ role: t.role, text: clipTail(t.text.trim(), 2000) }));
+    const out = [];
+    if (typeof data.lastUser === "string" && data.lastUser !== "") out.push({ role: "user", text: data.lastUser });
+    if (typeof data.lastAssistant === "string" && data.lastAssistant !== "") out.push({ role: "assistant", text: clipTail(data.lastAssistant, 2000) });
+    return out;
   }
 
   /**
@@ -347,7 +354,7 @@ export function createHub(options = {}) {
    */
   function noteActivity(agent, activity) {
     const text = typeof activity === "string" ? activity.slice(0, 80) : "";
-    if (text !== "" && text !== agent.steps?.at(-1)) agent.steps = [...(agent.steps ?? []), text].slice(-6);
+    if (text !== "" && text !== agent.steps?.at(-1)) agent.steps = [...(agent.steps ?? []), text].slice(-30);
     agent.activity = text;
   }
 
@@ -521,7 +528,7 @@ export function createHub(options = {}) {
   // ------------------------------------------------------------- report
   const agentInfo = (agent) => ({
     id: agent.id, label: agent.label, kind: agent.kind, machine: agent.machine, mode: agent.mode,
-    online: isOnline(agent), busy: agent.busy, busySince: agent.busy ? agent.busySince ?? null : null, steps: agent.busy ? agent.steps ?? [] : [], activity: agent.activity, error: agent.error,
+    online: isOnline(agent), busy: agent.busy, busySince: agent.busy ? agent.busySince ?? null : null, steps: agent.steps ?? [], chat: agent.chat ?? [], activity: agent.activity, error: agent.error,
     answer: agent.answer, lastQuestion: agent.lastQuestion, suggestions: agent.suggestions, suggesting: agent.suggesting === true,
     transport: agent.transport, sessionsSupported: agent.sessionsSupported,
     session: agent.session ? { id: agent.session.id, title: agent.session.title } : null,
@@ -768,11 +775,13 @@ export function createHub(options = {}) {
       if (isNew) {
         const id = typeof data.id === "string" && data.id !== "" ? data.id : null;
         setSession(agent, { id, title: "", fresh: id === null });
+        agent.chat = [];
         agent.answer = null;
         agent.lastQuestion = null;
       } else {
         setSession(agent, { id: body.sessionId, title: typeof body.title === "string" ? body.title.slice(0, 60) : "", fresh: false });
-        agent.answer = typeof data.lastAssistant === "string" ? clipTail(withEarlier(data.lastAssistant, data.history), 4000) : null;
+        agent.answer = typeof data.lastAssistant === "string" ? clipTail(data.lastAssistant, 4000) : null;
+        agent.chat = chatFrom(data);
         agent.lastQuestion = typeof data.lastUser === "string" ? data.lastUser.slice(0, 200) : null;
       }
       log(isNew ? "session new:" : "session select:", agent.id);
