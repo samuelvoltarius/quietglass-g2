@@ -3,7 +3,7 @@ import { createClient, ApiError, classifyError, insecureServer, serverHost, type
 import { emptyReport } from "./api/empty";
 import { createDemoApi, DEMO_SCENES, type DemoScene } from "./api/demo";
 import type { HubApi } from "./api/types";
-import { getLocale, setLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
@@ -46,7 +46,8 @@ async function boot(): Promise<void> {
   const setup = new URLSearchParams(globalThis.location?.hash?.replace(/^#/, "") ?? "");
   const forced = params.get("lang");
   if (forced === "de" || forced === "en") setLocale(forced);
-  let locale: Locale = getLocale();
+  let locale: Locale = forced === "de" || forced === "en" ? forced : await resolveLocale(bridge);
+  setLocale(locale);
   let settings = await loadSettings(bridge);
   // `?server=` points at the daemon without going through the phone page —
   // used by the simulator and for testing the real Hermes bridge.
@@ -507,7 +508,7 @@ async function boot(): Promise<void> {
       onSpeechActivate: () => { narrator.activate(); },
       onLocale: (next) => {
         locale = next;
-        setLocale(next);
+        rememberLocale(bridge, next);
         lastView = null;
         void draw();
         refreshPhone();
