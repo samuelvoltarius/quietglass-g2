@@ -30,6 +30,7 @@ export const RECONNECT_MAX_MS = 30_000;
 export const BRIDGE_TIMEOUT_MS = 6_000;
 export const STOP_GRACE_MS = 3_000;
 export const SESSION_LIMIT = 8;
+const PAIRING_REPLY = /pairing code|don.t recognize you/i;
 
 export const clip = (text, max) => (text.length > max ? text.slice(text.length - max) : text);
 export const oneLine = (text, max = 120) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -393,7 +394,12 @@ export function createHermesController(agent, ctx) {
         else if (m.t === "assistant" && typeof m.text === "string") { text = clip(m.text, MAX_TEXT); emit({ text, activity: "" }); }
         else if (m.t === "tool.start") emit({ text, activity: oneLine(`${m.name ?? "tool"} ${m.label ?? ""}`, 80) });
         else if (m.t === "tool.end") emit({ text, activity: "" });
-        else if (m.t === "turn.done") finish(stopping ? { status: "cancelled", text } : { status: "done", text: text || "(keine Antwort)" });
+        else if (m.t === "turn.done") {
+          if (stopping) finish({ status: "cancelled", text });
+          // An unpaired device only gets a pairing prompt back: say so instead of showing it as an answer.
+          else if (PAIRING_REPLY.test(text) && text.length < 800) finish({ status: "error", text: "", pairing: true, error: "Bridge nicht gekoppelt: hermes pairing approve even_g2 <id>" });
+          else finish({ status: "done", text: text || "(keine Antwort)" });
+        }
         else if (m.t === "error") finish(stopping ? { status: "cancelled", text } : { status: "error", text, error: oneLine(m.msg ?? "Hermes error", 200) });
         else if (m.t === "_closed") finish(stopping ? { status: "cancelled", text } : text !== "" ? { status: "done", text } : { status: "error", text, error: m.code === 1008 ? "token rejected" : "bridge closed" });
       });
@@ -436,7 +442,13 @@ export function createHermesController(agent, ctx) {
     transport: () => transport,
     async run(job, emit) {
       if (await bridgeUp()) {
-        try { return await runBridge(job, emit); } catch (error) {
+        try {
+          const viaBridge = await runBridge(job, emit);
+          if (viaBridge.pairing !== true) return viaBridge;
+          // Not paired yet: the CLI still answers while the owner approves the device.
+          transport = "cli";
+          emit({ text: "", activity: "Bridge nicht gekoppelt" });
+        } catch (error) {
           // Failed BEFORE the prompt left (connect/switch): the CLI still answers.
           if (job.signal?.aborted) return { status: "cancelled", text: "", transport: "bridge" };
           transport = "cli";

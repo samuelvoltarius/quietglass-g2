@@ -163,6 +163,22 @@ describe("Hermes controller", () => {
     expect(b.instances[0].sent.some((m) => m.t === "stop")).toBe(true);
   });
 
+  it("an unpaired device (bridge answers with a pairing prompt) is never shown as an answer; the CLI answers instead", async () => {
+    const b = fakeBridge();
+    const send = b.FakeWS.prototype.send;
+    b.FakeWS.prototype.send = function patched(raw) {
+      const m = JSON.parse(raw);
+      if (m.t === "text") { this.reply({ t: "assistant", text: "Hi~ I don't recognize you yet! Here's your pairing code: ABCD1234" }); this.reply({ t: "turn.done" }); return; }
+      send.call(this, raw);
+    };
+    const spawn = () => { const child = fakeChild(); setImmediate(() => { child.emitLines("Servus"); child.exit(0); }); return child; };
+    const c = createController(bridgeAgent(), ctxFor(b, spawn));
+    cleanup.push(() => c.close());
+    const out = await c.run({ prompt: "Hallo", sessionId: null, fresh: false, signal: new AbortController().signal }, () => undefined);
+    expect(out).toMatchObject({ status: "done", text: "Servus", transport: "cli" });
+    expect(c.transport()).toBe("cli");
+  });
+
   it("select returns the last exchange for the glasses", async () => {
     const b = fakeBridge();
     const c = createController(bridgeAgent(), ctxFor(b));
