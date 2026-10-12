@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2] — 2026-10-13
+
+### Fixed
+
+- Start language: the Even app's WebView reports English even on a German phone.
+  An explicit language choice is now kept in the SDK store; without one, a German-speaking
+  Even account country (AT/DE/CH/LI/LU) starts the app in German.
+
 ## [0.4.1] — 2026-10-12
 
 ### Changed

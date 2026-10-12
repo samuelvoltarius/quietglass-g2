@@ -23,7 +23,7 @@ import { thinPoints } from "./overview/project";
 import { needsOverviewImage, type OverviewFrame } from "./overview/refresh";
 import { createStreetSource, streetsForRoute, type StreetSegment } from "./overview/streets";
 import { createGeocoder, type Geocoder } from "./geocode/photon";
-import { getLocale, setLocale, tr, type Locale } from "./i18n";
+import { resolveLocale, rememberLocale, setLocale, tr, type Locale } from "./i18n";
 import { messages } from "./messages";
 import {
   destinationOf, geocoderUrlOf, load, routerUrlOf, save, usesMockRouter, type NavData,
@@ -42,7 +42,8 @@ const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
+  setLocale(locale);
   let data: NavData = await load(bridge);
   if (DEMO) data = { ...data, places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }], destinationId: "demo", demo: true };
   let nav: NavState | null = null;
@@ -413,7 +414,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      setLocale(next);
+      rememberLocale(bridge, next);
       void draw();
     },
     search: (query) => searchPlaces(query, { lang: locale, near: position }),
