@@ -416,7 +416,7 @@ export function createHermesController(agent, ctx) {
     const script = [
       "import json,sqlite3,sys",
       "c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)",
-      "q=\"select role,content from messages where session_id=? and role in ('user','assistant') and coalesce(content,'')!='' order by id desc limit 12\"",
+      "q=\"select role,content from messages where session_id=? and role in ('user','assistant') and coalesce(content,'')!='' order by id desc limit 24\"",
       "print(json.dumps([list(r) for r in c.execute(q,(sys.argv[2],))][::-1]))",
     ].join("\n");
     let out = "";
@@ -427,7 +427,7 @@ export function createHermesController(agent, ctx) {
     if (res.code !== 0) throw new Error("state.db unreadable");
     // Drop the glasses' own style hint that the hub appends to every question.
     const history = JSON.parse(out).map(([role, text]) => ({ role, text: String(text).replace(/\n\n\(Antworte [^)]*\)\s*$/, "") }));
-    return { ...exchange(history), history: history.slice(-8) };
+    return { ...exchange(history), history: history.slice(-16) };
   }
 
   async function cliSessions() {
@@ -562,7 +562,7 @@ export function createHermesController(agent, ctx) {
         try {
           const history = await bridge.switchSession(id);
           const turns = history.map((h) => ({ role: h.role, text: h.text }));
-          return { ...exchange(turns), history: turns.slice(-8) };
+          return { ...exchange(turns), history: turns.slice(-16) };
         } catch { transport = "cli"; }
       }
       cliSession = id;

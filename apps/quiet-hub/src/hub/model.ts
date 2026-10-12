@@ -278,10 +278,15 @@ function chooseSession(model: HubModel, agent: AgentInfo, now: number, locale: L
       effect: { kind: "newSession", agentId: agent.id },
     };
   }
-  if (model.sessionIndex === 1) return { model: askView };
+  // The hub may not know what was said before (e.g. after a restart): load it.
+  const reload = (id: string | null | undefined, title: string): { model: HubModel; effect?: Effect } =>
+    id && (agent.chat ?? []).length === 0 && !agent.busy
+      ? { model: askView, effect: { kind: "selectSession", agentId: agent.id, sessionId: id, title } }
+      : { model: askView };
+  if (model.sessionIndex === 1) return reload(agent.session?.id, agent.session?.title ?? "");
   const listed = model.sessions?.items[model.sessionIndex - 2];
   if (listed === undefined) return { model };
-  if (agent.session?.id === listed.id) return { model: askView };
+  if (agent.session?.id === listed.id) return reload(listed.id, listed.title);
   if (agent.busy) return busy;
   return {
     model: say(withReport(askView, patchAgent(model.report, agent.id, { stopped: false, error: null, session: { id: listed.id, title: listed.title } })), tr(messages, locale, "ack.session"), now),

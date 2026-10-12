@@ -54,6 +54,17 @@ describe("session page", () => {
     expect(buildView(out.model, "de", T0).header).toContain("Neue Sitzung");
   });
 
+  it("'Weiter' loads what was said before when the hub does not know it yet", () => {
+    const base = onSessions();
+    const withAgent = (patch: Record<string, unknown>): HubModel => ({
+      ...base, report: { ...base.report, agents: base.report.agents.map((a, i) => (i === 0 ? { ...a, ...patch } : a)) },
+    });
+    const empty = decide(withAgent({ session: { id: "S7", title: "Alt" }, chat: [] }), "click", T0);
+    expect(empty.effect).toMatchObject({ kind: "selectSession", sessionId: "S7" });
+    const known = decide(withAgent({ session: { id: "S7", title: "Alt" }, chat: [{ role: "user", text: "Hi" }] }), "click", T0);
+    expect(known.effect).toBeUndefined();
+  });
+
   it("'Weiter' just opens the current session without any request", () => {
     const out = decide(onSessions(), "click", T0);
     expect(out.effect).toBeUndefined();

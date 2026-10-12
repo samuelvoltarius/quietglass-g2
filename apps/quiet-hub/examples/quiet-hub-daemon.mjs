@@ -341,7 +341,9 @@ export function createHub(options = {}) {
   /** A reopened session's turns: the full history when the agent gives one, else its last exchange. */
   function chatFrom(data) {
     const turns = Array.isArray(data.history) ? data.history.filter((t) => t && (t.role === "user" || t.role === "assistant") && typeof t.text === "string" && t.text.trim() !== "") : [];
-    if (turns.length > 0) return turns.slice(-16).map((t) => ({ role: t.role, text: clipTail(t.text.trim(), 2000) }));
+    // The glasses' own style hint is not part of what the user said.
+    const clean = (text) => text.replace(/\n\n\(Antworte [^)]*\)\s*$/, "").trim();
+    if (turns.length > 0) return turns.slice(-16).map((t) => ({ role: t.role, text: clipTail(clean(t.text), 2000) }));
     const out = [];
     if (typeof data.lastUser === "string" && data.lastUser !== "") out.push({ role: "user", text: data.lastUser });
     if (typeof data.lastAssistant === "string" && data.lastAssistant !== "") out.push({ role: "assistant", text: clipTail(data.lastAssistant, 2000) });
