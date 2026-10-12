@@ -11,7 +11,7 @@ import { createImageSync } from "./glasses/image-sync";
 import { addProject, load, save, type ClockData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
-import { getLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { defaultProject } from "./messages";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
@@ -19,7 +19,7 @@ const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
   let data: ClockData = await load(bridge, locale);
   if (DEMO) {
     const now = Date.now();
@@ -209,6 +209,7 @@ async function boot(): Promise<void> {
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
+      rememberLocale(bridge, next);
       void draw();
     },
   });
