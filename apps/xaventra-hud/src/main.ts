@@ -2,7 +2,7 @@ import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@eve
 import { ApiError, createClient, type XaventraApi } from "./api/client";
 import { createDemoApi } from "./api/demo";
 import type { HudCard, HudFeed, VoiceResult } from "./api/types";
-import { getLocale, type Locale } from "./i18n";
+import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
 import { errorText } from "./hud/errors";
 import { t } from "./messages";
@@ -42,7 +42,7 @@ async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let settings: Settings = await loadSettings(bridge);
-  let locale: Locale = getLocale();
+  let locale: Locale = await resolveLocale(bridge);
   let closed = false;
 
   const makeApi = (): XaventraApi | null => {
@@ -421,6 +421,7 @@ async function boot(): Promise<void> {
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
+      rememberLocale(bridge, next);
       void draw();
     },
   });
