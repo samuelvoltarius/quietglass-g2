@@ -76,8 +76,10 @@ export interface RoutingProvider {
  * stays user-editable, as those terms recommend, and self-hosting is one
  * field away.
  */
-export const DEFAULT_ROUTER_URL = "https://valhalla1.openstreetmap.de";
-export const DEFAULT_ROUTER_HOST = "valhalla1.openstreetmap.de";
+/** A private build can point at its own Valhalla (VITE_ROUTER_URL at build time); the public one uses FOSSGIS. */
+const BUILD_ROUTER: string | undefined = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_ROUTER_URL;
+export const DEFAULT_ROUTER_URL = BUILD_ROUTER && BUILD_ROUTER !== "" ? BUILD_ROUTER.replace(/\/+$/, "") : "https://valhalla1.openstreetmap.de";
+export const DEFAULT_ROUTER_HOST = new URL(DEFAULT_ROUTER_URL).host;
 
 /**
  * A browser cannot set its User-Agent, so on the FOSSGIS server the client is
@@ -134,14 +136,16 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
           },
         };
 
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        // GET with ?json= is a "simple" request: the glasses' WebView sends no CORS
+        // preflight, which self-hosted Valhalla answers with 405. A custom header
+        // would bring the preflight back, so the client id only goes out when set.
+        const headers: Record<string, string> = {};
         if (config.clientId) headers["X-Client-Id"] = config.clientId;
 
-        const response = await doFetch(joinUrl(config.url, "/route"), {
-          method: "POST",
+        const response = await doFetch(`${joinUrl(config.url, "/route")}?json=${encodeURIComponent(JSON.stringify(body))}`, {
+          method: "GET",
           headers,
           signal: controller.signal,
-          body: JSON.stringify(body),
         });
 
         if (!response.ok) return failedResponse(response);

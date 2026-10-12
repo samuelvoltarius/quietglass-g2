@@ -160,10 +160,12 @@ describe("Valhalla parsing", () => {
     expect(mapValhallaType(999)).toBe("straight");
   });
 
-  it("posts to the /route endpoint with the right costing", async () => {
+  it("asks /route with GET ?json= (no CORS preflight) and the right costing", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toContain("/route");
-      expect(JSON.parse(String(init?.body)).costing).toBe("bicycle");
+      expect(url).toContain("/route?json=");
+      expect(init?.method).toBe("GET");
+      expect(Object.keys(init?.headers ?? {})).toEqual([]);
+      expect(JSON.parse(decodeURIComponent(url.split("?json=")[1] ?? "")).costing).toBe("bicycle");
       return new Response(JSON.stringify(response), { status: 200 });
     });
     const provider = createValhallaProvider({ url: "https://v.example/", fetchImpl: fetchImpl as never });
