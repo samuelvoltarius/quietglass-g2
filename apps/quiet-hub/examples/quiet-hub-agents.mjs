@@ -369,7 +369,7 @@ export function createHermesController(agent, ctx) {
   };
 
   async function cliSessions() {
-    const res = await runCli(["sessions", "list", "--limit", String(SESSION_LIMIT)], { timeoutMs: 20_000 });
+    const res = await runCli(["sessions", "list", "--limit", String(SESSION_LIMIT)], { timeoutMs: 40_000 });
     if (res.code !== 0 && res.out.trim() === "") throw new Error(oneLine(res.stderr || "hermes sessions failed", 120));
     return parseHermesSessions(res.out).slice(0, SESSION_LIMIT);
   }

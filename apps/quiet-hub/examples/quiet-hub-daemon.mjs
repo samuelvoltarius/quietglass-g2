@@ -30,7 +30,7 @@ const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den T
 const MAX_AUDIO = 12 * 1024 * 1024;
 const RELAY_STALE_MS = 45_000;
 const POLL_HOLD_MS = 25_000;
-const RPC_TIMEOUT_MS = 20_000;
+const RPC_TIMEOUT_MS = 45_000; // a CLI that updates itself on start (seen on one Hermes host) needs ~30 s
 
 const digest = (text) => createHash("sha256").update(text).digest();
 const clipTail = (text, max) => (text.length > max ? text.slice(text.length - max) : text);
