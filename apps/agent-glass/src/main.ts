@@ -3,7 +3,8 @@ import { EMPTY_STATE, applyEvent, type AgentState, type Session } from "./termin
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, sessionList, type AgentView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, faceKey, updatePage } from "./glasses/render";
+import { MASCOT_STEP_MS, headerIcon, isOffline } from "./glasses/face";
 import { load, parsePairingUrl, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { AgentNarrator, createBrowserSpeechEngine } from "./speech/narrator";
@@ -44,6 +45,29 @@ const DEMO_SESSION: Session = {
  * ever be seen saying "no token". A value stored in the app always wins, so
  * this seeds the first run and is then out of the way.
  */
+/**
+ * The demo run, for the simulator and screenshots: `?demo=1&scene=working|idle|waiting|error`.
+ * Working is the default; the face follows the scene.
+ */
+export function demoState(scene: string | null): AgentState {
+  const base: AgentState = {
+    ...EMPTY_STATE,
+    session: DEMO_SESSION,
+    text: "I am updating the loading state and checking the component tests.",
+    tool: "Edit",
+    busy: true,
+    startedAt: new Date(Date.now() - 12000),
+    controllable: true,
+  };
+  switch (scene) {
+    case "idle": return { ...base, busy: false, tool: null, startedAt: null };
+    case "waiting": return { ...base, tool: null, pending: { kind: "permission", title: "Bash", detail: "npm test -- --run" } };
+    case "error": return { ...base, busy: false, tool: null, error: "Agent stopped: tests failed" };
+    case "offline": return { ...base, busy: false, tool: null, error: "Hermes bridge unreachable" };
+    default: return base;
+  }
+}
+
 export function pairingFromUrl(search: string): Partial<Settings> | null {
   const raw = new URLSearchParams(search).get("pair");
   if (!raw) return null;
@@ -83,15 +107,7 @@ async function boot(): Promise<void> {
     const { pathname, search, hash } = globalThis.location;
     globalThis.history.replaceState(null, "", pathname + stripPairing(search) + hash);
   }
-  let state: AgentState = DEMO ? {
-    ...EMPTY_STATE,
-    session: DEMO_SESSION,
-    text: "I am updating the loading state and checking the component tests.",
-    tool: "Edit",
-    busy: true,
-    startedAt: new Date(Date.now() - 12000),
-    controllable: true,
-  } : EMPTY_STATE;
+  let state: AgentState = DEMO ? demoState(new URLSearchParams(globalThis.location?.search ?? "").get("scene")) : EMPTY_STATE;
   narrator.remember(state.text);
   let sessions: readonly Session[] = DEMO ? [DEMO_SESSION] : [];
   let screen: Screen = "agent";
@@ -107,6 +123,7 @@ async function boot(): Promise<void> {
   const gate = new DecisionGate();
 
   let lastView: AgentView | null = null;
+  let lastFace = "";
   let pageReady = false;
 
   const backend = (): AgentBackend => activeBackend;
@@ -119,10 +136,13 @@ async function boot(): Promise<void> {
     const view = currentView();
     // Only what was actually drawn may be answered by a swipe.
     const shown = decisionOnScreen(screen, state) ? state.pending : null;
-    if (sameView(lastView, view)) { gate.displayed(shown, Date.now()); return; }
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    const now = Date.now();
+    const face = headerIcon(screen, state, isOffline(state, DEMO || settings.token !== "", streamGap !== null), now);
+    const key = faceKey(face);
+    if (pageReady && sameView(lastView, view) && key === lastFace) { gate.displayed(shown, now); return; }
+    const result = pageReady ? await updatePage(bridge, view, face, lastView) : await createPage(bridge, view, face);
     if (closed) return;
-    if (result.ok) { pageReady = true; lastView = view; gate.displayed(shown, Date.now()); return; }
+    if (result.ok) { pageReady = true; lastView = view; lastFace = key; gate.displayed(shown, Date.now()); return; }
     pageReady = false;
     gate.displayed(null, Date.now());
     console.warn("[agent-glass] draw failed:", result.reason);
@@ -284,8 +304,10 @@ async function boot(): Promise<void> {
     }
   }
 
-  // The elapsed counter moves with the clock even when no event arrives.
-  const ticker = setInterval(() => { void draw(); }, 1000);
+  // The elapsed counter moves with the clock and the face blinks or writes:
+  // redraw twice a second, but only on the page that shows them. Unchanged
+  // frames cost nothing (see draw).
+  const ticker = setInterval(() => { if (screen === "agent") void draw(); }, MASCOT_STEP_MS);
 
   const requestExit = createExitRequest(bridge, {
     onConfirmed: () => {

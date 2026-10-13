@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0] — 2026-10-13
+
+### Added
+
+- A face in the top-right corner of the header (64 x 30 image): it blinks when the agent is idle, writes in a notebook while the agent works, opens its eyes wide when a permission or question waits for you, shows a cross on an error and sleeps without a connection. The header text now ends 64 px before the right edge.
+- The face moves twice a second on the agent page only; pictures are sent to the glasses only when they change, text containers only when their text changed.
+
 ## [0.5.4] — 2026-10-13
 
 ### Changed

@@ -31,6 +31,7 @@ function fakeBridge() {
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async () => { writes.count += 1; return 0; },
     textContainerUpgrade: async () => { writes.count += 1; return true; },
+    updateImageRawData: async () => { writes.count += 1; return "success"; },
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.modes.push(mode); return shutdown.answer(); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,

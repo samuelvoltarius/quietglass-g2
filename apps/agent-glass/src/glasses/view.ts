@@ -81,7 +81,7 @@ export function clip(text: string, width: number = LINE_WIDTH): string {
 }
 
 /** Shortens a session title to something readable in one glance. */
-export function shortTitle(title: string, width = 52): string {
+export function shortTitle(title: string, width = 46): string {
   return title.length <= width ? title : title.slice(0, width - 1) + "…";
 }
 
