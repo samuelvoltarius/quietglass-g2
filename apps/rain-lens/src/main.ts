@@ -27,6 +27,13 @@ const DEMO = typeof location !== "undefined" && new URLSearchParams(location.sea
 const DEMO_PLACE = { latitude: 47.8095, longitude: 13.055 };
 /** Header and footer span the full 576 px, unlike the body next to the icons. */
 const FULL_WIDTH = 56;
+/** Longest wait for the phone's position before the app carries on without it. */
+const LOCATION_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), ms); })]).finally(() => clearTimeout(timer));
+}
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -51,7 +58,10 @@ async function boot(): Promise<void> {
   let radar: RadarSession | null = null;
   if (RADAR) {
     const { createRadarSession } = await import("./radar/session");
-    radar = createRadarSession({ position: () => where?.position ?? null, t, locale: () => locale, redraw: () => { void draw(); }, demo: DEMO });
+    radar = createRadarSession({
+      position: () => where?.position ?? null, t, locale: () => locale, redraw: () => { void draw(); }, demo: DEMO,
+      locating: () => loading && !where, imagesIdle: () => radarLane.idle?.() ?? true,
+    });
   }
   const pageCount = radar ? 4 : 3;
   const onRadar = (): boolean => radar !== null && page === 3;
@@ -125,7 +135,12 @@ async function boot(): Promise<void> {
     drawing = (async () => { try { do { drawAgain = false; await drawNow(); } while (drawAgain && !closed); } finally { drawing = null; } })();
     return drawing;
   };
-  const phoneFix = async (): Promise<{ latitude: number; longitude: number } | null> => (await Promise.resolve(bridge.getAppLocation({ accuracy: AppLocationAccuracy.Medium, timeoutMs: 8000 })).catch(() => null)) ?? (DEMO ? DEMO_PLACE : null);
+  /**
+   * The phone's position. The SDK's `timeoutMs` is only a hint: a pending
+   * permission prompt or a cold GPS can leave the call open for good, so it is
+   * capped here as well.
+   */
+  const phoneFix = async (): Promise<{ latitude: number; longitude: number } | null> => (await withTimeout(Promise.resolve(bridge.getAppLocation({ accuracy: AppLocationAccuracy.Medium, timeoutMs: 8000 })), LOCATION_TIMEOUT_MS).catch(() => null)) ?? (DEMO ? DEMO_PLACE : null);
   const refresh = async (): Promise<void> => {
     if (loading) return; loading = true; failure = null; if (forecast.source === "demo") status = "loading"; await draw(); renderPhone();
     where = await resolveLocation(storedSources(store, phoneFix));
@@ -171,8 +186,9 @@ async function boot(): Promise<void> {
   };
   // Double tap opens the system exit dialog; the app keeps running until the user confirms.
   const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; lane.close(); radarLane.close(); radar?.stop(); } }, "rainlens");
-  await draw(); renderPhone(); void refresh();
+  // Gestures first: nothing native (page creation, location) may delay them, or the glasses stay deaf.
   bridge.onEvenHubEvent((event) => { if (closed) return; const gesture = gestureFromEvent(event); if (!gesture) return; if (gesture.gesture === "doubleClick") { void requestExit(); return; } if (gesture.gesture === "click") { if (onRadar() && radar) radar.reload(); else void refresh(); return; } if (gesture.gesture.startsWith("scroll")) { const was = onRadar(); page = gesture.gesture === "scrollDown" ? (page + 1) % pageCount : (page + pageCount - 1) % pageCount; last = ""; if (was && !onRadar()) radar?.stop(); if (!was && onRadar()) radar?.start(); void draw(); } });
   bridge.onDeviceStatusChanged((status) => { if (status?.connectType === "connected" && !closed) { pageReady = false; last = ""; void draw(); } });
+  await draw(); renderPhone(); void refresh();
 }
 void boot().catch((error: unknown) => console.error("[rainlens]", error));

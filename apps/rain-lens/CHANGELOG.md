@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.1] — 2026-10-13
+
+### Added
+
+- Radar page (private build): a base map under the rain, offline from embedded Natural Earth 1:10m data (public domain) for Europe: country borders (dotted), coastline, larger lakes, major rivers and place names in a 5 x 7 pixel font with a black halo. Names are chosen by population with a collision test (at most 14, never over the cross or each other). The map is dim (levels 2…3), rain is remapped to 6…15, and lines under rain are cut black into it. The nearest town is named in the header.
+- The map is on screen as soon as the place is known, also while the radar loads ("Radar lädt …") or when it cannot be reached ("Radar nicht erreichbar · Tippen = neu"); before the first GPS fix the page says "Standort wird gesucht …".
+
+### Changed
+
+- The base map is drawn once per place, zoom and language and reused for every frame; tiles without rain keep their key and are not sent again.
+- The radar loop steps only once the glasses have the previous frame, so a slow Bluetooth link slows the animation instead of mixing tiles of different frames.
+
+### Fixed
+
+- Robustness on real glasses: gesture handlers are registered before the first page and before the location request; the phone location is capped at 10 s; a radar load is capped at 30 s and then shows the retry hint; an image transfer that never answers no longer blocks all later images (10 s timeout in the image lane); tile decoding falls back from `createImageBitmap` to an `<img>` from a blob URL on a plain `<canvas>` (no OffscreenCanvas needed).
+- The base map data lives only in the radar chunk; the public build carries none of it.
+
 ## [0.4.0] — 2026-10-13
 
 ### Added

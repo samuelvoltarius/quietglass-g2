@@ -33,6 +33,8 @@ export interface ImageLane {
   close(): void;
   /** Resolves once nothing is in flight or waiting (for tests). */
   settled(): Promise<void>;
+  /** True when nothing is in flight or waiting. */
+  idle?(): boolean;
 }
 
 interface Job { readonly target: ImageTarget; readonly key: string; readonly render: ImageRender; readonly retry: boolean }
@@ -40,8 +42,10 @@ interface Slot { shownKey: string | null; sentAt: number; pending: Job | null }
 
 /** Default spacing between two writes of the same image. */
 export const IMAGE_INTERVAL_MS = 3000;
+/** A write that has not answered after this long counts as failed. */
+export const SEND_TIMEOUT_MS = 10_000;
 
-export function createImageLane(send: ImageSend, minIntervalMs = IMAGE_INTERVAL_MS): ImageLane {
+export function createImageLane(send: ImageSend, minIntervalMs = IMAGE_INTERVAL_MS, sendTimeoutMs = SEND_TIMEOUT_MS): ImageLane {
   const slots = new Map<number, Slot>();
   let busy: Promise<void> | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -58,7 +62,12 @@ export function createImageLane(send: ImageSend, minIntervalMs = IMAGE_INTERVAL_
   const run = async (slot: Slot, job: Job): Promise<void> => {
     const started = generation;
     let ok = false;
-    try { ok = await send(job.target, await job.render()); } catch { ok = false; }
+    // A transfer that never answers must not block the lane for good (nothing would ever be sent again).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const data = await job.render();
+      ok = await Promise.race([send(job.target, data), new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), sendTimeoutMs); })]);
+    } catch { ok = false; } finally { clearTimeout(timer); }
     if (closed || started !== generation) return;
     slot.sentAt = Date.now();
     if (ok) slot.shownKey = job.key;
@@ -104,6 +113,11 @@ export function createImageLane(send: ImageSend, minIntervalMs = IMAGE_INTERVAL_
     },
     async settled() {
       while (busy) await busy;
+    },
+    idle() {
+      if (busy) return false;
+      for (const slot of slots.values()) if (slot.pending && slot.pending.key !== slot.shownKey) return false;
+      return true;
     },
   };
 }

@@ -1,7 +1,7 @@
 import { CreateStartUpPageContainer, ImageContainerProperty, ImageRawDataUpdate, ImageRawDataUpdateResult, RebuildPageContainer, StartUpPageCreateResult, TextContainerProperty, TextContainerUpgrade, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { CHART } from "../weather/chart";
 import { ICONS } from "../weather/icons";
-import { RADAR_TILES } from "../radar/frame";
+import { RADAR_TILES } from "../radar/layout";
 import type { ImageTarget } from "./lane";
 
 /**

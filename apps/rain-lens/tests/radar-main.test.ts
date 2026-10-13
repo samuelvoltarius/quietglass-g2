@@ -49,7 +49,7 @@ function fakeBridge() {
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, images, texts, pages, calls,
+    bridge, images, texts, pages, calls, shutdown,
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
@@ -90,9 +90,10 @@ describe("rainlens radar page (private build)", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-  async function boot(radar: boolean) {
+  async function boot(radar: boolean, tweak?: (fake: ReturnType<typeof fakeBridge>) => void) {
     if (radar) vi.stubEnv("VITE_RADAR", "1");
     const fake = fakeBridge();
+    tweak?.(fake);
     harness.bridge = fake.bridge;
     vi.resetModules();
     await import("../src/main");
@@ -172,5 +173,26 @@ describe("rainlens radar page (private build)", () => {
     expect(fake.images.some((name) => name.startsWith("radar-"))).toBe(false);
     expect(fake.pages.flat().some((name) => name.startsWith("radar-"))).toBe(false);
     expect(tileRequests).toBe(0);
+  });
+
+  it("listens to the glasses even while the page and the location never answer", async () => {
+    const fake = await boot(true, (f) => {
+      f.bridge.getAppLocation = () => new Promise(() => undefined);
+      f.bridge.createStartUpPageContainer = () => new Promise(() => undefined);
+    });
+    expect(fake.ready()).toBe(true);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.shutdown.modes).toEqual([1]);
+  });
+
+  it("shows the base map and the nearest town while the radar is still loading", async () => {
+    const fake = await boot(true);
+    vi.stubGlobal("fetch", async (url: string) => (String(url).includes("rainviewer") ? new Promise(() => undefined) : new Response(JSON.stringify(forecast))));
+    await swipe(fake, 3);
+    await vi.advanceTimersByTimeAsync(3000);
+    const header = fake.texts.filter((part) => part.name === "header").at(-1)?.content ?? "";
+    expect(header).toContain("RADAR");
+    expect(fake.images.filter((name) => name.startsWith("radar-")).length).toBeGreaterThanOrEqual(4);
   });
 });

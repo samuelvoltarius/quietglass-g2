@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pixel } from "../src/glasses/bitmap";
 import { levelOf, levelsFromRgba } from "../src/radar/intensity";
 import {
-  ANCHOR, MAP, RADAR_TILES, TILE_HEIGHT, TILE_WIDTH, bitmapKey, composeFrame, neededTiles, splitTiles,
+  ANCHOR, MAP, RADAR_TILES, TILE_HEIGHT, TILE_WIDTH, bitmapKey, composeFrame, neededTiles, rainLevel, splitTiles,
 } from "../src/radar/frame";
 import {
   CONCURRENCY, FRAME_COUNT, INDEX_URL, frameAt, isStale, loadRadar, parseIndex, syntheticRadar,
@@ -103,7 +103,7 @@ describe("radar frame", () => {
   });
 
   it("is black where there is no radar, except rings and the cross", () => {
-    const [nw] = splitTiles(composeFrame(SALZBURG, () => null));
+    const [nw] = splitTiles(composeFrame(SALZBURG, () => null, RADAR_ZOOM, null));
     expect(pixel(nw, 5, 40)).toBe(0);
     expect(Math.max(...nw.pixels)).toBeLessThanOrEqual(15);
   });
@@ -111,7 +111,7 @@ describe("radar frame", () => {
   it("keeps the header and footer rows free for text", () => {
     const frame = composeFrame(SALZBURG, () => rainEverywhere);
     for (const y of [0, 20, 33, 252, 270, 287]) for (const x of [0, 288, 575]) expect(pixel(frame, x, y), `${x},${y}`).toBe(0);
-    expect(pixel(frame, 20, 60)).toBe(9);
+    expect(pixel(composeFrame(SALZBURG, () => rainEverywhere, RADAR_ZOOM, null), 20, 60)).toBe(rainLevel(9));
   });
 
   it("draws the place as a bright cross in the middle of the map area", () => {
@@ -122,7 +122,7 @@ describe("radar frame", () => {
     expect(pixel(frame, cx, cy - 6)).toBe(15);
     // The black halo keeps it readable over rain.
     expect(pixel(frame, cx + 6, cy + 2)).toBe(0);
-    expect(pixel(frame, cx + 15, cy)).toBe(9);
+    expect([rainLevel(9), 1]).toContain(pixel(frame, cx + 15, cy));
   });
 
   it("shows rain where the tile has it, at 1:1 pixels", () => {
@@ -131,8 +131,9 @@ describe("radar frame", () => {
     // Thirty pixels east of the place, away from the cross.
     const column = ANCHOR.x - target.x + 30; const row = ANCHOR.y - target.y;
     spot[row * TILE_SIZE + column] = 12;
-    const frame = composeFrame(SALZBURG, (tx, ty) => (tx === target.tx && ty === target.ty ? spot : null));
-    expect(pixel(frame, ANCHOR.x + 30, MAP.y + ANCHOR.y)).toBe(12);
+    // Without the base map, so only the rain is there.
+    const frame = composeFrame(SALZBURG, (tx, ty) => (tx === target.tx && ty === target.ty ? spot : null), RADAR_ZOOM, null);
+    expect(pixel(frame, ANCHOR.x + 30, MAP.y + ANCHOR.y)).toBe(rainLevel(12));
     expect(pixel(frame, ANCHOR.x + 31, MAP.y + ANCHOR.y)).toBe(0);
   });
 
@@ -240,12 +241,12 @@ describe("session", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  const messages: Record<string, string> = { radar: "RADAR", radarCredit: "Radar: RainViewer", radarControls: "Tap: reload", radarLoading: "Loading radar", radarNoLocation: "No location", radarError: "Radar unreachable", radarSample: "SAMPLE" };
+  const messages: Record<string, string> = { radar: "RADAR", radarCredit: "Radar: RainViewer", radarControls: "Tap: reload", radarLoading: "Loading radar", radarLoadingShort: "Loading", radarNoLocation: "No location", radarError: "Radar unreachable", radarErrorShort: "Unreachable · Tap = retry", radarLocating: "Finding you", radarSample: "SAMPLE" };
   const t = (key: string): string => messages[key] ?? key;
 
   function make(options: { position?: typeof SALZBURG | null; load?: () => Promise<ReturnType<typeof syntheticRadar>>; demo?: boolean } = {}) {
     const redraws = { count: 0 };
-    const data = syntheticRadar(SALZBURG, Date.now());
+    const data = syntheticRadar(SALZBURG, Date.now(), RADAR_ZOOM, "en");
     const load = vi.fn(options.load ?? (async () => data));
     const session = createRadarSession({
       position: () => (options.position === undefined ? SALZBURG : options.position),
@@ -258,7 +259,9 @@ describe("session", () => {
     const { session, redraws } = make();
     session.start();
     expect(session.status()).toBe("loading");
-    expect(session.text().note).toBe("Loading radar");
+    // The map is already up: the state is in the header, with the nearest town.
+    expect(session.text().note).toBe("");
+    expect(session.text().header).toBe("RADAR  Salzburg  Loading");
     await vi.advanceTimersByTimeAsync(0);
     expect(session.status()).toBe("ready");
     expect(session.text().note).toBe("");
@@ -288,7 +291,7 @@ describe("session", () => {
 
   it("says so without a place, and loads once the place is there", async () => {
     let position: typeof SALZBURG | null = null;
-    const data = syntheticRadar(SALZBURG, Date.now());
+    const data = syntheticRadar(SALZBURG, Date.now(), RADAR_ZOOM, "en");
     const load = vi.fn(async () => data);
     const session = createRadarSession({ position: () => position, t, locale: () => "en", redraw: () => undefined, load, now: () => Date.now() });
     session.start();
@@ -303,12 +306,13 @@ describe("session", () => {
 
   it("reports a failed first load, keeps old pictures when a reload fails, and tries again on a tap", async () => {
     let fail = true;
-    const data = syntheticRadar(SALZBURG, Date.now());
+    const data = syntheticRadar(SALZBURG, Date.now(), RADAR_ZOOM, "en");
     const { session, load } = make({ load: async () => { if (fail) throw new Error("offline"); return data; } });
     session.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(session.status()).toBe("error");
-    expect(session.text().note).toBe("Radar unreachable");
+    expect(session.text().header).toBe("RADAR  Unreachable · Tap = retry");
+    expect(session.text().note).toBe("");
     fail = false; session.reload();
     await vi.advanceTimersByTimeAsync(0);
     expect(session.status()).toBe("ready");

@@ -1,5 +1,7 @@
-import { createBitmap, drawText, fillRect, line, MAX_LEVEL, plot, textWidth, type Bitmap } from "../glasses/bitmap";
-import { RADAR_ZOOM, TILE_SIZE, metersPerPixel, windowTiles, type Placement, type Position } from "./tiles";
+import { createBitmap, fillRect, line, MAX_LEVEL, plot, type Bitmap } from "../glasses/bitmap";
+import { baseMapFor, CUT_LEVEL, TRANSPARENT, type BaseMap } from "./basemap";
+import { ANCHOR, MAP, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_HEIGHT, TILE_WIDTH } from "./layout";
+import { RADAR_ZOOM, TILE_SIZE, windowTiles, type Placement, type Position } from "./tiles";
 
 /**
  * One radar picture for the whole 576 x 288 display, as four 288 x 144 tiles
@@ -7,27 +9,13 @@ import { RADAR_ZOOM, TILE_SIZE, metersPerPixel, windowTiles, type Placement, typ
  *
  * The top 34 and bottom 36 rows stay black: that is where the header and the
  * footer text sit (the source credit must stay readable). The map area in
- * between is centred on the place, drawn at 1 pixel per radar pixel, with two
- * dotted range rings (100 and 200 km) for scale and the place as a pixel cross.
+ * between is centred on the place, drawn at 1 pixel per radar pixel: the dim
+ * base map (borders, coast, lakes, rivers, range rings) below, the rain above
+ * it in the bright levels 6…15, place names on top and the place as a cross.
  */
 
-export const SCREEN_WIDTH = 576;
-export const SCREEN_HEIGHT = 288;
-export const TILE_WIDTH = 288;
-export const TILE_HEIGHT = 144;
-/** The four image containers, left to right, top to bottom. */
-export const RADAR_TILES = [
-  { id: 11, name: "radar-nw", x: 0, y: 0, width: TILE_WIDTH, height: TILE_HEIGHT },
-  { id: 12, name: "radar-ne", x: TILE_WIDTH, y: 0, width: TILE_WIDTH, height: TILE_HEIGHT },
-  { id: 13, name: "radar-sw", x: 0, y: TILE_HEIGHT, width: TILE_WIDTH, height: TILE_HEIGHT },
-  { id: 14, name: "radar-se", x: TILE_WIDTH, y: TILE_HEIGHT, width: TILE_WIDTH, height: TILE_HEIGHT },
-] as const;
-
-/** The map area between the header and footer text. */
-export const MAP = { x: 0, y: 34, width: SCREEN_WIDTH, height: 218 } as const;
-/** Where the place is drawn: the middle of the map area. */
-export const ANCHOR = { x: MAP.width / 2, y: MAP.height / 2 } as const;
-export const RING_KM = [100, 200] as const;
+export { ANCHOR, MAP, RADAR_TILES, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_HEIGHT, TILE_WIDTH } from "./layout";
+export { RING_KM } from "./basemap";
 
 /** Radar grey levels of a 256 x 256 tile, one byte per pixel, or null for a tile without data. */
 export type TileLevels = Uint8Array | null;
@@ -39,8 +27,16 @@ export function neededTiles(position: Position, zoom = RADAR_ZOOM): Placement[] 
   return windowTiles(position, { width: MAP.width, height: MAP.height, anchorX: ANCHOR.x, anchorY: ANCHOR.y }, zoom);
 }
 
-/** Copies one tile into the map area, clipped; later tiles never overwrite a lit pixel with a dark one. */
-function blit(target: Bitmap, levels: Uint8Array, placement: Placement): void {
+/** Radar level 1…15 on the screen: 6…15, so rain is always brighter than the base map (2…3). */
+export function rainLevel(level: number): number {
+  return level <= 0 ? 0 : Math.min(MAX_LEVEL, 6 + Math.round(((Math.min(level, MAX_LEVEL) - 1) * 9) / 14));
+}
+
+/**
+ * Copies one tile into the map area, clipped; later tiles never overwrite a lit
+ * pixel with a dark one. A base-map line under rain is cut dark into it.
+ */
+function blit(target: Bitmap, levels: Uint8Array, placement: Placement, lines: Uint8Array | null): void {
   for (let row = 0; row < TILE_SIZE; row += 1) {
     const y = MAP.y + placement.y + row;
     if (y < MAP.y || y >= MAP.y + MAP.height) continue;
@@ -48,20 +44,8 @@ function blit(target: Bitmap, levels: Uint8Array, placement: Placement): void {
       const x = MAP.x + placement.x + column;
       if (x < MAP.x || x >= MAP.x + MAP.width) continue;
       const level = levels[row * TILE_SIZE + column] ?? 0;
-      if (level > 0) target.pixels[y * target.width + x] = level;
+      if (level > 0) { const at = y * target.width + x; target.pixels[at] = lines && lines[at]! > 0 ? CUT_LEVEL : rainLevel(level); }
     }
-  }
-}
-
-/** A dotted circle clipped to the map area. */
-function ring(target: Bitmap, cx: number, cy: number, radius: number, level: number): void {
-  const steps = Math.max(24, Math.round(radius * 1.2));
-  for (let step = 0; step < steps; step += 1) {
-    if (step % 3 === 2) continue;
-    const angle = (step / steps) * Math.PI * 2;
-    const x = Math.round(cx + Math.cos(angle) * radius);
-    const y = Math.round(cy + Math.sin(angle) * radius);
-    if (x >= MAP.x && x < MAP.x + MAP.width && y >= MAP.y && y < MAP.y + MAP.height) plot(target, x, y, level);
   }
 }
 
@@ -76,26 +60,20 @@ export function drawCross(target: Bitmap, cx: number, cy: number): void {
   plot(target, cx, cy, MAX_LEVEL);
 }
 
-/** The whole display as one bitmap (grey levels 0…15). */
-export function composeFrame(position: Position, lookup: TileLookup, zoom = RADAR_ZOOM): Bitmap {
+/**
+ * The whole display as one bitmap (grey levels 0…15). `base` is the base map
+ * for this place (drawn once per place, see basemap.ts); null draws the radar
+ * on black, `lookup` returning null everywhere draws the map alone.
+ */
+export function composeFrame(position: Position, lookup: TileLookup, zoom = RADAR_ZOOM, base: BaseMap | null = baseMapFor(position, zoom)): Bitmap {
   const bitmap = createBitmap(SCREEN_WIDTH, SCREEN_HEIGHT);
-  const cx = MAP.x + ANCHOR.x;
-  const cy = MAP.y + ANCHOR.y;
-  // Rings first, so the radar paints over them where it rains.
-  const perPixel = metersPerPixel(position.latitude, zoom);
-  for (const km of RING_KM) {
-    const radius = (km * 1000) / perPixel;
-    ring(bitmap, cx, cy, radius, 4);
-    const label = `${km} KM`;
-    const labelX = Math.round(cx + radius * Math.SQRT1_2 + 3);
-    const labelY = Math.round(cy - radius * Math.SQRT1_2 - 5);
-    if (labelX + textWidth(label, 1) < MAP.x + MAP.width && labelY > MAP.y && labelY + 5 < MAP.y + MAP.height) drawText(bitmap, label, labelX, labelY, 1, 6);
-  }
+  if (base) bitmap.pixels.set(base.lines);
   for (const placement of neededTiles(position, zoom)) {
     const levels = lookup(placement.tx, placement.ty);
-    if (levels) blit(bitmap, levels, placement);
+    if (levels) blit(bitmap, levels, placement, base?.lines ?? null);
   }
-  drawCross(bitmap, cx, cy);
+  if (base) for (let at = 0; at < base.overlay.length; at += 1) { const level = base.overlay[at]!; if (level !== TRANSPARENT) bitmap.pixels[at] = level; }
+  drawCross(bitmap, MAP.x + ANCHOR.x, MAP.y + ANCHOR.y);
   return bitmap;
 }
 

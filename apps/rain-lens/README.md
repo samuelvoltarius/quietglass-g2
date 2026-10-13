@@ -28,10 +28,15 @@ RainLens zeigt nicht mehr nur Regen, sondern das komplette Wetterbild: aktuelle 
 - verständliche Hinweise bei Netzfehlern auf Brille und Handy
 - Deutsch, Englisch, Französisch, Spanisch und Italienisch
 - keine Anmeldung und kein eigener API-Schlüssel erforderlich
+- nur im privaten Build (`VITE_RADAR=1`): animiertes Regenradar als vierte Ansicht, mit Grundkarte (Grenzen, Küste, Seen, große Flüsse, Ortsnamen) und dem nächsten Ort in der Kopfzeile
 
 ## Datenquelle
 
 RainLens lädt die Vorhersage direkt von Open-Meteo (`api.open-meteo.com`) und sucht Orte über den Open-Meteo-Geocoder (`geocoding-api.open-meteo.com`, Ortsdaten von GeoNames). Beide antworten ohne Schlüssel und mit `access-control-allow-origin: *`, funktionieren also direkt aus der Even-App. Die freie Nutzung ist laut den Open-Meteo-Bedingungen auf nicht-kommerzielle Zwecke und weniger als 10 000 Aufrufe pro Tag begrenzt; die Daten stehen unter CC BY 4.0, der Hinweis steht unten in der Handy-App.
+
+### Radar und Karte (nur privater Build)
+
+Das Radar kommt von RainViewer (`api.rainviewer.com`, `tilecache.rainviewer.com`; laut deren Bedingungen nur privat/zu Lernzwecken, mit sichtbarer Quellenangabe auf der Radarseite). Die Grundkarte darunter lädt nichts aus dem Netz: Grenzen, Küstenlinie, Seen, große Flüsse und Orte stammen aus [Natural Earth](https://www.naturalearthdata.com) 1:10m (gemeinfrei / public domain), auf Europa zugeschnitten, vereinfacht und in `src/radar/map-data.ts` eingebettet (~117 KB, nur im Radar-Teil des privaten Builds). Neu erzeugen: `node scripts/build-map-data.mjs <Ordner mit den Natural-Earth-GeoJSON-Dateien>`.
 
 Die App übermittelt nur die zur Prognose benötigten Koordinaten bzw. den eingetippten Ortsnamen. Der gewählte Ort, eigene Koordinaten und die Sprachwahl bleiben lokal auf dem Gerät.
 

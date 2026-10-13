@@ -1,5 +1,6 @@
 import type { Bitmap } from "../glasses/bitmap";
 import { RAINVIEWER_HOST, RADAR_ZOOM, TILE_SIZE, tileUrl, type Position } from "./tiles";
+import { baseMapFor } from "./basemap";
 import { bitmapKey, composeFrame, neededTiles, splitTiles, type TileLevels } from "./frame";
 import { levelsFromRgba } from "./intensity";
 
@@ -67,14 +68,49 @@ export async function fetchIndex(fetchImpl: Fetcher = fetch): Promise<RadarIndex
   return parseIndex(await (await timedFetch(fetchImpl, INDEX_URL)).json());
 }
 
-/** Browser decoding: the PNG onto a canvas, then pixel by pixel to grey levels. */
-export const decodeTileInBrowser: TileDecoder = async (blob) => {
+/** How long one tile image may take to decode before it counts as missing. */
+export const DECODE_TIMEOUT_MS = 10_000;
+
+/** The decoded picture as something a 2d canvas can draw, plus how to free it. */
+interface Drawable { readonly source: CanvasImageSource; readonly release: () => void }
+
+/** Fast path: `createImageBitmap` (iOS 15+, every recent Chromium). */
+async function viaImageBitmap(blob: Blob): Promise<Drawable> {
   const image = await createImageBitmap(blob);
-  const canvas = document.createElement("canvas"); canvas.width = TILE_SIZE; canvas.height = TILE_SIZE;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true }); if (!ctx) throw new Error("2d canvas unavailable");
-  ctx.drawImage(image, 0, 0, TILE_SIZE, TILE_SIZE);
-  image.close?.();
-  return levelsFromRgba(ctx.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data, TILE_SIZE * TILE_SIZE);
+  return { source: image, release: () => image.close?.() };
+}
+
+/**
+ * Fallback for WebViews without a working `createImageBitmap(blob)`: an
+ * `<img>` from a blob URL. A blob URL is same-origin, so the canvas stays
+ * readable (not "tainted").
+ */
+function viaImageElement(blob: Blob): Promise<Drawable> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    const timer = setTimeout(() => { URL.revokeObjectURL(url); reject(new Error("image decode timed out")); }, DECODE_TIMEOUT_MS);
+    image.onload = () => { clearTimeout(timer); resolve({ source: image, release: () => URL.revokeObjectURL(url) }); };
+    image.onerror = () => { clearTimeout(timer); URL.revokeObjectURL(url); reject(new Error("image decode failed")); };
+    image.src = url;
+  });
+}
+
+/**
+ * Browser decoding: the PNG onto a plain `<canvas>` (no OffscreenCanvas, which
+ * older iOS WebViews lack), then pixel by pixel to grey levels.
+ */
+export const decodeTileInBrowser: TileDecoder = async (blob) => {
+  let drawable: Drawable;
+  if (typeof createImageBitmap === "function") {
+    try { drawable = await viaImageBitmap(blob); } catch { drawable = await viaImageElement(blob); }
+  } else drawable = await viaImageElement(blob);
+  try {
+    const canvas = document.createElement("canvas"); canvas.width = TILE_SIZE; canvas.height = TILE_SIZE;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true }); if (!ctx) throw new Error("2d canvas unavailable");
+    ctx.drawImage(drawable.source, 0, 0, TILE_SIZE, TILE_SIZE);
+    return levelsFromRgba(ctx.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data, TILE_SIZE * TILE_SIZE);
+  } finally { drawable.release(); }
 };
 
 export interface RadarFrame {
@@ -92,6 +128,8 @@ export interface RadarData {
   readonly loadedAt: number;
   /** True for the made-up demo radar. */
   readonly synthetic?: boolean;
+  /** Language of the place names drawn into the frames. */
+  readonly locale?: string;
 }
 
 export interface LoadOptions {
@@ -99,6 +137,8 @@ export interface LoadOptions {
   readonly decode?: TileDecoder;
   readonly now?: () => number;
   readonly zoom?: number;
+  /** Language of the place names on the map. */
+  readonly locale?: string;
 }
 
 /** Runs `jobs` with at most `limit` at a time. */
@@ -112,11 +152,13 @@ async function pool<T>(jobs: readonly (() => Promise<T>)[], limit: number): Prom
   return results;
 }
 
-export function composeData(position: Position, frames: readonly { time: number; lookup: (tx: number, ty: number) => TileLevels }[], now: number, zoom = RADAR_ZOOM, synthetic = false): RadarData {
+export function composeData(position: Position, frames: readonly { time: number; lookup: (tx: number, ty: number) => TileLevels }[], now: number, zoom = RADAR_ZOOM, synthetic = false, locale = "de"): RadarData {
+  // The base map is drawn once for all frames; only the rain differs between them.
+  const base = baseMapFor(position, zoom, locale);
   return {
-    position, loadedAt: now, ...(synthetic ? { synthetic: true } : {}),
+    position, loadedAt: now, locale, ...(synthetic ? { synthetic: true } : {}),
     frames: frames.map((frame) => {
-      const tiles = splitTiles(composeFrame(position, frame.lookup, zoom));
+      const tiles = splitTiles(composeFrame(position, frame.lookup, zoom, base));
       return { time: frame.time, tiles, keys: [bitmapKey(tiles[0]), bitmapKey(tiles[1]), bitmapKey(tiles[2]), bitmapKey(tiles[3])] };
     }),
   };
@@ -152,12 +194,13 @@ export async function loadRadar(position: Position, options: LoadOptions = {}): 
     tiles.set(result.key, result.levels); byFrame.set(result.frame, tiles);
   }
   const now = (options.now ?? Date.now)();
-  return composeData(position, index.frames.map((frame) => ({ time: frame.time, lookup: (tx, ty) => byFrame.get(frame.time)?.get(`${tx}/${ty}`) ?? null })), now, zoom);
+  return composeData(position, index.frames.map((frame) => ({ time: frame.time, lookup: (tx, ty) => byFrame.get(frame.time)?.get(`${tx}/${ty}`) ?? null })), now, zoom, false, options.locale);
 }
 
-/** True when the loaded radar is for another place or has grown old. */
-export function isStale(data: RadarData | null, position: Position, now: number): boolean {
+/** True when the loaded radar is for another place or language, or has grown old. */
+export function isStale(data: RadarData | null, position: Position, now: number, locale?: string): boolean {
   if (!data) return true;
+  if (locale !== undefined && data.locale !== undefined && data.locale !== locale) return true;
   if (now - data.loadedAt > MAX_AGE_MS) return true;
   return Math.abs(data.position.latitude - position.latitude) > 0.05 || Math.abs(data.position.longitude - position.longitude) > 0.05;
 }
@@ -174,7 +217,7 @@ export function frameAt(tick: number, count: number): number {
 }
 
 /** A made-up radar for the ?demo=1 mode: a few rain cells drifting north-east. */
-export function syntheticRadar(position: Position, now: number, zoom = RADAR_ZOOM): RadarData {
+export function syntheticRadar(position: Position, now: number, zoom = RADAR_ZOOM, locale = "de"): RadarData {
   const cells = [{ x: 90, y: 60, rx: 70, ry: 38 }, { x: 40, y: 150, rx: 35, ry: 20 }, { x: 160, y: 210, rx: 28, ry: 40 }];
   const frames = Array.from({ length: FRAME_COUNT }, (_, index) => ({
     time: Math.round(now / 1000) - (FRAME_COUNT - 1 - index) * 600,
@@ -196,5 +239,5 @@ export function syntheticRadar(position: Position, now: number, zoom = RADAR_ZOO
       return levels;
     },
   }));
-  return composeData(position, frames, now, zoom, true);
+  return composeData(position, frames, now, zoom, true, locale);
 }
