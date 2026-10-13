@@ -456,7 +456,7 @@ async function boot(): Promise<void> {
 
   /** Hold on the goal list: record until the release, or until the hard stop. */
   const startVoice = async (): Promise<void> => {
-    if (screen !== "places") return;
+    if (screen !== "places" && screen !== "board") return;
     const seq = ++voiceSeq;
     screen = "voice";
     if (!demo.enabled && !sttBase(settings.sttUrl)) {
@@ -688,12 +688,10 @@ async function boot(): Promise<void> {
         void startTracking();
         return;
       case "longPress":
-        // Cycle through the other stops within reach — useful at a junction
-        // where the stop you want is not the one you are standing closest to.
-        if (ride || stops.length < 2) return;
-        stopIndex = (stopIndex + 1) % stops.length;
-        selected = 0;
-        void loadDepartures();
+        // Hold = say where you want to go, right from the start page. Cycling
+        // through nearby stops moved to the menu ("Andere Haltestelle").
+        if (ride) return;
+        void startVoice();
         return;
       case "scrollUp":
         if (ride || departures.length === 0) return;
@@ -803,6 +801,12 @@ async function boot(): Promise<void> {
       case MENU.route: openPlaces(); return;
       case MENU.board: openBoard(); return;
       case MENU.refresh: if (screen === "board") { ride = null; void findStops(); } return;
+      case MENU.otherStop:
+        if (screen !== "board" || ride || stops.length < 2) return;
+        stopIndex = (stopIndex + 1) % stops.length;
+        selected = 0;
+        void loadDepartures();
+        return;
       case MENU.goals: openPlaces(); return;
       case MENU.again: if (plan) void startPlan(plan.target); return;
       case MENU.next: stepGuide(1); return;

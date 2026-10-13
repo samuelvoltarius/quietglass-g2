@@ -57,6 +57,7 @@ function fakeBridge() {
     bridge, state,
     ready: () => onEvent !== undefined,
     gesture: (eventType: number) => onEvent?.({ sysEvent: { eventType, eventSource: 1 } }),
+    menu: (itemID: number) => onEvent?.({ menuItemClickEvent: { itemID } }),
   };
 }
 
@@ -129,7 +130,7 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending.map((p) => p.stopId)).toEqual(["A"]));
 
-    fake.gesture(9); // hold: next stop
+    fake.menu(10); // menu "Andere Haltestelle" (hold now starts the voice destination)
     await vi.waitFor(() => expect(pending.map((p) => p.stopId)).toEqual(["A", "B"]));
 
     pending[1]?.reply(stopTimes("Bravo-Ziel"));

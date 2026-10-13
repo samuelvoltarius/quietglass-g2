@@ -110,3 +110,17 @@ describe("the build's ÖBB default", () => {
     expect(parseSettings(JSON.stringify({ oebbUrl: "http://192.168.1.2:8079/oebb" }), d).oebbUrl).toBe("http://192.168.1.2:8079/oebb");
   });
 });
+
+describe("settings saved by an older version", async () => {
+  const { parseSettings, defaultsFor, LEGACY_OEBB_PLACEHOLDER } = await import("../src/storage/persist");
+  it("move to the build's own ÖBB proxy once instead of keeping the placeholder", () => {
+    const defaults = defaultsFor("https://proxy.example:8458/oebb");
+    const old = JSON.stringify({ backend: "motis", oebbUrl: LEGACY_OEBB_PLACEHOLDER, motisUrl: "https://api.transitous.org", refreshSeconds: 30 });
+    expect(parseSettings(old, defaults)).toMatchObject({ backend: "oebb", oebbUrl: "https://proxy.example:8458/oebb" });
+  });
+  it("keep a proxy the user set themselves", () => {
+    const defaults = defaultsFor("https://proxy.example:8458/oebb");
+    const own = JSON.stringify({ backend: "motis", oebbUrl: "http://192.168.1.20:8079/oebb" });
+    expect(parseSettings(own, defaults)).toMatchObject({ backend: "motis", oebbUrl: "http://192.168.1.20:8079/oebb" });
+  });
+});

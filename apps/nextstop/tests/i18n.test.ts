@@ -218,14 +218,14 @@ describe("German output stays exactly as reviewed", () => {
         "  4 min ~  REX 1  Wien Westbahnhof über L… · 3",
         "  15 min +3  Railjet Xpress 563  Wien H… · 10A",
       ],
-      footer: "tippen = verfolgen · ● live  ~ Fahrplan",
+      footer: "tippen = folgen · halten = Ziel · ● live",
     });
     expect(departureBoard(STOP, [], null, "de")).toEqual({
       header: "Salzburg Mirabellplatz",
       body: ["", "Keine Abfahrten in der nächsten Stunde.", "", "Betriebsschluss, oder diese Haltestelle", "wird gerade nicht bedient."],
       footer: "halten = andere Haltestelle",
     });
-    expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("tippen = verfolgen · nur Fahrplan");
+    expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("tippen = folgen · halten = Ziel · Fahrplan");
   });
 
   it("pins the ride", () => {

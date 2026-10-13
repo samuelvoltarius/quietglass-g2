@@ -49,8 +49,8 @@ export const messages: Messages = {
     "g.emptyBoard2": "Betriebsschluss, oder diese Haltestelle",
     "g.emptyBoard3": "wird gerade nicht bedient.",
     "g.footerEmptyBoard": "halten = andere Haltestelle",
-    "g.footerBoardLive": "tippen = verfolgen · ● live  ~ Fahrplan",
-    "g.footerBoardPlanned": "tippen = verfolgen · nur Fahrplan",
+    "g.footerBoardLive": "tippen = folgen · halten = Ziel · ● live",
+    "g.footerBoardPlanned": "tippen = folgen · halten = Ziel · Fahrplan",
     // Glasses: ride
     "g.terminus": "Endstation {stop}.",
     "g.rideOver": "Die Fahrt ist zu Ende.",
@@ -148,8 +148,8 @@ export const messages: Messages = {
     "g.emptyBoard2": "Service has ended, or this stop",
     "g.emptyBoard3": "is not being served right now.",
     "g.footerEmptyBoard": "hold = other stop",
-    "g.footerBoardLive": "tap = follow · ● live  ~ timetable",
-    "g.footerBoardPlanned": "tap = follow · timetable only",
+    "g.footerBoardLive": "tap = follow · hold = destination · ● live",
+    "g.footerBoardPlanned": "tap = follow · hold = destination · timetable",
     // Glasses: ride
     "g.terminus": "End of the line: {stop}.",
     "g.rideOver": "This ride has ended.",

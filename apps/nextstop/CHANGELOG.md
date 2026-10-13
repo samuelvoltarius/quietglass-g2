@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- Startseite: Halten = Ziel per Sprache sagen; „Andere Haltestelle“ ist jetzt im Menü.
+- Ältere gespeicherte Einstellungen mit dem Platzhalter-Proxy wechseln einmal auf den ÖBB-Proxy des privaten Builds (Echtzeit ohne Handy-Einstellung).
+
 ## 0.3.2
 
 - Annäherungsbalken beim Gehen füllt sich über das ganze Wegstück seit der letzten Abbiegung statt immer über die letzten 150 m.

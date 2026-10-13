@@ -61,6 +61,9 @@ export function defaultsFor(buildOebbUrl: string | undefined): Settings {
 
 export const DEFAULT_SETTINGS: Settings = defaultsFor(BUILD_OEBB_URL);
 
+/** What versions before 0.3.1 stored as the ÖBB proxy when nobody had set one. */
+export const LEGACY_OEBB_PLACEHOLDER = "http://127.0.0.1:8079/oebb";
+
 export async function save(bridge: EvenAppBridge, settings: Settings): Promise<void> {
   await bridge.setLocalStorage(KEY, JSON.stringify(settings));
 }
@@ -96,6 +99,13 @@ export function parseSettings(raw: string, defaults: Settings = DEFAULT_SETTINGS
   if (!raw) return defaults;
   try {
     const value = JSON.parse(raw) as Partial<Settings>;
+    // Settings saved by an older version still carry its placeholder proxy
+    // (and therefore Transitous). A private build with its own ÖBB proxy takes
+    // over once, so live times work without touching the phone page.
+    const placeholder = String(value.oebbUrl ?? "").trim() === LEGACY_OEBB_PLACEHOLDER;
+    if (placeholder && defaults.backend === "oebb") {
+      return parseSettings(JSON.stringify({ ...value, backend: "oebb", oebbUrl: defaults.oebbUrl }), defaults);
+    }
     return {
       backend: value.backend === "oebb" || value.backend === "motis" ? value.backend : defaults.backend,
       oebbUrl: validateUrl(String(value.oebbUrl ?? "")).valid

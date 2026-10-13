@@ -124,7 +124,7 @@ describe("the route pages", () => {
     await boot(fake, "?demo=1&lang=de");
     await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 3"));
     // The first page carries the native menu with the way to the route pages.
-    expect(fake.state.menus[0]).toEqual(["Route planen", "Neu laden"]);
+    expect(fake.state.menus[0]).toEqual(["Route planen", "Andere Haltestelle", "Neu laden"]);
 
     fake.menu(1); // Route planen
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\? · \d\d:\d\d$/));

@@ -102,7 +102,7 @@ describe("the departure board", () => {
 
   it("does not claim live data when there is none", () => {
     const planned = departureBoard(STOP, [departure(), departure()], null, "de");
-    expect(planned.footer).toContain("nur Fahrplan");
+    expect(planned.footer).toContain("Fahrplan");
     expect(planned.footer).not.toContain("live");
   });
 

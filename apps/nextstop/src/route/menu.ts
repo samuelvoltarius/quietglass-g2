@@ -10,7 +10,7 @@ import { t } from "../messages";
 export type Screen = "board" | "places" | "plans" | "guide" | "voice";
 
 export const MENU = {
-  route: 1, board: 2, refresh: 3, goals: 4, again: 5, next: 6, prev: 7, stop: 8, saveVoice: 9,
+  route: 1, board: 2, refresh: 3, goals: 4, again: 5, next: 6, prev: 7, stop: 8, saveVoice: 9, otherStop: 10,
 } as const;
 
 export interface MenuItemSpec { readonly id: number; readonly label: string }
@@ -23,7 +23,7 @@ export interface MenuSpec {
 export function menuFor(screen: Screen, locale: Locale): MenuSpec {
   const item = (id: number, key: string): MenuItemSpec => ({ id, label: t(locale, key) });
   const items: Record<Screen, MenuItemSpec[]> = {
-    board: [item(MENU.route, "r.menuRoute"), item(MENU.refresh, "r.menuRefresh")],
+    board: [item(MENU.route, "r.menuRoute"), item(MENU.otherStop, "r.menuOtherStop"), item(MENU.refresh, "r.menuRefresh")],
     places: [item(MENU.board, "r.menuBoard")],
     plans: [item(MENU.goals, "r.menuGoals"), item(MENU.again, "r.menuSearchAgain"), item(MENU.board, "r.menuBoard")],
     voice: [item(MENU.saveVoice, "r.menuSaveVoice"), item(MENU.goals, "r.menuGoals")],

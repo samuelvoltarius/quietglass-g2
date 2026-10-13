@@ -9,6 +9,7 @@ export const routeStrings = {
   de: {
     // Glasses: native menu (labels stay under 32 bytes)
     "r.menuRoute": "Route planen",
+    "r.menuOtherStop": "Andere Haltestelle",
     "r.menuBoard": "Abfahrten",
     "r.menuRefresh": "Neu laden",
     "r.menuGoals": "Ziele",
@@ -158,6 +159,7 @@ export const routeStrings = {
   },
   en: {
     "r.menuRoute": "Plan a route",
+    "r.menuOtherStop": "Another stop",
     "r.menuBoard": "Departures",
     "r.menuRefresh": "Reload",
     "r.menuGoals": "Destinations",
