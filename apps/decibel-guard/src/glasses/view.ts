@@ -70,8 +70,8 @@ export function composeView(dose: DoseState, settings: DoseSettings, options: Vi
   const band = doseLevel(dose);
   const level = options.level;
 
+  // The level itself is a picture of big digits (digits.ts), not a text row.
   const body: string[] = [];
-  body.push(levelLine(level, options.calibrated, locale));
 
   if (band !== "quiet") {
     body.push(x("g.dose", { pct: percent(dose.fraction) }));
@@ -98,14 +98,6 @@ function headerFor(band: ReturnType<typeof doseLevel>, locale: Locale): string {
     case "high": return t(locale, "g.headerHigh");
     default: return "";
   }
-}
-
-function levelLine(level: number | null, calibrated: boolean, locale: Locale): string {
-  if (level === null) return t(locale, "g.listening");
-  const rounded = Math.round(level);
-  // Estimated readings are marked, so a number is never mistaken for an
-  // absolute sound pressure level it is not.
-  return t(locale, calibrated ? "g.level" : "g.levelEstimate", { db: rounded });
 }
 
 export function percent(fraction: number): string {

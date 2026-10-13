@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0] — 2026-10-13
+
+### Added
+
+- The sound level as big pixel digits ("72 dB", 56 px tall; "~" marks an estimate) instead of small text.
+- A peak-hold line in the level meter: it stays at the loudest recent level for two seconds, then falls slowly.
+- ?demo=1 shows a made-up level without microphone.
+
+### Changed
+
+- Images are written at most every 700 ms and only when their picture changes; the body shows three rows.
+- The page is created once per run and later only rebuilt (images are resent after every rebuild).
+
 ## [0.3.3] — 2026-10-13
 
 ### Changed

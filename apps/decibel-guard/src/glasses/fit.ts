@@ -1,13 +1,13 @@
 /**
- * Text budget on the G2 (576 x 288): one header row, up to four body rows and
- * one footer row. Header and footer span the full width (~56 characters); the
+ * Text budget on the G2 (576 x 288): one header row, the level as big digits (an image),
+ * up to three body rows and one footer row. Header and footer span the full width (~56 characters); the
  * body sits beside the 96 px level meter, so it gets ~46, and above the dose
- * bar, so it gets four rows. German runs longer
+ * bar, so it gets three rows. German runs longer
  * than English, so every line is cut safely rather than allowed to wrap.
  */
 export const LINE_COLS = 56;
 export const BODY_COLS = 46;
-export const BODY_ROWS = 4;
+export const BODY_ROWS = 3;
 
 export function fit(text: string, max: number): string {
   if (text.length <= max) return text;

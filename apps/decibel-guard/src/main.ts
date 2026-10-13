@@ -7,8 +7,11 @@ import { gestureFromEvent } from "./input/gestures";
 import { buildView, type NoiseView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { createPage, sendImage, updatePage } from "./glasses/render";
+import { quantize } from "./glasses/bitmap";
 import { DOSE_BAR, METER, doseKey, dosePercent, drawDoseBar, drawMeter, meterKey, meterLevel, type MeterState } from "./glasses/gauge";
 import { createImageLane } from "./glasses/lane";
+import { LEVEL_IMAGE, drawLevel, levelKey, type LevelState } from "./glasses/digits";
+import { updatePeak, type Peak } from "./glasses/peak";
 import { encodePng } from "./glasses/pixel";
 import { effectiveOffset, isCalibrated, load, save, type NoiseData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
@@ -52,7 +55,11 @@ async function boot(): Promise<void> {
   let micError = false;
   /** Level as last drawn on the meter, in 3 dB steps; the hysteresis works against it. */
   let meterDb: number | null = null;
-  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData));
+  /** Level as last drawn in the big digits, in whole dB; the hysteresis works against it. */
+  let digitsDb: number | null = null;
+  let peak: Peak | null = null;
+  /** Images are written at most every 700 ms and only when their picture changes. */
+  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
 
   const displayLevel = (): number | null =>
     smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, effectiveOffset(data));
@@ -72,9 +79,14 @@ async function boot(): Promise<void> {
    */
   const requestImages = (): void => {
     if (!pageReady || closed) return;
-    meterDb = listening ? meterLevel(meterDb, displayLevel()) : null;
-    const meter: MeterState = { listening, level: meterDb, criterionDb: data.dose.criterionDb };
+    const shown = displayLevel();
+    meterDb = listening ? meterLevel(meterDb, shown) : null;
+    digitsDb = listening ? quantize(digitsDb, shown, 1) : null;
+    peak = listening ? updatePeak(peak, shown, Date.now()) : null;
+    const meter: MeterState = { listening, level: meterDb, criterionDb: data.dose.criterionDb, peak: peak ? meterLevel(null, peak.db) : null };
     lane.request(METER, meterKey(meter), () => encodePng(drawMeter(meter)));
+    const digits: LevelState = { listening, db: digitsDb, calibrated: isCalibrated(data) };
+    lane.request(LEVEL_IMAGE, levelKey(digits), () => encodePng(drawLevel(digits)));
     const percent = dosePercent(dose.fraction);
     lane.request(DOSE_BAR, doseKey(percent), () => encodePng(drawDoseBar(percent)));
   };
@@ -238,6 +250,18 @@ async function boot(): Promise<void> {
   });
 
   tick = setInterval(() => { void draw(); }, 1000);
+
+  // ?demo=1 (simulator, screenshots): a made-up level that swells and fades, no microphone.
+  if (typeof location !== "undefined" && new URLSearchParams(location.search).get("demo") === "1") {
+    listening = true;
+    const started = Date.now();
+    setInterval(() => {
+      if (closed) return;
+      const seconds = (Date.now() - started) / 1000;
+      smoothedDbfs = -60 + 14 * Math.sin(seconds / 4) + 4 * Math.sin(seconds * 1.7);
+      void draw();
+    }, 500);
+  }
 
   mountPhoneUi({
     getData: () => data,

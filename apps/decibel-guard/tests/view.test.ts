@@ -37,21 +37,16 @@ describe("listening", () => {
     expect(view.footer).toContain("MIC");
   });
 
-  it("marks an uncalibrated reading so it is not mistaken for SPL", () => {
-    const view = buildView(quiet, DEFAULT_DOSE, { ...listening, calibrated: false });
-    expect(view.body[0]).toBe("about 75 dB");
-  });
-
-  it("shows a plain level once calibrated", () => {
-    expect(buildView(quiet, DEFAULT_DOSE, listening).body[0]).toBe("75 dB");
-  });
-
-  it("waits for audio rather than showing a fake zero", () => {
-    expect(buildView(quiet, DEFAULT_DOSE, { ...listening, level: null }).body[0]).toBe("listening…");
+  it("leaves the level to the big digits: no level text row, calibrated or not", () => {
+    // The number is a picture (digits.ts); see graphic.test.ts for its label and the estimate mark.
+    for (const calibrated of [true, false]) for (const level of [75, null]) {
+      const view = buildView(quiet, DEFAULT_DOSE, { ...listening, calibrated, level });
+      expect(view.body.join(" ")).not.toMatch(/dB/);
+    }
   });
 
   it("stays minimal while the dose is zero", () => {
-    expect(buildView(quiet, DEFAULT_DOSE, listening).body).toHaveLength(1);
+    expect(buildView(quiet, DEFAULT_DOSE, listening).body).toHaveLength(0);
     expect(buildView(quiet, DEFAULT_DOSE, listening).header).toBe("");
   });
 });

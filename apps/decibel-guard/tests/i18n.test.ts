@@ -118,7 +118,7 @@ describe("first run", () => {
     expect(effectiveOffset(EMPTY_DATA)).toBe(ESTIMATED_OFFSET);
     expect(effectiveOffset({ ...EMPTY_DATA, calibrationOffset: 104 })).toBe(104);
     const view = buildView(createDose(), DEFAULT_DOSE, { listening: true, level: 72.4, calibrated: false, locale: "de" });
-    expect(view.body[0]).toBe("etwa 72 dB");
+    expect(view.body).toEqual([]);
   });
 
   it("says what to do when the microphone is refused", () => {

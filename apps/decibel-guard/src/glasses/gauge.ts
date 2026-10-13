@@ -16,7 +16,7 @@ import { columnDivider, createBitmap, drawIcon, drawText, fillRect, MAX_LEVEL, q
  */
 
 export const METER = { id: 4, name: "pixel-icon", x: 0, y: 36, width: 96, height: 144 } as const;
-export const DOSE_BAR = { id: 5, name: "dose-bar", x: 104, y: 164, width: 288, height: 80 } as const;
+export const DOSE_BAR = { id: 5, name: "dose-bar", x: 104, y: 184, width: 288, height: 66 } as const;
 
 /** Level is shown in 3 dB steps: one step is one halving of the permitted time. */
 export const LEVEL_STEP_DB = 3;
@@ -47,10 +47,12 @@ export interface MeterState {
   /** Quantised level, or null before audio arrives. */
   readonly level: number | null;
   readonly criterionDb: number;
+  /** Peak-hold line in 3 dB steps, or null. */
+  readonly peak?: number | null;
 }
 
 export function meterKey(state: MeterState): string {
-  return state.listening ? `on:${state.level ?? "-"}:${state.criterionDb}` : "icon";
+  return state.listening ? `on:${state.level ?? "-"}:${state.criterionDb}:${state.peak ?? "-"}` : "icon";
 }
 
 /** Bar geometry inside the meter bitmap. */
@@ -72,6 +74,10 @@ export function drawMeter(state: MeterState): Bitmap {
     // Below the criterion the fill is dimmer; at or above it, full brightness.
     fillRect(bitmap, BAR.x, top, BAR.width, BAR.bottom - top + 1, state.level >= state.criterionDb ? MAX_LEVEL : 9);
   }
+  // Peak hold: a thin line at the loudest recent level, wider than the bar so it shows over the fill.
+  if (state.peak !== null && state.peak !== undefined) {
+    fillRect(bitmap, BAR.x - 4, meterY(state.peak) - 1, BAR.width + 8, 2, MAX_LEVEL);
+  }
   const tick = meterY(state.criterionDb);
   fillRect(bitmap, BAR.x - 8, tick - 1, BAR.width + 16, 2, MAX_LEVEL);
   // The tick stays visible across a full bar.
@@ -85,7 +91,7 @@ export function doseKey(percent: number): string {
 }
 
 /** Track geometry inside the dose bitmap: 0 % at `left`, 100 % at `right`. */
-const TRACK = { left: 2, right: 246, top: 12, height: 36 } as const;
+const TRACK = { left: 2, right: 246, top: 8, height: 36 } as const;
 const OVER = { x: 256, width: 30 } as const;
 
 /** Pixel column of a dose percentage on the track (clamped to 0…100). */
@@ -109,7 +115,7 @@ export function drawDoseBar(percent: number, warnPercent: number = WARN_PERCENT)
     fillRect(bitmap, OVER.x + 7, top + height / 2 - 2, OVER.width - 14, 4, 0);
     fillRect(bitmap, OVER.x + OVER.width / 2 - 2, top + 9, 4, height - 18, 0);
   } else strokeRect(bitmap, OVER.x, top - 2, OVER.width, height + 4, 3);
-  const labelY = top + height + 12;
+  const labelY = top + height + 9;
   const warnLabel = `${warnPercent}%`;
   drawText(bitmap, warnLabel, marker - Math.floor(textWidth(warnLabel, 2) / 2), labelY, 2, 10);
   drawText(bitmap, "100%", right - textWidth("100%", 2), labelY, 2, 10);

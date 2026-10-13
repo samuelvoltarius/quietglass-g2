@@ -132,10 +132,11 @@ describe("decibelguard loop", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.shutdown.modes).toEqual([1]);
     expect(fake.mic).toEqual([true, false, true]);
-    const writesAtCancel = fake.writes.count;
+    const writesAtCancel = fake.writes.count + fake.images.length;
     fake.audio(20000);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
+    // The level is a picture now, so measuring shows up as image writes.
+    expect(fake.writes.count + fake.images.length).toBeGreaterThan(writesAtCancel);
   });
 
   it("leaves the microphone off on cancel when it was off before", async () => {
@@ -180,12 +181,12 @@ describe("decibelguard loop", () => {
     expect(fake.texts.at(-1)).toContain("● MIC");
   });
 
-  it("draws the meter and the dose bar once, and not again while nothing changes", async () => {
+  it("draws the meter, the level digits and the dose bar once, and not again while nothing changes", async () => {
     const fake = await boot();
     await vi.advanceTimersByTimeAsync(5000);
-    expect([...fake.images].sort()).toEqual(["dose-bar", "pixel-icon"]);
+    expect([...fake.images].sort()).toEqual(["dose-bar", "level-digits", "pixel-icon"]);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(fake.images).toHaveLength(2);
+    expect(fake.images).toHaveLength(3);
   });
 
   it("keeps updating text while an image transfer is slow", async () => {
@@ -203,7 +204,7 @@ describe("decibelguard loop", () => {
     expect(fake.texts.at(-1)).toContain("●");
   });
 
-  it("sends the meter at most every few seconds while the level moves", async () => {
+  it("sends each picture at most every 700 ms while the level moves", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(5000);
@@ -212,9 +213,11 @@ describe("decibelguard loop", () => {
       fake.audio(i % 2 === 0 ? 500 : 20_000);
       await vi.advanceTimersByTimeAsync(100);
     }
-    // 10 s of a level jumping every block: at most one meter write per 3 s (+ dose bar steps).
-    const meterWrites = fake.images.slice(start).filter((name) => name === "pixel-icon").length;
-    expect(meterWrites).toBeGreaterThan(0);
-    expect(meterWrites).toBeLessThanOrEqual(4);
+    // 10 s of a level jumping every block: at most one write per 700 ms and picture.
+    for (const name of ["pixel-icon", "level-digits"]) {
+      const writes = fake.images.slice(start).filter((n) => n === name).length;
+      expect(writes, name).toBeGreaterThan(0);
+      expect(writes, name).toBeLessThanOrEqual(15);
+    }
   });
 });
