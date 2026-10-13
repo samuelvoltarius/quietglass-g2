@@ -72,7 +72,7 @@ describe("the four pages", () => {
     expect(view.body.slice(0, 3)).toEqual(["M 31 Andromeda", "Ha · 180 s · Bild 23/60", "noch 1:05 · Smart Exposure"]);
     expect(view.body[4]).toBe('Kamera -10,0 °C · Guiding 0,52"');
     expect(view.body[5]).toBe("Flip in 41 min · Höhe 64°");
-    expect(view.footer).toBe("1/4 · wischen · tippen = steuern · 2× = Ende");
+    expect(view.footer).toBe("1/4 · Wischen = Seite · Tippen = steuern · 2× = Ende");
   });
 
   it("an alert takes the header on every page", async () => {

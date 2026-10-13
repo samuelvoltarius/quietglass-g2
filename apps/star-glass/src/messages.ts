@@ -108,7 +108,7 @@ export const messages: Messages = {
     "g.setup.1": "Noch keine Bridge eingerichtet.",
     "g.setup.2": "Adresse am Handy in der Even-App eintragen.",
 
-    "g.footer": "{page}/4 · wischen · tippen = {tap} · 2× = Ende",
+    "g.footer": "{page}/{pages} · Wischen = Seite · Tippen = {tap} · 2× = Ende",
     "g.tap.control": "steuern",
     "g.tap.refresh": "neu",
     "g.footer.setup": "2× = Ende",
@@ -120,10 +120,11 @@ export const messages: Messages = {
     "g.control.confirm.stop": "Nochmal tippen = ANHALTEN bestätigen",
     "g.control.confirm.start": "Nochmal tippen = Fortsetzen bestätigen",
     "g.control.sending": "sende …",
-    "g.control.footer": "wischen = wählen · tippen = ok · 2× = zurück",
+    "g.control.footer": "Wischen = wählen · Tippen = ok · 2× = zurück",
     "g.sent.stop": "Sequenz angehalten",
     "g.sent.start": "Sequenz fortgesetzt",
     "g.notSent": "nicht gesendet: {reason}",
+    "g.unknownResult": "Ergebnis unklar – Status wird geprüft",
 
     "p.lede": "Der Stand deiner N.I.N.A.-Nacht auf der Brille – über eine kleine Bridge am Aufnahme-Rechner.",
     "p.bridge": "Bridge",
@@ -265,7 +266,7 @@ export const messages: Messages = {
     "g.setup.1": "No bridge set up yet.",
     "g.setup.2": "Enter its address in the Even app on phone.",
 
-    "g.footer": "{page}/4 · swipe · tap = {tap} · 2× = close",
+    "g.footer": "{page}/{pages} · swipe = page · tap = {tap} · 2× = close",
     "g.tap.control": "control",
     "g.tap.refresh": "refresh",
     "g.footer.setup": "2× = close",
@@ -281,6 +282,7 @@ export const messages: Messages = {
     "g.sent.stop": "sequence stopped",
     "g.sent.start": "sequence resumed",
     "g.notSent": "not sent: {reason}",
+    "g.unknownResult": "result unclear – checking the status",
 
     "p.lede": "Your N.I.N.A. imaging night on the glasses – through a small bridge on the imaging computer.",
     "p.bridge": "Bridge",

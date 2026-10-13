@@ -116,7 +116,7 @@ function sequenceWord(state: ViewState, s: OnlineStatus): string {
 function footer(state: ViewState): string {
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
   const tap = controlRows(state.status).length > 1 && state.connection.kind === "ok" ? L("g.tap.control") : L("g.tap.refresh");
-  return fit(L("g.footer", { page: PAGES.indexOf(state.page) + 1, tap }), ROW_WIDTH);
+  return fit(L("g.footer", { page: PAGES.indexOf(state.page) + 1, pages: PAGES.length, tap }), ROW_WIDTH);
 }
 
 const rows = (list: readonly string[], width: number): string[] => list.slice(0, MAX_BODY_ROWS).map((row) => fit(row, width));

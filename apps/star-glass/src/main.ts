@@ -4,6 +4,7 @@ import { createDemoNina, type DemoScene } from "./nina/demo";
 import type { Command, StarStatus } from "./nina/status";
 import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
+import { lifecycleFromEvent } from "./lifecycle";
 import { t } from "./messages";
 import { installPage, updatePage, type Preview } from "./glasses/render";
 import { bitmapKey } from "./glasses/gfx";
@@ -15,7 +16,7 @@ import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.1.0";
+export const BUILD = "0.1.1";
 
 const params = new URLSearchParams(globalThis.location?.search ?? "");
 const DEMO = params.get("demo") === "1";
@@ -28,6 +29,8 @@ const START_PAGE = Math.max(0, Math.min(PAGES.length - 1, Number(params.get("pag
 const POLL_MS = 4_000;
 const ARM_MS = 6_000;
 const MESSAGE_MS = 5_000;
+/** The page on the glasses survives a restart of the app (phone locked, app unloaded). */
+const PAGE_KEY = "quietglass.starglass.page.v1";
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -56,6 +59,8 @@ async function boot(): Promise<void> {
   let preview: Preview | null = null;
   let fetchingPreview = "";
   let ready = false;
+  /** Left through the system: no polling, no ticking, no drawing until the app is back. */
+  let backgrounded = false;
 
   const say = (text: string): void => {
     message = text;
@@ -102,7 +107,7 @@ async function boot(): Promise<void> {
 
   /** One draw at a time; requests meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
-    if (closed || !ready) return Promise.resolve();
+    if (closed || !ready || backgrounded) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
       try {
@@ -163,7 +168,7 @@ async function boot(): Promise<void> {
 
   const poll = async (): Promise<void> => {
     const client = api;
-    if (polling || closed || !client) return;
+    if (polling || closed || backgrounded || !client) return;
     polling = true;
     const startedIn = generation;
     try {
@@ -198,7 +203,10 @@ async function boot(): Promise<void> {
     } catch (error) {
       if (closed) return;
       const problem = toApiError(error);
-      say(t(locale, "g.notSent", { reason: errorReason(locale, problem.code, problem.status) }));
+      // Without an answer the command may well have run: say so, and look at N.I.N.A. at once.
+      say(problem.code === "timeout"
+        ? t(locale, "g.unknownResult")
+        : t(locale, "g.notSent", { reason: errorReason(locale, problem.code, problem.status) }));
     } finally {
       sending = false;
     }
@@ -239,6 +247,7 @@ async function boot(): Promise<void> {
   const turn = (delta: number): void => {
     const index = (PAGES.indexOf(page) + delta + PAGES.length) % PAGES.length;
     page = PAGES[index] ?? "overview";
+    if (!DEMO) void bridge.setLocalStorage(PAGE_KEY, page).catch(() => false);
     void loadPreview();
   };
 
@@ -288,10 +297,40 @@ async function boot(): Promise<void> {
     void draw();
   };
 
+  const startTick = (): void => {
+    clearInterval(tickTimer);
+    // The sign animates and the exposure counts down; drawOnce writes only what changed.
+    tickTimer = setInterval(() => { void draw(); }, ICON_STEP_MS);
+  };
+  const goBackground = (): void => {
+    backgrounded = true;
+    clearInterval(pollTimer);
+    clearInterval(tickTimer);
+    pollTimer = undefined;
+    tickTimer = undefined;
+    disarm();
+    screen = "pages";
+  };
+  const comeBack = (): void => {
+    backgrounded = false;
+    if (!ready) return;
+    pageReady = false;
+    lastView = null;
+    startTick();
+    void draw();
+    startPolling();
+  };
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { comeBack(); return; }
+    if (lifecycle === "background") { goBackground(); return; }
+    if (lifecycle === "exit") { goBackground(); shutDown(); return; }
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
+    // A gesture means the app is on the glasses again, even if no "foreground" came first.
+    if (backgrounded) { comeBack(); return; }
     // Before the first page exists only "leave" means anything.
     if (!ready) { if (parsed.gesture === "doubleClick") requestExit(); return; }
     if (screen === "control") onControl(parsed.gesture);
@@ -308,14 +347,16 @@ async function boot(): Promise<void> {
 
   settings = await loadSettings(bridge);
   locale = await resolveLocale(bridge);
+  if (!DEMO && params.get("page") === null) {
+    const saved = await bridge.getLocalStorage(PAGE_KEY).catch(() => "");
+    if (PAGES.includes(saved as Page)) page = saved as Page;
+  }
   api = makeApi();
   connection = api ? { kind: "loading" } : { kind: "setup" };
   ready = true;
 
   await draw();
-  startPolling();
-  // The sign animates and the exposure counts down; drawOnce writes only what changed.
-  tickTimer = setInterval(() => { void draw(); }, ICON_STEP_MS);
+  if (!backgrounded) { startPolling(); startTick(); }
 
   const phone = mountPhoneUi({
     getSettings: () => settings,

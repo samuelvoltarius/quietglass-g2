@@ -37,7 +37,7 @@ function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, exit, pages,
+    bridge, exit, pages, storage,
     header: () => screen.get(1) ?? "",
     body: () => screen.get(2) ?? "",
     footer: () => screen.get(3) ?? "",
@@ -169,5 +169,29 @@ describe("Star Glass lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Bridge: nicht erreichbar"));
     expect(fake.header()).toBe("STAR GLASS · keine Verbindung");
+  });
+
+  it("comes back on the same page after a restart (phone locked, app unloaded)", async () => {
+    const first = fakeGlasses(configured());
+    await boot(first);
+    await vi.waitFor(() => expect(first.header()).toBe("ÜBERSICHT · läuft"));
+    first.emit(DOWN);
+    await vi.waitFor(() => expect(first.header()).toBe("GUIDING & FOKUS · läuft"));
+    const second = fakeGlasses(Object.fromEntries(first.storage));
+    await boot(second);
+    await vi.waitFor(() => expect(second.header()).toBe("GUIDING & FOKUS · läuft"));
+  });
+
+  it("stops asking N.I.N.A. in the background and starts again on return", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(server.fetchMock).toHaveBeenCalled());
+    fake.emit(5);
+    const calls = server.fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(server.fetchMock.mock.calls.length).toBe(calls);
+    fake.emit(4);
+    await vi.waitFor(() => expect(server.fetchMock.mock.calls.length).toBeGreaterThan(calls));
   });
 });

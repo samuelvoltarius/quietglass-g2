@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1] — 2026-10-13
+
+### Fixed
+
+- The page on the glasses survives a restart of the app.
+- A command without an answer says "Ergebnis unklar – Status wird geprüft" and checks N.I.N.A. at once.
+- Leaving through the system stops polling and the animation; coming back rebuilds the page.
+
+### Changed
+
+- Footer counts the real number of pages and names the swipe: `1/4 · Wischen = Seite · Tippen = steuern · 2× = Ende`.
+
 ## [0.1.0] — 2026-10-13
 
 ### Added
