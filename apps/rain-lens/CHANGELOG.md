@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.2] — 2026-10-13
+
+### Added
+
+- The forecast refreshes itself every 15 minutes (and on return to the app when it is older); the footer says how old it is ("Stand 14:05").
+
+### Fixed
+
+- The page on the glasses (now / hours / days / radar) survives a restart of the app.
+- Leaving through the system stops the radar loop and the refresh; coming back rebuilds the page.
+
+### Changed
+
+- Footer in one style: `Tippen = neu · Wischen = Seite · 2× = Ende`.
+
 ## [0.4.1] — 2026-10-13
 
 ### Added

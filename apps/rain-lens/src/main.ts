@@ -7,6 +7,7 @@ import { createRadarPage, createTextPage, sendImage, updateRadarText, updateText
 import type { RadarSession } from "./radar/session";
 import { languageSelect, rememberLocale, resolveLocale, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent } from "./input/gestures";
+import { lifecycleFromEvent } from "./lifecycle";
 import { messages } from "./messages";
 import { fetchForecast, parseCoordinates } from "./rain/api";
 import { searchPlaces, usableQuery, type Place } from "./rain/geocode";
@@ -29,6 +30,16 @@ const DEMO_PLACE = { latitude: 47.8095, longitude: 13.055 };
 const FULL_WIDTH = 56;
 /** Longest wait for the phone's position before the app carries on without it. */
 const LOCATION_TIMEOUT_MS = 10_000;
+/** A forecast older than this is fetched again on its own (and on return to the app). */
+const REFRESH_MS = 15 * 60_000;
+/** The page on the glasses (now / hours / days / radar) survives a restart of the app. */
+const PAGE_KEY = "rainlens.page";
+
+/** "14:05" in local time. */
+function hhmm(time: number): string {
+  const d = new Date(time);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -37,7 +48,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
-  await appStore.init(bridge, ["quietglass.locale", ...Object.values(KEYS)]);
+  await appStore.init(bridge, ["quietglass.locale", PAGE_KEY, ...Object.values(KEYS)]);
   /** Storage view for the helpers in rain/location.ts (sync reads from the KV mirror). */
   const store: Pick<Storage, "getItem"> = { getItem: (key: string) => appStore.get(key) };
   let locale = await resolveLocale(bridge); setLocale(locale); let forecast: WeatherForecast = demoWeather(); let loading = false; let failure: ReturnType<typeof errorKey> | null = null; let pageReady = false; let last = ""; let page = 0;
@@ -64,6 +75,12 @@ async function boot(): Promise<void> {
     });
   }
   const pageCount = radar ? 4 : 3;
+  { const saved = Number(appStore.get(PAGE_KEY) ?? "0"); page = Number.isInteger(saved) && saved >= 0 && saved < pageCount ? saved : 0; }
+  /** When the forecast on screen was fetched; 0 = never. */
+  let fetchedAt = 0;
+  /** In the background (left through the system): no drawing, no radar loop, no refresh timer. */
+  let backgrounded = false;
+  let refreshTimer: ReturnType<typeof setInterval> | undefined;
   const onRadar = (): boolean => radar !== null && page === 3;
   const condition = (code: number): string => t(weatherKind(code));
   const errorText = (): string => failure ? t(failure.key, { status: failure.status ?? "" }) : "";
@@ -80,9 +97,16 @@ async function boot(): Promise<void> {
   const sideLines = (): string[] => { const summary = notice() ? null : chartSummary(forecast.hourly); return summary ? [t("chance"), `${summary.rain}% ${clock(summary.time, locale)}`, `${summary.high}° / ${summary.low}°`].map((line) => fit(line, SIDE_WIDTH)) : []; };
   /** Without a real forecast the glasses say what to do next instead of showing sample numbers that look real. */
   const notice = (): string | null => { const key = noticeKey(status, forecast.source); return key ? t(key) : null; };
+  /** Gestures, and how old the forecast is when it is a real one and there is room. */
+  const footerLine = (): string => {
+    const controls = t("controls");
+    if (forecast.source !== "live" || fetchedAt === 0) return controls;
+    const withTime = `${t("asOf", { time: hhmm(fetchedAt) })} · ${controls}`;
+    return withTime.length <= FULL_WIDTH ? withTime : controls;
+  };
   const view = (): TextView => {
     const text = notice(); const tag = forecast.source === "live" ? (where?.label ?? "LIVE").toUpperCase() : t("sampleTag");
-    return { header: fit(text ? "RAINLENS" : `RAINLENS  ${[t("now"), t("hourly"), t("days")][page]}  ${tag}`, FULL_WIDTH), body: text ? glassesBody(text.split("\n"), "", CHART_ROWS) : glassesBody(page === 0 ? currentLines() : page === 1 ? hourlyLines() : dailyLines(), errorText(), CHART_ROWS), side: sideLines(), footer: fit(loading ? t("updating") : t("controls"), FULL_WIDTH) };
+    return { header: fit(text ? "RAINLENS" : `RAINLENS  ${[t("now"), t("hourly"), t("days")][page]}  ${tag}`, FULL_WIDTH), body: text ? glassesBody(text.split("\n"), "", CHART_ROWS) : glassesBody(page === 0 ? currentLines() : page === 1 ? hourlyLines() : dailyLines(), errorText(), CHART_ROWS), side: sideLines(), footer: fit(loading ? t("updating") : footerLine(), FULL_WIDTH) };
   };
   /**
    * Images go through the lane and are never awaited: the icon column changes
@@ -114,7 +138,7 @@ async function boot(): Promise<void> {
     radar.requestImages(radarLane);
   };
   const drawNow = async (): Promise<void> => {
-    if (closed) return;
+    if (closed || backgrounded) return;
     if (onRadar()) { await drawRadar(); return; }
     if (installed !== "weather") { pageReady = false; last = ""; }
     const text = view(); const signature = JSON.stringify(text);
@@ -146,7 +170,7 @@ async function boot(): Promise<void> {
     where = await resolveLocation(storedSources(store, phoneFix));
     if (!where) status = "noLocation";
     else {
-      try { forecast = await fetchForecast(where.position); status = "live"; }
+      try { forecast = await fetchForecast(where.position); status = "live"; fetchedAt = Date.now(); }
       catch (cause) { failure = errorKey(cause); if (forecast.source === "demo") status = "offline"; }
     }
     loading = false; last = ""; await draw(); renderPhone();
@@ -185,10 +209,40 @@ async function boot(): Promise<void> {
     });
   };
   // Double tap opens the system exit dialog; the app keeps running until the user confirms.
-  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; lane.close(); radarLane.close(); radar?.stop(); } }, "rainlens");
+  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; clearInterval(refreshTimer); lane.close(); radarLane.close(); radar?.stop(); } }, "rainlens");
+  const stale = (): boolean => Date.now() - fetchedAt >= REFRESH_MS;
+  const startRefreshTimer = (): void => {
+    clearInterval(refreshTimer);
+    // Checked every minute, so a phone that slept through the 15 minutes catches up soon after.
+    refreshTimer = setInterval(() => { if (!closed && !backgrounded && !loading && stale()) void refresh(); }, 60_000);
+  };
+  const goBackground = (): void => {
+    backgrounded = true;
+    clearInterval(refreshTimer);
+    refreshTimer = undefined;
+    radar?.stop();
+  };
+  const comeBack = (): void => {
+    backgrounded = false;
+    pageReady = false; last = ""; installed = null;
+    startRefreshTimer();
+    if (onRadar()) radar?.start();
+    void draw();
+    if (stale() && !loading) void refresh();
+  };
+  const onLifecycle = (step: ReturnType<typeof lifecycleFromEvent>): boolean => {
+    if (step === null) return false;
+    if (step === "foreground") comeBack();
+    else if (step === "background") goBackground();
+    else { goBackground(); closed = true; lane.close(); radarLane.close(); }
+    return true;
+  };
   // Gestures first: nothing native (page creation, location) may delay them, or the glasses stay deaf.
-  bridge.onEvenHubEvent((event) => { if (closed) return; const gesture = gestureFromEvent(event); if (!gesture) return; if (gesture.gesture === "doubleClick") { void requestExit(); return; } if (gesture.gesture === "click") { if (onRadar() && radar) radar.reload(); else void refresh(); return; } if (gesture.gesture.startsWith("scroll")) { const was = onRadar(); page = gesture.gesture === "scrollDown" ? (page + 1) % pageCount : (page + pageCount - 1) % pageCount; last = ""; if (was && !onRadar()) radar?.stop(); if (!was && onRadar()) radar?.start(); void draw(); } });
+  bridge.onEvenHubEvent((event) => { if (closed) return; if (onLifecycle(lifecycleFromEvent(event))) return; const gesture = gestureFromEvent(event); if (!gesture) return; if (backgrounded) { comeBack(); return; } if (gesture.gesture === "doubleClick") { void requestExit(); return; } if (gesture.gesture === "click") { if (onRadar() && radar) radar.reload(); else void refresh(); return; } if (gesture.gesture.startsWith("scroll")) { const was = onRadar(); page = gesture.gesture === "scrollDown" ? (page + 1) % pageCount : (page + pageCount - 1) % pageCount; last = ""; appStore.set(PAGE_KEY, String(page)); if (was && !onRadar()) radar?.stop(); if (!was && onRadar()) radar?.start(); void draw(); } });
   bridge.onDeviceStatusChanged((status) => { if (status?.connectType === "connected" && !closed) { pageReady = false; last = ""; void draw(); } });
+  // Back on the radar page after a restart: its loop starts like after a swipe.
+  if (onRadar()) radar?.start();
+  startRefreshTimer();
   await draw(); renderPhone(); void refresh();
 }
 void boot().catch((error: unknown) => console.error("[rainlens]", error));

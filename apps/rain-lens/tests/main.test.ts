@@ -21,6 +21,9 @@ const forecast = {
   daily: { time: ["2026-10-07"], temperature_2m_min: [8], temperature_2m_max: [18], precipitation_probability_max: [75], weather_code: [61], sunrise: ["2026-10-07T07:08"], sunset: ["2026-10-07T18:42"] },
 };
 
+/** The app's SDK storage; shared between two boots of one test, as on the phone. */
+const kv = new Map<string, string>();
+
 function fakeBridge(imageDelayMs = 0) {
   let handler: ((event: unknown) => void) | undefined;
   const images: string[] = [];
@@ -28,6 +31,8 @@ function fakeBridge(imageDelayMs = 0) {
   const shutdown = { confirm: true, fail: false, modes: [] as (number | undefined)[] };
   const bridge = {
     getAppLocation: async () => ({ latitude: 47.68, longitude: 13.1 }),
+    getLocalStorage: async (key: string) => kv.get(key) ?? "",
+    setLocalStorage: async (key: string, value: string) => { kv.set(key, value); return true; },
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async (page: { textObject?: { containerName?: string; content?: string }[] }) => { texts.push(...(page.textObject ?? []).map((part) => ({ name: part.containerName ?? "", content: part.content ?? "" }))); return 0; },
     textContainerUpgrade: async (update: { containerName?: string; content?: string }) => { texts.push({ name: update.containerName ?? "", content: update.content ?? "" }); return true; },
@@ -50,6 +55,7 @@ function fakeBridge(imageDelayMs = 0) {
 describe("rainlens images", () => {
   beforeEach(() => {
   resetGestureDedupe();
+    kv.clear();
     vi.useFakeTimers();
     const store = new Map<string, string>([["quietglass.locale", "en"]]);
     vi.stubGlobal("localStorage", { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } });
@@ -143,5 +149,46 @@ describe("rainlens images", () => {
     vi.restoreAllMocks();
     expect(unhandled).toEqual([]);
     expect(fake.texts.length).toBeGreaterThan(textsAtFailure);
+  });
+
+  const header = (fake: ReturnType<typeof fakeBridge>): string => fake.texts.filter((part) => part.name === "header").at(-1)?.content ?? "";
+  const footer = (fake: ReturnType<typeof fakeBridge>): string => fake.texts.filter((part) => part.name === "footer").at(-1)?.content ?? "";
+
+  it("says how old the forecast is", async () => {
+    const fake = await boot();
+    expect(footer(fake)).toMatch(/^as of \d\d:\d\d · tap = refresh/);
+  });
+
+  it("comes back on the same page after a restart", async () => {
+    const first = await boot();
+    first.emit(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(header(first)).toContain("HOURLY");
+    const second = await boot();
+    expect(header(second)).toContain("HOURLY");
+  });
+
+  it("draws nothing in the background and rebuilds, with a fresh forecast, on return", async () => {
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => { fetches += 1; return new Response(JSON.stringify(forecast)); });
+    const fake = await boot();
+    const before = fetches;
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    const texts = fake.texts.length;
+    expect(fetches).toBe(before);
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.texts.length).toBeGreaterThan(texts);
+    expect(fetches).toBeGreaterThan(before);
+  });
+
+  it("fetches the forecast again on its own every 15 minutes", async () => {
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => { fetches += 1; return new Response(JSON.stringify(forecast)); });
+    await boot();
+    const before = fetches;
+    await vi.advanceTimersByTimeAsync(16 * 60_000);
+    expect(fetches).toBeGreaterThan(before);
   });
 });
