@@ -9,7 +9,8 @@ import { createPage, sendProgressBar, sendStepImage, updatePage } from "./glasse
 import { browserMeasure, layoutStep, sameLayout, type Measure, type StepLayout } from "./glasses/stepimage";
 import { drawProgressBar, sameProgressBar, type ProgressBarState } from "./glasses/progressbar";
 import { createImageSync } from "./glasses/image-sync";
-import { activeList, load, save, type FlowListData } from "./storage/persist";
+import { activeList, load, loadRun, restoreRun, save, saveRun, type FlowListData } from "./storage/persist";
+import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
@@ -24,7 +25,9 @@ async function boot(): Promise<void> {
   setLocale(locale);
   let data: FlowListData = await load(bridge, locale);
   let list: Checklist = activeList(data) ?? EMPTY_CHECKLIST;
-  let state: RunState = startRun(list);
+  // After the phone was locked for a while the Even app starts FlowList anew;
+  // the run continues at the step where it was left.
+  let state: RunState = restoreRun(await loadRun(bridge), list) ?? startRun(list);
   let showDetail = false;
   let lastView: FlowView | null = null;
   let pageReady = false;
@@ -110,11 +113,17 @@ async function boot(): Promise<void> {
     return drawing;
   };
 
+  /** Writes the run so a restart (phone locked, app unloaded) continues where it was. */
+  const persistRun = (): void => {
+    void saveRun(bridge, state).catch((error: unknown) => console.warn("[flowlist] saving the run failed:", error));
+  };
+
   const restart = (): void => {
     list = activeList(data) ?? EMPTY_CHECKLIST;
     state = startRun(list);
     showDetail = false;
     lastView = null;
+    persistRun();
   };
 
   /**
@@ -131,13 +140,22 @@ async function boot(): Promise<void> {
   await draw();
 
   let clock: ReturnType<typeof setInterval> | undefined;
+  /** Only the elapsed-time readout changes on its own; it pauses while the app is in the background. */
+  const startClock = (): void => {
+    if (clock !== undefined || closed) return;
+    clock = setInterval(() => { void draw(); }, CLOCK_MS);
+  };
+  const stopClock = (): void => {
+    if (clock !== undefined) clearInterval(clock);
+    clock = undefined;
+  };
 
   /**
    * Double tap asks the system exit dialog. The run carries on while it is
    * open; only a confirmed exit stops the clock and the drawing.
    */
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; clearInterval(clock); },
+    onConfirmed: () => { persistRun(); closed = true; stopClock(); },
   }, "flowlist");
   const close = (): void => {
     if (closed) return;
@@ -146,11 +164,23 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // Left or reopened through the system rather than by a double tap.
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") {
+      pageReady = false;
+      lastView = null;
+      startClock();
+      void draw();
+      return;
+    }
+    if (lifecycle === "background") { persistRun(); stopClock(); return; }
+    if (lifecycle === "exit") { persistRun(); stopClock(); closed = true; return; }
+    if (clock === undefined) startClock();
     const gesture = gestureFromEvent(event, { invertScroll: data.settings.invertScroll });
     if (!gesture) return;
 
     const result = dispatch(list, state, gesture.gesture);
-    state = result.state;
+    if (result.state !== state) { state = result.state; persistRun(); }
 
     for (const effect of result.effects) {
       if (effect.kind === "exit") {
@@ -172,9 +202,8 @@ async function boot(): Promise<void> {
     }
   });
 
-  // Only the elapsed-time readout changes on its own; sameView() drops the
-  // redraw on the ticks where the displayed second has not advanced.
-  clock = setInterval(() => { void draw(); }, CLOCK_MS);
+  // sameView() drops the redraw on the ticks where the displayed second has not advanced.
+  startClock();
 
   mountPhoneUi({
     getData: () => data,

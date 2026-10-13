@@ -157,7 +157,7 @@ function footerText(list: Checklist, state: RunState, now: number, locale: Local
   if (state.awaitingConfirm) hint = t(locale, "g.hint.confirm");
   else if (step?.kind === "choice") hint = t(locale, "g.hint.choice");
   else if (step?.kind === "optional") hint = t(locale, "g.hint.optional");
-  else hint = t(locale, "g.hint.normal");
+  else hint = t(locale, step?.detail ? "g.hint.normalDetail" : "g.hint.normal");
 
   const time = formatDuration(elapsedSeconds(state, now));
   const candidates = [

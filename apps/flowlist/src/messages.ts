@@ -10,7 +10,7 @@ export const messages: Messages = {
     // Glasses
     "g.empty.1": "Noch keine Checkliste.",
     "g.empty.2": "Leg am Handy in FlowList eine an.",
-    "g.empty.footer": "doppeltippen = beenden",
+    "g.empty.footer": "2× = Ende",
     "g.confirm": "WICHTIG – nochmal tippen:",
     "g.next": "danach: {text}",
     "g.done": "Fertig!",
@@ -18,11 +18,12 @@ export const messages: Messages = {
     "g.skipped": "{skipped} ausgelassen",
     "g.took": "Dauer {time}",
     "g.otherList": "Andere Liste? Am Handy auswählen.",
-    "g.finished.footer": "tippen = neu starten · doppeltippen = beenden",
-    "g.hint.confirm": "nochmal tippen = bestätigen",
-    "g.hint.choice": "wischen = wählen · tippen = weiter",
-    "g.hint.optional": "tippen = erledigt · runterwischen = auslassen",
-    "g.hint.normal": "tippen = erledigt",
+    "g.finished.footer": "Tippen = neu starten · 2× = Ende",
+    "g.hint.confirm": "Nochmal tippen = bestätigen",
+    "g.hint.choice": "Wischen = wählen · Tippen = weiter",
+    "g.hint.optional": "Tippen = erledigt · ↓ = auslassen · ↑ = zurück",
+    "g.hint.normal": "Tippen = erledigt · ↑ = zurück",
+    "g.hint.normalDetail": "Tippen = erledigt · ↑ = zurück · Halten = Info",
 
     // Import warnings
     "w.noText": "Einen Schritt ohne Text übersprungen.",
@@ -80,7 +81,7 @@ export const messages: Messages = {
     // Glasses
     "g.empty.1": "No checklist yet.",
     "g.empty.2": "Add one in FlowList on your phone.",
-    "g.empty.footer": "double tap = exit",
+    "g.empty.footer": "2× = close",
     "g.confirm": "CONFIRM:",
     "g.next": "next: {text}",
     "g.done": "Complete.",
@@ -88,11 +89,12 @@ export const messages: Messages = {
     "g.skipped": "{skipped} skipped",
     "g.took": "took {time}",
     "g.otherList": "Another list? Pick it on your phone.",
-    "g.finished.footer": "tap = start over · double tap = exit",
+    "g.finished.footer": "tap = start over · 2× = close",
     "g.hint.confirm": "tap again = confirm",
     "g.hint.choice": "swipe = choose · tap = go",
-    "g.hint.optional": "tap = done · swipe down = skip",
-    "g.hint.normal": "tap = done",
+    "g.hint.optional": "tap = done · ↓ = skip · ↑ = back",
+    "g.hint.normal": "tap = done · ↑ = back",
+    "g.hint.normalDetail": "tap = done · ↑ = back · hold = info",
 
     // Import warnings
     "w.noText": "Skipped a step with no text.",

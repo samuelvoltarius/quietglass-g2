@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1] — 2026-10-13
+
+### Fixed
+
+- The run survives a restart of the app (phone locked for a while, Even app unloaded it): FlowList comes back at the same step with what was done and skipped, instead of step 1. A run older than 12 hours, or of another list, starts fresh.
+- Leaving through the system (not by double tap) is handled: the clock stops in the background, the page is rebuilt on return, a system exit saves the run.
+
+### Changed
+
+- Footers name every gesture in one style: `Tippen = erledigt · ↑ = zurück` (plus `Halten = Info` when the step has details), `2× = Ende`.
+
 ## [0.3.0] — 2026-10-13
 
 ### Added

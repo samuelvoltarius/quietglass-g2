@@ -140,18 +140,18 @@ describe("glasses copy fits the display", () => {
       { id: "b", text: "Sonnencreme", kind: "optional" },
     ] };
     const start = startRun(list, 0);
-    expect(buildView(list, start, { locale: "de" }, 0).footer).toContain("tippen = erledigt");
+    expect(buildView(list, start, { locale: "de" }, 0).footer).toContain("Tippen = erledigt");
     const armed = complete(list, start, "done", 0);
     const view = buildView(list, armed, { locale: "de" }, 0);
     expect(view.body[0]).toBe("WICHTIG – nochmal tippen:");
-    expect(view.footer).toContain("nochmal tippen = bestätigen");
+    expect(view.footer).toContain("Nochmal tippen = bestätigen");
     const optional = complete(list, armed, "done", 0);
-    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("tippen = erledigt · runterwischen = auslassen  ·  0:00");
+    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("Tippen = erledigt · ↓ = auslassen · ↑ = zurück  ·  0:00");
     const done = skip(list, optional, 65_000);
     const finished = buildView(list, done, { locale: "de" }, 65_000);
     expect(finished.headline).toBe("Fertig!");
     expect(finished.body).toContain("1 von 1 erledigt");
-    expect(finished.footer).toBe("tippen = neu starten · doppeltippen = beenden");
+    expect(finished.footer).toBe("Tippen = neu starten · 2× = Ende");
   });
 });
 

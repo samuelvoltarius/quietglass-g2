@@ -20,10 +20,9 @@ const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(do
 
 const KEY = "quietglass.flowlist.v1";
 
-function fakeBridge(stored: Record<string, unknown> | null = null) {
+function fakeBridge(stored: Record<string, unknown> | null = null, storage = new Map<string, string>()) {
   let handler: ((event: unknown) => void) | undefined;
   let statusHandler: ((status: unknown) => void) | undefined;
-  const storage = new Map<string, string>();
   if (stored) storage.set(KEY, JSON.stringify(stored));
   const bridge = {
     getLocalStorage: vi.fn(async (key: string) => storage.get(key) ?? ""),
@@ -41,6 +40,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
     reconnect: () => statusHandler?.({ connectType: "connected" }),
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
+    storage,
   };
 }
 
@@ -224,5 +224,69 @@ describe("flowlist lifecycle", () => {
     await boot(fake);
     const rows = (bodies(fake)[0] ?? "").split("\n");
     expect(rows.length).toBeLessThanOrEqual(4);
+  });
+
+  it("continues the run at the same step after a restart (phone locked, app unloaded)", async () => {
+    const first = fakeBridge(data());
+    await boot(first);
+    first.emit(0);
+    first.emit(0);
+    first.emit(0);
+    await vi.waitFor(() => expect(lastBody(first)).toContain("Step number 5"));
+    await vi.waitFor(() => expect(first.storage.get("quietglass.flowlist.run.v1")).toContain('"currentId":"s4"'));
+
+    const second = fakeBridge(null, new Map(first.storage));
+    await boot(second);
+    // Step 4 is the picture; the body shows the step after it.
+    expect(bodies(second)[0]).toContain("Step number 5");
+  });
+
+  it("a different list on the phone starts its own run instead of restoring", async () => {
+    const first = fakeBridge(data());
+    await boot(first);
+    first.emit(0);
+    await vi.waitFor(() => expect(first.storage.get("quietglass.flowlist.run.v1")).toContain('"currentId":"s2"'));
+    const other = { ...data(), lists: [{ id: "l2", title: "Other", steps: STEPS }], activeId: "l2" };
+    const storage = new Map(first.storage);
+    storage.set(KEY, JSON.stringify(other));
+    const second = fakeBridge(null, storage);
+    await boot(second);
+    expect(bodies(second)[0]).toContain("Step number 2");
+  });
+
+  it("pauses the clock in the background and rebuilds the page when it comes back", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fake = fakeBridge(data());
+      await boot(fake);
+      fake.emit(0);
+      await vi.waitFor(() => expect(fake.storage.get("quietglass.flowlist.run.v1")).toContain('"currentId":"s2"'));
+      fake.bridge.setLocalStorage.mockClear();
+      fake.emit(5);
+      await vi.waitFor(() => expect(fake.bridge.setLocalStorage).toHaveBeenCalled());
+      const calls = drawCount(fake);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(drawCount(fake)).toBe(calls);
+
+      const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+      fake.emit(4);
+      await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 1));
+      expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops drawing after a system exit and keeps the run saved", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    fake.emit(7);
+    await sleep(30);
+    const calls = drawCount(fake);
+    fake.emit(0);
+    await sleep(1200);
+    expect(drawCount(fake)).toBe(calls);
+    expect(fake.storage.get("quietglass.flowlist.run.v1")).toContain('"currentId":"s2"');
   });
 });

@@ -16,7 +16,7 @@ describe("empty state", () => {
     const empty = list();
     const view = buildView(empty, startRun(empty));
     expect(view.body.join(" ")).toContain("on your phone");
-    expect(view.footer).toContain("double tap = exit");
+    expect(view.footer).toContain("2× = close");
   });
 });
 
@@ -111,7 +111,7 @@ describe("finished view", () => {
 
   it("offers the way out", () => {
     const one = list(step("a"));
-    expect(buildView(one, complete(one, startRun(one))).footer).toContain("exit");
+    expect(buildView(one, complete(one, startRun(one))).footer).toContain("2× = close");
   });
 });
 
