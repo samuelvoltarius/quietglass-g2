@@ -246,6 +246,25 @@ const APPS = {
       "............",
     ],
   },
+  "sugar-glass": {
+    name: "Sugar Glass",
+    tagline: ["Your Nightscout glucose at a glance on your G2.", "Dein Zucker aus Nightscout auf einen Blick."],
+    // A drop with a highlight.
+    icon: [
+      ".....##.....",
+      ".....##.....",
+      "....####....",
+      "....####....",
+      "...######...",
+      "..########..",
+      "..#.######..",
+      ".##.#######.",
+      ".##.#######.",
+      ".###.######.",
+      "..########..",
+      "...######...",
+    ],
+  },
   "status-glass": {
     name: "Status Glass",
     tagline: ["Your servers' health and alerts on your glasses.", "Zustand und Warnungen deiner Server auf der Brille."],

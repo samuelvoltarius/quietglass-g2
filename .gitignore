@@ -34,3 +34,6 @@ selfhost/services/valhalla/.env
 
 # ECAPA speaker model (downloaded/exported locally, ~160 MB)
 selfhost/services/whisper/models/
+
+# Private notes with infrastructure details (never commit)
+*-PRIVAT.md

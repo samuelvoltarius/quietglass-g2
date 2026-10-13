@@ -1,0 +1,23 @@
+{
+  "package_id": "glass.quiet.sugarglass",
+  "edition": "202601",
+  "name": "Sugar Glass",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Reads your glucose values, pump status and treatments from your own Nightscout (or the Sugar Glass bridge in front of it) that you enter in the phone app. Read only. No other server is contacted.",
+      "whitelist": [
+        "http://*",
+        "https://*"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en"
+  ]
+}

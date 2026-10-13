@@ -10,6 +10,7 @@
     "shoot-day": "https://my-server.tailnet-name.ts.net:8445",
     "klipper": "https://my-server.tailnet-name.ts.net:8447",
     "star": "https://my-imaging-pc.tailnet-name.ts.net:8460",
+    "sugar": "https://my-server.tailnet-name.ts.net:8462",
     "status": [
       { "name": "Server", "url": "https://my-server.tailnet-name.ts.net:8451" },
       { "name": "Raspberry Pi", "url": "https://my-pi.tailnet-name.ts.net:8451" }

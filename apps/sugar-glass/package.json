@@ -1,0 +1,29 @@
+{
+  "name": "@quietglass/sugar-glass",
+  "version": "0.1.0",
+  "description": "Quietglass Sugar Glass — your Nightscout glucose on the Even G2: big value, trend arrow, 3-hour curve, alerts and pump status",
+  "author": "Quietglass",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "evenhub-simulator --automation-port 9939 http://127.0.0.1:5239/?demo=1",
+    "pack": "evenhub pack app.json dist -o sugar-glass.ehpk",
+    "bridge": "node examples/sugar-bridge.mjs"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

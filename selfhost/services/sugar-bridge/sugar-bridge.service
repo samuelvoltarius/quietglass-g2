@@ -1,0 +1,25 @@
+# Sugar Glass bridge: read-only proxy in front of Nightscout (needs a token with role "readable").
+# System service (next to a Docker Nightscout):
+#   sudo mkdir -p /opt/sugar-bridge
+#   sudo cp ~/quietglass-g2/apps/sugar-glass/examples/sugar-bridge.mjs /opt/sugar-bridge/
+#   sudo install -m 600 /dev/null /opt/sugar-bridge/.env      # then fill it, see .env.example
+#   sudo cp sugar-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now sugar-bridge
+#   tailscale serve --bg --https=8462 http://127.0.0.1:8466     # never "serve reset"
+[Unit]
+Description=Sugar Glass bridge (Nightscout read-only proxy for the G2)
+After=network-online.target docker.service
+
+[Service]
+EnvironmentFile=/opt/sugar-bridge/.env
+ExecStart=/usr/bin/env node /opt/sugar-bridge/sugar-bridge.mjs
+Restart=always
+RestartSec=10
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

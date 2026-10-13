@@ -33,6 +33,7 @@ systemd-Units und Konfig-Vorlagen, eine Konfigurationsdatei für deine Adressen 
 | shoot-day | `SD_TAILSCALE_USERS` |
 | klipper-bridge | `KL_TAILSCALE_USERS` |
 | star-bridge | `STAR_TAILSCALE_USERS` |
+| sugar-bridge | `SUGAR_TAILSCALE_USERS` (ohne Allowlist und ohne `TOKEN`: alles gesperrt) |
 | whisper (WebSocket), babel-llm-proxy | `TAILSCALE_USERS` (wirkt, sobald auch `TOKEN` gesetzt ist) |
 | whisper (HTTP), oebb-proxy, valhalla | keine Anmeldung — nur im Tailnet erreichbar, Zugriff per Tailscale-ACL einschränkbar |
 
@@ -63,6 +64,7 @@ auf dem Rechner lauscht, „Tailscale“ = die HTTPS-Nummer für `tailscale serv
 | [`shoot-day`](services/shoot-day) | 8896 | **8445** | Shoot Day |
 | [`klipper-bridge`](services/klipper-bridge) | 8898 | **8447** | Klipper Glance |
 | [`star-bridge`](services/star-bridge) (auf dem N.I.N.A.-Rechner, Windows) | 8893 | **8460** | Star Glass |
+| [`sugar-bridge`](services/sugar-bridge) (neben Nightscout; Nightscout selbst nur lokal) | 8466 | **8462** | Sugar Glass |
 | [`valhalla`](services/valhalla) (Docker) | 8112 | **8455** | OpenGlance Nav, NextStop (Fußwege) |
 | Agent-Endpunkt (Even Terminal / Hermes-Bridge / OpenClaw, extern) | 8765 | **8446** | Agent Glass |
 | LUMEN (eigenes Projekt, **nicht** Teil dieses Repos) | – | **8454** | Lumen Glass |
@@ -80,6 +82,7 @@ auf dem Rechner lauscht, „Tailscale“ = die HTTPS-Nummer für `tailscale serv
 | Shoot Day | `shoot-day` (+ `whisper` für Sprache) | |
 | Klipper Glance | `klipper-bridge` | |
 | Star Glass | `star-bridge` | läuft neben N.I.N.A. (Plugin „Advanced API“); Steuern nur mit `STAR_ALLOW_CONTROL=1` |
+| Sugar Glass | `sugar-bridge` + eigenes Nightscout | nur Lesen; Lese-Token bleibt am Server. Nur zur Information – maßgeblich sind Pumpe und Sensor |
 | Lumen Glass | LUMEN | separates Projekt |
 | Xaventra HUD | Xaventra-Daemon | separates Projekt |
 | Rain Lens | – | Radar-Seite nur mit `options.rainRadar` (RainViewer: nur private Nutzung) |
