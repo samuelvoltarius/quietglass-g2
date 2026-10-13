@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3] — 2026-10-13
+
+### Changed
+
+- Default row width is now 56 characters (was 46) to match the display; a stored 46 (the old factory default) moves to 56, any other chosen width is kept. Footer hints now have room for the elapsed time next to them.
+
 ## [0.2.2] — 2026-10-13
 
 ### Fixed

@@ -2,7 +2,7 @@ import { tr, type Locale, type Messages } from "./i18n";
 
 /**
  * Every user-facing string, German and English. Keys starting with `g.` go to
- * the glasses and must fit the display budget (46 characters per row); the
+ * the glasses and must fit the display budget (56 characters per row); the
  * tests check every German and English variant against it.
  */
 export const messages: Messages = {

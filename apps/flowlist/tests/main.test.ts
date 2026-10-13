@@ -95,7 +95,7 @@ function data(settings: Record<string, unknown> = {}, steps: unknown[] = STEPS) 
   return {
     lists: [{ id: "l1", title: "Run", steps }],
     activeId: "l1",
-    settings: { showNext: true, lineWidth: 46, invertScroll: false, ...settings },
+    settings: { showNext: true, lineWidth: 56, invertScroll: false, ...settings },
   };
 }
 

@@ -10,7 +10,7 @@ import { addSamples, firstRunData, removeList, samplesMissing } from "../src/sto
 import { dispatch } from "../src/input/dispatch";
 import { fileName } from "../src/ui/phone";
 
-const GLASSES_WIDTH = 46;
+const GLASSES_WIDTH = 56;
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 
 /** Worst-case values for every placeholder that reaches the glasses. */
@@ -111,7 +111,7 @@ function walk(list: Checklist, locale: "de" | "en"): ReturnType<typeof buildView
 
 describe("glasses copy fits the display", () => {
   for (const locale of locales) {
-    it(`${locale}: every screen of both example lists stays within 7 rows × 46 characters`, () => {
+    it(`${locale}: every screen of both example lists stays within 7 rows × 56 characters`, () => {
       for (const list of sampleChecklists(locale)) {
         const views = walk(list, locale);
         expect(views.length).toBeGreaterThan(list.steps.length);
@@ -145,7 +145,7 @@ describe("glasses copy fits the display", () => {
     expect(view.body[0]).toBe("WICHTIG – nochmal tippen:");
     expect(view.footer).toContain("nochmal tippen = bestätigen");
     const optional = complete(list, armed, "done", 0);
-    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("tippen = erledigt · runterwischen = auslassen");
+    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("tippen = erledigt · runterwischen = auslassen  ·  0:00");
     const done = skip(list, optional, 65_000);
     const finished = buildView(list, done, { locale: "de" }, 65_000);
     expect(finished.body).toContain("Fertig!");

@@ -142,7 +142,7 @@ describe("text helpers", () => {
 
 describe("display budget", () => {
   const long = "word ".repeat(80).trim();
-  const fits = (body: readonly string[], width = 46): void => {
+  const fits = (body: readonly string[], width = 56): void => {
     expect(body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
     for (const row of body) expect(row.length).toBeLessThanOrEqual(width);
   };
@@ -179,8 +179,8 @@ describe("display budget", () => {
   });
 
   it("regression: a pasted URL is split instead of running off the display", () => {
-    const rows = wrap("see https://example.com/" + "x".repeat(80), 46);
-    for (const row of rows) expect(row.length).toBeLessThanOrEqual(46);
+    const rows = wrap("see https://example.com/" + "x".repeat(80), 56);
+    for (const row of rows) expect(row.length).toBeLessThanOrEqual(56);
     expect(rows.join("")).toContain("x".repeat(80));
   });
 });

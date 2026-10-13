@@ -29,7 +29,7 @@ export interface ViewOptions {
   readonly locale?: Locale;
 }
 
-const DEFAULT_WIDTH = 46;
+const DEFAULT_WIDTH = 56;
 
 /**
  * The body container holds seven rows; anything beyond is pushed off the
@@ -37,7 +37,7 @@ const DEFAULT_WIDTH = 46;
  */
 export const MAX_BODY_ROWS = 7;
 /** Characters the header holds on one line in the G2's proportional font. */
-export const HEADER_WIDTH = 46;
+export const HEADER_WIDTH = 56;
 /**
  * The header text shares its row with the progress bar and keeps the left
  * half (288 px), about 22 characters. The position ("3/7") always survives;
@@ -45,7 +45,7 @@ export const HEADER_WIDTH = 46;
  */
 export const HEADER_TEXT_WIDTH = 22;
 /** The footer is one line, like the header. */
-export const FOOTER_WIDTH = 46;
+export const FOOTER_WIDTH = 56;
 /** Most branch options shown at once; the list scrolls with the highlight. */
 const MAX_CHOICE_ROWS = 4;
 

@@ -29,7 +29,7 @@ const KEY = "quietglass.flowlist.v1";
 
 export const DEFAULT_SETTINGS: FlowListSettings = {
   showNext: true,
-  lineWidth: 46,
+  lineWidth: 56,
   invertScroll: false,
 };
 
@@ -138,8 +138,10 @@ function mergeSettings(value: Partial<FlowListSettings> | undefined): FlowListSe
   if (!value || typeof value !== "object") return DEFAULT_SETTINGS;
   return {
     showNext: typeof value.showNext === "boolean" ? value.showNext : DEFAULT_SETTINGS.showNext,
+    // 46 was the factory default before 0.2.3 (the display holds about 56), so
+    // a stored 46 is taken as "never touched" and moves to the new default.
     lineWidth: typeof value.lineWidth === "number" && Number.isFinite(value.lineWidth)
-      ? value.lineWidth
+      ? (value.lineWidth === 46 ? DEFAULT_SETTINGS.lineWidth : value.lineWidth)
       : DEFAULT_SETTINGS.lineWidth,
     invertScroll: typeof value.invertScroll === "boolean"
       ? value.invertScroll
