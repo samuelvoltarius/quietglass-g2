@@ -181,17 +181,25 @@ describe("the board page: one thing big, little text", () => {
     expect(last.images[1]!.key).toBe("stop-bus:2");
   });
 
-  it("riding: the next stop in bold, minutes to it big, then and the terminus as two rows", () => {
+  it("riding: the next stop in bold, minutes to it big, then and the terminus as two rows (place left out)", () => {
     const ride: Ride = { line: "Bus 150", headsign: "Bad Ischl", stops: stops(-6) };
     const state = followRide(ride, 2, at(-2), NOW, { lat: 47.8068, lon: 13.047 })!;
     const scene = followScene(departure(), state, NOW, "de", 0);
-    expect(scene.images[2]!.key).toBe("strip:Salzburg Hofwirt");
+    expect(scene.images[2]!.key).toBe("strip:Hofwirt");
     expect(scene.images[1]!.key).toContain("nächster");
     expect(scene.view.body).toEqual([
-      "danach Salzburg Sterneckstraße · 2 min",
-      "bis Salzburg Gnigl Bahnhst · " + clockOf(at(4)) + " · 3 Halte",
+      "danach Sterneckstraße · 2 min",
+      "bis Gnigl Bahnhst · " + clockOf(at(4)) + " · 3 Stationen",
     ]);
     expect(scene.view.footer).toBe("GPS · Tippen: zurück zur Tafel");
+  });
+
+  it("riding out of town: the names stay whole", () => {
+    const out = stops(-6).map((s, i, all) => (i === all.length - 1 ? { ...s, stop: { ...s.stop, name: "Koppl Ort" } } : s));
+    const state = followRide({ line: "Bus 150", headsign: "Bad Ischl", stops: out }, 2, at(-2), NOW, { lat: 47.8068, lon: 13.047 })!;
+    const scene = followScene(departure(), state, NOW, "de", 0);
+    expect(scene.images[2]!.key).toBe("strip:Salzburg Hofwirt");
+    expect(scene.view.body[1]).toMatch(/^bis Koppl Ort · /);
   });
 });
 

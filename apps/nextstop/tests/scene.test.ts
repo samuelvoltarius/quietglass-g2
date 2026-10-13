@@ -8,6 +8,7 @@ import { buildSteps, guideState, type Step } from "../src/route/guide";
 import { arrivalOf, departureOf, type TransitLeg, type WalkLeg } from "../src/route/journey";
 import type { TurnType, WalkNav } from "../src/route/walk";
 import { beatOf, guideScene, plainScene, type Scene } from "../src/route/scene";
+import { stopNamer } from "../src/glasses/view";
 import { menuFor } from "../src/route/menu";
 import { buildPage, createPage, rebuildPage, updatePage } from "../src/glasses/render";
 import { sameScene } from "../src/glasses/diff";
@@ -417,21 +418,60 @@ describe("riding", () => {
     expect(stops).toBeGreaterThanOrEqual(5);
   });
 
-  it("shows 'noch 2 Halte' as pictures, with the stop to get off at and its time as text", () => {
+  it("shows 'noch 2 Stationen' as pictures, with the stop to get off at and its time as text", () => {
     const scene = ride(stops - 4);
     expect(scene.kind).toBe("ride");
     expect(scene.images.map((image) => image.id)).toEqual([4, 5, 6]);
     expect(scene.images[1]!.key).toBe("digits:3||n");
     expect(scene.images[0]!.key).toContain("noch");
-    expect(scene.images[2]!.key).toContain("Halte");
-    const alight = slow.stops[stops - 1]!;
-    expect(scene.view.body[0]).toMatch(new RegExp(`^Aussteigen: .+ · an \\d\\d:\\d\\d$`));
-    expect(scene.view.body.length).toBeLessThanOrEqual(3);
-    expect(scene.view.body[0]).toContain(alight.stop.name.replace(/\s*\(.*\)$/, "").slice(0, 10));
+    expect(scene.images[2]!.key).toContain("Stationen");
     expect(scene.animated).toBe(false);
     expect(ride(stops - 3).images[1]!.key).toBe("digits:2||n");
-    expect(ride(stops - 3).view.body[1]).toBe("Danach aussteigen – bereit machen!");
-    expect(ride(stops - 4).view.body[1]).toMatch(/^Nächster Halt: /);
+  });
+
+  it("lists the stops ahead in order: next, the one before getting off, the one to get off at", () => {
+    const name = (i: number): string => slow.stops[i]!.stop.name.replace(/\s*\(.*\)$/, "").replace(/^Salzburg\s+/, "");
+    const time = (i: number): string => clockOf(slow.stops[i]!.expected);
+    // Three or more left: three rows, a gap marked when stops lie between.
+    const far = ride(stops - 5).view.body;
+    expect(far).toEqual([
+      `→ ${name(stops - 4)} · ${time(stops - 4)}`,
+      `… ${name(stops - 2)} · ${time(stops - 2)}`,
+      `● ${name(stops - 1)} AUSSTEIGEN · ${clockOf(arrivalOf(slow))}`,
+    ]);
+    const three = ride(stops - 4).view.body;
+    expect(three[1]).toBe(`  ${name(stops - 2)} · ${time(stops - 2)}`);
+    expect(three).toHaveLength(3);
+    // Two left: the next stop is the one before getting off - two rows.
+    expect(ride(stops - 3).view.body).toEqual([
+      `→ ${name(stops - 2)} · ${time(stops - 2)}`,
+      `● ${name(stops - 1)} AUSSTEIGEN · ${clockOf(arrivalOf(slow))}`,
+    ]);
+    // One left: only the stop to get off at.
+    expect(ride(stops - 2).view.body).toEqual([`● ${name(stops - 1)} AUSSTEIGEN · ${clockOf(arrivalOf(slow))}`]);
+    expect(ride(stops - 4, 60, 0, "en").view.body[2]).toMatch(/^● .+ GET OFF · \d\d:\d\d$/);
+  });
+
+  it("leaves the shared place out of the names, but only when the whole ride stays in it", () => {
+    expect(slow.stops.every((s) => s.stop.name.startsWith("Salzburg "))).toBe(true);
+    for (const line of ride(stops - 5).view.body) expect(line).not.toContain("Salzburg");
+    const mixed: TransitLeg = { ...slow, stops: slow.stops.map((s, i) => (i === stops - 1 ? { ...s, stop: { ...s.stop, name: "Anif Bahnhof" } } : s)) };
+    const mixedSteps = buildSteps({ ...journey, legs: [journey.legs[0]!, mixed, ...journey.legs.slice(2)] });
+    const now = new Date(mixed.stops[stops - 5]!.expected.getTime() + 60000);
+    const body = guideScene(guideState(mixedSteps, now, null), now, null, "de").view.body;
+    expect(body[0]).toContain("Salzburg ");
+    expect(body[2]).toMatch(/^● Anif Bahnhof AUSSTEIGEN/);
+  });
+
+  it("names the next stop 'jetzt' when the bus is there", () => {
+    const body = ride(stops - 4, 299).view.body;
+    expect(body[0]).toMatch(/ · jetzt$/);
+  });
+
+  it("puts what comes after the ride into the footer, short", () => {
+    const footer = ride(stops - 4).view.footer;
+    expect(footer).toMatch(/^(Umstieg .+|dann zu Fuß|dann Ziel) · \d\/\d · (GPS|Uhr) · 2× = Ende$/);
+    expect(ride(stops - 4).view.body.join(" ")).not.toContain("Danach");
   });
 
   it("pulses 'get off' every beat when the next stop is the one to get off at", () => {
@@ -456,7 +496,8 @@ describe("riding", () => {
     expect(scene.kind).toBe("ride");
     expect(scene.animated).toBe(false);
     expect(scene.images[1]!.key).toBe(`digits:${state.stopsLeft}||n`);
-    expect(scene.view.body[1]).toMatch(/^Nächster Halt: /);
+    expect(scene.view.body[0]).toMatch(/^→ .+ · jetzt$/);
+    expect(scene.view.body.at(-1)).toMatch(/^● .+ AUSSTEIGEN · \d\d:\d\d$/);
   });
 
   it("only the digit changes between the beats of the pulse - the words are not sent again", () => {
@@ -667,5 +708,26 @@ describe("sending pages and pictures", () => {
     const scene = plainScene(board);
     expect(scene.images).toHaveLength(0);
     expect(buildPage(scene, null).imageObject ?? []).toHaveLength(0);
+  });
+});
+
+function clockOf(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+describe("stopNamer", () => {
+  it("drops a place every stop shares, and the stand", () => {
+    const name = stopNamer(["Salzburg Hbf", "Salzburg Makartplatz (Theatergasse)", "Salzburg Mirabellplatz"]);
+    expect(name("Salzburg Makartplatz (Theatergasse)")).toBe("Makartplatz");
+    expect(name("Salzburg Hbf")).toBe("Hbf");
+  });
+  it("keeps whole names when the ride leaves the place, or there is only one", () => {
+    expect(stopNamer(["Salzburg Hofwirt", "Hof bei Salzburg Ort"])("Salzburg Hofwirt")).toBe("Salzburg Hofwirt");
+    expect(stopNamer(["Salzburg Hbf"])("Salzburg Hbf")).toBe("Salzburg Hbf");
+    expect(stopNamer(["Salzburg", "Salzburg Hbf"])("Salzburg Hbf")).toBe("Salzburg Hbf");
+  });
+  it("handles 'Place, Stop' and cuts long names", () => {
+    expect(stopNamer(["Wien, Karlsplatz", "Wien, Oper"])("Wien, Oper")).toBe("Oper");
+    expect(stopNamer(["A B", "A Ccccccccccccc"], 6)("A Ccccccccccccc")).toBe("Ccccc…");
   });
 });

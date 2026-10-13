@@ -152,7 +152,7 @@ export class Companion {
       this.#said.add(`${tag}:ride`);
       if (this.#once(`${tag}:alight2`)) {
         return {
-          text: de ? `In zwei Halten aussteigen: ${stopName}.` : `Get off in two stops: ${stopName}.`,
+          text: de ? `In zwei Stationen aussteigen: ${stopName}.` : `Get off in two stops: ${stopName}.`,
           priority: 2, key: `${tag}:alight`, maxAgeMs: 30_000,
         };
       }
@@ -160,7 +160,7 @@ export class Companion {
     }
     if (this.#once(`${tag}:ride`)) {
       return {
-        text: de ? `Aussteigen in ${left} Halten: ${stopName}.` : `Get off in ${left} stops: ${stopName}.`,
+        text: de ? `In ${left} Stationen aussteigen: ${stopName}.` : `Get off in ${left} stops: ${stopName}.`,
         priority: 1, key: `${tag}:ride`, maxAgeMs: 30_000,
       };
     }

@@ -1,6 +1,6 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import { fit, rideStopName, type StopView } from "../glasses/view";
+import { fit, rideStopName, stopNamer, type StopView } from "../glasses/view";
 import { minutesUntil } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import type { PageKind } from "../glasses/layout";
@@ -28,7 +28,7 @@ import { ROUTE_WIDTH, TURN_KEYS, guideView, type GuideDisplay } from "./view";
  *    approach bar, the street as a bold strip;
  *  - waiting at a stop: the countdown in big digits, and a bus that drives
  *    into the stop picture in the last minute;
- *  - riding: "noch 2 Halte" in big digits, and in the last stretch a pulsing
+ *  - riding: "noch 2 Stationen" in big digits, and in the last stretch a pulsing
  *    "get off" warning.
  *
  * Every other state (no walking route yet, a missed bus, arrival) stays plain
@@ -83,7 +83,7 @@ export function guideScene(
 
   if (step.kind === "walk" && display.walk) return walkScene(view, step, display, now, locale);
   if (step.kind === "transit" && state.phase === "board") return waitScene(view, step, now, locale, beat);
-  if (step.kind === "transit" && state.phase === "ride") return rideScene(view, step, state, now, locale, beat);
+  if (step.kind === "transit" && state.phase === "ride") return rideScene(view, step, state, now, locale, beat, display);
   return plainScene(view);
 }
 
@@ -178,16 +178,68 @@ function waitScene(
 
 const lineKey = (lines: readonly WordLine[]): string => lines.map((line) => `${line.size}:${line.text}`).join("/");
 
+/**
+ * The stops ahead as a short list in the order they come (0.4.1, Alfred on the
+ * glasses): the next one with its time ("jetzt" when the bus is there), the one
+ * before getting off, and the one to get off at, marked. Rows that would name
+ * the same stop twice fold together, so two stops left are two rows and the
+ * last stretch is the marked row alone. A gap between the first two rows is
+ * shown as "…"; how many stops it hides is the big number above.
+ */
+export function rideList(
+  leg: Extract<GuideState["step"], { kind: "transit" }>["leg"], state: GuideState, now: Date, locale: Locale,
+): string[] {
+  const stops = leg.stops;
+  const last = stops.length - 1;
+  const progress = state.progress;
+  const nextIndex = progress && !progress.finished ? Math.min(progress.nextIndex, last) : last;
+  // The whole leg decides whether the place can go, so a name does not grow back on the last stretch.
+  const name = stopNamer(stops.map((stop) => stop.stop.name), 34);
+
+  const at = (index: number): string => {
+    const stop = stops[index]!;
+    if (stop.cancelled) return t(locale, "g.cancelled");
+    const isNext = index === nextIndex;
+    if (isNext && (progress?.arriving || minutesUntil(stop.expected, now) <= 0)) return t(locale, "g.now");
+    return clock(stop.expected);
+  };
+
+  const rows: string[] = [];
+  if (nextIndex < last - 1) rows.push(withTail(`→ ${name(stops[nextIndex]!.stop.name)}`, ` · ${at(nextIndex)}`));
+  if (nextIndex <= last - 1) {
+    const gap = nextIndex < last - 2 ? "… " : nextIndex === last - 1 ? "→ " : "  ";
+    rows.push(withTail(`${gap}${name(stops[last - 1]!.stop.name)}`, ` · ${at(last - 1)}`));
+  }
+  const alight = stops[last];
+  rows.push(withTail(
+    `● ${name(alight?.stop.name ?? "")}`,
+    ` ${t(locale, "r.listAlight")} · ${clock(arrivalOf(leg))}`,
+  ));
+  return rows;
+}
+
+/** "Umstieg O-Bus 10 · 2/6 · GPS · 2× = Ende": what comes after the ride, short, in the footer. */
+function rideFooter(
+  step: Extract<GuideState["step"], { kind: "transit" }>, state: GuideState, locale: Locale,
+): string {
+  const after = step.after;
+  const line = after?.kind === "transit" ? after.leg.line : after?.kind === "walk" ? after.next?.line : undefined;
+  const key = line ? "r.footRideTransfer" : after?.kind === "walk" ? "r.footRideGoal" : "r.footRideDone";
+  return t(locale, key, {
+    line: line ? fit(line, 10) : "",
+    step: Math.min(state.index + 1, state.steps.length),
+    total: state.steps.length,
+    basis: t(locale, state.progress?.basis === "gps" ? "r.footerGuideGps" : "r.footerGuideClock"),
+  });
+}
+
 function rideScene(
   view: StopView, step: Extract<GuideState["step"], { kind: "transit" }>, state: GuideState,
-  now: Date, locale: Locale, beat: number,
+  now: Date, locale: Locale, beat: number, display: SceneDisplay,
 ): Scene {
   const leg = step.leg;
   const left = state.stopsLeft ?? 1;
-  const progress = state.progress;
   const alert = left <= 1;
-  const alight = leg.stops[leg.stops.length - 1];
-  const alightName = rideStopName(alight?.stop.name ?? "");
 
   const number: BigNumber = alert
     ? { value: "!", unit: "", inverted: beat % 2 === 1 }
@@ -199,30 +251,15 @@ function rideScene(
     ? [{ text: t(locale, "r.bigAlight"), size: 56, align: "left" }]
     : [{ text: t(locale, "r.bigAfterMany"), size: 64, align: "left" }];
 
-  const nextStop = progress && !progress.finished ? progress.next : undefined;
-  const when = nextStop ? waitText(nextStop.expected, now, locale) : "";
-  const second = alert
-    ? (progress?.arriving ? t(locale, "r.alightNow") : "")
-    : left === 2
-      ? t(locale, "r.warnNext")
-      : nextStop
-        ? withTail(t(locale, "r.nextStop", { stop: rideStopName(nextStop.stop.name), when: "" }).replace(/ · $/, ""), ` · ${when}`)
-        : "";
-  const after2 = step.after;
-  const afterLine = after2?.kind === "transit"
-    ? t(locale, "r.afterTransfer", { line: after2.leg.line })
-    : after2?.kind === "walk"
-      ? (after2.next ? t(locale, "r.afterTransfer", { line: after2.next.line }) : t(locale, "r.afterGoal"))
-      : t(locale, "r.afterDone");
-  const body = [
-    alightRow(alightName, arrivalOf(leg), "", locale),
-    ...(second ? [row(second)] : []),
-    row(afterLine),
-  ];
+  const list = rideList(leg, state, now, locale);
+  const body = alert && state.progress?.arriving && !state.progress.finished
+    ? [...list.slice(-1), row(t(locale, "r.alightNow"))]
+    : alert ? list.slice(-1) : list;
+  const footer = display.confirmStop || display.rerouted ? view.footer : rideFooter(step, state, locale);
 
   const [pre, digits, post] = RIDE_IMAGES;
   return {
-    view: { header: "", body, footer: view.footer },
+    view: { header: "", body, footer },
     kind: "ride",
     animated: alert,
     images: [

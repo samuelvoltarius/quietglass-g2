@@ -233,14 +233,14 @@ describe("German output stays exactly as reviewed", () => {
     const at = minutes(2.5);
     expect(ridingView(trackRide(simple, at, null)!, at, simple.line, simple.headsign, "de")).toEqual({
       header: "O-Bus 6 → Itzling West",
-      body: ["> Halt 3 · gleich", "  Halt 4 · 2 min", "  Halt 5 · 3 min", "  Halt 6 · 4 min", "  Halt 7 · 5 min", "", "noch 6 Halte · Ziel 7 min"],
+      body: ["> Halt 3 · gleich", "  Halt 4 · 2 min", "  Halt 5 · 3 min", "  Halt 6 · 4 min", "  Halt 7 · 5 min", "", "noch 6 Stationen · Ziel 7 min"],
       footer: "nach Fahrplan geschätzt · tippen = zurück",
     });
     const gps = ridingView(trackRide(simple, at, { lat: 47.8 + 2.7 * 0.0045, lon: 13.04 })!, at, "O-Bus 6", "Itzling", "de");
     expect(gps.footer).toBe("GPS · 150 m · tippen = zurück");
     const two = ride(3);
-    expect(ridingView(trackRide(two, minutes(0.2), null)!, minutes(0.2), "1", "X", "de").body.at(-1)).toBe("noch 1 Halt · Ziel 2 min");
-    expect(ridingView(trackRide(two, minutes(1.9), null)!, minutes(1.9), "1", "X", "de").body.at(-1)).toBe("letzter Halt");
+    expect(ridingView(trackRide(two, minutes(0.2), null)!, minutes(0.2), "1", "X", "de").body.at(-1)).toBe("noch 1 Station · Ziel 2 min");
+    expect(ridingView(trackRide(two, minutes(1.9), null)!, minutes(1.9), "1", "X", "de").body.at(-1)).toBe("letzte Station");
     expect(ridingView(trackRide(two, minutes(99), null)!, minutes(99), "1", "X", "de")).toEqual({
       header: "1 → X",
       body: ["", "Endstation Halt 2.", "", "Die Fahrt ist zu Ende."],

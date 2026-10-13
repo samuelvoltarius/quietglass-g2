@@ -8,7 +8,7 @@ import { numberKey, renderNumberPng, type BigNumber } from "./turncard";
 import { renderBadgePng, renderWordsPng, type WordLine } from "./words";
 import { renderStreetPngs } from "./street";
 import { busFrame, busKey, renderBusPng } from "./bus";
-import { fit, rideStopName, shortHeadsign, wrap } from "./view";
+import { fit, rideStopName, shortHeadsign, stopNamer, wrap } from "./view";
 import type { Scene, SceneImage } from "../route/scene";
 import { clock, waitText } from "../route/journey";
 
@@ -213,6 +213,8 @@ export function followScene(departure: Departure, follow: Follow, now: Date, loc
   }
 
   const { progress, terminus } = follow;
+  // All stops in one place ("Salzburg …"): the place is left out, the rows stay short.
+  const short = (stop: RideStop, width: number): string => stopNamer(follow.stops.map((s) => s.stop.name), width)(stop.stop.name);
   const next = progress.next;
   const number: BigNumber = progress.arriving || minutesUntil(next.expected, now) <= 0
     ? { value: t(locale, "g.now"), unit: "" }
@@ -222,10 +224,10 @@ export function followScene(departure: Departure, follow: Follow, now: Date, loc
   return bigScene({
     number: next.cancelled ? { value: "--", unit: "" } : number,
     picture: { kind: "words", lines: [{ text: t(locale, "g.bigNext1"), size: 40 }, { text: t(locale, "g.bigNext2"), size: 40 }] },
-    strip: next.cancelled ? `${t(locale, "g.cancelled")}: ${rideStopName(next.stop.name)}` : rideStopName(next.stop.name),
+    strip: next.cancelled ? `${t(locale, "g.cancelled")}: ${short(next, 32)}` : short(next, 32),
     rows: [
-      ...(then ? [t(locale, "g.thenStop", { stop: rideStopName(then.stop.name, 28), when: waitText(then.expected, now, locale) })] : []),
-      t(locale, left === 1 ? "g.terminusOne" : "g.terminusMany", { stop: rideStopName(terminus.stop.name, 24), time: clock(terminus.expected), count: left }),
+      ...(then ? [t(locale, "g.thenStop", { stop: short(then, 28), when: waitText(then.expected, now, locale) })] : []),
+      t(locale, left === 1 ? "g.terminusOne" : "g.terminusMany", { stop: short(terminus, 24), time: clock(terminus.expected), count: left }),
     ],
     footer: `${t(locale, progress.basis === "gps" ? "g.basisGps" : "g.basisClock")} · ${t(locale, "g.footerFollow")}`,
   });

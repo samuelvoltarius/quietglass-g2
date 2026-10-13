@@ -152,7 +152,7 @@ describe("the ride", () => {
 
   it("says how many stops are left", () => {
     const view = ridingView(progress!, new Date(NOW.getTime() + 150000), "O-Bus 6", "Itzling West", "de");
-    expect(view.body.join(" ")).toContain("noch 6 Halte");
+    expect(view.body.join(" ")).toContain("noch 6 Stationen");
   });
 
   it("admits when the next stop is only a timetable estimate", () => {

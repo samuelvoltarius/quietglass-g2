@@ -94,7 +94,7 @@ describe("at the stop and on the ride", () => {
       const a = c.next(stateAt(i));
       if (a) all.push(a.text);
     }
-    expect(all.map((text) => text.split(":")[0])).toEqual(["Aussteigen in 4 Halten", "In zwei Halten aussteigen", "Nächster Halt aussteigen"]);
+    expect(all.map((text) => text.split(":")[0])).toEqual(["In 4 Stationen aussteigen", "In zwei Stationen aussteigen", "Nächster Halt aussteigen"]);
     expect(all.some((text) => text.startsWith("Nächster Halt aussteigen:"))).toBe(true);
     expect(new Set(all).size).toBe(all.length);
   });

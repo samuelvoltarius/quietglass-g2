@@ -9,7 +9,7 @@
  *  - "walk": a big arrow (144 x 144) and the distance with its approach bar
  *    (288 x 144) side by side, the street name as two image halves across the
  *    full width, one line of small text, the footer.
- *  - "ride": "noch 2 Halte" as three images in one row (the word before, the
+ *  - "ride": "noch 2 Stationen" as three images in one row (the word before, the
  *    big pixel digits, the word after), small text below, the footer.
  *  - "wait": the big countdown (288 x 120) next to a bus-stop scene (288 x 120)
  *    that a bus drives into in the last minute; text below, the footer.
@@ -66,7 +66,7 @@ export const WALK_BODY: Box = { x: 0, y: 212, width: SCREEN_WIDTH, height: 38 };
 
 export const RIDE_BAND = 120;
 /**
- * "noch" + the digits + "Halte", the digits centred on the display: the word
+ * "noch" + the digits + "Stationen", the digits centred on the display: the word
  * before hugs them from the left, the word after from the right.
  */
 export const RIDE_IMAGES: readonly ImageSpec[] = [

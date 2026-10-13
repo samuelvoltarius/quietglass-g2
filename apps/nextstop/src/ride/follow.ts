@@ -80,6 +80,8 @@ export type Follow =
     readonly progress: RideProgress;
     /** The last stop of the ride. */
     readonly terminus: RideStop;
+    /** The stops of the ride from the passenger's stop on (for naming them short). */
+    readonly stops: readonly RideStop[];
   }
   | { readonly phase: "finished"; readonly terminus: RideStop };
 
@@ -113,5 +115,5 @@ export function followRide(ride: Ride, boarding: number, departs: Date, now: Dat
   const ahead: Ride = boarding > 0 ? { ...ride, stops: ride.stops.slice(boarding) } : ride;
   const progress = trackRide(ahead, now, position);
   if (!progress || progress.finished) return { phase: "finished", terminus };
-  return { phase: "riding", progress, terminus };
+  return { phase: "riding", progress, terminus, stops: ahead.stops };
 }

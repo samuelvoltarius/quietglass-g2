@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Begleitung beim Fahren: Unter „noch N Stationen“ stehen die Halte jetzt als kurze Liste in Fahrtreihenfolge – nächster Halt mit Zeit („jetzt“, wenn der Bus dort ist), der Halt vor dem Ausstieg (mit „…“, wenn dazwischen noch Halte liegen) und der Ausstieg markiert: „● Mirabellplatz AUSSTEIGEN · 12:14“. Bei zwei Stationen bleiben zwei Zeilen, beim letzten nur der Ausstieg (groß und pulsierend wie bisher).
+- „Danach: Umsteigen …“ steht kurz in der Fußzeile („Umstieg O-Bus 10 · 2/6 · GPS · 2× = Ende“).
+- Deutsch: „Stationen“ statt „Halte“ – „noch 3 Stationen“, „noch 1 Station“, Ansage „In 2 Stationen aussteigen“ (Brille, Handy-Seite, Sprachausgabe). „Nächster Halt“ bleibt. Englisch unverändert.
+- Haltestellennamen kürzer: Liegen alle Halte einer Fahrt im selben Ort, entfällt der Ortsname („Salzburg Mirabellplatz“ → „Mirabellplatz“). Gilt auch beim Verfolgen eines Busses von der Tafel aus (nächster und übernächster Halt, Endstation).
+
 ## 0.4.0
 
 - Weniger Text, eine Sache groß: Abfahrtstafel, Bus verfolgen, Verbindungen und alle Warte-/Fehlermeldungen dieser Seiten haben jetzt dieselbe Form – Minuten als große Pixelziffern, daneben die Linie als Schild (oder die Haltestelle mit Bus), darunter Ziel bzw. nächster Halt fett über die ganze Breite, höchstens drei kurze Zeilen, kurze Fußzeile („Tippen: verfolgen · Halten: Ziel“).

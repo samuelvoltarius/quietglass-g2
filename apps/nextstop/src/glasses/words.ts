@@ -5,7 +5,7 @@ import { createGrayCanvas, encodePng } from "./png";
  *
  * The glasses' text has one small fixed size, too small to read at a glance
  * while walking or riding. So the few words that matter - the street name,
- * "noch ... Halte", "Aussteigen" - are drawn as bold type into an image. The
+ * "noch ... Stationen", "Aussteigen" - are drawn as bold type into an image. The
  * WebView of the Even app has a 2d canvas for that; where there is none (the
  * tests, a headless run) the image stays black instead of failing the draw.
  */

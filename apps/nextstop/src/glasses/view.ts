@@ -122,6 +122,31 @@ export function rideStopName(name: string, width = 32): string {
 }
 
 /**
+ * Names for a list of stops on one ride, as short as they can be.
+ *
+ * When every stop of the ride is in the same place ("Salzburg Hbf",
+ * "Salzburg Makartplatz", …) the place says nothing and costs a third of
+ * the row; it is left out ("Hbf", "Makartplatz"). A ride that leaves the
+ * place keeps every name whole, so "Salzburg Hofwirt" and "Hof bei
+ * Salzburg" stay apart. `all` are the names of the whole ride (or the part
+ * still ahead), not just the ones shown: a single row cannot tell.
+ */
+export function stopNamer(all: readonly string[], width = 32): (name: string) => string {
+  const bare = (name: string): string => name.replace(/\s*\([^()]*\)\s*$/, "").trim();
+  const names = all.map(bare);
+  const place = names[0]?.match(/^([^\s,]+)[\s,]+\S/)?.[1];
+  const shared = place !== undefined && names.length >= 2
+    && names.every((name) => name.startsWith(place) && /^[\s,]+\S/.test(name.slice(place.length)));
+  return (name: string): string => {
+    const plain = bare(name);
+    const short = shared && plain.startsWith(place) && /^[\s,]+\S/.test(plain.slice(place.length))
+      ? plain.slice(place.length).replace(/^[\s,]+/, "")
+      : plain;
+    return short.length <= width ? short : short.slice(0, width - 1) + "…";
+  };
+}
+
+/**
  * The board at a stop: what leaves from here, soonest first.
  *
  * With `now`, the waiting times are worked out afresh from each departure's

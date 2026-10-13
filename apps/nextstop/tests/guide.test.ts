@@ -237,7 +237,7 @@ describe("the guide on the glasses", () => {
     expect(view.body[2]).toBe(`um ${clock(departureOf(bus1))} ~ (in 2 min)`);
     expect(view.body[3]).toBe("Salzburg Vogelweiderstraße");
     expect(view.body[5]).toBe("Aussteigen: Salzburg Mirabellplatz");
-    expect(view.body[6]).toBe(`4 Halte · an ${clock(arrivalOf(bus1))}`);
+    expect(view.body[6]).toBe(`4 Stationen · an ${clock(arrivalOf(bus1))}`);
   });
 
   it("says jetzt, not 'in jetzt', when the vehicle is about to leave", () => {
@@ -252,7 +252,7 @@ describe("the guide on the glasses", () => {
     const view = show(guideState(steps, now, null), now);
     expect(view.header).toBe(`Unterwegs · O-Bus 2 · ${clock(now)}`);
     expect(view.body[0]).toBe("> Aussteigen: Salzburg Mirabellplatz");
-    expect(view.body[1]).toBe(`noch 4 Halte · an ${clock(arrivalOf(bus1))}`);
+    expect(view.body[1]).toBe(`noch 4 Stationen · an ${clock(arrivalOf(bus1))}`);
     expect(view.body[3]).toBe("Nächster Halt: Salzburg Bayerhamerstraße · jetzt");
     expect(view.body[5]).toBe("Danach: Umsteigen auf O-Bus 10");
   });
