@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] — 2026-10-13
+
+### Changed
+
+- Text beside the level meter gets 46 characters per row (was 38), so lines like "noch 1 h 10 min bei dieser Lautstärke" are no longer cut off; header and footer use the full 56 characters.
+
 ## [0.3.2] — 2026-10-13
 
 ### Fixed
