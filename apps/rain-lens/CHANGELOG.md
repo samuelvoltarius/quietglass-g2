@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] — 2026-10-13
+
+### Changed
+
+- Body text beside the icon column gets 46 characters per row (was 38); header and footer use the full 56 characters, so hourly and daily lines and German/French/Spanish/Italian texts are cut later.
+
 ## [0.3.2] — 2026-10-13
 
 ### Fixed

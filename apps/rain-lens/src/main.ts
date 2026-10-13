@@ -16,7 +16,7 @@ import { ICONS, drawWeatherIcons, iconKey } from "./weather/icons";
 
 const round = (value: number): string => `${Math.round(value)}°`;
 /** Header and footer span the full 576 px, unlike the body next to the icons. */
-const FULL_WIDTH = 46;
+const FULL_WIDTH = 56;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();

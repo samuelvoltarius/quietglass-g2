@@ -65,7 +65,7 @@ export function dayName(iso: string, locale = "de-AT"): string { const date = ne
 
 /** Rows the 214 px body shows, and roughly the characters across it next to the 104 px icon column. */
 export const BODY_ROWS = 7;
-export const LINE_WIDTH = 38;
+export const LINE_WIDTH = 46;
 /** Body rows above the 12-hour chart; every view and notice fits in these. */
 export const CHART_ROWS = 4;
 /** Characters across the narrow column right of the chart. */

@@ -30,8 +30,8 @@ describe("messages", () => {
     for (const key of ["errorTimeout", "errorServer", "errorOffline", "errorData"]) expect(width(`! ${tr(messages, locale, key, { status: "503" })}`), `${locale}.${key}`).toBeLessThanOrEqual(LINE_WIDTH);
   });
   it.each(locales)("%s header and footer fit the full width", (locale) => {
-    for (const page of ["now", "hourly", "days"]) expect(width(`RAINLENS  ${tr(messages, locale, page)}  ${tr(messages, locale, "sampleTag")}`)).toBeLessThanOrEqual(46);
-    expect(width(tr(messages, locale, "controls"))).toBeLessThanOrEqual(46);
+    for (const page of ["now", "hourly", "days"]) expect(width(`RAINLENS  ${tr(messages, locale, page)}  ${tr(messages, locale, "sampleTag")}`)).toBeLessThanOrEqual(56);
+    expect(width(tr(messages, locale, "controls"))).toBeLessThanOrEqual(56);
   });
   it("keeps jargon out of the German main screen", () => {
     const advanced = new Set(["latitude", "longitude", "useCoords", "help", "badCoords", "credits", "advanced"]);
