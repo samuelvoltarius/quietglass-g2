@@ -5,24 +5,14 @@ import {
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type LumenView, type Phase } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, updateIcon, updatePage } from "./glasses/render";
+import { FLAP_STEP_MS, isFlapping, mothSprite, spriteKey } from "./glasses/sprite";
 import { load, save, type LumenData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 
-const PIXEL_ICON = [
-  "......#..#......",
-  ".......##.......",
-  "####...##...####",
-  "######.##.######",
-  ".#####.##.#####.",
-  "..####.##.####..",
-  "...###.##.###...",
-  "....##.##.##....",
-  ".....#.##.#.....",
-] as const;
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
 /** How often the moth and the light window refresh. */
@@ -38,6 +28,9 @@ async function boot(): Promise<void> {
   let result: { ok: boolean; text: string } | null = null;
   let error: string | null = null;
   let lastView: LumenView | null = null;
+  /** Key of the sprite the glasses show now; the image is only resent when it changes. */
+  let lastIcon: string | null = null;
+  let flapTimer: ReturnType<typeof setInterval> | undefined;
   let pageReady = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -55,13 +48,27 @@ async function boot(): Promise<void> {
 
   const currentView = (): LumenView => buildView(status, { phase, result, error, locale });
 
+  const currentIcon = () => mothSprite(status?.moth.state ?? "eingerollt", Date.now());
+
   const drawOnce = async (): Promise<void> => {
     if (closed) return;
     const view = currentView();
-    if (sameView(lastView, view)) return;
+    const icon = currentIcon();
+    const iconKey = spriteKey(icon);
+    const sameText = sameView(lastView, view);
+    if (sameText && iconKey === lastIcon) return;
 
-    const outcome = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
-    if (outcome.ok) { pageReady = true; lastView = view; return; }
+    // Only the wings moved: send the small image, not the text.
+    if (sameText && pageReady) {
+      const quick = await updateIcon(bridge, icon);
+      if (quick.ok) { lastIcon = iconKey; return; }
+      pageReady = false;
+      console.warn("[lumen] icon failed:", quick.reason);
+      return;
+    }
+
+    const outcome = pageReady ? await updatePage(bridge, view, icon) : await createPage(bridge, view, icon);
+    if (outcome.ok) { pageReady = true; lastView = view; lastIcon = iconKey; return; }
     pageReady = false;
     console.warn("[lumen] draw failed:", outcome.reason);
   };
@@ -163,8 +170,15 @@ async function boot(): Promise<void> {
     await refresh(true);
   };
 
+  /** The wings only beat while the moth is awake and nothing else is on screen. */
+  const flapTick = (): void => {
+    if (closed || !pageReady || !status || phase !== "idle" || error) return;
+    if (isFlapping(status.moth.state)) void draw();
+  };
+  flapTimer = setInterval(flapTick, FLAP_STEP_MS);
+
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; clearTimeout(timer); },
+    onConfirmed: () => { closed = true; clearTimeout(timer); clearInterval(flapTimer); },
   }, "lumen");
 
   await draw();

@@ -1,4 +1,4 @@
-import { drawMoth, lightBar, mothLine } from "../lumen/moth";
+import { lightBar, mothLine } from "../lumen/moth";
 import type { LumenStatus } from "../lumen/client";
 import type { Locale } from "../i18n";
 import { messages, t } from "../messages";
@@ -6,9 +6,9 @@ import { messages, t } from "../messages";
 /**
  * What the glasses show.
  *
- * The moth gets the middle of the display, because seeing it is the point of
- * LUMEN — a number saying "light: 34" motivates nobody, a moth with folded
- * wings does. The quest sits under it, the light window in the corner.
+ * The moth is a pixel sprite in the header corner (src/glasses/sprite.ts); the
+ * body is all text: one line of what the moth does, then the task, then the
+ * medium and duration. The light window sits in the footer.
  */
 export interface LumenView {
   readonly header: string;
@@ -61,31 +61,29 @@ export function buildView(
     return { header: "Lumen Glass", body: [x("g.connecting")], footer: "" };
   }
 
-  const moth = drawMoth(status.moth.state);
-
   if (options.phase === "shooting") {
     return {
       header: "",
-      body: [...moth, "", x("g.shooting")],
+      body: [x("g.shooting")],
       footer: "",
     };
   }
 
   if (options.phase === "submitting") {
-    return { header: "", body: [...moth, "", x("g.sending")], footer: "" };
+    return { header: "", body: [x("g.sending")], footer: "" };
   }
 
   if (options.phase === "result" && options.result) {
     const text = options.result.ok ? x("g.sent") : errorText(options.result.text, locale);
     return {
       header: x(options.result.ok ? "g.accepted" : "g.rejected"),
-      body: fitBody([...moth], wrap(text, width), [], width),
+      body: fitBody([], wrap(text, width), [], width),
       footer: x("g.tapCarryOn"),
     };
   }
 
   // LUMEN's own wording, which can be any length: one line, never a wrap.
-  const head = [...moth, truncate(mothLine(status.moth.state, status.moth.gesture), width)];
+  const head = [truncate(mothLine(status.moth.state, status.moth.gesture), width)];
 
   const body = status.quest
     // The instruction is what you act on; the short name is the heading.

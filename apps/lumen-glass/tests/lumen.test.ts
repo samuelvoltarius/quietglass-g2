@@ -238,10 +238,9 @@ describe("the display", () => {
     expect(view.footer).toContain("hold = quest");
   });
 
-  it("shows the moth while the camera and upload are busy", () => {
+  it("says so while the camera and upload are busy", () => {
     const shooting = buildView(status, { ...idle, phase: "shooting" });
     expect(shooting.body.join(" ")).toContain("phone");
-    expect(shooting.body[0]).toMatch(/[\\/]/);
   });
 
   it("reports the outcome plainly", () => {

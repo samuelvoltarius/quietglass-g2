@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0] — 2026-10-13
+
+### Changed
+
+- The ASCII moth is gone from the body: the task text gets the whole body (three more rows).
+- The pixel moth in the header corner beats its wings once a second while the moth is awake; other states stand still. The image is only sent when the wings change (every 500 ms at most).
+- The page is created once per run and later only rebuilt (images are resent after every rebuild).
+
 ## [0.3.5] — 2026-10-13
 
 ### Fixed

@@ -203,7 +203,10 @@ describe("switching language on the phone", () => {
     harness.bridge = {
       getLocalStorage: async () => "",
       setLocalStorage: async () => true,
-      rebuildPageContainer: async () => true,
+      rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+        for (const part of page.textObject ?? []) show(part.containerID, part.content);
+        return true;
+      },
       createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
         for (const part of page.textObject ?? []) show(part.containerID, part.content);
         return 0;
