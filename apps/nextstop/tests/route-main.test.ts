@@ -33,7 +33,7 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
   const adopt = (page: Page): void => {
     state.header = "";
     const names = (page.imageObject ?? []).map((image) => image.containerName);
-    state.kind = names.includes("arrow") ? "walk" : names.includes("bus") ? "wait" : names.includes("count") ? "ride" : "text";
+    state.kind = names.includes("arrow") ? "walk" : names.includes("bus") ? "wait" : names.includes("count") ? "ride" : names.includes("big") ? "board" : "text";
     // A page without a header container shows none.
     for (const text of page.textObject ?? []) record(text.containerID, text.content);
   };
@@ -122,7 +122,10 @@ describe("the route pages", () => {
   it("walks from the departures to a guide and back, by menu and gestures", async () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de");
-    await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 3"));
+    // The board: O-Bus 3 big (pictures), the next ones as rows.
+    await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
+    expect(fake.state.kind).toBe("board");
+    expect(fake.state.footer).toBe("1/4 · Tippen: verfolgen · Halten: Ziel");
     // The first page carries the native menu with the way to the route pages.
     expect(fake.state.menus[0]).toEqual(["Route planen", "Andere Haltestelle", "Neu laden"]);
 
@@ -138,13 +141,16 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.body).toContain("> Heim"));
 
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^→ Heim · /));
-    await vi.waitFor(() => expect(fake.state.body).toContain("in 4 min"));
-    expect(fake.state.body.split("\n")[0]).toMatch(/^> in 4 min · O-Bus 2 → O-Bus 10 · an \d\d:\d\d · 1×$/);
+    // The connections: the first one big, where to board and two more as rows.
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen: los/));
+    expect(fake.state.kind).toBe("board");
+    expect(fake.state.body.split("\n")[0]).toMatch(/^Ab .+ · \d+ min zu Fuß$/);
+    expect(fake.state.body.split("\n")[1]).toMatch(/^in \d+ min · O-Bus 10 · an \d\d:\d\d$/);
+    expect(fake.state.body.split("\n")).toHaveLength(3);
     expect(fake.state.menus.at(-1)).toEqual(["Ziele", "Neu suchen", "Abfahrten"]);
 
     fake.gesture(DOWN); // select the second connection
-    await vi.waitFor(() => expect(fake.state.body.split("\n")[1]).toMatch(/^> /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/4 · /));
 
     fake.gesture(CLICK);
     // The walk to the stop: as soon as its route is in, the big arrow page with "Dann: ..." beneath.
@@ -153,12 +159,13 @@ describe("the route pages", () => {
     expect(fake.state.footer).toMatch(/^Schritt 1\/\d/);
     expect(fake.state.menus.at(-1)).toEqual(["Nächster Schritt", "Vorheriger Schritt", "Begleitung beenden"]);
     // Arrow, distance and the two street halves, sent once each for the first fix.
-    await vi.waitFor(() => expect(fake.state.images.slice(0, 4).map((entry) => entry.split(":")[0])).toEqual(["arrow", "distance", "street-left", "street-right"]));
+    const walkPictures = new Set(["arrow", "distance", "street-left", "street-right"]);
+    await vi.waitFor(() => expect(fake.state.images.map((entry) => entry.split(":")[0]).filter((name) => walkPictures.has(name ?? "")).slice(0, 4)).toEqual(["arrow", "distance", "street-left", "street-right"]));
 
     // A tap steps by hand, scrolling goes back, the menu does the same.
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.kind).toBe("wait"));
-    expect(fake.state.body.split("\n")[0]).toMatch(/^> O-Bus 10 Richtung /);
+    expect(fake.state.body.split("\n")[0]).toMatch(/^O-Bus 10 Richtung /);
     await vi.waitFor(() => expect(fake.state.images.slice(-2).map((entry) => entry.split(":")[0])).toEqual(["countdown", "bus"]));
     fake.gesture(UP);
     await vi.waitFor(() => expect(fake.state.kind).toBe("walk"));
@@ -170,13 +177,13 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal doppeltippen = Begleitung beenden"));
     expect(fake.state.kind).toBe("wait");
     fake.gesture(DOUBLE);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^→ Heim · /));
-    expect(fake.state.kind).toBe("text");
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/4 · Tippen: los/));
+    expect(fake.state.kind).toBe("board");
 
     fake.gesture(DOUBLE); // connections -> goals
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\? · /));
     fake.gesture(DOUBLE); // goals -> departures
-    await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 3"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
     expect(fake.state.shutdowns).toBe(0);
 
     fake.gesture(DOUBLE); // on the first page: the system exit dialog, as before
@@ -188,19 +195,20 @@ describe("the route pages", () => {
     await boot(fake, "?demo=1&lang=de&scene=guide");
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Schritt 1\//));
     fake.menu(8);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^→ Getreidegasse 10 · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen: los/));
   });
 
   it("says what is missing when there is no location, instead of searching", async () => {
     const stored = { [PLACES_KEY]: serializePlaces({ favorites: [{ id: "h", name: "Heim", lat: 47.796, lon: 13.016 }], now: null }) };
     const fake = fakeBridge({ stored, fix: null });
     await boot(fake, "");
-    await vi.waitFor(() => expect(fake.state.body).toContain("Warte auf deinen Standort"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
 
     fake.menu(1);
     await vi.waitFor(() => expect(fake.state.body).toBe("> Heim"));
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.body).toContain("Ohne Standort keine Route"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
+    expect(fake.state.footer).toBe("tippen = nochmal versuchen");
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -218,7 +226,7 @@ describe("the route pages", () => {
     await import("../src/main");
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
     // The failed first request shows on the next beat of the 2 s redraw.
-    await vi.waitFor(() => expect(fake.state.body).toContain("gestört"), { timeout: 5000 });
+    await vi.waitFor(() => expect(fake.state.body).toContain("Bitte gleich nochmal versuchen."), { timeout: 5000 });
 
     fake.menu(1);
     await vi.waitFor(() => expect(fake.state.body).toBe("> Heim"));
@@ -228,7 +236,8 @@ describe("the route pages", () => {
     expect(plan.origin).toBe("https://api.transitous.org");
     expect(plan.searchParams.get("fromPlace")).toBe("47.8095,13.055");
     expect(plan.searchParams.get("toPlace")).toBe("47.796,13.016");
-    await vi.waitFor(() => expect(fake.state.body).toContain("Fahrplandienst gestört (502)"));
+    await vi.waitFor(() => expect(fake.state.body).toBe("Bitte gleich nochmal versuchen."));
+    expect(fake.state.footer).toBe("tippen = nochmal versuchen");
     expect(new Set(urls.map((url) => new URL(url).origin))).toEqual(new Set(["https://api.transitous.org"]));
   });
 });

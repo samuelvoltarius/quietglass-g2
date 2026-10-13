@@ -16,10 +16,10 @@ export function fitStreetText(measure: (text: string, size: number) => number, t
 }
 
 /** The two PNG halves (left, right) of the street name; empty text gives two black images. */
-export async function renderStreetPngs(text: string): Promise<[Uint8Array, Uint8Array]> {
-  const line = [{ text, size: MAX_FONT_PX }] as const;
+export async function renderStreetPngs(text: string, height = STREET_HEIGHT, size = MAX_FONT_PX): Promise<[Uint8Array, Uint8Array]> {
+  const line = [{ text, size }] as const;
   return [
-    await renderWordsPng(line, STREET_HALF, STREET_HEIGHT, { offsetX: 0, fullWidth: STREET_WIDTH }),
-    await renderWordsPng(line, STREET_HALF, STREET_HEIGHT, { offsetX: STREET_HALF, fullWidth: STREET_WIDTH }),
+    await renderWordsPng(line, STREET_HALF, height, { offsetX: 0, fullWidth: STREET_WIDTH }),
+    await renderWordsPng(line, STREET_HALF, height, { offsetX: STREET_HALF, fullWidth: STREET_WIDTH }),
   ];
 }

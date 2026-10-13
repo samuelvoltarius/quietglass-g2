@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Weniger Text, eine Sache groß: Abfahrtstafel, Bus verfolgen, Verbindungen und alle Warte-/Fehlermeldungen dieser Seiten haben jetzt dieselbe Form – Minuten als große Pixelziffern, daneben die Linie als Schild (oder die Haltestelle mit Bus), darunter Ziel bzw. nächster Halt fett über die ganze Breite, höchstens drei kurze Zeilen, kurze Fußzeile („Tippen: verfolgen · Halten: Ziel“).
+- Abfahrtstafel nach der tatsächlich erwarteten Zeit sortiert; die Auswahl bleibt beim Aktualisieren auf demselben Bus. Ein fehlgeschlagenes Nachladen behält die Tafel statt sie durch eine Fehlermeldung zu ersetzen.
+- Bus verfolgen: Tippen antwortet sofort („Fahrt wird geladen …“), ohne Seitenneuaufbau. Die Fahrt beginnt an deiner Haltestelle: zuerst „in N min“ bis der Bus hier abfährt und wo er gerade ist (in der letzten Minute fährt der Bus ins Bild), danach nächster Halt groß. Vorher zeigte NextStop den ganzen Fahrtverlauf des Busses – z. B. Halte weit weg oder minutenlang unverändert „Mirabellplatz · gleich“, was wie ein Hänger wirkte. Verspätungen werden während der Fahrt nachgeladen.
+- Tippen wirkt immer: auch während die Fahrt noch lädt (zurück zur Tafel); Anfragen haben ein Zeitlimit von 15 s und zeigen dann eine Meldung.
+- Ein Bild, das die Brille nicht annimmt, löst keinen Seitenneuaufbau mehr aus (der sonst alle 2 s Eingaben verschluckt hätte); es wird beim nächsten Zeichnen erneut gesendet.
+- Begleitung: Warten und Fahren mit zwei bzw. drei kurzen Zeilen unter dem großen Bild.
+
 ## 0.3.7
 
 - Hängt nicht mehr beim Start: Die Brille hört sofort auf Tippen, Halten (Ziel per Sprache) und Doppeltippen, auch während das Handy noch nach dem Standort fragt oder der erste GPS-Fix dauert. Der erste Standort wartet höchstens 10 s.

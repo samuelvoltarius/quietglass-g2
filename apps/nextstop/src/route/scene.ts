@@ -1,6 +1,6 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import { CURSOR, fit, rideStopName, type StopView } from "../glasses/view";
+import { fit, rideStopName, type StopView } from "../glasses/view";
 import { minutesUntil } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import type { PageKind } from "../glasses/layout";
@@ -15,7 +15,7 @@ import { renderWordsPng, type WordLine } from "../glasses/words";
 import { busFrame, busKey, renderBusPng } from "../glasses/bus";
 import { arrivalOf, clock, departureOf, distanceText, waitText, whenPhrase } from "./journey";
 import type { GuideState } from "./guide";
-import { ROUTE_WIDTH, TURN_KEYS, boardLines, guideView, type GuideDisplay } from "./view";
+import { ROUTE_WIDTH, TURN_KEYS, guideView, type GuideDisplay } from "./view";
 
 /**
  * What the glasses show for the guide, as a whole: the words (`view`), which
@@ -154,13 +154,11 @@ function waitScene(
   const arriving = minutesUntil(departs, now) <= 0;
   const frame = arriving ? busFrame(beat) : -1;
 
-  const boarding = leg.stops[0];
   const track = leg.boardTrack ? ` · ${t(locale, "r.track", { track: leg.boardTrack })}` : "";
   const alight = leg.stops[leg.stops.length - 1];
+  // Two rows: which bus and from where, where to get off. The minutes are the big picture.
   const body = [
-    row(`${CURSOR} ${step.transfer ? t(locale, "r.transferPrefix") : ""}${t(locale, "r.board", { line: leg.line, to: leg.headsign })}`),
-    row(boardLines(leg, now, locale, "r.boardAt")),
-    row(`${rideStopName(boarding?.stop.name ?? "")}${track}`),
+    withTail(`${step.transfer ? t(locale, "r.transferPrefix") : ""}${t(locale, "r.board", { line: leg.line, to: leg.headsign })}`, track),
     alightRow(rideStopName(alight?.stop.name ?? ""), arrivalOf(leg), "", locale),
   ];
 
@@ -217,9 +215,8 @@ function rideScene(
       ? (after2.next ? t(locale, "r.afterTransfer", { line: after2.next.line }) : t(locale, "r.afterGoal"))
       : t(locale, "r.afterDone");
   const body = [
-    alightRow(alightName, arrivalOf(leg), `${CURSOR} `, locale),
-    row(second),
-    "",
+    alightRow(alightName, arrivalOf(leg), "", locale),
+    ...(second ? [row(second)] : []),
     row(afterLine),
   ];
 

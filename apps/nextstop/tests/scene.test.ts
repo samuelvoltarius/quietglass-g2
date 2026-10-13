@@ -26,6 +26,7 @@ import { BUS_CYCLE, BUS_FRAMES, busFrame, drawBusScene } from "../src/glasses/bu
 import { fitText } from "../src/glasses/words";
 import { fitStreetText, MAX_FONT_PX, MIN_FONT_PX } from "../src/glasses/street";
 import { departureBoard } from "../src/glasses/view";
+import { boardScene } from "../src/glasses/board";
 import { placesView } from "../src/route/view";
 import { locales } from "../src/i18n";
 
@@ -344,11 +345,12 @@ describe("waiting at the stop", () => {
     expect(scene.kind).toBe("wait");
     expect(scene.images.map((image) => image.id)).toEqual([4, 5]);
     expect(scene.images[0]!.key).toBe("count:2|min|n");
-    expect(scene.view.body[0]).toMatch(/^> O-Bus 2 Richtung /);
-    expect(scene.view.body[1]).toMatch(/^um \d\d:\d\d .*\(in 2 min\)$/);
-    expect(scene.view.body).toHaveLength(4);
+    // Two short rows: the minutes are the picture, nothing repeats them.
+    expect(scene.view.body[0]).toMatch(/^O-Bus 2 Richtung /);
+    expect(scene.view.body[1]).toMatch(/^Aussteigen: .+ · an \d\d:\d\d$/);
+    expect(scene.view.body).toHaveLength(2);
     expect(scene.view.body.every((line) => line.length <= 50)).toBe(true);
-    expect(board(150, 0, "en").view.body[0]).toMatch(/^> O-Bus 2 towards /);
+    expect(board(150, 0, "en").view.body[0]).toMatch(/^O-Bus 2 towards /);
   });
 
   it("counts down by the minute and sends nothing in between", () => {
@@ -393,7 +395,7 @@ describe("waiting at the stop", () => {
     const position = { lat: stop.lat, lon: stop.lon, accuracy: 10 };
     const scene = guideScene(guideState(steps, now, position, { index: 3, autoAtSet: guideState(steps, now, position).auto }), now, position, "de");
     expect(scene.kind).toBe("wait");
-    expect(scene.view.body[0]).toMatch(/^> Umsteigen: /);
+    expect(scene.view.body[0]).toMatch(/^Umsteigen: /);
   });
 });
 
@@ -423,7 +425,8 @@ describe("riding", () => {
     expect(scene.images[0]!.key).toContain("noch");
     expect(scene.images[2]!.key).toContain("Halte");
     const alight = slow.stops[stops - 1]!;
-    expect(scene.view.body[0]).toMatch(new RegExp(`^> Aussteigen: .+ · an \\d\\d:\\d\\d$`));
+    expect(scene.view.body[0]).toMatch(new RegExp(`^Aussteigen: .+ · an \\d\\d:\\d\\d$`));
+    expect(scene.view.body.length).toBeLessThanOrEqual(3);
     expect(scene.view.body[0]).toContain(alight.stop.name.replace(/\s*\(.*\)$/, "").slice(0, 10));
     expect(scene.animated).toBe(false);
     expect(ride(stops - 3).images[1]!.key).toBe("digits:2||n");
@@ -498,6 +501,7 @@ function sampleScenes(): Record<PageKind, Scene> {
     walk: walkScene(nav(300)),
     wait,
     ride,
+    board: boardScene({ id: "x", name: "Salzburg Mirabellplatz", lat: 0, lon: 0 }, [], 40, "de", 0, T0),
   };
 }
 
@@ -506,10 +510,10 @@ describe("the pages obey the container limits of the glasses", () => {
   const menu = menuFor("guide", "de");
 
   it("has a sample of every kind", () => {
-    expect(Object.entries(scenes).map(([kind, scene]) => `${kind}=${scene.kind}`)).toEqual(["text=text", "walk=walk", "wait=wait", "ride=ride"]);
+    expect(Object.entries(scenes).map(([kind, scene]) => `${kind}=${scene.kind}`)).toEqual(["text=text", "walk=walk", "wait=wait", "ride=ride", "board=board"]);
   });
 
-  for (const kind of ["text", "walk", "wait", "ride"] as const) {
+  for (const kind of ["text", "walk", "wait", "ride", "board"] as const) {
     it(`${kind}: at most four images of 20…288 x 20…144, exactly one event capture, all on the display, valid for the SDK`, () => {
       const page = buildPage(scenes[kind], menu);
       const images = page.imageObject ?? [];
@@ -635,12 +639,27 @@ describe("sending pages and pictures", () => {
     }
   });
 
-  it("reports a refused picture instead of pretending it arrived", async () => {
-    const { bridge } = recordingBridge();
-    const refusing = { ...(bridge as object), updateImageRawData: async () => ImageRawDataUpdateResult.imageSizeInvalid } as never;
-    const result = await createPage(refusing, sampleScenes().walk, menuFor("guide", "de"));
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("image:imageSizeInvalid");
+  it("reports a refused picture as partial, keeps the page and sends the picture again next time", async () => {
+    // Before, a refused picture failed the whole page and the next draw rebuilt
+    // it - every two seconds while it kept failing, each rebuild eating taps.
+    const { bridge, log } = recordingBridge();
+    let refuse = true;
+    const refusing = {
+      ...(bridge as object),
+      updateImageRawData: async (update: { containerName?: string }) => {
+        if (refuse) return ImageRawDataUpdateResult.imageSizeInvalid;
+        log.push(`image:${update.containerName}`);
+        return ImageRawDataUpdateResult.success;
+      },
+    } as never;
+    const scene = sampleScenes().walk;
+    const result = await createPage(refusing, scene, menuFor("guide", "de"));
+    expect(result.ok).toBe(true);
+    expect(result.partial).toBe(true);
+    refuse = false;
+    log.length = 0;
+    expect(await updatePage(refusing, scene)).toEqual({ ok: true });
+    expect(log.filter((entry) => entry.startsWith("image:"))).toHaveLength(4);
   });
 
   it("treats departure board pages as plain text scenes, with no pictures", () => {

@@ -13,6 +13,12 @@
  *    big pixel digits, the word after), small text below, the footer.
  *  - "wait": the big countdown (288 x 120) next to a bus-stop scene (288 x 120)
  *    that a bus drives into in the last minute; text below, the footer.
+ *  - "board": one thing big - minutes in pixel digits (288 x 104) beside a
+ *    picture (the line as a badge, the bus stop, "next stop") - then one bold
+ *    line across the full width (two 288 x 50 halves), three short text
+ *    lines, the footer. The departure board, following a bus, the
+ *    connections and every waiting or error message of those pages all use
+ *    it, so moving between them never rebuilds the page.
  *
  * Changing the kind rebuilds the page, which on hardware takes a moment and
  * swallows input meanwhile. It happens when the guide moves to another stage,
@@ -23,7 +29,7 @@
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
 
-export type PageKind = "text" | "walk" | "ride" | "wait";
+export type PageKind = "text" | "walk" | "ride" | "wait" | "board";
 
 export interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 export interface ImageSpec extends Box { readonly id: number; readonly name: string }
@@ -79,12 +85,26 @@ export const WAIT_IMAGES: readonly ImageSpec[] = [
 ];
 export const WAIT_BODY: Box = { x: 0, y: 130, width: SCREEN_WIDTH, height: 120 };
 
+// ---- board --------------------------------------------------------------------
+
+export const BIG_BAND = 104;
+export const BOARD_STRIP = 50;
+export const BOARD_IMAGES: readonly ImageSpec[] = [
+  { id: 4, name: "big", x: 0, y: 2, width: 288, height: BIG_BAND },
+  { id: 5, name: "picture", x: 288, y: 2, width: 288, height: BIG_BAND },
+  { id: 6, name: "strip-left", x: 0, y: 108, width: STREET_HALF, height: BOARD_STRIP },
+  { id: 7, name: "strip-right", x: STREET_HALF, y: 108, width: STREET_HALF, height: BOARD_STRIP },
+];
+/** Three rows of small text under the bold line. */
+export const BOARD_BODY: Box = { x: 0, y: 160, width: SCREEN_WIDTH, height: 90 };
+export const BOARD_ROWS = 3;
+
 export const IMAGES: Readonly<Record<PageKind, readonly ImageSpec[]>> = {
-  text: [], walk: WALK_IMAGES, ride: RIDE_IMAGES, wait: WAIT_IMAGES,
+  text: [], walk: WALK_IMAGES, ride: RIDE_IMAGES, wait: WAIT_IMAGES, board: BOARD_IMAGES,
 };
 
 export const BODY_BOX: Readonly<Record<PageKind, Box>> = {
-  text: TEXT_BODY, walk: WALK_BODY, ride: RIDE_BODY, wait: WAIT_BODY,
+  text: TEXT_BODY, walk: WALK_BODY, ride: RIDE_BODY, wait: WAIT_BODY, board: BOARD_BODY,
 };
 
 export function imageSpec(kind: PageKind, id: number): ImageSpec | undefined {

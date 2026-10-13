@@ -214,8 +214,9 @@ describe("saying a destination", () => {
     expect(fake.state.mic).toEqual([]);
 
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^→ Salzburg Hauptbahnhof/));
-    await vi.waitFor(() => expect(fake.state.body).toContain("in 4 min"));
+    // The connections: the first one big (pictures), where to board and the next two as rows.
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen: los/));
+    await vi.waitFor(() => expect(fake.state.body).toMatch(/^Ab .+ zu Fuß\nin \d+ min · /));
   });
 
   it("demo: the menu keeps a hit as a favourite, double tap drops the page", async () => {

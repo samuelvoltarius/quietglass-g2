@@ -223,7 +223,7 @@ describe("German output stays exactly as reviewed", () => {
     expect(departureBoard(STOP, [], null, "de")).toEqual({
       header: "Salzburg Mirabellplatz",
       body: ["", "Keine Abfahrten in der nächsten Stunde.", "", "Betriebsschluss, oder diese Haltestelle", "wird gerade nicht bedient."],
-      footer: "halten = andere Haltestelle",
+      footer: "Halten: Ziel · Menü: andere Haltestelle",
     });
     expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("tippen = folgen · halten = Ziel · Fahrplan");
   });
@@ -294,7 +294,7 @@ describe("German output stays exactly as reviewed", () => {
       "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe „Erweitert“ unten.",
     );
     expect(html).toContain('<option value="motis">Überall – Fahrplan (funktioniert sofort)</option>');
-    expect(html).toContain("<strong>Tippen</strong> — mitfahren und den nächsten Halt sehen, nochmal tippen = zurück<br />");
+    expect(html).toContain("<strong>Tippen</strong> — Bus verfolgen: wann er kommt, dann der nächste Halt; nochmal tippen = zurück<br />");
     expect(html).toContain('<label for="refresh">Abfahrten neu laden alle <span id="refresh-value"></span> s</label>');
     expect(html).toContain('Fahrplandaten: <a href="https://transitous.org/sources/" target="_blank" rel="noopener">Transitous und seine Quellen</a> (u. a. OpenStreetMap) · Echtzeit Österreich: ÖBB');
     vi.useRealTimers();
@@ -384,15 +384,15 @@ describe("switching the language on the phone", () => {
 
     // Device language German: glasses and phone start in German.
     await vi.waitFor(() => expect(root.innerHTML).toContain("Woher kommen die Abfahrten?"));
-    await vi.waitFor(() => expect(glasses.body).toContain("Warte auf deinen Standort"));
+    // The headline is drawn as a picture now; the hint and the footer stay text.
+    await vi.waitFor(() => expect(glasses.body).toContain("Erlaube den Standort in der Even-App."));
     expect(glasses.footer).toBe("doppeltippen = beenden");
 
     const language = root.querySelector("#language");
     language.value = "en";
     language.fire("change");
 
-    await vi.waitFor(() => expect(glasses.body).toContain("Waiting for your location"));
-    expect(glasses.body).toContain("Allow location in the Even app.");
+    await vi.waitFor(() => expect(glasses.body).toContain("Allow location in the Even app."));
     expect(glasses.footer).toBe("double-tap = exit");
     expect(root.innerHTML).toContain("Where do the departures come from?");
     expect(root.innerHTML).toContain('<option value="en" selected>');
@@ -404,7 +404,7 @@ describe("switching the language on the phone", () => {
     const again = root.querySelector("#language");
     again.value = "de";
     again.fire("change");
-    await vi.waitFor(() => expect(glasses.body).toContain("Warte auf deinen Standort"));
+    await vi.waitFor(() => expect(glasses.body).toContain("Erlaube den Standort in der Even-App."));
     expect(saved).toBe("de");
   });
 });

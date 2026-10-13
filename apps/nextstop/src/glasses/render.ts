@@ -36,6 +36,8 @@ export interface RenderResult {
   readonly ok: boolean;
   /** Present when page creation failed, for the caller to surface or log. */
   readonly reason?: string;
+  /** The page is there, but a picture did not go through; it is sent again with the next draw. */
+  readonly partial?: boolean;
 }
 
 /** Native contextual menu of the page; the SDK checks count, ids and the 32-byte labels. */
@@ -189,7 +191,15 @@ export async function updatePage(bridge: EvenAppBridge, scene: Scene): Promise<R
   return updateImages(bridge, scene);
 }
 
+/**
+ * Sends the pictures that changed. A picture that does not go through never
+ * fails the page: before, it marked the page as lost, and the next draw
+ * rebuilt it - every two seconds, for as long as the picture kept failing,
+ * each rebuild swallowing the taps meant to leave. Now the text stays, the
+ * picture is forgotten and tried again with the next draw.
+ */
 async function updateImages(bridge: EvenAppBridge, scene: Scene): Promise<RenderResult> {
+  let partial = false;
   for (const picture of scene.images) {
     if (shown.get(picture.id) === picture.key) continue;
     const spec = IMAGES[scene.kind].find((candidate) => candidate.id === picture.id);
@@ -199,13 +209,15 @@ async function updateImages(bridge: EvenAppBridge, scene: Scene): Promise<Render
       const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
         containerID: spec.id, containerName: spec.name, imageData,
       }));
-      if (result !== ImageRawDataUpdateResult.success) return { ok: false, reason: `image:${String(result)}` };
-      shown.set(picture.id, picture.key);
+      if (result === ImageRawDataUpdateResult.success) { shown.set(picture.id, picture.key); continue; }
+      console.warn("[nextstop] picture not taken:", spec.name, String(result));
     } catch (error) {
-      return { ok: false, reason: errorMessage(error) };
+      console.warn("[nextstop] picture failed:", spec.name, errorMessage(error));
     }
+    shown.delete(picture.id);
+    partial = true;
   }
-  return { ok: true };
+  return partial ? { ok: true, partial: true } : { ok: true };
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

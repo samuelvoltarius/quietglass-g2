@@ -5,11 +5,10 @@ import { HafasBackend } from "./transit/hafas";
 import { MotisBackend } from "./transit/motis";
 import type { Departure, Ride, Stop, TransitBackend } from "./transit/types";
 import { metresBetween } from "./transit/types";
-import { trackRide, type Position } from "./ride/tracker";
+import type { Position } from "./ride/tracker";
+import { boardingIndex, followRide } from "./ride/follow";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import {
-  departureBoard, errorView, fit, loadingView, ridingView, wrap, type StopView,
-} from "./glasses/view";
+import { boardScene, bySoonest, followLoadingScene, followScene, messageScene } from "./glasses/board";
 import { sameScene } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
@@ -20,12 +19,13 @@ import { createExitRequest } from "./exit";
 import { explainFailure, glassesText, noStopsHint, type Explanation } from "./text";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
-import { clock as clockText, type Destination, type Journey, type TransitLeg } from "./route/journey";
+import type { Destination, Journey, TransitLeg } from "./route/journey";
 import { buildWav } from "./audio/wav";
 import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
 import { addFavorite, loadPlaces, savePlaces, targetsOf, type Places, type Target } from "./route/places";
 import { estimatedArrival, guideState, buildSteps, stepBy, withFreshTimes, withLeg, type Step, type StepOverride } from "./route/guide";
-import { ROUTE_WIDTH, placesView, plansView, voiceView, type VoiceState } from "./route/view";
+import { placesView, voiceView, type VoiceState } from "./route/view";
+import { planScene } from "./route/plan-scene";
 import { BEAT_MS, beatOf, guideScene, plainScene, type Scene } from "./route/scene";
 import { MENU, menuFor, type Screen } from "./route/menu";
 import type { Planner } from "./route/planner";
@@ -68,6 +68,8 @@ export function positionFromUrl(search: string): Position | null {
 
 /** How long the first location answer may take before the app goes on without it. */
 const FIRST_FIX_MS = 10000;
+/** A request that has not been answered by then is reported as a failure the passenger can tap away. */
+const RIDE_TIMEOUT_MS = 15000;
 
 /** Rejects when the promise has not settled in time; the promise itself runs on. */
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -119,7 +121,21 @@ async function boot(): Promise<void> {
    * same message in the other language at once.
    */
   type Say = (locale: Locale) => Explanation;
-  let ride: Ride | null = null;
+  /**
+   * The bus picked on the board, from the tap on. It exists while its stops
+   * are still being fetched, so the glasses answer the tap at once instead of
+   * showing the unchanged board until the network has replied.
+   */
+  interface FollowState {
+    readonly departure: Departure;
+    readonly stop: Stop;
+    readonly status: "loading" | "ready" | "error";
+    readonly ride: Ride | null;
+    /** Index of the passenger's stop in `ride.stops`, -1 when it is not found. */
+    readonly boarding: number;
+    readonly error?: Say;
+  }
+  let following: FollowState | null = null;
   let error: Say | null = null;
   let busy: Say = (lang) => ({ error: glassesText(lang).searching, hint: "" });
 
@@ -222,46 +238,53 @@ async function boot(): Promise<void> {
   const currentStop = (): Stop | undefined => stops[stopIndex];
   const targets = (): readonly Target[] => targetsOf(places);
 
-  const boardView = (): StopView => {
-    if (error) {
-      const { error: message, hint } = error(locale);
-      return errorView(message, hint, locale);
+  /** Everything the board screen shows: the board, a followed bus, waiting and failures - one page shape. */
+  const boardPage = (): Scene => {
+    const now = clock();
+    if (following) {
+      const current = following;
+      if (current.status === "loading") return followLoadingScene(current.departure, now, locale);
+      if (current.status === "ready" && current.ride) {
+        const state = followRide(current.ride, current.boarding, current.departure.expected, now, position);
+        if (state) return followScene(current.departure, state, now, locale, beatOf(Date.now()));
+      }
+      const said = current.error?.(locale) ?? { error: glassesText(locale).noRide, hint: glassesText(locale).noRideHint };
+      return messageScene(said.error, said.hint, t(locale, "g.footerFollow"), "!");
     }
 
-    if (ride) {
-      const progress = trackRide(ride, clock(), position);
-      if (progress) return ridingView(progress, clock(), ride.line, ride.headsign, locale);
+    if (error) {
+      const { error: message, hint } = error(locale);
+      return messageScene(message, hint, t(locale, "g.footerRetry"), "!");
     }
 
     const stop = currentStop();
     if (!stop) {
       const { error: what, hint } = busy(locale);
-      return loadingView(what, hint, locale);
+      return messageScene(what, hint, t(locale, "g.footerExit"), "...");
     }
 
     const away = position
       ? metresBetween(position.lat, position.lon, stop.lat, stop.lon)
       : null;
-    return departureBoard(stop, departures, away, locale, selected, clock());
+    return boardScene(stop, departures, away, locale, selected, now);
   };
 
-  const planView = (state: PlanState): StopView => {
-    const header = fit(t(locale, "r.plansHeader", { name: state.target.name, time: clockText(clock()) }), ROUTE_WIDTH);
+  const planPage = (state: PlanState): Scene => {
     if (state.status === "loading") {
-      return { header, body: ["", t(locale, "r.searchingPlans")], footer: t(locale, "r.footerBack") };
+      return messageScene(t(locale, "r.searchingPlans"), state.target.name, t(locale, "r.footerBack"), "...");
     }
     if (state.status === "error" || state.journeys.length === 0) {
       const { error: message, hint } = state.error
         ? state.error(locale)
         : { error: t(locale, "r.noPlans"), hint: t(locale, "r.noPlansHint") };
-      return { header, body: ["", ...wrap(message), "", ...wrap(hint)].slice(0, 7), footer: t(locale, "g.footerRetry") };
+      return messageScene(message, hint, t(locale, "g.footerRetry"), "!");
     }
-    return plansView(state.target.name, state.journeys, state.selected, clock(), locale);
+    return planScene(state.journeys, state.selected, clock(), locale);
   };
 
   const currentScene = (): Scene => {
     if (screen === "places") return plainScene(placesView(targets(), placeIndex, clock(), locale));
-    if (screen === "plans" && plan) return plainScene(planView(plan));
+    if (screen === "plans" && plan) return planPage(plan);
     if (screen === "voice" && voice) return plainScene(voiceView(voice, clock(), locale));
     if (screen === "guide" && guide) {
       const now = clock();
@@ -275,7 +298,7 @@ async function boot(): Promise<void> {
         beat: beatOf(Date.now()),
       });
     }
-    return plainScene(boardView());
+    return boardPage();
   };
 
   const drawOnce = async (): Promise<void> => {
@@ -305,7 +328,8 @@ async function boot(): Promise<void> {
       result = await updatePage(bridge, scene);
     }
     if (closed) return;
-    if (result.ok) { pageReady = true; lastScene = scene; return; }
+    // A picture that did not go through is sent again with the next draw.
+    if (result.ok) { pageReady = true; lastScene = result.partial ? null : scene; return; }
     pageReady = false;
     menuKey = "";
     console.warn("[nextstop] draw failed:", result.reason);
@@ -326,25 +350,34 @@ async function boot(): Promise<void> {
   };
 
   /** Turns a thrown failure into something a passenger can act on. */
-  const explain = (thrown: unknown): void => {
+  const sayFailure = (thrown: unknown): Say => {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     console.warn("[nextstop] request failed:", message);
     const backendId = settings.backend;
-    error = (lang) => explainFailure(message, backendId, lang);
+    return (lang) => explainFailure(message, backendId, lang);
   };
+  const explain = (thrown: unknown): void => { error = sayFailure(thrown); };
 
   const loadDepartures = async (seq = ++requestSeq): Promise<void> => {
     const stop = currentStop();
     if (!stop) { settle(seq); return; }
     try {
-      const next = await backend().departures(stop.id, 12);
+      const next = await withTimeout(backend().departures(stop.id, 12), RIDE_TIMEOUT_MS);
       if (seq !== requestSeq) return;
-      departures = next;
-      selected = Math.min(selected, Math.max(0, departures.length - 1));
+      // Soonest first by the time now expected, and the selection stays on the
+      // same bus when a refresh reorders the board under the passenger's eyes.
+      const kept = departures[selected]?.tripId;
+      departures = bySoonest(next);
+      const again = kept ? departures.findIndex((departure) => departure.tripId === kept) : -1;
+      selected = again >= 0 ? again : Math.min(selected, Math.max(0, departures.length - 1));
       error = null;
     } catch (thrown) {
       if (seq !== requestSeq) return;
-      explain(thrown);
+      // A failed refresh of a board already on screen keeps the board: its
+      // minutes are worked out from the clock and stay right for a while, and
+      // the next refresh comes in half a minute. Only an empty board says why.
+      if (departures.length > 0) console.warn("[nextstop] refresh failed, board kept:", thrown instanceof Error ? thrown.message : String(thrown));
+      else explain(thrown);
     }
     settle(seq);
     await draw();
@@ -361,7 +394,7 @@ async function boot(): Promise<void> {
     busy = (lang) => ({ error: glassesText(lang).searching, hint: "" });
     await draw();
     try {
-      const found = await backend().nearbyStops(position.lat, position.lon, 5);
+      const found = await withTimeout(backend().nearbyStops(position.lat, position.lon, 5), RIDE_TIMEOUT_MS);
       if (seq !== requestSeq) return;
       stops = found;
       departures = [];
@@ -378,28 +411,53 @@ async function boot(): Promise<void> {
     await loadDepartures(seq);
   };
 
-  const startTracking = async (): Promise<void> => {
+  /**
+   * Tap on the board: follow the selected bus. The page answers at once
+   * (same page shape, only words and pictures change), the stops of the ride
+   * follow when they arrive, and a failure or a timeout is shown rather than
+   * left as a board that seems to ignore the tap.
+   */
+  const startFollow = async (): Promise<void> => {
     const departure = departures[selected];
-    if (!departure) return;
+    const stop = currentStop();
+    if (!departure || !stop) return;
     const seq = ++requestSeq;
-    busy = (lang) => ({ error: glassesText(lang).loadingRide, hint: "" });
-    await draw();
+    following = { departure, stop, status: "loading", ride: null, boarding: -1 };
+    void draw();
+    let next: FollowState;
     try {
-      const loaded = await backend().ride(departure.tripId);
-      if (seq !== requestSeq) return;
-      ride = loaded;
-      error = ride ? null : (lang) => ({ error: glassesText(lang).noRide, hint: glassesText(lang).noRideHint });
+      const loaded = await withTimeout(backend().ride(departure.tripId), RIDE_TIMEOUT_MS);
+      next = loaded
+        ? { departure, stop, status: "ready", ride: loaded, boarding: boardingIndex(loaded, stop, departure.expected) }
+        : { departure, stop, status: "error", ride: null, boarding: -1 };
     } catch (thrown) {
-      if (seq !== requestSeq) return;
-      explain(thrown);
+      next = { departure, stop, status: "error", ride: null, boarding: -1, error: sayFailure(thrown) };
     }
+    if (seq !== requestSeq || following?.departure !== departure) return;
+    following = next;
     settle(seq);
     await draw();
   };
 
-  const stopTracking = async (): Promise<void> => {
-    ride = null;
+  /** Fresh times for the followed bus (delays move); a failure keeps what is there. */
+  const refreshFollow = async (): Promise<void> => {
+    const current = following;
+    if (!current || current.status !== "ready" || !current.ride) return;
+    try {
+      const loaded = await withTimeout(backend().ride(current.departure.tripId), RIDE_TIMEOUT_MS);
+      if (following !== current || !loaded) return;
+      following = { ...current, ride: loaded, boarding: boardingIndex(loaded, current.stop, current.departure.expected) };
+      void draw();
+    } catch {
+      // The times already shown stay; the next refresh tries again.
+    }
+  };
+
+  /** Back to the board: the departures already held show at once, fresh ones follow. */
+  const stopFollow = async (): Promise<void> => {
+    following = null;
     error = null;
+    void draw();
     await loadDepartures();
   };
 
@@ -677,7 +735,8 @@ async function boot(): Promise<void> {
     refreshTimer = setInterval(() => {
       // A request the passenger started — a stop switch, a ride being loaded —
       // is never pre-empted by the background refresh.
-      if (screen === "board" && !ride && settledSeq === requestSeq) void loadDepartures();
+      if (screen === "board" && !following && settledSeq === requestSeq) void loadDepartures();
+      if (screen === "board" && following?.status === "ready" && settledSeq === requestSeq) void refreshFollow();
       // The ride screen still redraws, because its countdown moves with the
       // clock even when no new data has arrived.
       void draw();
@@ -703,7 +762,7 @@ async function boot(): Promise<void> {
     };
 
     // The first fix after starting cold is what finally makes a stop findable.
-    if (!previous && !ride) { void findStops(); return; }
+    if (!previous && !following) { void findStops(); return; }
     void ensureWalk();
     announce();
     void draw();
@@ -713,23 +772,24 @@ async function boot(): Promise<void> {
   const onBoardGesture = (gesture: string): void => {
     switch (gesture) {
       case "click":
-        if (error) { void (ride ? stopTracking() : findStops()); return; }
-        if (ride) { void stopTracking(); return; }
-        void startTracking();
+        // Following (also while its stops load, or after it failed): back to the board.
+        if (following) { void stopFollow(); return; }
+        if (error) { void findStops(); return; }
+        void startFollow();
         return;
       case "longPress":
         // Hold = say where you want to go, right from the start page. Cycling
         // through nearby stops moved to the menu ("Andere Haltestelle").
-        if (ride) return;
+        if (following) return;
         void startVoice();
         return;
       case "scrollUp":
-        if (ride || departures.length === 0) return;
+        if (following || departures.length === 0) return;
         selected = Math.max(0, selected - 1);
         void draw();
         return;
       case "scrollDown":
-        if (ride || departures.length === 0) return;
+        if (following || departures.length === 0) return;
         selected = Math.min(departures.length - 1, selected + 1);
         void draw();
         return;
@@ -830,9 +890,9 @@ async function boot(): Promise<void> {
     switch (itemId) {
       case MENU.route: openPlaces(); return;
       case MENU.board: openBoard(); return;
-      case MENU.refresh: if (screen === "board") { ride = null; void findStops(); } return;
+      case MENU.refresh: if (screen === "board") { following = null; void findStops(); } return;
       case MENU.otherStop:
-        if (screen !== "board" || ride || stops.length < 2) return;
+        if (screen !== "board" || following || stops.length < 2) return;
         stopIndex = (stopIndex + 1) % stops.length;
         selected = 0;
         void loadDepartures();
@@ -927,7 +987,7 @@ async function boot(): Promise<void> {
     if (closed || !firstFix || typeof firstFix.latitude !== "number") return;
     // A real fix always wins over the URL parameter.
     position = { lat: firstFix.latitude, lon: firstFix.longitude };
-    if (!ride) void findStops();
+    if (!following) void findStops();
   })();
 
   // A second beat so the countdown stays honest between data refreshes.
@@ -937,7 +997,7 @@ async function boot(): Promise<void> {
   // "get off"): it redraws only while such a page is on screen, so the quiet
   // pages keep their 2 s rhythm and send nothing in between.
   beatTimer = setInterval(() => {
-    if (!closed && lastScene?.animated && screen === "guide") void draw();
+    if (!closed && lastScene?.animated && (screen === "guide" || screen === "board")) void draw();
   }, BEAT_MS);
 
   mountPhoneUi({
@@ -958,7 +1018,7 @@ async function boot(): Promise<void> {
       settings = next;
       await save(bridge, next);
       scheduleRefresh();
-      if (backendChanged) { ride = null; await findStops(); }
+      if (backendChanged) { following = null; await findStops(); }
       await draw();
     },
     getPosition: () => position,

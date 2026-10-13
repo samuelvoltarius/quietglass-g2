@@ -21,11 +21,12 @@ const nodeProcess = (globalThis as unknown as {
 // promises, which would hide exactly the rejections these tests look for.
 function fakeBridge() {
   let onEvent: ((event: unknown) => void) | undefined;
-  const state = { shutdowns: 0, shutdownFails: false, confirm: true, modes: [] as (number | undefined)[], draws: 0, header: "", body: "" };
+  const state = { shutdowns: 0, shutdownFails: false, confirm: true, modes: [] as (number | undefined)[], draws: 0, header: "", body: "", footer: "" };
   const record = (id: number | undefined, content: string | undefined): void => {
     state.draws += 1;
     if (id === 1) state.header = content ?? "";
     if (id === 2) state.body = content ?? "";
+    if (id === 3) state.footer = content ?? "";
   };
   const bridge = {
     getLocalStorage: async () => JSON.stringify({
@@ -66,13 +67,17 @@ const STOPS = [
   { stopId: "B", name: "Bravo Gasse", lat: 47.8070, lon: 13.0440 },
 ];
 
+/**
+ * Two departures to the same place. The first one is drawn big (pictures);
+ * the second one is a text row, which is what the fake glasses can read.
+ */
 function stopTimes(headsign: string): unknown {
-  const soon = new Date(Date.now() + 5 * 60000).toISOString();
+  const at = (minutes: number): string => new Date(Date.now() + minutes * 60000).toISOString();
   return {
-    stopTimes: [{
-      tripId: "trip-" + headsign, routeShortName: "6", headsign, realTime: false,
-      place: { scheduledDeparture: soon, departure: soon },
-    }],
+    stopTimes: [5, 9].map((minutes) => ({
+      tripId: `trip-${headsign}-${minutes}`, routeShortName: "6", headsign, realTime: false,
+      place: { scheduledDeparture: at(minutes), departure: at(minutes) },
+    })),
   };
 }
 
@@ -138,7 +143,7 @@ describe("nextstop lifecycle", () => {
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(fake.state.header).toContain("Bravo Gasse");
+    expect(fake.state.body).toContain("Bravo Gasse");
     expect(fake.state.body).toContain("Bravo-Ziel");
     expect(fake.state.body).not.toContain("Alpha-Ziel");
   });
@@ -156,8 +161,8 @@ describe("nextstop lifecycle", () => {
     const fake = fakeBridge();
     (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = async () => null;
     await boot(fake);
-    await vi.waitFor(() => expect(fake.state.body).toContain("Warte auf deinen Standort"));
-    expect(fake.state.body).toContain("Erlaube den Standort in der Even-App");
+    // "Warte auf deinen Standort" is the bold picture line; the hint is text.
+    await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -180,6 +185,9 @@ describe("nextstop lifecycle", () => {
     await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
 
     fake.gesture(0); // tap: follow the selected bus
+    // The glasses answer the tap at once, before the network has (0.3.7 showed the unchanged board).
+    await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
+    expect(fake.state.footer).toBe("Tippen: zurück zur Tafel");
     await vi.waitFor(() => expect(pending).toHaveLength(2));
     const at = (minutes: number): string => new Date(Date.now() + minutes * 60000).toISOString();
     pending[1]?.reply({
@@ -193,15 +201,15 @@ describe("nextstop lifecycle", () => {
         to: { name: "Endstation", lat: 47.83, lon: 13.07, scheduledArrival: at(14) },
       }],
     });
-    await vi.waitFor(() => expect(fake.state.body).toMatch(/Mitte|Nord|Endstation/), { timeout: 3000 });
-    const drawsBefore = fake.state.draws;
-    console.info("[test] ride header:", fake.state.header, "| body:", fake.state.body);
+    // Waiting at Alpha Platz: when it leaves from here, not the stops after it.
+    await vi.waitFor(() => expect(fake.state.body).toMatch(/^\d\d:\d\d · ~ Fahrplan · Alpha Platz\nBus ist gleich da$/), { timeout: 3000 });
 
     resetGestureDedupe(); // a person's second tap comes seconds later
-    fake.gesture(0); // tap again: back to the board
+    fake.gesture(0); // tap again: back to the board, at once, with the departures already held
+    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
     await vi.waitFor(() => expect(pending).toHaveLength(3));
     pending[2]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.draws).toBeGreaterThan(drawsBefore));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fake.state.body).toContain("Alpha-Ziel");
     fake.gesture(3); // double tap
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
@@ -216,8 +224,51 @@ describe("nextstop lifecycle", () => {
     (fake.bridge as { startAppLocationUpdates: () => Promise<unknown> }).startAppLocationUpdates = never;
     (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = never;
     await boot(fake);
-    await vi.waitFor(() => expect(fake.state.body).toContain("Warte auf deinen Standort"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
     fake.gesture(3); // double tap
+    await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
+  });
+
+  it("a tap while the ride is still loading goes back to the board, and the late answer is dropped", async () => {
+    // A slow network must never leave the glasses ignoring taps.
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.reply(stopTimes("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+
+    fake.gesture(0);
+    await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    resetGestureDedupe();
+    fake.gesture(0); // the ride has not answered: back anyway
+    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    expect(fake.state.footer).toContain("Tippen: verfolgen");
+
+    pending[1]?.reply({ legs: [] }); // the ride's answer, too late
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.state.footer).toContain("Tippen: verfolgen");
+    fake.gesture(3);
+    await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
+  });
+
+  it("never rebuilds the page between the board and a followed bus", async () => {
+    // A rebuild costs seconds on the glasses and swallows taps meanwhile.
+    const fake = fakeBridge();
+    let rebuilds = 0;
+    (fake.bridge as unknown as { rebuildPageContainer: () => Promise<boolean> }).rebuildPageContainer = async () => { rebuilds += 1; return true; };
+    await boot(fake);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.reply(stopTimes("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    const before = rebuilds;
+    fake.gesture(0);
+    await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
+    resetGestureDedupe();
+    fake.gesture(0);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    expect(rebuilds).toBe(before);
+    fake.gesture(3);
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });
 

@@ -113,3 +113,27 @@ export async function renderWordsPng(lines: readonly WordLine[], width: number, 
   });
   return toPng(canvas);
 }
+
+/**
+ * A line name as the sign on the front of the bus: black bold type in a white
+ * box, the box as large as the type needs. Empty text gives a black image.
+ */
+export async function renderBadgePng(text: string, width: number, height: number, maxSize = 72): Promise<Uint8Array> {
+  const label = text.trim();
+  const made = label ? makeCanvas(width, height) : null;
+  if (!made) return blackPng(width, height);
+  const { canvas, ctx } = made;
+  const measure = (value: string, size: number): number => { ctx.font = FONT(size); return ctx.measureText(value).width; };
+  const pad = 14;
+  const fitted = fitText(measure, label, width - 2 * pad - 8, Math.min(maxSize, height - 2 * pad), MIN_FONT_PX);
+  const boxWidth = Math.min(width - 4, fitted.width + 2 * pad);
+  const boxHeight = Math.min(height - 4, fitted.size + 2 * pad - 6);
+  const left = Math.round((width - boxWidth) / 2);
+  const top = Math.round((height - boxHeight) / 2);
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#fff"; ctx.fillRect(left, top, boxWidth, boxHeight);
+  ctx.fillStyle = "#000"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  ctx.font = FONT(fitted.size);
+  ctx.fillText(fitted.text, left + (boxWidth - fitted.width) / 2, top + boxHeight / 2 + 1);
+  return toPng(canvas);
+}

@@ -65,6 +65,21 @@ export function drawBusScene(ctx: CardContext, frame: number, width = BUS_WIDTH,
 
 export async function renderBusPng(frame: number, width = BUS_WIDTH, height = BUS_HEIGHT): Promise<Uint8Array> {
   const canvas = createGrayCanvas(width, height);
-  drawBusScene(canvas, frame, width, height);
+  if (height === BUS_HEIGHT) {
+    drawBusScene(canvas, frame, width, height);
+  } else {
+    // A smaller band (the board page): the same scene, scaled down whole and centred.
+    const scale = height / BUS_HEIGHT;
+    const left = (width - width * scale) / 2;
+    const scaled: CardContext = {
+      get fillStyle() { return canvas.fillStyle; },
+      set fillStyle(value: string) { canvas.fillStyle = value; },
+      fillRect: (x, y, w, h) => {
+        const x0 = Math.floor(left + x * scale), y0 = Math.floor(y * scale);
+        canvas.fillRect(x0, y0, Math.max(1, Math.ceil(left + (x + w) * scale) - x0), Math.max(1, Math.ceil((y + h) * scale) - y0));
+      },
+    };
+    drawBusScene(scaled, frame, width, BUS_HEIGHT);
+  }
   return encodePng(width, height, canvas.pixels);
 }
