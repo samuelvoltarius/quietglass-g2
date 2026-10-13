@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] — 2026-10-13
+
+### Added
+
+- Animated rain radar as a fourth view (swipe): RainViewer tiles, 2 x 2 image containers around your place, six frames looping every 700 ms (only while the page is open), range rings at 100 and 200 km, your place as a pixel cross. The page shows "Radar: RainViewer". Private build only: built with VITE_RADAR=1 and packed with app.private.json (adds the RainViewer origins); the public build has no radar. RainViewer allows private and educational use only.
+- ?demo=1 uses a fixed place (and a made-up radar if the service cannot be reached).
+
+### Fixed
+
+- Pictures (icons, chart) no longer vanish: the page is created once per run and later only rebuilt, and all images are resent after every rebuild.
+
 ## [0.3.3] — 2026-10-13
 
 ### Changed

@@ -3,7 +3,8 @@ import { AppLocationAccuracy, waitForEvenAppBridge, type EvenAppBridge } from "@
 import { createImageLane } from "./glasses/lane";
 import { createExitRequest } from "./exit";
 import { encodePng } from "./glasses/pixel";
-import { createTextPage, sendImage, updateTextPage, type TextView } from "./glasses/text";
+import { createRadarPage, createTextPage, sendImage, updateRadarText, updateTextPage, type RadarView, type TextView } from "./glasses/text";
+import type { RadarSession } from "./radar/session";
 import { languageSelect, rememberLocale, resolveLocale, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent } from "./input/gestures";
 import { messages } from "./messages";
@@ -15,6 +16,15 @@ import { CHART, chartData, chartKey, chartSummary, drawChart } from "./weather/c
 import { ICONS, drawWeatherIcons, iconKey } from "./weather/icons";
 
 const round = (value: number): string => `${Math.round(value)}°`;
+/**
+ * The radar page exists only in the private build (`VITE_RADAR=1`): RainViewer's
+ * terms allow private and educational use only. Written out literally so the
+ * public build drops the radar code altogether.
+ */
+const RADAR = import.meta.env.VITE_RADAR === "1";
+/** ?demo=1: a fixed place when the phone has no location, so the app can be tried in the simulator. */
+const DEMO = typeof location !== "undefined" && new URLSearchParams(location.search).get("demo") === "1";
+const DEMO_PLACE = { latitude: 47.8095, longitude: 13.055 };
 /** Header and footer span the full 576 px, unlike the body next to the icons. */
 const FULL_WIDTH = 56;
 
@@ -32,7 +42,19 @@ async function boot(): Promise<void> {
   /** What the glasses show now, so a refresh only rewrites the containers that changed. */
   let shown: TextView | null = null;
   const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData));
+  /** The radar's four tiles go through their own lane: at most one write per tile every 700 ms. */
+  const radarLane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  /** Which layout is on the glasses: switching between the two is a page rebuild. */
+  let installed: "weather" | "radar" | null = null;
+  let shownRadar: RadarView | null = null;
+  let radar: RadarSession | null = null;
+  if (RADAR) {
+    const { createRadarSession } = await import("./radar/session");
+    radar = createRadarSession({ position: () => where?.position ?? null, t, locale: () => locale, redraw: () => { void draw(); }, demo: DEMO });
+  }
+  const pageCount = radar ? 4 : 3;
+  const onRadar = (): boolean => radar !== null && page === 3;
   const condition = (code: number): string => t(weatherKind(code));
   const errorText = (): string => failure ? t(failure.key, { status: failure.status ?? "" }) : "";
   const placeName = (): string => where?.label ?? (where?.kind === "manual" ? `${where.position.latitude.toFixed(2)}, ${where.position.longitude.toFixed(2)}` : t("here"));
@@ -64,20 +86,46 @@ async function boot(): Promise<void> {
     const data = chartData(forecast.hourly, t("now"));
     lane.request(CHART, chartKey(data), () => encodePng(drawChart(data)));
   };
-  const draw = async (): Promise<void> => {
+  const drawRadar = async (): Promise<void> => {
+    if (!radar) return;
+    if (installed !== "radar") pageReady = false;
+    const text = radar.text();
+    if (!pageReady) {
+      const result = await createRadarPage(bridge, text);
+      if (!result.ok) { pageReady = false; return; }
+      pageReady = true; installed = "radar"; shownRadar = text;
+      // A new page starts with blank images.
+      radarLane.invalidate();
+    } else if (JSON.stringify(text) !== JSON.stringify(shownRadar)) {
+      const result = await updateRadarText(bridge, text, shownRadar ?? undefined);
+      if (!result.ok) { pageReady = false; return; }
+      shownRadar = text;
+    }
+    radar.requestImages(radarLane);
+  };
+  const drawNow = async (): Promise<void> => {
     if (closed) return;
+    if (onRadar()) { await drawRadar(); return; }
+    if (installed !== "weather") { pageReady = false; last = ""; }
     const text = view(); const signature = JSON.stringify(text);
     if (signature !== last || !pageReady) {
       const created = !pageReady;
       const result = pageReady ? await updateTextPage(bridge, text, shown ?? undefined) : await createTextPage(bridge, text);
       if (!result.ok) { pageReady = false; return; }
-      pageReady = true; last = signature; shown = text;
+      pageReady = true; installed = "weather"; last = signature; shown = text;
       // A new page starts with blank images.
       if (created) lane.invalidate();
     }
     requestImages();
   };
-  const phoneFix = async (): Promise<{ latitude: number; longitude: number } | null> => bridge.getAppLocation({ accuracy: AppLocationAccuracy.Medium, timeoutMs: 8000 });
+  /** One draw at a time: the radar loop, taps and refreshes all ask for one, and two page creations must never overlap. */
+  let drawing: Promise<void> | null = null; let drawAgain = false;
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => { try { do { drawAgain = false; await drawNow(); } while (drawAgain && !closed); } finally { drawing = null; } })();
+    return drawing;
+  };
+  const phoneFix = async (): Promise<{ latitude: number; longitude: number } | null> => (await Promise.resolve(bridge.getAppLocation({ accuracy: AppLocationAccuracy.Medium, timeoutMs: 8000 })).catch(() => null)) ?? (DEMO ? DEMO_PLACE : null);
   const refresh = async (): Promise<void> => {
     if (loading) return; loading = true; failure = null; if (forecast.source === "demo") status = "loading"; await draw(); renderPhone();
     where = await resolveLocation(storedSources(store, phoneFix));
@@ -87,6 +135,8 @@ async function boot(): Promise<void> {
       catch (cause) { failure = errorKey(cause); if (forecast.source === "demo") status = "offline"; }
     }
     loading = false; last = ""; await draw(); renderPhone();
+    // A radar page that was waiting for a place can load now.
+    if (onRadar() && radar && radar.status() !== "ready") radar.reload();
   };
   const nextStep = (): string => loading && forecast.source === "demo" ? t("nextLoading") : status === "noLocation" ? t("nextNoLocation") : status === "offline" || failure ? t("nextOffline") : status === "live" ? t("nextLive", { place: placeName() }) : t("nextLoading");
   const currentSetting = (): string => { const mode = storedMode(store); const source = storedSources(store, async () => null); if (mode === "place" && source.place) return t("using", { place: source.place.label }); if (mode === "manual" && source.manual) return t("using", { place: `${source.manual.latitude}, ${source.manual.longitude}` }); return mode === "phone" ? t("usingPhone") : t("usingNone"); };
@@ -95,7 +145,7 @@ async function boot(): Promise<void> {
     const weather = `<section class="card weather-card"><div class="status-row"><span class="status-dot ${forecast.source === "demo" ? "warn" : ""}"></span><strong>${t(forecast.source === "live" ? "live" : "demo")}</strong><time>${clock(current.time, locale)}</time></div><div class="weather-hero"><div><span>${condition(current.weatherCode)}</span><strong>${round(current.temperature)}</strong></div><p>${t("feels")} ${round(current.feelsLike)}</p></div><div class="weather-grid"><div><span>${t("humidity")}</span><b>${Math.round(current.humidity)}%</b></div><div><span>${t("wind")}</span><b>${windCompass(current.windDirection)} ${Math.round(current.windSpeed)}</b><small>km/h</small></div><div><span>${t("precipitation")}</span><b>${current.precipitation.toFixed(1)}</b><small>mm</small></div><div><span>${t("clouds")}</span><b>${Math.round(current.cloudCover)}%</b></div></div>${failure ? `<p class="error">${escapeHtml(errorText())}</p>` : ""}<button id="refresh">${t("refresh")}</button></section>`;
     const location = `<section class="card"><h2>${t("settings")}</h2><p class="hint">${escapeHtml(currentSetting())}</p><label class="check"><input id="automatic" type="checkbox"${mode === "phone" ? " checked" : ""}>${t("automatic")}</label><label>${t("place")}<input id="place" type="text" autocomplete="off" placeholder="${escapeHtml(t("placeHint"))}" value="${escapeHtml(query)}"></label><button id="search">${t("search")}</button>${searchNote ? `<p class="hint">${escapeHtml(searchNote)}</p>` : ""}${results.length ? `<div class="place-list">${results.map((place, index) => `<button class="place" data-index="${index}">${escapeHtml(place.label)}</button>`).join("")}</div>` : ""}</section>`;
     const advanced = `<details class="card advanced"${coordNote ? " open" : ""}><summary>${t("advanced")}</summary><label>${t("latitude")}<input id="lat" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lat) ?? "")}"></label><label>${t("longitude")}<input id="lon" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lon) ?? "")}"></label><button id="coords">${t("useCoords")}</button>${coordNote ? `<p class="error">${escapeHtml(coordNote)}</p>` : ""}<p class="hint">${t("help")}</p></details>`;
-    app.innerHTML = `<header class="brand"><div class="brand-mark">QUIETGLASS / WEATHER</div><h1>RainLens</h1><p class="lede">${t("lede")}</p></header><p class="next">${escapeHtml(nextStep())}</p>${status === "noLocation" ? location + weather : weather + location}<section class="card"><div class="section-title"><h2>${t("hourly")}</h2><span>${t("chance")}</span></div><div class="hourly-strip">${forecast.hourly.slice(0, 8).map((hour) => `<div><time>${clock(hour.time, locale)}</time><b>${round(hour.temperature)}</b><span>${condition(hour.weatherCode)}</span><em>${Math.round(hour.precipitationProbability)}%</em></div>`).join("")}</div></section><section class="card"><h2>${t("days")}</h2><div class="forecast-list">${forecast.daily.map((day) => `<div><b>${dayName(day.date, locale)}</b><span>${condition(day.weatherCode)}</span><em>${round(day.maximum)} / ${round(day.minimum)}</em><small>${Math.round(day.precipitationProbability)}%</small></div>`).join("")}</div>${today ? `<div class="sun-row"><span>${t("sun")}</span><b>${clock(today.sunrise, locale)} → ${clock(today.sunset, locale)}</b></div>` : ""}</section><section class="card compact">${languageSelect(locale)}</section>${advanced}<p class="credits">${t("credits")}</p>`;
+    app.innerHTML = `<header class="brand"><div class="brand-mark">QUIETGLASS / WEATHER</div><h1>RainLens</h1><p class="lede">${t("lede")}</p></header><p class="next">${escapeHtml(nextStep())}</p>${status === "noLocation" ? location + weather : weather + location}<section class="card"><div class="section-title"><h2>${t("hourly")}</h2><span>${t("chance")}</span></div><div class="hourly-strip">${forecast.hourly.slice(0, 8).map((hour) => `<div><time>${clock(hour.time, locale)}</time><b>${round(hour.temperature)}</b><span>${condition(hour.weatherCode)}</span><em>${Math.round(hour.precipitationProbability)}%</em></div>`).join("")}</div></section><section class="card"><h2>${t("days")}</h2><div class="forecast-list">${forecast.daily.map((day) => `<div><b>${dayName(day.date, locale)}</b><span>${condition(day.weatherCode)}</span><em>${round(day.maximum)} / ${round(day.minimum)}</em><small>${Math.round(day.precipitationProbability)}%</small></div>`).join("")}</div>${today ? `<div class="sun-row"><span>${t("sun")}</span><b>${clock(today.sunrise, locale)} → ${clock(today.sunset, locale)}</b></div>` : ""}</section><section class="card compact">${languageSelect(locale)}</section>${advanced}<p class="credits">${t("credits")}${RADAR ? ` · ${t("creditsRadar")}` : ""}</p>`;
     document.querySelector("#language")?.addEventListener("change", (event) => { locale = (event.target as HTMLSelectElement).value as Locale; rememberLocale(bridge, locale); last = ""; void draw(); renderPhone(); });
     document.querySelector("#refresh")?.addEventListener("click", () => { void refresh(); });
     document.querySelector("#automatic")?.addEventListener("change", (event) => { const checked = (event.target as HTMLInputElement).checked; const fallback = storedSources(store, async () => null).place ? "place" : "manual"; appStore.set(KEYS.mode, checked ? "phone" : fallback); void refresh(); });
@@ -120,9 +170,9 @@ async function boot(): Promise<void> {
     });
   };
   // Double tap opens the system exit dialog; the app keeps running until the user confirms.
-  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; lane.close(); } }, "rainlens");
+  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; lane.close(); radarLane.close(); radar?.stop(); } }, "rainlens");
   await draw(); renderPhone(); void refresh();
-  bridge.onEvenHubEvent((event) => { if (closed) return; const gesture = gestureFromEvent(event); if (!gesture) return; if (gesture.gesture === "doubleClick") { void requestExit(); return; } if (gesture.gesture === "click") { void refresh(); return; } if (gesture.gesture.startsWith("scroll")) { page = gesture.gesture === "scrollDown" ? (page + 1) % 3 : (page + 2) % 3; last = ""; void draw(); } });
+  bridge.onEvenHubEvent((event) => { if (closed) return; const gesture = gestureFromEvent(event); if (!gesture) return; if (gesture.gesture === "doubleClick") { void requestExit(); return; } if (gesture.gesture === "click") { if (onRadar() && radar) radar.reload(); else void refresh(); return; } if (gesture.gesture.startsWith("scroll")) { const was = onRadar(); page = gesture.gesture === "scrollDown" ? (page + 1) % pageCount : (page + pageCount - 1) % pageCount; last = ""; if (was && !onRadar()) radar?.stop(); if (!was && onRadar()) radar?.start(); void draw(); } });
   bridge.onDeviceStatusChanged((status) => { if (status?.connectType === "connected" && !closed) { pageReady = false; last = ""; void draw(); } });
 }
 void boot().catch((error: unknown) => console.error("[rainlens]", error));
