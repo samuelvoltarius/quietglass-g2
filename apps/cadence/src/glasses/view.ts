@@ -2,7 +2,7 @@ import { positionAt, type MetronomeSettings, type MetronomeState } from "../metr
 import { formatDuration } from "../practice/log";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import { fitView, HEADER_COLS } from "./fit";
+import { fitView, HEADER_COLS, LINE_COLS } from "./fit";
 
 /**
  * What the glasses show.
@@ -20,8 +20,14 @@ export interface CadenceView {
 const FILLED = "●"; // ●
 const HOLLOW = "○"; // ○
 
-/** Wider spacing makes the row readable in peripheral vision. */
-const GAP = "  ";
+/**
+ * Wider spacing makes the row readable in peripheral vision. Few beats get a
+ * wide gap so the row spans the display instead of hugging the left edge; a
+ * long bar (12/8, 7/4) stays tight enough to fit.
+ */
+export function gapFor(count: number): string {
+  return " ".repeat(count <= 4 ? 8 : count <= 6 ? 6 : count <= 9 ? 4 : 2);
+}
 
 export interface ViewOptions {
   /** What is being practised right now, if anything. */
@@ -78,6 +84,7 @@ export function beatRow(
 ): string {
   const count = Math.max(1, Math.round(settings.signature.beats));
   const markers: string[] = [];
+  const GAP = gapFor(count);
 
   if (running && currentBeat === 1) return Array.from({ length: count }, () => FILLED).join(GAP);
 
@@ -115,6 +122,6 @@ function footerText(state: MetronomeState, options: ViewOptions, locale: Locale)
 
   parts.push(t(locale, state.running ? "g.tapPause" : "g.tapStart"));
   // The swipe hint goes where there is room; the session clock wins otherwise.
-  if (!timed) parts.push(t(locale, "g.swipeTempo"));
-  return parts.join(" · ");
+  const withSwipe = [...parts, t(locale, "g.swipeTempo")].join(" · ");
+  return !timed || withSwipe.length <= LINE_COLS ? withSwipe : parts.join(" · ");
 }

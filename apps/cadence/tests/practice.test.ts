@@ -4,7 +4,7 @@ import {
   sessionsToday, toCsv, totalsByItem, totalSeconds, type PracticeSession,
 } from "../src/practice/log";
 import { parseData, EMPTY_DATA, addItem, removeItem } from "../src/storage/persist";
-import { buildView, beatRow, signatureLabel } from "../src/glasses/view";
+import { buildView, beatRow, gapFor, signatureLabel } from "../src/glasses/view";
 import { createState, start, type MetronomeSettings } from "../src/metronome/engine";
 import { csvFormatFor, defaultCsvFormat, numberCell, textCell } from "../src/csv";
 
@@ -207,17 +207,17 @@ describe("beat display", () => {
   const settings: MetronomeSettings = { bpm: 120, signature: { beats: 4, unit: 4 }, mark: "beat" };
 
   it("draws one marker per beat", () => {
-    expect(beatRow(settings, 1, false).split("  ")).toHaveLength(4);
+    expect(beatRow(settings, 1, false).split(gapFor(4))).toHaveLength(4);
   });
 
   it("lights the whole row on the downbeat, so the top of the bar needs no counting", () => {
-    expect(beatRow(settings, 1, true)).toBe("●  ●  ●  ●");
+    expect(beatRow(settings, 1, true)).toBe(["●", "●", "●", "●"].join(gapFor(4)));
     // No accent glyph the G2 font is not known to draw.
     expect(beatRow(settings, 1, true)).not.toContain("◆");
   });
 
   it("fills the current beat", () => {
-    expect(beatRow(settings, 2, true).split("  ")[1]).toBe("●");
+    expect(beatRow(settings, 2, true).split(gapFor(4))[1]).toBe("●");
   });
 
   it("marks nothing while stopped", () => {
@@ -227,7 +227,7 @@ describe("beat display", () => {
   it("marks only the downbeat in bar mode", () => {
     const barMode: MetronomeSettings = { ...settings, mark: "bar" };
     expect(beatRow(barMode, 2, true)).not.toContain("●");
-    expect(beatRow(barMode, 1, true)).toBe("●  ●  ●  ●");
+    expect(beatRow(barMode, 1, true)).toBe(["●", "●", "●", "●"].join(gapFor(4)));
   });
 
   it("labels the signature", () => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4] — 2026-10-13
+
+### Changed
+
+- Beat markers are spread across the display (wider gap for short bars) so the beat is easier to catch in peripheral vision.
+- The "swipe = tempo" hint also shows while a practice session is running, when the line has room.
+
 ## [0.3.3] — 2026-10-13
 
 ### Fixed
