@@ -10,7 +10,7 @@ import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import {
   departureBoard, errorView, fit, loadingView, ridingView, wrap, type StopView,
 } from "./glasses/view";
-import { sameView } from "./glasses/diff";
+import { sameScene } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
@@ -23,7 +23,8 @@ import { buildWav } from "./audio/wav";
 import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
 import { addFavorite, loadPlaces, savePlaces, targetsOf, type Places, type Target } from "./route/places";
 import { estimatedArrival, guideState, buildSteps, stepBy, withFreshTimes, withLeg, type Step, type StepOverride } from "./route/guide";
-import { ROUTE_WIDTH, guideView, placesView, plansView, voiceView, type VoiceState } from "./route/view";
+import { ROUTE_WIDTH, placesView, plansView, voiceView, type VoiceState } from "./route/view";
+import { BEAT_MS, beatOf, guideScene, plainScene, type Scene } from "./route/scene";
 import { MENU, menuFor, type Screen } from "./route/menu";
 import type { Planner } from "./route/planner";
 import { DEMO_PLACES, DEMO_POSITION, demoBackend, demoFromUrl, demoPlanner, demoPosition, demoWalkRoute } from "./demo/demo";
@@ -69,9 +70,10 @@ async function boot(): Promise<void> {
   const search = globalThis.location?.search ?? "";
   const demo = demoFromUrl(search);
   /** The clock of everything on screen; only the demo ever runs it ahead. */
-  const clock = (): Date => demo.offsetMinutes === 0
+  const startedAt = Date.now();
+  const clock = (): Date => demo.offsetMinutes === 0 && demo.speed === 1
     ? new Date()
-    : new Date(Date.now() + demo.offsetMinutes * 60000);
+    : new Date(Date.now() + demo.offsetMinutes * 60000 + (Date.now() - startedAt) * (demo.speed - 1));
   const recorded: unknown = demo.enabled ? (await import("./demo/plan-salzburg.json")).default : null;
 
   let settings: Settings = await load(bridge);
@@ -129,11 +131,14 @@ async function boot(): Promise<void> {
   let recordTimer: ReturnType<typeof setTimeout> | null = null;
   const micChunks: Uint8Array[] = [];
 
-  let lastView: StopView | null = null;
+  let lastScene: Scene | null = null;
+  /** Menu and page kind of the page on the glasses: when it changes, the page is rebuilt. */
   let menuKey = "";
+  let lastKind: Scene["kind"] = "text";
   let pageReady = false;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let tickTimer: ReturnType<typeof setInterval> | null = null;
+  let beatTimer: ReturnType<typeof setInterval> | null = null;
   let closed = false;
   /**
    * Every request for the board or a ride takes a number; an answer that comes
@@ -233,48 +238,53 @@ async function boot(): Promise<void> {
     return plansView(state.target.name, state.journeys, state.selected, clock(), locale);
   };
 
-  const currentView = (): StopView => {
-    if (screen === "places") return placesView(targets(), placeIndex, clock(), locale);
-    if (screen === "plans" && plan) return planView(plan);
-    if (screen === "voice" && voice) return voiceView(voice, clock(), locale);
+  const currentScene = (): Scene => {
+    if (screen === "places") return plainScene(placesView(targets(), placeIndex, clock(), locale));
+    if (screen === "plans" && plan) return plainScene(planView(plan));
+    if (screen === "voice" && voice) return plainScene(voiceView(voice, clock(), locale));
     if (screen === "guide" && guide) {
       const now = clock();
       const at = guidePosition();
       const state = guideState(guide.steps, now, at, guide.override);
-      return guideView(state, now, at, locale, {
+      return guideScene(state, now, at, locale, {
         confirmStop: confirmStopUntil > Date.now(),
         walk: walkDisplay(state, at),
         arrival: estimatedArrival(guide.journey),
         rerouted: reroutedUntil > Date.now(),
+        beat: beatOf(Date.now()),
       });
     }
-    return boardView();
+    return plainScene(boardView());
   };
 
   const drawOnce = async (): Promise<void> => {
     // After the double tap the page is gone; drawing again would bring it back.
     if (closed) return;
-    const view = currentView();
+    const scene = currentScene();
     const menu = menuFor(screen, locale);
-    if (sameView(lastView, view) && menu.key === menuKey) return;
+    const layout = `${menu.key}|${scene.kind}`;
+    if (sameScene(lastScene, scene) && layout === menuKey) return;
 
     let result;
     if (!pageReady) {
-      result = await createPage(bridge, view, menu);
-      if (result.ok) menuKey = menu.key;
-    } else if (menu.key !== menuKey) {
-      // Another page means another menu: the one reason to rebuild.
-      menuKey = menu.key;
-      result = await rebuildPage(bridge, view, menu);
+      result = await createPage(bridge, scene, menu);
+      if (result.ok) { menuKey = layout; lastKind = scene.kind; }
+    } else if (layout !== menuKey) {
+      // Another page means another menu or other pictures: the one reason to rebuild.
+      const kindChanged = scene.kind !== lastKind;
+      menuKey = layout;
+      lastKind = scene.kind;
+      result = await rebuildPage(bridge, scene, menu);
       if (!result.ok) {
-        console.warn("[nextstop] menu rebuild failed:", result.reason);
-        result = await updatePage(bridge, view);
+        console.warn("[nextstop] page rebuild failed:", result.reason);
+        // Pictures cannot be updated into a page that was not rebuilt; try creating it afresh.
+        result = kindChanged ? await createPage(bridge, scene, menu) : await updatePage(bridge, scene);
       }
     } else {
-      result = await updatePage(bridge, view);
+      result = await updatePage(bridge, scene);
     }
     if (closed) return;
-    if (result.ok) { pageReady = true; lastView = view; return; }
+    if (result.ok) { pageReady = true; lastScene = scene; return; }
     pageReady = false;
     menuKey = "";
     console.warn("[nextstop] draw failed:", result.reason);
@@ -850,9 +860,11 @@ async function boot(): Promise<void> {
       abortVoice();
       if (refreshTimer !== null) clearInterval(refreshTimer);
       if (tickTimer !== null) clearInterval(tickTimer);
+      if (beatTimer !== null) clearInterval(beatTimer);
       stopGuideTimer();
       refreshTimer = null;
       tickTimer = null;
+      beatTimer = null;
       if (typeof stopListening === "function") stopListening();
       await bridge.stopAppLocationUpdates().catch(() => undefined);
     },
@@ -868,6 +880,13 @@ async function boot(): Promise<void> {
 
   // A second beat so the countdown stays honest between data refreshes.
   tickTimer = setInterval(() => { void ensureWalk(); void draw(); }, 2000);
+
+  // The half-second beat of the animated guide pages (the bus, the pulse of
+  // "get off"): it redraws only while such a page is on screen, so the quiet
+  // pages keep their 2 s rhythm and send nothing in between.
+  beatTimer = setInterval(() => {
+    if (!closed && lastScene?.animated && screen === "guide") void draw();
+  }, BEAT_MS);
 
   mountPhoneUi({
     getLocale: () => locale,

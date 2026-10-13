@@ -126,7 +126,7 @@ function metresLeft(leg: WalkLeg, position: Position | null): number {
   return metresBetween(position.lat, position.lon, leg.toLat, leg.toLon);
 }
 
-function boardLines(leg: TransitLeg, now: Date, locale: Locale, keyTime: "r.boardAt" | "r.thenAt"): string {
+export function boardLines(leg: TransitLeg, now: Date, locale: Locale, keyTime: "r.boardAt" | "r.thenAt"): string {
   const boarding = leg.stops[0];
   const departs = departureOf(leg);
   return t(locale, keyTime, {
@@ -155,7 +155,7 @@ export const ARROWS: Readonly<Record<TurnType, string>> = {
   uturn: "↓", roundabout: "↻",
 };
 
-const TURN_KEYS: Readonly<Record<TurnType, string>> = {
+export const TURN_KEYS: Readonly<Record<TurnType, string>> = {
   depart: "r.turnStraight", straight: "r.turnStraight", arrive: "r.turnStraight",
   left: "r.turnLeft", slightLeft: "r.turnSlightLeft", sharpLeft: "r.turnSharpLeft",
   right: "r.turnRight", slightRight: "r.turnSlightRight", sharpRight: "r.turnSharpRight",

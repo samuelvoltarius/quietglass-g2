@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, parseSettings, validateUrl } from "../src/storage/persist";
+import { DEFAULT_SETTINGS, defaultsFor, parseSettings, validateUrl } from "../src/storage/persist";
 import { positionFromUrl } from "../src/main";
 import { boundingBox } from "../src/transit/motis";
 
@@ -78,5 +78,35 @@ describe("the MOTIS search box", () => {
     const box = boundingBox(47.8, 13.04, 800);
     const latSpan = Number(box.max.split(",")[0]) - Number(box.min.split(",")[0]);
     expect(latSpan * 111320).toBeGreaterThan(1500);
+  });
+});
+
+describe("the build's ÖBB default", () => {
+  const PROXY = "https://proxy.example.net:8458/oebb";
+
+  it("a public build has none: Transitous, and the local proxy address as the placeholder", () => {
+    for (const none of [undefined, "", "  ", "ws://bad"]) {
+      const d = defaultsFor(none);
+      expect(d.backend).toBe("motis");
+      expect(d.oebbUrl).toBe("http://127.0.0.1:8079/oebb");
+    }
+    expect(DEFAULT_SETTINGS.backend).toBe("motis");
+  });
+
+  it("a private build with an address starts on ÖBB live data, pointing at it", () => {
+    const d = defaultsFor(` ${PROXY} `);
+    expect(d.backend).toBe("oebb");
+    expect(d.oebbUrl).toBe(PROXY);
+    expect(d.motisUrl).toBe("https://api.transitous.org");
+  });
+
+  it("fresh storage and corrupt storage give the build default; saved choices win", () => {
+    const d = defaultsFor(PROXY);
+    expect(parseSettings("", d)).toEqual(d);
+    expect(parseSettings("{nope", d)).toEqual(d);
+    expect(parseSettings(JSON.stringify({ refreshSeconds: 60 }), d).backend).toBe("oebb");
+    expect(parseSettings(JSON.stringify({ backend: "motis" }), d).backend).toBe("motis");
+    expect(parseSettings(JSON.stringify({ oebbUrl: "ws://bad" }), d).oebbUrl).toBe(PROXY);
+    expect(parseSettings(JSON.stringify({ oebbUrl: "http://192.168.1.2:8079/oebb" }), d).oebbUrl).toBe("http://192.168.1.2:8079/oebb");
   });
 });

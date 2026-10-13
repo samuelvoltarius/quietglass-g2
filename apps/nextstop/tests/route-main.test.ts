@@ -24,6 +24,18 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
   const state = {
     shutdowns: 0, header: "", body: "", footer: "",
     menus: [] as string[][], rebuilds: 0, creates: 0, saved: new Map<string, string>(),
+    /** The page kind on the glasses, told by its picture containers: "text", "walk" (arrow), "wait" (bus), "ride" (digits). */
+    kind: "text",
+    /** Every picture sent: `containerName:bytes`. */
+    images: [] as string[],
+  };
+  type Page = { menuObject?: { menuItems?: MenuItem[] }; textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] };
+  const adopt = (page: Page): void => {
+    state.header = "";
+    const names = (page.imageObject ?? []).map((image) => image.containerName);
+    state.kind = names.includes("arrow") ? "walk" : names.includes("bus") ? "wait" : names.includes("count") ? "ride" : "text";
+    // A page without a header container shows none.
+    for (const text of page.textObject ?? []) record(text.containerID, text.content);
   };
   const record = (id: number | undefined, content: string | undefined): void => {
     if (id === 1) state.header = content ?? "";
@@ -36,17 +48,21 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
   const bridge = {
     getLocalStorage: async (key: string) => options.stored?.[key] ?? "",
     setLocalStorage: async (key: string, value: string) => { state.saved.set(key, value); return true; },
-    rebuildPageContainer: async (page: { menuObject?: { menuItems?: MenuItem[] }; textObject?: { containerID?: number; content?: string }[] }) => {
+    rebuildPageContainer: async (page: Page) => {
       state.rebuilds += 1;
       note(page);
-      for (const text of page.textObject ?? []) record(text.containerID, text.content);
+      adopt(page);
       return true;
     },
-    createStartUpPageContainer: async (page: { menuObject?: { menuItems?: MenuItem[] }; textObject?: { containerID?: number; content?: string }[] }) => {
+    createStartUpPageContainer: async (page: Page) => {
       state.creates += 1;
       note(page);
-      for (const text of page.textObject ?? []) record(text.containerID, text.content);
+      adopt(page);
       return 0;
+    },
+    updateImageRawData: async (update: { containerName?: string; imageData?: Uint8Array }) => {
+      state.images.push(`${update.containerName}:${update.imageData?.length ?? 0}`);
+      return "success";
     },
     textContainerUpgrade: async (upgrade: { containerID?: number; content?: string }) => {
       record(upgrade.containerID, upgrade.content);
@@ -130,24 +146,31 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.body.split("\n")[1]).toMatch(/^> /));
 
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Zu Fuß · /));
-    expect(fake.state.body).toContain("Geh zu Haltestelle");
+    // The walk to the stop: as soon as its route is in, the big arrow page with "Dann: ..." beneath.
+    await vi.waitFor(() => expect(fake.state.kind).toBe("walk"), { timeout: 5000 });
+    expect(fake.state.body).toMatch(/^Dann: O-Bus 10 Richtung .+ · in \d+ min$/);
+    expect(fake.state.footer).toMatch(/^Schritt 1\/\d/);
     expect(fake.state.menus.at(-1)).toEqual(["Nächster Schritt", "Vorheriger Schritt", "Begleitung beenden"]);
+    // Arrow, distance and the two street halves, sent once each for the first fix.
+    await vi.waitFor(() => expect(fake.state.images.slice(0, 4).map((entry) => entry.split(":")[0])).toEqual(["arrow", "distance", "street-left", "street-right"]));
 
     // A tap steps by hand, scrolling goes back, the menu does the same.
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Einsteigen · /));
+    await vi.waitFor(() => expect(fake.state.kind).toBe("wait"));
+    expect(fake.state.body.split("\n")[0]).toMatch(/^> O-Bus 10 Richtung /);
+    await vi.waitFor(() => expect(fake.state.images.slice(-2).map((entry) => entry.split(":")[0])).toEqual(["countdown", "bus"]));
     fake.gesture(UP);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Zu Fuß · /));
+    await vi.waitFor(() => expect(fake.state.kind).toBe("walk"));
     fake.menu(6);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Einsteigen · /));
+    await vi.waitFor(() => expect(fake.state.kind).toBe("wait"));
 
     // One double tap only asks; the second one leaves.
     fake.gesture(DOUBLE);
     await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal doppeltippen = Begleitung beenden"));
-    expect(fake.state.header).toMatch(/^Einsteigen · /);
+    expect(fake.state.kind).toBe("wait");
     fake.gesture(DOUBLE);
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^→ Heim · /));
+    expect(fake.state.kind).toBe("text");
 
     fake.gesture(DOUBLE); // connections -> goals
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\? · /));
@@ -162,7 +185,7 @@ describe("the route pages", () => {
   it("leaves the guide at once from the menu", async () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de&scene=guide");
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Zu Fuß · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Schritt 1\//));
     fake.menu(8);
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^→ Getreidegasse 10 · /));
   });

@@ -32,6 +32,13 @@ export const routeStrings = {
     "r.waitFor": "Warte auf {line}",
     "r.warnNext": "Danach aussteigen – bereit machen!",
     "r.footerRerouted": "Neu berechnet – weiter so",
+    // Glasses: the big pictures of the guide (words drawn as images)
+    "r.transferPrefix": "Umsteigen: ",
+    "r.bigBefore": "noch",
+    "r.bigAfterMany": "Halte",
+    "r.bigNext1": "Nächster",
+    "r.bigNext2": "Halt",
+    "r.bigAlight": "Aussteigen",
     
     "r.menuSaveVoice": "Als Favorit merken",
     "r.headerVoice": "Spracheingabe · {time}",
@@ -174,6 +181,12 @@ export const routeStrings = {
     "r.waitFor": "Wait for {line}",
     "r.warnNext": "Get off after that – get ready!",
     "r.footerRerouted": "Route recalculated – carry on",
+    "r.transferPrefix": "Change: ",
+    "r.bigBefore": "",
+    "r.bigAfterMany": "stops left",
+    "r.bigNext1": "Next",
+    "r.bigNext2": "stop",
+    "r.bigAlight": "Get off",
     
     "r.menuSaveVoice": "Save as favourite",
     "r.headerVoice": "Voice input · {time}",

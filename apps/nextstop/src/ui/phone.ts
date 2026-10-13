@@ -303,6 +303,13 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
     for (const [field, key] of [[oebbUrl, "oebbUrl"], [motisUrl, "motisUrl"]] as const) {
       field.addEventListener("change", () => {
+        // An empty ÖBB field means the build's default, like the Whisper field.
+        if (key === "oebbUrl" && field.value.trim() === "") {
+          field.setCustomValidity("");
+          commit({ oebbUrl: DEFAULT_SETTINGS.oebbUrl });
+          field.value = DEFAULT_SETTINGS.oebbUrl;
+          return;
+        }
         const check = validateUrl(field.value, lang);
         if (!check.valid) {
           field.setCustomValidity(check.error ?? x("p.invalid"));

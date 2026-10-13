@@ -22,6 +22,8 @@ export interface DemoOptions {
   readonly scene: "board" | "places" | "plans" | "guide" | "recording" | "voice" | null;
   /** Dev-only: minutes the demo clock runs ahead, to reach later guide steps. */
   readonly offsetMinutes: number;
+  /** Dev-only: how many times faster than real time the demo clock runs (1 = real time). */
+  readonly speed: number;
   readonly locale: "de" | "en" | null;
 }
 
@@ -30,10 +32,12 @@ export function demoFromUrl(search: string): DemoOptions {
   const scene = params.get("scene");
   const offset = Number(params.get("t") ?? "0");
   const lang = params.get("lang");
+  const speed = Number(params.get("speed") ?? "1");
   return {
     enabled: params.get("demo") === "1",
     scene: scene === "board" || scene === "places" || scene === "plans" || scene === "guide" || scene === "recording" || scene === "voice" ? scene : null,
     offsetMinutes: Number.isFinite(offset) ? offset : 0,
+    speed: Number.isFinite(speed) && speed >= 1 && speed <= 120 ? speed : 1,
     locale: lang === "de" || lang === "en" ? lang : null,
   };
 }

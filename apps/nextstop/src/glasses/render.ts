@@ -1,5 +1,8 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -8,33 +11,26 @@ import {
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import type { StopView } from "./view";
 import type { MenuSpec } from "../route/menu";
+import type { Scene } from "../route/scene";
+import {
+  BODY_BOX, BODY_ID, FOOTER_BOX, FOOTER_ID, HEADER_BOX, HEADER_ID, IMAGES, SCREEN_HEIGHT, SCREEN_WIDTH,
+  type Box, type ImageSpec, type PageKind,
+} from "./layout";
 
 /**
- * Renders the departure board and the ride onto the G2.
+ * Renders the departure board, the ride and the guide onto the G2.
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
- * changes text without rebuilding the page — on real hardware a rebuild falls
- * back to a full page creation and costs seconds, discarding input meanwhile.
+ * Four page kinds exist (see layout.ts); the text page has three stacked text
+ * containers, the picture pages swap the header for up to four images. After
+ * a page exists, updates go through `textContainerUpgrade` and
+ * `updateImageRawData`, which change text and pictures without rebuilding the
+ * page - on real hardware a rebuild costs seconds and discards input meanwhile.
+ * Only a change of the page kind or of the menu rebuilds.
  */
 
-export const SCREEN_WIDTH = 576;
-export const SCREEN_HEIGHT = 288;
-
-interface ContainerSpec {
-  readonly id: number;
-  readonly name: string;
-  readonly y: number;
-  readonly height: number;
-}
-
-const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
-  header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
-  footer: { id: 3, name: "footer", y: 252, height: 34 },
-};
+export { SCREEN_HEIGHT, SCREEN_WIDTH };
+export type { PageKind };
 
 export interface RenderResult {
   readonly ok: boolean;
@@ -50,85 +46,51 @@ export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefi
   });
 }
 
-function pageParts(view: StopView, menu: MenuSpec | null) {
-  const menuObject = buildMenu(menu);
-  return {
-    containerTotalNum: 3,
-    textObject: [
-      text(CONTAINER.header, view.header, 1, false),
-      // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true),
-      text(CONTAINER.footer, view.footer, 3, false),
-    ],
-    ...(menuObject === undefined ? {} : { menuObject }),
-  };
-}
-
-export function buildPage(view: StopView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
-  return new CreateStartUpPageContainer(pageParts(view, menu));
-}
-
-function text(
-  spec: ContainerSpec,
-  content: string,
-  zOrderIndex: number,
-  captureEvents: boolean,
-): TextContainerProperty {
+function text(id: number, name: string, box: Box, content: string, z: number, capture: boolean): TextContainerProperty {
   return new TextContainerProperty({
-    containerID: spec.id,
-    containerName: spec.name,
-    xPosition: 0,
-    yPosition: spec.y,
-    width: SCREEN_WIDTH,
-    height: spec.height,
+    containerID: id,
+    containerName: name,
+    xPosition: box.x,
+    yPosition: box.y,
+    width: box.width,
+    height: box.height,
     paddingLength: 4,
-    zOrderIndex,
-    isEventCapture: captureEvents ? 1 : 0,
+    zOrderIndex: z,
+    isEventCapture: capture ? 1 : 0,
     content: content || " ",
   });
 }
 
-/**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
- */
-export async function createPage(bridge: EvenAppBridge, view: StopView, menu: MenuSpec | null = null): Promise<RenderResult> {
-  const page = buildPage(view, menu);
-  try {
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-  } catch {
-    // Expected on current firmware; the creation below is the real path.
-  }
-
-  try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return { ok: true };
-    return { ok: false, reason: describeCreateResult(result) };
-  } catch (error) {
-    return { ok: false, reason: errorMessage(error) };
-  }
+function image(spec: ImageSpec, z: number): ImageContainerProperty {
+  return new ImageContainerProperty({
+    containerID: spec.id, containerName: spec.name,
+    xPosition: spec.x, yPosition: spec.y, width: spec.width, height: spec.height, zOrderIndex: z,
+  });
 }
 
-/**
- * Another page means another menu, and the menu can only change with a
- * rebuild: the one reason to pay for it. `menuObject` is supplied again
- * because a rebuild without it would clear the menu. A refused rebuild leaves
- * the old page (and its text lengths) in place; the caller then falls back to
- * the fast path so the text at least moves on.
- */
-export async function rebuildPage(bridge: EvenAppBridge, view: StopView, menu: MenuSpec | null): Promise<RenderResult> {
-  try {
-    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu)));
-    if (!ok) return { ok: false, reason: "rebuild refused" };
-    sentLength.clear();
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, reason: errorMessage(error) };
-  }
+function pageParts(scene: Scene, menu: MenuSpec | null) {
+  const menuObject = buildMenu(menu);
+  const { view, kind } = scene;
+  const images = IMAGES[kind];
+  // Images sit below the text (lower z), so the text may overlay them; every z is used once.
+  let z = images.length;
+  const textObject = [
+    ...(kind === "text" ? [text(HEADER_ID, "header", HEADER_BOX, view.header, ++z, false)] : []),
+    // Exactly one container may capture input; the body owns it.
+    text(BODY_ID, "body", BODY_BOX[kind], view.body.join("\n"), ++z, true),
+    text(FOOTER_ID, "footer", FOOTER_BOX, view.footer, ++z, false),
+  ];
+  return {
+    containerTotalNum: textObject.length + images.length,
+    textObject,
+    ...(images.length > 0 ? { imageObject: images.map((spec, index) => image(spec, index + 1)) } : {}),
+    ...(menuObject === undefined ? {} : { menuObject }),
+  };
 }
 
-/** Fast path: change the text of the three containers in place. */
+export function buildPage(scene: Scene, menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer(pageParts(scene, menu));
+}
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
@@ -140,31 +102,107 @@ const TEXT_HARD_CAP = 900;
 const sentLength = new Map<number, number>();
 
 function guarded(specId: number, content: string): { content: string; contentLength: number } {
-  const text = (content || " ").slice(0, TEXT_HARD_CAP);
-  const length = Math.max(sentLength.get(specId) ?? 0, text.length);
-  sentLength.set(specId, text.length);
-  return { content: text, contentLength: length };
+  const shown = (content || " ").slice(0, TEXT_HARD_CAP);
+  const length = Math.max(sentLength.get(specId) ?? 0, shown.length);
+  sentLength.set(specId, shown.length);
+  return { content: shown, contentLength: length };
 }
 
-export async function updatePage(bridge: EvenAppBridge, view: StopView): Promise<RenderResult> {
-  const updates: Array<[ContainerSpec, string]> = [
-    [CONTAINER.header, view.header],
-    [CONTAINER.body, view.body.join("\n")],
-    [CONTAINER.footer, view.footer],
-  ];
+/** What each image container shows on the glasses, by container id: pictures are sent only when this changes. */
+const shown = new Map<number, string>();
 
+/** `createStartUpPageContainer` works once per run; every later page is a rebuild. */
+let startupDone = false;
+
+/**
+ * Puts a page on the glasses. The first page is created; every later one
+ * replaces it with `rebuildPageContainer` (a second creation is refused as
+ * "invalid" - which once left the map of OpenGlance Nav blank for good). The
+ * rebuild call is also made before the very first page although there is
+ * nothing to rebuild yet: it registers event routing, and skipping it leaves
+ * the app deaf to input. If a later rebuild is refused, creating is tried as
+ * the last resort.
+ */
+async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
+  sentLength.clear();
+  shown.clear();
   try {
-    for (const [spec, content] of updates) {
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
-        containerID: spec.id,
-        containerName: spec.name,
-        ...guarded(spec.id, content),
-      }));
-    }
-    return { ok: true };
+    if (await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })) && startupDone) return { ok: true };
+  } catch {
+    // Expected on current firmware for the first page; creation below is the real path.
+  }
+  try {
+    const result = await bridge.createStartUpPageContainer(page);
+    if (result === StartUpPageCreateResult.success) { startupDone = true; return { ok: true }; }
+    return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+}
+
+/** Creates the page (or replaces it after a lost connection) and sends all of its pictures. */
+export async function createPage(bridge: EvenAppBridge, scene: Scene, menu: MenuSpec | null = null): Promise<RenderResult> {
+  const installed = await installPage(bridge, buildPage(scene, menu));
+  return installed.ok ? updateImages(bridge, scene) : installed;
+}
+
+/**
+ * Another page kind or another menu means a rebuild: the one reason to pay
+ * for it. `menuObject` is supplied again because a rebuild without it would
+ * clear the menu. A refused rebuild leaves the old page in place; the caller
+ * then falls back to the fast path so the text at least moves on.
+ */
+export async function rebuildPage(bridge: EvenAppBridge, scene: Scene, menu: MenuSpec | null): Promise<RenderResult> {
+  try {
+    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(scene, menu)));
+    if (!ok) return { ok: false, reason: "rebuild refused" };
+    sentLength.clear();
+    shown.clear();
+    return updateImages(bridge, scene);
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/** Fast path: text in place, and only the pictures that changed - each one crosses Bluetooth. */
+export async function updatePage(bridge: EvenAppBridge, scene: Scene): Promise<RenderResult> {
+  const { view, kind } = scene;
+  const updates: Array<[number, string, string]> = [
+    ...(kind === "text" ? [[HEADER_ID, "header", view.header] as [number, string, string]] : []),
+    [BODY_ID, "body", view.body.join("\n")],
+    [FOOTER_ID, "footer", view.footer],
+  ];
+  try {
+    for (const [id, name, content] of updates) {
+      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+        containerID: id,
+        containerName: name,
+        ...guarded(id, content),
+      }));
+    }
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+  return updateImages(bridge, scene);
+}
+
+async function updateImages(bridge: EvenAppBridge, scene: Scene): Promise<RenderResult> {
+  for (const picture of scene.images) {
+    if (shown.get(picture.id) === picture.key) continue;
+    const spec = IMAGES[scene.kind].find((candidate) => candidate.id === picture.id);
+    if (!spec) continue;
+    try {
+      const imageData = await picture.render();
+      const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
+        containerID: spec.id, containerName: spec.name, imageData,
+      }));
+      if (result !== ImageRawDataUpdateResult.success) return { ok: false, reason: `image:${String(result)}` };
+      shown.set(picture.id, picture.key);
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
+  }
+  return { ok: true };
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

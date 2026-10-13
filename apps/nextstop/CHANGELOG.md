@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.1] — 2026-10-13
+
+### Changed
+
+- The guide is now readable at a glance while walking and riding: the three stages of a
+  journey have a page of their own with pictures (text cannot be made larger on the glasses).
+  - **Walking** (with a walking route): a big arrow (144 x 144 image) on the left, the distance
+    to the next turn in about 70 px high pixel digits (50 m steps from 200 m, 10 m below,
+    "1,2 km", "jetzt" at the end), a thick approach bar underneath that fills as the turn comes
+    closer and is full within 50 m, the street name in bold across the full width, and one small
+    line of text: `Dann: O-Bus 2 Richtung Walserfeld · in 4 min`. The layout and the arrow shapes
+    come from OpenGlance Nav 0.5.1 (same licence).
+  - **Waiting at the stop**: the countdown ("2 min") in big digits, the line and direction as text,
+    and next to it a bus-stop picture; in the last minute a bus drives in from the left (six
+    frames, one per 500 ms beat).
+  - **Riding**: "noch 2 Halte" as big pixel digits across the top, below it as text
+    `Aussteigen: Mirabellplatz · an 02:06`. At the stop before the one to get off at, a pulsing
+    "Aussteigen" warning (the digit flashes every 500 ms).
+- Pictures are sent only when they change (rounded distance, bar step, minute, animation frame),
+  and the 500 ms beat runs only while an animated page is on screen. A change of stage rebuilds the
+  page with the other containers (at most 4 images, exactly one event capture); updates inside a
+  stage are text and image updates only. `createStartUpPageContainer` is called once per run; every
+  later page is a `rebuildPageContainer`.
+- Walking without a route yet, a missed vehicle and the arrival stay plain text as before.
+- A private build can carry the ÖBB proxy address (`VITE_OEBB_URL=https://… npm run build`, like
+  `VITE_STT_URL`): ÖBB live data is then on by default and the field "Address of the ÖBB add-on" on the
+  phone starts with it (leave it empty to return to it). Without the variable (public build) nothing
+  changes: Transitous by default. Saved choices always win.
+- Development: the demo takes `speed=N` (clock N times faster, up to 120) to drive through a whole
+  journey on the desk simulator.
+
 ## [0.3.0] — 2026-10-13
 
 ### Added

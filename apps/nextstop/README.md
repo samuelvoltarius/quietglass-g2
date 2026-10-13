@@ -154,8 +154,15 @@ aktuellen Standort neu berechnet („Neu berechnet“ in der Fußzeile). Die Eta
 selbst (Fußweg → „Warte auf Bus 3“ → Fahrt mit „Danach aussteigen“ einen Halt vorher →
 Umstiegsweg → … → „Ziel erreicht“); der Kopf zeigt Etappe, Uhrzeit und die erwartete Ankunft.
 Ein verpasstes Fahrzeug erkennt die App am Standort und bietet per Tippen eine neue Verbindung an.
-Die Pfeile sind Textzeichen (die Brille kann Text nicht vergrößern); ein Bild-Pfeil wäre der
-nächste Schritt.
+**Große Bilder statt kleinem Text (seit 0.3.1):** Die Brille kann Text nicht vergrößern, deshalb
+haben die drei Etappen eigene Bildseiten. *Zu Fuß*: großer Pfeil links, die Entfernung bis zur
+Abbiegung in rund 70 px hohen Pixelziffern (50-m-Schritte ab 200 m, darunter 10 m), ein dicker
+Annäherungsbalken (voll ab 50 m vor der Abbiegung), die Straße fett über die ganze Breite und
+darunter klein `Dann: O-Bus 2 Richtung Walserfeld · in 4 min`. *Warten*: der Countdown („2 min“)
+groß, Linie und Richtung als Text, daneben eine Haltestelle, in die in der letzten Minute ein Bus
+einfährt. *Fahrt*: „noch 2 Halte“ als große Ziffern, darunter `Aussteigen: Mirabellplatz · an 02:06`;
+einen Halt vorher blinkt „Aussteigen“. Bilder werden nur bei Änderung gesendet; der 500-ms-Takt
+läuft nur, solange eine animierte Seite offen ist. Pfeilformen und Aufbau stammen aus OpenGlance Nav.
 
 Die Ziele liegen auf dem Handy (SDK-Speicher, mit localStorage als Spiegel). Orte
 sucht die App über die Ortssuche von Transitous (`/api/v1/geocode`), Verbindungen über
