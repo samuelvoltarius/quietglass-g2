@@ -3,7 +3,10 @@ import {
   usesMockRouter, validateRouterUrl, type NavData,
 } from "../storage/persist";
 import type { LatLng } from "../geo/geometry";
-import { DEFAULT_ROUTER_URL, type TravelMode } from "../routing/provider";
+import { DEFAULT_ROUTER_URL, type RouteOutcome, type TravelMode } from "../routing/provider";
+import { addRoute, makeSavedRoute, removeRoute, renameRoute, type RoutePoint } from "../trip/saved";
+import { chargersAlong, type ChargerOutcome } from "../chargers/chargers";
+import { chargerErrorKey, emptyPlan, insertStop, planOf, plannerTemplate, withPoints, type PlanState } from "./planner";
 import { DEFAULT_GEOCODER_URL, type FoundPlace, type SearchOutcome } from "../geocode/photon";
 import type { GlassLayout } from "../glasses/view";
 import { escapeHtml, languageSelect, tr, type Locale } from "../i18n";
@@ -27,6 +30,10 @@ export interface PhoneUiPorts {
   readonly getVoiceState?: () => "needs-tap" | "server" | "browser" | "off";
   /** Place search; absent means the search box is not offered. */
   readonly search?: (query: string) => Promise<SearchOutcome>;
+  /** Routes through the points in order (start, stops, destination); absent means no planner preview. */
+  readonly planRoute?: (points: readonly LatLng[], mode: TravelMode) => Promise<RouteOutcome>;
+  /** Charging stations along a route line. */
+  readonly chargersAlong?: (line: readonly LatLng[]) => Promise<ChargerOutcome>;
 }
 
 const MODES: readonly { mode: TravelMode; icon: string; key: string }[] = [
@@ -41,7 +48,7 @@ const VIEWS: readonly { view: GlassLayout; key: string }[] = [
 ];
 
 /** Text inputs whose unsaved contents are carried across a redraw. */
-const DRAFT_FIELDS = ["url", "geocoder", "label", "coords", "query"] as const;
+const DRAFT_FIELDS = ["url", "geocoder", "label", "coords", "query", "plan-query", "plan-name", "rename"] as const;
 
 interface SearchState {
   readonly busy: boolean;
@@ -55,13 +62,15 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
   let notice = "";
   let search: SearchState = { busy: false, results: [], errorKey: null };
+  let plan: PlanState = emptyPlan(ports.getData().mode);
   const locale = (): Locale => ports.getLocale?.() ?? "en";
 
   const render = (): void => {
     const data = ports.getData();
     // Whatever is half typed survives a redraw caused by another control.
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
-    root.innerHTML = template(data, notice, ports.getPosition(), locale(), search, Boolean(ports.search), ports.getVoiceState?.() ?? null);
+    root.innerHTML = template(data, notice, ports.getPosition(), locale(), search, Boolean(ports.search), ports.getVoiceState?.() ?? null)
+      .replace("<!--planner-->", plannerTemplate(plan, data.routes, locale(), { canSearch: Boolean(ports.search), canRoute: Boolean(ports.planRoute), chargers: data.chargers && Boolean(ports.chargersAlong) }));
     DRAFT_FIELDS.forEach((id, index) => {
       const field = root.querySelector<HTMLInputElement>("#" + id);
       const value = typed[index];
@@ -73,6 +82,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       rerender: render,
       setSearch: (next) => { search = next; render(); },
       getSearch: () => search,
+      setPlan: (next) => { plan = next; render(); },
+      getPlan: () => plan,
     });
   };
   render();
@@ -158,6 +169,14 @@ function template(
     </details>
   </section>
 
+  <!--planner-->
+
+  <section class="card">
+    <h2>${t("p.chargers")}</h2>
+    <label class="check"><input id="chargers" type="checkbox"${data.chargers ? " checked" : ""} /> ${t("p.chargersOn")}</label>
+    <p class="hint">${escapeHtml(t("p.chargersHint"))}</p>
+  </section>
+
   <section class="card">
     <h2>${t("p.travel")}</h2>
     <div class="choices">
@@ -219,7 +238,9 @@ function template(
     <p>${t("p.attribution")}</p>
     <p>${escapeHtml(t("p.routedBy", { provider: routerName }))} · ${escapeHtml(t("p.searchBy", { provider: searchName }))}</p>
     ${data.streets && !usesMockRouter(data) ? `<p>${escapeHtml(t("p.streetsBy"))}</p>` : ""}
+    ${data.chargers ? `<p>${escapeHtml(t("p.chargersBy"))}</p>` : ""}
     <p>${escapeHtml(t("p.privacy"))}</p>
+    <p>${escapeHtml(t("p.privacyRoutes"))}</p>
   </footer>`;
 }
 
@@ -228,6 +249,8 @@ interface WireHooks {
   readonly rerender: () => void;
   readonly setSearch: (state: SearchState) => void;
   readonly getSearch: () => SearchState;
+  readonly setPlan: (state: PlanState) => void;
+  readonly getPlan: () => PlanState;
 }
 
 function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Locale, hooks: WireHooks): void {
@@ -267,6 +290,12 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
     ports.onVoiceActivate?.();
     hooks.rerender();
   });
+
+  byId<HTMLInputElement>("chargers")?.addEventListener("change", (event) => {
+    commit({ ...data, chargers: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
+  wirePlanner(root, ports, data, locale, hooks, commit);
 
   byId<HTMLInputElement>("streets")?.addEventListener("change", (event) => {
     commit({ ...data, streets: Boolean((event.target as HTMLInputElement).checked) });
@@ -354,6 +383,170 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
     if (label && !label.value.trim()) label.value = locale === "de" ? "Hier" : "Here";
     addWith(at);
   });
+}
+
+/** The route planner and the saved routes: every control redraws from the plan state. */
+function wirePlanner(
+  root: HTMLElement,
+  ports: PhoneUiPorts,
+  data: NavData,
+  locale: Locale,
+  hooks: WireHooks,
+  commit: (next: NavData) => void,
+): void {
+  const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
+  const plan = (): PlanState => hooks.getPlan();
+  const set = (next: PlanState): void => hooks.setPlan(next);
+
+  const runSearch = async (): Promise<void> => {
+    if (!ports.search || plan().search.busy) return;
+    const query = byId<HTMLInputElement>("plan-query")?.value ?? "";
+    set({ ...plan(), search: { busy: true, results: [], errorKey: null } });
+    const outcome = await ports.search(query).catch((): SearchOutcome => ({ places: [], error: "server" }));
+    set({ ...plan(), search: { busy: false, results: outcome.places, errorKey: searchErrorKey(outcome.error) } });
+  };
+  byId<HTMLButtonElement>("plan-search")?.addEventListener("click", () => { void runSearch(); });
+  byId<HTMLInputElement>("plan-query")?.addEventListener("keydown", (event) => {
+    if ((event as KeyboardEvent).key === "Enter") void runSearch();
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-plan-as]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const current = plan();
+      const place = current.search.results[Number(button.dataset["index"])];
+      if (!place) return;
+      const point: RoutePoint = { label: place.label, at: place.at };
+      const query = byId<HTMLInputElement>("plan-query");
+      if (query) query.value = "";
+      const cleared = { ...current, search: { busy: false, results: [], errorKey: null } };
+      const role = button.dataset["planAs"];
+      if (role === "start") set(withPoints(cleared, { start: point }));
+      else if (role === "to") set(withPoints(cleared, { to: point }));
+      else {
+        const stops = insertStop(current.stops, point, null);
+        if (!stops) { hooks.notify(tr(messages, locale, "r.full")); return; }
+        set(withPoints(cleared, { stops }));
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-plan-remove]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const current = plan();
+      const what = button.dataset["planRemove"];
+      if (what === "start") set(withPoints(current, { start: null }));
+      else if (what === "to") set(withPoints(current, { to: null }));
+      else set(withPoints(current, { stops: current.stops.filter((_, i) => i !== Number(button.dataset["index"])) }));
+    });
+  });
+
+  byId<HTMLButtonElement>("plan-here")?.addEventListener("click", () => { set(withPoints(plan(), { start: null })); });
+
+  root.querySelectorAll<HTMLInputElement>('input[name="plan-mode"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.checked) set({ ...withPoints(plan(), {}), mode: radio.value as TravelMode });
+    });
+  });
+
+  const calculate = async (): Promise<void> => {
+    const current = plan();
+    if (!ports.planRoute || current.busy) return;
+    if (!current.to) { set({ ...current, errorKey: "r.needTo" }); return; }
+    const from = current.start?.at ?? ports.getPosition();
+    if (!from) { set({ ...current, errorKey: "r.noPosition" }); return; }
+    set({ ...current, busy: true, errorKey: null });
+    const outcome = await ports.planRoute([from, ...current.stops.map((stop) => stop.at), current.to.at], current.mode)
+      .catch((): RouteOutcome => ({ route: null, error: "failed", code: "server" }));
+    const after = plan();
+    if (outcome.route) set({ ...after, busy: false, route: outcome.route, errorKey: null });
+    else set({ ...after, busy: false, route: null, errorKey: routeErrorKey(outcome.code) });
+  };
+  byId<HTMLButtonElement>("plan-route")?.addEventListener("click", () => { void calculate(); });
+
+  byId<HTMLButtonElement>("plan-chargers")?.addEventListener("click", () => {
+    const current = plan();
+    const line = current.route?.shape;
+    if (!ports.chargersAlong || !line || current.chargers.busy) return;
+    set({ ...current, chargers: { busy: true, list: null, errorKey: null } });
+    void ports.chargersAlong(line)
+      .catch((): ChargerOutcome => ({ chargers: [], error: "server" }))
+      .then((outcome) => {
+        const after = plan();
+        if (after.route?.shape !== line) return;
+        set({
+          ...after,
+          chargers: outcome.error
+            ? { busy: false, list: null, errorKey: chargerErrorKey(outcome.error), ...(outcome.waitS !== undefined ? { waitS: outcome.waitS } : {}) }
+            : { busy: false, list: chargersAlong(line, outcome.chargers), errorKey: null },
+        });
+      });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-charger]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const current = plan();
+      const hit = current.chargers.list?.[Number(button.dataset["charger"])];
+      if (!hit) return;
+      const stop: RoutePoint = { label: hit.charger.name || tr(messages, locale, "c.noName"), at: hit.charger.at };
+      const stops = insertStop(current.stops, stop, current.route?.shape ?? null);
+      if (!stops) { hooks.notify(tr(messages, locale, "r.full")); return; }
+      set(withPoints(current, { stops }));
+      // The route through the new stop is calculated straight away.
+      void calculate();
+    });
+  });
+
+  byId<HTMLButtonElement>("plan-save")?.addEventListener("click", () => {
+    const current = plan();
+    if (!current.to) { hooks.notify(tr(messages, locale, "r.needTo")); return; }
+    if (!current.route) { hooks.notify(tr(messages, locale, "r.needRoute")); return; }
+    const nameField = byId<HTMLInputElement>("plan-name");
+    const saved = makeSavedRoute(data.routes, {
+      name: nameField?.value ?? "", mode: current.mode, start: current.start, stops: current.stops, to: current.to,
+    }, current.route);
+    if (nameField) nameField.value = "";
+    hooks.setPlan(emptyPlan(current.mode));
+    commit({ ...data, routes: addRoute(data.routes, saved) });
+    hooks.notify(tr(messages, locale, "r.saved", { name: saved.name }));
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-route-edit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const route = data.routes.find((r) => r.id === button.dataset["routeEdit"]);
+      if (route) set(planOf(route));
+    });
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-route-rename]").forEach((button) => {
+    button.addEventListener("click", () => { set({ ...plan(), renaming: button.dataset["routeRename"] ?? null }); });
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-route-rename-ok]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset["routeRenameOk"] ?? "";
+      const field = byId<HTMLInputElement>("rename");
+      const name = field?.value ?? "";
+      if (field) field.value = "";
+      hooks.setPlan({ ...plan(), renaming: null });
+      commit({ ...data, routes: renameRoute(data.routes, id, name) });
+    });
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-route-delete]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset["routeDelete"] ?? "";
+      commit({ ...data, routes: removeRoute(data.routes, id), destinationId: data.destinationId === id ? null : data.destinationId });
+    });
+  });
+}
+
+/** A route that could not be had, as the sentence under the button. */
+export function routeErrorKey(code: RouteOutcome["code"]): string {
+  switch (code) {
+    case "offline": return "err.routeUnreachable";
+    case "timeout": return "err.routeTimeout";
+    case "busy": return "err.busy";
+    case "noRoute": return "err.noRoute";
+    case "tooFar": return "err.tooFar";
+    default: return "err.server";
+  }
 }
 
 /** Maps a search failure to the sentence shown under the search box. */

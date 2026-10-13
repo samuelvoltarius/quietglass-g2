@@ -4,6 +4,7 @@ import { DEFAULT_ROUTER_URL, type TravelMode } from "../routing/provider";
 import { DEFAULT_GEOCODER_URL } from "../geocode/photon";
 import type { GlassLayout } from "../glasses/view";
 import { buildTtsUrl } from "../speech/server-tts";
+import { parseRoutes, type SavedRoute } from "../trip/saved";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -38,7 +39,9 @@ export interface NavData {
    * glasses), newest first, at most MAX_RECENT. Pickable on the glasses list.
    */
   readonly recent: readonly Destination[];
-  /** Selected destination id (a saved place or a recent one), or null. */
+  /** Routes planned on the phone and saved under a name (start, stops, destination). */
+  readonly routes: readonly SavedRoute[];
+  /** Selected destination id (a saved place, a recent one or a saved route), or null. */
   readonly destinationId: string | null;
   readonly invertScroll: boolean;
   /**
@@ -48,6 +51,18 @@ export interface NavData {
   readonly streets: boolean;
   /** Spoken turn instructions ("In 200 metres turn left"). On by default when the build has a voice server. */
   readonly announce: boolean;
+  /**
+   * Charging stations (OpenStreetMap via Overpass): along a planned route on
+   * the phone, "charging nearby" on the glasses list, the next one while
+   * driving. Off by default: nothing is asked for while it is off.
+   */
+  readonly chargers: boolean;
+  /**
+   * When the running navigation was started (ms), null when none runs. The
+   * phone may end the app (screen lock); on the next start the navigation to
+   * the selected destination or route is picked up again.
+   */
+  readonly activeSince: number | null;
 }
 
 const KEY = "quietglass.openglance.v1";
@@ -61,10 +76,13 @@ export const EMPTY_DATA: NavData = {
   mode: "walking",
   places: [],
   recent: [],
+  routes: [],
   destinationId: null,
   invertScroll: false,
   streets: true,
   announce: buildTtsUrl() !== "",
+  chargers: false,
+  activeSince: null,
 };
 
 export function usesMockRouter(data: NavData): boolean {
@@ -85,6 +103,17 @@ export function destinationOf(data: NavData): Destination | null {
   return data.places.find((p) => p.id === data.destinationId)
     ?? data.recent.find((p) => p.id === data.destinationId)
     ?? null;
+}
+
+/** The saved route selected as destination, or null. */
+export function selectedRoute(data: NavData): SavedRoute | null {
+  if (!data.destinationId) return null;
+  return data.routes.find((r) => r.id === data.destinationId) ?? null;
+}
+
+/** Label of whatever is selected: a place or a saved route. */
+export function selectionLabel(data: NavData): string | null {
+  return destinationOf(data)?.label ?? selectedRoute(data)?.name ?? null;
 }
 
 /** How many recent destinations are kept. */
@@ -216,8 +245,9 @@ export function parseData(raw: string): NavData {
       typeof candidate === "string" && validateRouterUrl(candidate).valid ? candidate.trim() : "";
     const valhallaUrl = url(value.valhallaUrl);
 
+    const routes = parseRoutes(value.routes);
     const destinationId = typeof value.destinationId === "string"
-      && [...places, ...recent].some((p) => p.id === value.destinationId)
+      && [...places, ...recent, ...routes].some((p) => p.id === value.destinationId)
       ? value.destinationId
       : null;
 
@@ -229,10 +259,13 @@ export function parseData(raw: string): NavData {
       mode: isMode(value.mode) ? value.mode : EMPTY_DATA.mode,
       places,
       recent,
+      routes,
       destinationId,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
       streets: typeof value.streets === "boolean" ? value.streets : EMPTY_DATA.streets,
       announce: typeof value.announce === "boolean" ? value.announce : EMPTY_DATA.announce,
+      chargers: value.chargers === true,
+      activeSince: typeof value.activeSince === "number" && Number.isFinite(value.activeSince) && destinationId !== null ? value.activeSince : null,
     };
   } catch {
     return EMPTY_DATA;

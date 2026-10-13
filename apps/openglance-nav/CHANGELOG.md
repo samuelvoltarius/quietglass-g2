@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.7.0] — 2026-10-13
+
+Plan routes ahead on the phone, save them, and charging stations for the
+electric car (wish from Alfred: "Wege online planen und speichern, und
+Ladestationen (optional)").
+
+### Added
+
+- **Route planner on the phone**: start (a searched place, or the position at
+  the moment of starting), up to three stops, destination, car / bike / on foot.
+  "Route berechnen" routes once through all points (Valhalla `locations`,
+  same GET `?json=` without preflight), preview with distance, time and a line
+  drawing of the route (SVG from the route's own points, no map tiles, no new
+  hosts). "Route speichern" under a name; saved routes can be edited, renamed
+  and deleted.
+- **Saved routes on the glasses**: in the destination list after the places
+  (`↑`, "Route, 2 Stopps"). Tap starts from the current position: near the
+  planned start as planned, far from it but close to the planned line joined
+  there (stops behind are left out), otherwise straight to the first stop.
+  Arrivals at stops are turns of their own ("Stopp 1: Ladepark") and are
+  announced as stops. A reroute keeps the stops not yet passed.
+- **Charging stations** (switch on the phone, off by default), OpenStreetMap
+  `amenity=charging_station` via the public Overpass API (already used for the
+  overview streets, so no new origin): along a planned route (2 km corridor,
+  distance from the start, power, sockets CCS/CHAdeMO/Typ 2, places; "Als
+  Stopp" inserts it in order and recalculates); "Ladestation in der Nähe" on
+  the glasses list (three nearest fast ones, ≥ 50 kW where known, tap
+  navigates); while driving "Laden in 12 km · 150 kW" under the road and a
+  marked plate on the overview map. At most one request per 30 s, answers
+  reused, 18 s timeout, errors in words. Bicycle-only and private stations are
+  left out. Credits: "Ladestationen: OpenStreetMap über Overpass API (ODbL)".
+- **Navigation resumes** after the phone ended the app (screen lock, Even
+  review criterion): the running navigation is remembered (`activeSince`) and
+  picked up again at the next start when it is less than 6 h old; a hold, the
+  arrival or leaving with double tap forgets it.
+- System lifecycle events: back in front redraws the page; ended by the system
+  switches microphone, GPS and timers off.
+
+### Fixed
+
+- A microphone permission that answered only after the 5 s timeout left the
+  microphone on; it is now switched off as soon as that late answer arrives.
+- Without a speech server (public build) the list no longer advertises "Halten
+  sprechen".
+- `selfhost/build-private.mjs` now also sets the speech server (`VITE_STT_URL`)
+  for OpenGlance.
+
 ## [0.6.0] — 2026-10-13
 
 Destinations are chosen on the glasses, and can be spoken (user feedback from the

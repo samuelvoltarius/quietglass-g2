@@ -52,6 +52,12 @@ map** off under Advanced and nothing goes there; the overview then shows the
 route alone. Your browser engine sends its usual `Referer` and user agent
 with the request, as with any web request; OpenGlance adds nothing.
 
+With **charging stations** switched on (off by default), the same Overpass
+servers get: for *Charging nearby* on the glasses, your position rounded to
+about 10 m and a 15 km radius; for *Charging stations along the route* on the
+phone and while driving, boxes covering the route, rounded to about 10 m.
+Switched off, nothing is asked.
+
 Nothing else is sent, and nothing is sent anywhere else. With the demo route
 switched on, **nothing leaves the device at all**.
 
@@ -61,6 +67,8 @@ switched on, **nothing leaves the device at all**.
 |---|---|---|
 | Routing and search server addresses | Even app per-app storage, on the phone | No |
 | Saved places | same | Only the selected one, to the router |
+| Saved routes (name, start place, stops, destination, way of travel, distance, time; for a route from a typed start also its thinned line) | same | Their places, to the router, when started |
+| Whether a navigation is running and since when (to pick it up again after the phone ended the app) | same | No |
 | Mode, glasses view and settings (incl. the street-map switch) | same | No |
 | Language choice (only if changed) | WebView local storage | No |
 

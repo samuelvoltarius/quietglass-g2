@@ -62,7 +62,7 @@ export function spokenMeters(meters: number): number {
   return Math.max(10, Math.round(meters / 10) * 10);
 }
 
-function say(locale: Locale, key: "far" | "near" | "arriveFar" | "arrived" | "offRoute", vars: { meters?: number; turn?: string; street?: string } = {}): string {
+function say(locale: Locale, key: "far" | "near" | "arriveFar" | "arrived" | "offRoute" | "viaFar" | "viaNear", vars: { meters?: number; turn?: string; street?: string } = {}): string {
   const street = vars.street ? (locale === "de" ? ` auf ${vars.street}.` : ` onto ${vars.street}.`) : ".";
   if (locale === "de") {
     switch (key) {
@@ -70,6 +70,8 @@ function say(locale: Locale, key: "far" | "near" | "arriveFar" | "arrived" | "of
       case "near": return `Jetzt ${vars.turn}.`;
       case "arriveFar": return `In ${vars.meters} Metern erreichen Sie Ihr Ziel.`;
       case "arrived": return "Sie haben Ihr Ziel erreicht.";
+      case "viaFar": return `In ${vars.meters} Metern erreichen Sie Ihren Zwischenstopp.`;
+      case "viaNear": return "Zwischenstopp erreicht.";
       default: return "Sie haben die Route verlassen. Neue Route wird berechnet.";
     }
   }
@@ -78,6 +80,8 @@ function say(locale: Locale, key: "far" | "near" | "arriveFar" | "arrived" | "of
     case "near": return `${(vars.turn ?? "").replace(/^./, (c) => c.toUpperCase())} now.`;
     case "arriveFar": return `In ${vars.meters} meters you will arrive at your destination.`;
     case "arrived": return "You have arrived.";
+    case "viaFar": return `In ${vars.meters} meters you will reach your stop.`;
+    case "viaNear": return "You have reached your stop.";
     default: return "You left the route. Calculating a new route.";
   }
 }
@@ -128,14 +132,15 @@ export class TurnAnnouncer {
 
     if (distance <= near && this.#stage < 2) {
       this.#stage = 2;
-      // The arrival itself is announced once the destination is reached.
+      // A stop on the way is said here; the arrival itself once the destination is reached.
+      if (isArrival && maneuver.via !== undefined) return { text: say(locale, "viaNear"), priority: 2, key: turnKey, maxAgeMs: 8_000 };
       if (isArrival) return null;
       return { text: say(locale, "near", { turn: phrase }), priority: 2, key: turnKey, maxAgeMs: 6_000 };
     }
     if (distance > near && distance <= far && this.#stage < 1) {
       this.#stage = 1;
       const meters = spokenMeters(distance);
-      if (isArrival) return { text: say(locale, "arriveFar", { meters }), priority: 1, key: turnKey, maxAgeMs: 10_000 };
+      if (isArrival) return { text: say(locale, maneuver.via !== undefined ? "viaFar" : "arriveFar", { meters }), priority: 1, key: turnKey, maxAgeMs: 10_000 };
       return {
         text: say(locale, "far", { meters, turn: phrase, ...(maneuver.street ? { street: maneuver.street } : {}) }),
         priority: 1, key: turnKey, maxAgeMs: 10_000,

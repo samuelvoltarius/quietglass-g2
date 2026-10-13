@@ -85,6 +85,72 @@ export function decodePolyline(encoded: string, precision = 6): LatLng[] {
   return points;
 }
 
+/** Encodes points as a polyline at `precision` decimals, the inverse of {@link decodePolyline}. */
+export function encodePolyline(points: readonly LatLng[], precision = 5): string {
+  const factor = Math.pow(10, precision);
+  let out = "";
+  let lastLat = 0;
+  let lastLon = 0;
+  const push = (delta: number): void => {
+    let value = delta < 0 ? ~(delta << 1) : delta << 1;
+    while (value >= 0x20) { out += String.fromCharCode((0x20 | (value & 0x1f)) + 63); value >>= 5; }
+    out += String.fromCharCode(value + 63);
+  };
+  for (const point of points) {
+    const lat = Math.round(point.lat * factor);
+    const lon = Math.round(point.lon * factor);
+    push(lat - lastLat); push(lon - lastLon);
+    lastLat = lat; lastLon = lon;
+  }
+  return out;
+}
+
+/**
+ * Douglas–Peucker in metres: drops points that lie closer than `tolerance`
+ * to the line through their neighbours. Ends are always kept.
+ */
+export function simplifyPath(points: readonly LatLng[], tolerance: number): LatLng[] {
+  if (points.length <= 2) return [...points];
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1; keep[points.length - 1] = 1;
+  const stack: Array<[number, number]> = [[0, points.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop()!;
+    const a = points[first]!, b = points[last]!;
+    let worst = -1, worstAt = -1;
+    for (let i = first + 1; i < last; i++) {
+      const p = points[i]!;
+      const d = projectOntoPath(p, [a, b])?.distance ?? 0;
+      if (d > worst) { worst = d; worstAt = i; }
+    }
+    if (worst > tolerance && worstAt > 0) {
+      keep[worstAt] = 1;
+      stack.push([first, worstAt], [worstAt, last]);
+    }
+  }
+  return points.filter((_, i) => keep[i] === 1);
+}
+
+/** Simplifies a path until it has at most `max` points, starting at `tolerance` metres and doubling. */
+export function simplifyTo(points: readonly LatLng[], max: number, tolerance = 25): LatLng[] {
+  let out = simplifyPath(points, tolerance);
+  let t = tolerance;
+  while (out.length > max && t < 1_000_000) { t *= 2; out = simplifyPath(points, t); }
+  return out;
+}
+
+/** Metres along the path from its start to every point. */
+export function cumulativeMeters(path: readonly LatLng[]): number[] {
+  const out: number[] = [];
+  let total = 0;
+  path.forEach((point, i) => {
+    const previous = path[i - 1];
+    if (previous) total += distanceMeters(previous, point);
+    out.push(total);
+  });
+  return out;
+}
+
 export interface Projection {
   /** Closest point on the line. */
   readonly point: LatLng;

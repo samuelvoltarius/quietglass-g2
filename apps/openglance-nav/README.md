@@ -188,7 +188,8 @@ The phone page shows, as both services' terms require:
 
 > Map data © OpenStreetMap contributors (ODbL) · report a map error ·
 > Routes: FOSSGIS e.V. · Valhalla · Search: Photon by komoot ·
-> Overview streets: OpenStreetMap via Overpass API
+> Overview streets: OpenStreetMap via Overpass API ·
+> Charging stations: OpenStreetMap via Overpass API (ODbL) (when switched on)
 
 With your own servers entered, the provider line names them instead.
 
@@ -207,6 +208,53 @@ Search by address or place name; **Go here** saves the result and makes it the
 destination in one step. Saved places stay on the phone for next time. **Save
 my current position** remembers where you are (the car, the hotel).
 Coordinates can still be typed under *Enter coordinates instead*.
+
+## Planned routes
+
+On the phone, **Plan a route**: a start (a searched place, or *my position
+when I start*), up to three stops and a destination, car / bike / on foot.
+**Calculate route** asks the router once for the whole way (Valhalla
+`locations` with every stop, a "break" at each) and shows distance, time and a
+line drawing of the route made from the route's own points - no map tiles, no
+further server. **Save route** keeps it under a name; saved routes can be
+edited, renamed and deleted.
+
+On the glasses the saved routes follow the places in the destination list,
+marked `↑` with their number of stops. A tap starts from where you are:
+
+- near the planned start (500 m) the route is driven as planned, through every stop;
+- far from the start but within 2 km of the planned line, the route is joined
+  where you are and stops already behind are left out;
+- otherwise straight to the first stop (or the destination).
+
+The arrival at a stop is its own turn on the glasses ("Stopp 1: Ladepark") and
+is announced as a stop, not as the destination. A reroute keeps the stops not
+yet passed.
+
+## Charging stations (optional, off by default)
+
+For electric cars: switch **Show charging stations** on under *Charging
+stations* on the phone. The stations come from OpenStreetMap
+(`amenity=charging_station`) through the public Overpass API - the same
+servers as the overview streets, the same form POST without a CORS preflight.
+Bicycle-only and private stations are left out; power is read from
+`socket:*:output`, sockets from `socket:type2_combo` (CCS), `socket:chademo`
+and `socket:type2`, places from `capacity`.
+
+- **Along a planned route** (phone): stations within 2 km, with distance from
+  the start, power, sockets and how far off the route; **Add as stop** puts one
+  between the stops where it lies on the way and recalculates.
+- **Charging nearby** (glasses list entry): the three nearest fast ones within
+  15 km - at least 50 kW where the power is mapped, a CCS socket counts as
+  fast without it; tap navigates there.
+- **While driving**: "Laden in 12 km · 150 kW" under the road on the turn
+  view (not within 200 m of a turn), and a marked plate on the overview map.
+
+Asked sparingly: at most one request every 30 s, answers reused (nearby while
+within 1.5 km for 10 minutes, along a route per route), an 18 s timeout, the
+second server only when the first fails, and every failure said in words. The
+route corridor is asked as a union of boxes of ~20 km each: an `around` along
+a 130 km line ran into the server's time limit when tested.
 
 ## Advanced: your own servers
 
@@ -286,7 +334,6 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 ## Roadmap
 
 - Lane guidance where the router supplies it.
-- Waypoints.
 - Offline route caching for a planned trip.
 
 ## License

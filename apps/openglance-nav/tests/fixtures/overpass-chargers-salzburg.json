@@ -1,0 +1,99 @@
+{
+ "version": 0.6,
+ "generator": "Overpass API (trimmed test fixture; data © OpenStreetMap contributors, ODbL)",
+ "elements": [
+  {
+   "type": "node",
+   "id": 6309021345,
+   "lat": 47.8042037,
+   "lon": 13.0179215,
+   "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "capacity": "3",
+    "motorcar": "yes",
+    "operator": "Gasthof Drei Hasen",
+    "socket:type2": "1",
+    "socket:type2:output": "11kW"
+   }
+  },
+  {
+   "type": "node",
+   "id": 5449172135,
+   "lat": 47.8151481,
+   "lon": 13.0086602,
+   "tags": {
+    "amenity": "charging_station",
+    "bicycle": "yes",
+    "brand": "bike-energy",
+    "brand:wikidata": "Q67770877",
+    "capacity": "3",
+    "name": "bike-energy",
+    "operator": "bike-energy",
+    "operator:wikidata": "Q67770877",
+    "socket:output": "288 W"
+   }
+  },
+  {
+   "type": "node",
+   "id": 10753881307,
+   "lat": 47.8154665,
+   "lon": 12.9868576,
+   "tags": {
+    "access": "permit",
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Moon Power",
+    "socket:type2": "1",
+    "socket:type2:output": "22 kW",
+    "socket:type2_combo": "1",
+    "socket:type2_combo:output": "150 kW"
+   }
+  },
+  {
+   "type": "node",
+   "id": 445971871,
+   "lat": 47.8120973,
+   "lon": 13.0503815,
+   "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Salzburg AG",
+    "socket:type2_combo": "2",
+    "socket:type2_combo:output": "300 kW"
+   }
+  },
+  {
+   "type": "node",
+   "id": 4873087986,
+   "lat": 47.8164042,
+   "lon": 12.9864281,
+   "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "capacity": "2",
+    "operator": "Salzburg AG",
+    "socket:type2": "2",
+    "socket:type2:output": "22 kW"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2382723067,
+   "lat": 47.7982523,
+   "lon": 13.03682,
+   "tags": {
+    "access": "yes",
+    "amenity": "charging_station",
+    "bicycle": "no",
+    "capacity": "2",
+    "operator": "Salzburg AG",
+    "socket:schuko": "2",
+    "socket:type2": "2",
+    "socket:type2:output": "22 kW"
+   }
+  }
+ ]
+}

@@ -86,6 +86,8 @@ export interface ViewOptions {
   readonly bigDistance?: boolean;
   /** While a start is under way and nothing is routed yet: what it is doing ("Finding your position…"). */
   readonly status?: string | null;
+  /** "Laden in 12 km · 150 kW": the next charging station ahead, shown below the road when not close to a turn. */
+  readonly charger?: string | null;
 }
 
 export function buildView(
@@ -177,6 +179,8 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
 
   // Close to the turn the footer goes: nothing but arrow, distance and road.
   const near = big && progress.distanceToManeuver < NEAR_TURN_M;
+  // The next charging station gets the small line under the road, when it is free and the turn is not close.
+  if (options.charger && !overview && !near && body.length < (big ? 2 : 3)) body.push(options.charger);
   return {
     header: "",
     body,

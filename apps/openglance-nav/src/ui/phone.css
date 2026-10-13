@@ -136,3 +136,20 @@ details[open] summary { margin-bottom: 8px; }
 .card details { margin-top: 14px; }
 footer.hint p { margin: 6px 0; }
 footer.hint a { color: var(--muted); }
+
+/* Route planner */
+.scripts.plan li { padding: 8px 0; }
+.scripts .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.scripts .grow { flex: 1; }
+.plan-modes { margin-top: 14px; }
+.preview { margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.preview .summary { margin: 0 0 6px; }
+.route-svg { display: block; width: 100%; height: auto; }
+.route-line { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+.route-start { fill: var(--bg); stroke: var(--text); stroke-width: 3; }
+.route-stop { fill: var(--text); }
+.route-stop-n { fill: var(--bg); font: 600 11px system-ui, sans-serif; }
+.route-end { fill: var(--text); }
+.route-charger { fill: #e0a33e; stroke: var(--bg); stroke-width: 1.5; }
+.scripts.chargers small { word-break: normal; }
+#saved-routes small, .scripts.plan small { word-break: normal; }

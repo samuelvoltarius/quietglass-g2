@@ -451,4 +451,106 @@ describe("openglance lifecycle", () => {
     expect(fake.state.shutdowns).toBe(0);
     vi.unstubAllEnvs();
   });
+
+  it("starts a saved route from the list: every stop is a location, the stop is named on the glasses", async () => {
+    const fake = fakeBridge({
+      places: [],
+      destinationId: null,
+      routes: [{
+        id: "s1", name: "Morning", mode: "driving", start: null,
+        stops: [{ label: "Charger", at: { lat: START.lat + 0.002, lon: START.lon } }],
+        to: { label: "Office", at: { lat: START.lat + 0.004, lon: START.lon } }, distance: 440, duration: 120,
+      }],
+    });
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Morning · route, 1 stop"));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    const body = JSON.parse(decodeURIComponent(fetchUrl(0).split("?json=")[1]!)) as { locations: unknown[]; costing: string };
+    expect(body.locations).toHaveLength(3);
+    expect(body.costing).toBe("auto");
+    const shape = [0, 1, 2].map((i) => ({ lat: START.lat + i * 0.002, lon: START.lon }));
+    replies[0]?.({
+      trip: {
+        legs: [
+          { shape: encode(shape.slice(0, 2)), maneuvers: [
+            { type: 1, instruction: "Go", street_names: ["Start Road"], length: 0.22, time: 60, begin_shape_index: 0 },
+            { type: 4, instruction: "Arrive", length: 0, time: 0, begin_shape_index: 1 },
+          ] },
+          { shape: encode(shape.slice(1)), maneuvers: [
+            { type: 1, instruction: "Go", street_names: ["Office Road"], length: 0.22, time: 60, begin_shape_index: 0 },
+            { type: 4, instruction: "Arrive", length: 0, time: 0, begin_shape_index: 1 },
+          ] },
+        ],
+        summary: { length: 0.44, time: 120 },
+      },
+    });
+    await vi.waitFor(() => expect(harness.road).toBe("Stop 1: Charger"));
+    expect(JSON.parse(fake.state.saved).destinationId).toBe("s1");
+  });
+
+  it("picks a running navigation up again after the phone ended the app", async () => {
+    const fake = fakeBridge({ activeSince: Date.now() - 60_000 });
+    await boot(fake);
+    // No tap: the route is asked for by itself.
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(valhalla("Resume Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Resume Street"));
+    // A system exit keeps it remembered; a hold forgets it.
+    fake.send({ sysEvent: { eventType: 6 } });
+    await settle();
+    expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+  });
+
+  it("forgets the navigation when it is stopped with a hold", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0));
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
+  });
+
+  it("does not resume a navigation that is hours old", async () => {
+    const fake = fakeBridge({ activeSince: Date.now() - 24 * 3600_000 });
+    await boot(fake);
+    await settle();
+    expect(replies).toHaveLength(0);
+    expect(fake.state.body).toContain("→ ● Office");
+  });
+
+  it("lists fast charging stations nearby and navigates to the chosen one", async () => {
+    const fake = fakeBridge({ chargers: true });
+    await boot(fake);
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ Charging nearby …"));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    expect(fetchUrl(0)).toBe("https://overpass-api.de/api/interpreter");
+    replies[0]?.({ elements: [
+      { type: "node", id: 1, lat: START.lat + 0.01, lon: START.lon, tags: { amenity: "charging_station", name: "Wallbox", "socket:type2": "1", "socket:type2:output": "11 kW" } },
+      { type: "node", id: 2, lat: START.lat + 0.02, lon: START.lon, tags: { amenity: "charging_station", name: "Fast One", "socket:type2_combo": "2", "socket:type2_combo:output": "150 kW" } },
+    ] });
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ 2,2 km · 150 kW · Fast One".replace("2,2", "2.2")));
+    expect(fake.state.body).not.toContain("Wallbox");
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    expect(fetchUrl(1)).toContain("valhalla.test/route");
+    expect(JSON.parse(fake.state.saved).recent[0].label).toBe("Fast One");
+  });
+
+  it("switches the microphone off when its yes comes after the timeout", async () => {
+    vi.stubEnv("VITE_STT_URL", "https://stt.test");
+    const fake = fakeBridge();
+    (fake.bridge as { audioControl: (on: boolean) => Promise<boolean> }).audioControl = (on) => {
+      fake.state.mic.push(on);
+      return on ? new Promise((resolve) => setTimeout(() => resolve(true), 5300)) : Promise.resolve(true);
+    };
+    await boot(fake);
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.body).toContain("The microphone did not switch on."), { timeout: 6000 });
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true, false]), { timeout: 2000 });
+    vi.unstubAllEnvs();
+  }, 10_000);
 });

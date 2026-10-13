@@ -45,6 +45,21 @@ export interface MapScene {
   /** The street the next manoeuvre leads onto, and the one the car is on now. */
   readonly nextStreet?: string | undefined;
   readonly currentStreet?: string | undefined;
+  /** Charging stations to mark (driving, when the setting is on). */
+  readonly chargers?: readonly LatLng[];
+}
+
+/** A charging station: a white plate with a black lightning bolt, black-edged so it reads on the route too. */
+export function drawCharger(ctx: MapContext, at: PixelPoint): void {
+  const s = 13;
+  ctx.fillStyle = "#000"; ctx.fillRect(at.x - s - 3, at.y - s - 3, 2 * s + 6, 2 * s + 6);
+  ctx.fillStyle = "#fff"; ctx.fillRect(at.x - s, at.y - s, 2 * s, 2 * s);
+  const bolt = [
+    { x: 3, y: -11 }, { x: -7, y: 2 }, { x: -1, y: 2 }, { x: -3, y: 11 }, { x: 7, y: -2 }, { x: 1, y: -2 }, { x: 3, y: -11 },
+  ];
+  ctx.fillStyle = "#000"; ctx.beginPath();
+  bolt.forEach((p, i) => (i === 0 ? ctx.moveTo(at.x + p.x, at.y + p.y) : ctx.lineTo(at.x + p.x, at.y + p.y)));
+  ctx.fill();
 }
 
 /** Beyond this the canvas has nothing to draw; keeps absurd coordinates (zoomed far in on a far-off point) out of the strokes. */
@@ -145,6 +160,14 @@ export function drawMap(ctx: MapContext, scene: MapScene, width = MAP_WIDTH, hei
   if (end) {
     ctx.strokeStyle = "#000"; ctx.lineWidth = 9; ctx.strokeRect(end.x - 13, end.y - 13, 26, 26);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.strokeRect(end.x - 13, end.y - 13, 26, 26);
+  }
+
+  // Charging stations on the picture (not under the plate or the car).
+  for (const charger of scene.chargers ?? []) {
+    const p = toPixel(charger);
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 16 || p.x > width - 16 || p.y < 16 || p.y > height - 16) continue;
+    if (p.x < PLATE.width + 16 && p.y < PLATE.height + 16) continue;
+    drawCharger(ctx, p);
   }
 
   // Street names, over streets and route but under the car, compass and plate.

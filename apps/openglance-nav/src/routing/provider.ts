@@ -34,6 +34,12 @@ export interface Maneuver {
   readonly shapeIndex: number;
   /** Roundabout exit number, when applicable. */
   readonly exitNumber?: number;
+  /**
+   * Set on the arrival at a stop on the way (1 = first stop), not at the
+   * destination: a route with stops is one leg per stop, and every leg but the
+   * last ends there.
+   */
+  readonly via?: number;
 }
 
 export interface Route {
@@ -47,7 +53,12 @@ export interface RouteRequest {
   readonly from: LatLng;
   readonly to: LatLng;
   readonly mode: TravelMode;
+  /** Stops on the way, in order (at most MAX_STOPS); the route stops at each one. */
+  readonly via?: readonly LatLng[];
 }
+
+/** Most stops on the way a route may have. */
+export const MAX_STOPS = 3;
 
 /**
  * Why a route could not be had, in terms a person can act on. The app turns
@@ -119,16 +130,14 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
 
   return {
     name: "valhalla",
-    async route({ from, to, mode }): Promise<RouteOutcome> {
+    async route({ from, to, mode, via }): Promise<RouteOutcome> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 15_000);
 
       try {
         const body = {
-          locations: [
-            { lat: from.lat, lon: from.lon },
-            { lat: to.lat, lon: to.lon },
-          ],
+          // Stops are "break" locations (Valhalla's default): one leg each, a real stop.
+          locations: [from, ...(via ?? []).slice(0, MAX_STOPS), to].map((point) => ({ lat: point.lat, lon: point.lon })),
           costing: COSTING[mode],
           directions_options: {
             units: "kilometers",
@@ -206,9 +215,10 @@ export function parseValhalla(value: unknown): RouteOutcome {
   const shape: LatLng[] = [];
   const maneuvers: Maneuver[] = [];
 
-  for (const rawLeg of legs) {
+  for (const [legIndex, rawLeg] of legs.entries()) {
     const leg = rawLeg as Record<string, unknown>;
     const offset = shape.length;
+    const lastLeg = legIndex === legs.length - 1;
 
     if (typeof leg["shape"] === "string") {
       // Valhalla encodes at precision 6; using 5 would misplace the route
@@ -222,8 +232,9 @@ export function parseValhalla(value: unknown): RouteOutcome {
       const streets = Array.isArray(m["street_names"]) ? m["street_names"] as unknown[] : [];
       const street = typeof streets[0] === "string" ? streets[0] : undefined;
 
+      const type = mapValhallaType(numberOr(m["type"], 0));
       maneuvers.push({
-        type: mapValhallaType(numberOr(m["type"], 0)),
+        type,
         instruction: typeof m["instruction"] === "string" ? m["instruction"] : "",
         ...(street ? { street } : {}),
         // Valhalla reports length in kilometres with units=kilometers.
@@ -233,6 +244,7 @@ export function parseValhalla(value: unknown): RouteOutcome {
         ...(m["roundabout_exit_count"] !== undefined
           ? { exitNumber: numberOr(m["roundabout_exit_count"], 0) }
           : {}),
+        ...(type === "arrive" && !lastLeg ? { via: legIndex + 1 } : {}),
       });
     }
   }
@@ -315,7 +327,7 @@ function mockBearing(i: number): number {
 export function createMockProvider(): RoutingProvider {
   return {
     name: "mock",
-    async route({ from }): Promise<RouteOutcome> {
+    async route({ from, via }): Promise<RouteOutcome> {
       const shape: LatLng[] = [from];
       for (let i = 0; i < 40; i++) {
         const last = shape[i]!;
@@ -325,12 +337,17 @@ export function createMockProvider(): RoutingProvider {
           lon: last.lon + (Math.sin(bearing) * MOCK_STEP_M) / (111_320 * Math.cos((last.lat * Math.PI) / 180)),
         });
       }
+      // With a stop on the way the made-up route stops on Linzer Gasse, so a stop can be tried out.
+      const right: Maneuver = { type: "right", instruction: "Turn right onto Linzer Gasse", street: "Linzer Gasse", length: 840, time: 100, shapeIndex: 16 };
+      const stop: readonly Maneuver[] = via?.length
+        ? [{ ...right, length: 480 }, { type: "arrive", instruction: "You have arrived at your stop", length: 360, time: 45, shapeIndex: 24, via: 1 }]
+        : [right];
       return {
         route: {
           shape,
           maneuvers: [
             { type: "depart", instruction: "Head north on Rainerstraße", street: "Rainerstraße", length: 960, time: 120, shapeIndex: 0 },
-            { type: "right", instruction: "Turn right onto Linzer Gasse", street: "Linzer Gasse", length: 840, time: 100, shapeIndex: 16 },
+            ...stop,
             { type: "roundabout", instruction: "At the roundabout, take the second exit", street: "Hellbrunner Allee", exitNumber: 2, length: 600, time: 90, shapeIndex: 30 },
             { type: "arrive", instruction: "You have arrived", length: 0, time: 0, shapeIndex: 40 },
           ],

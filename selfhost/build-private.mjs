@@ -55,10 +55,16 @@ const APPS = {
     }),
   },
   "openglance-nav": {
-    summary: "own Valhalla routing",
+    summary: "own Valhalla routing, voice destination (Whisper, optional)",
     required: ["valhalla"],
-    optional: [],
-    plan: (s) => ({ origins: [s.valhalla], env: { VITE_ROUTER_URL: s.valhalla } }),
+    optional: ["whisper"],
+    plan: (s) => ({
+      origins: [s.valhalla, s.whisper].filter(Boolean),
+      env: {
+        VITE_ROUTER_URL: s.valhalla,
+        ...(s.whisper ? { VITE_STT_URL: s.whisper } : {}),
+      },
+    }),
   },
   "babel-glass": {
     summary: "live captions (Whisper WebSocket) and translation (LLM proxy)",

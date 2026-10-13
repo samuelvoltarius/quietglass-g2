@@ -1,9 +1,9 @@
 import {
   AppLocationAccuracy, AudioInputSource, waitForEvenAppBridge, type AppLocation, type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import type { LatLng } from "./geo/geometry";
+import { cumulativeMeters, formatDistance, type LatLng } from "./geo/geometry";
 import {
-  clientIdFor, createMockProvider, createValhallaProvider, type Route, type RoutingProvider,
+  clientIdFor, createMockProvider, createValhallaProvider, type Route, type RouteOutcome, type RoutingProvider,
 } from "./routing/provider";
 import { createRequestGate, mayAutoReroute } from "./routing/throttle";
 import {
@@ -12,7 +12,7 @@ import {
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type GlassLayout, type NavView } from "./glasses/view";
 import {
-  clampCursor, cursorFor, listItems, listView, nextMode, voiceView, type VoiceState,
+  chargerView, clampCursor, cursorFor, listItems, listView, nextMode, voiceView, type ChargerListState, type VoiceState,
 } from "./glasses/picker";
 import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
 import { buildWav } from "./voice/wav";
@@ -31,9 +31,14 @@ import { createGeocoder, type Geocoder } from "./geocode/photon";
 import { resolveLocale, rememberLocale, setLocale, tr, type Locale } from "./i18n";
 import { messages } from "./messages";
 import {
-  chooseDestination, destinationOf, geocoderUrlOf, load, routerUrlOf, save, saveFavorite, usesMockRouter,
+  chooseDestination, destinationOf, geocoderUrlOf, load, routerUrlOf, save, saveFavorite, selectedRoute, selectionLabel, usesMockRouter,
   type Destination, type NavData,
 } from "./storage/persist";
+import { nameStops, planFrom, stopsPassed, type JoinKind, type RoutePoint, type SavedRoute } from "./trip/saved";
+import {
+  chargersAlong, createChargerSource, demoChargers, nearestFast, nextAhead, powerText,
+  type Charger, type ChargerOutcome, type RouteCharger,
+} from "./chargers/chargers";
 import { mountPhoneUi } from "./ui/phone";
 import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 import { TurnAnnouncer } from "./speech/announcer";
@@ -55,6 +60,9 @@ function fingerprint(bytes: Uint8Array): number {
   for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
   return hash >>> 0;
 }
+
+/** A navigation interrupted by the system is resumed when it started less than this long ago. */
+const RESUME_WITHIN_MS = 6 * 60 * 60_000;
 
 /** How long a location answer may take before navigation goes on without it. */
 const FIRST_FIX_MS = 10000;
@@ -85,7 +93,23 @@ async function boot(): Promise<void> {
   let locale: Locale = await resolveLocale(bridge);
   setLocale(locale);
   let data: NavData = await load(bridge);
-  if (DEMO) data = { ...data, places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }], destinationId: "demo", demo: true, ...(SCENE ? { mode: "driving" as const, glassView: SCENE === "map" ? "overview" as const : "turns" as const } : {}) };
+  if (DEMO) {
+    // The demo also brings a saved route with one stop, and shows charging stations.
+    const demoRoute: SavedRoute = {
+      id: "s1", name: "Büro mit Ladestopp", mode: "driving", start: null,
+      stops: [{ label: "Demo Schnelllader", at: { lat: 47.8105, lon: 13.0505 } }],
+      to: { label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }, distance: 2400, duration: 310,
+    };
+    data = {
+      ...data,
+      places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }],
+      routes: [demoRoute],
+      destinationId: SCENE === "stop" ? "s1" : "demo",
+      demo: true,
+      chargers: true,
+      ...(SCENE ? { mode: "driving" as const, glassView: SCENE === "map" ? "overview" as const : "turns" as const } : {}),
+    };
+  }
   // Development only (vite dev server): `?at=lat,lon` stands in for the GPS the
   // simulator does not have, `?to=lat,lon,Name` puts a destination in the list.
   const devAt = import.meta.env.DEV ? latLngFromParam(new URLSearchParams(location.search).get("at")) : null;
@@ -108,7 +132,7 @@ async function boot(): Promise<void> {
    * Which glasses page is up: the destination list (start page), speaking a
    * destination, or navigation (including starting it and its errors).
    */
-  let screen: "list" | "voice" | "nav" = DEMO && SCENE !== "list" && SCENE !== "voice" ? "nav" : "list";
+  let screen: "list" | "voice" | "nav" | "chargers" = DEMO && SCENE !== "list" && SCENE !== "voice" && SCENE !== "chargers" ? "nav" : "list";
   let cursor = cursorFor(data);
   let voice: VoiceState | null = null;
   /** Bumped whenever a recording or its answer is abandoned. */
@@ -159,6 +183,27 @@ async function boot(): Promise<void> {
   const routeGate = createRequestGate();
   let lastRouteAt: number | null = null;
 
+  /**
+   * The trip being navigated: where to, the stops still ahead (saved routes),
+   * and how a saved route was begun. `routedStops` are the stops the current
+   * route was calculated with; a reroute keeps those not yet passed.
+   */
+  let trip: { label: string; to: LatLng; stops: readonly RoutePoint[]; kind: JoinKind } | null = null;
+  let routedStops: readonly RoutePoint[] = [];
+  /** Bumped for every new trip (not for a reroute): charging stations are fetched once per trip. */
+  let tripSeq = 0;
+
+  // Charging stations (setting "chargers", OpenStreetMap via Overpass).
+  const chargerSource = createChargerSource();
+  /** Stations around the trip's first route, fetched once per trip while driving. */
+  let tripChargers: { trip: number; list: readonly Charger[] } | null = null;
+  let chargersAskedFor = -1;
+  let chargersVersion = 0;
+  let alongCache: { route: number; version: number; list: readonly RouteCharger[]; length: number } | null = null;
+  /** The "charging nearby" page of the glasses. */
+  let chargerList: ChargerListState | null = null;
+  let chargerSeq = 0;
+
   // Spoken turn instructions: Piper server voice (private build: VITE_TTS_URL), phone voice as fallback.
   const tts = new ServerTts({ url: buildTtsUrl(), voices: DEFAULT_VOICES });
   const announcer = new TurnAnnouncer();
@@ -200,21 +245,77 @@ async function boot(): Promise<void> {
   };
 
   const currentView = (kind: PageKind): NavView => {
-    if (screen === "list") return listView(data, cursor, locale);
+    if (screen === "list") return listView(data, cursor, locale, DEMO || sttBase("") !== "");
     if (screen === "voice" && voice) return voiceView(voice, locale);
+    if (screen === "chargers" && chargerList) return chargerView(chargerList, locale);
     const layout: GlassLayout = kind === "overview" ? "overview" : "turns";
     return buildView(nav ? progressOf(nav) : null, {
       mode: data.mode,
       navigating: nav !== null,
       rerouting,
       error: errorKey ? tr(messages, locale, errorKey) : null,
-      status: startPhase === "gps" ? tr(messages, locale, "g.findingFix") : startPhase === "route" ? tr(messages, locale, "g.routing") : null,
+      status: startPhase === "gps" ? tr(messages, locale, "g.findingFix") : startPhase === "route" ? routingStatus() : null,
       mock: usesMockRouter(data),
       waitingForFix: nav !== null && position === null,
       locale,
-      destination: destinationOf(data)?.label ?? null,
+      destination: trip?.label ?? selectionLabel(data),
       layout,
       bigDistance: kind === "turns",
+      charger: kind === "turns" ? nextChargerLine() : null,
+    });
+  };
+
+  /** "Calculating route…", and for a saved route begun far from its start, how it is joined. */
+  const routingStatus = (): string => {
+    const base = tr(messages, locale, "g.routing");
+    const note = trip?.kind === "joined" ? "g.tripJoined" : trip?.kind === "toFirstStop" ? "g.tripFirstStop" : trip?.kind === "direct" ? "g.tripDirect" : null;
+    return note ? base + "\n" + tr(messages, locale, note) : base;
+  };
+
+  /** Charging stations along the current route (driving, setting on), measured on the route. */
+  const chargersOnRoute = (): { list: readonly RouteCharger[]; length: number } => {
+    if (!nav || !data.chargers || data.mode !== "driving" || !tripChargers || tripChargers.trip !== tripSeq) return { list: [], length: 0 };
+    if (!alongCache || alongCache.route !== routeVersion || alongCache.version !== chargersVersion) {
+      const along = cumulativeMeters(nav.route.shape);
+      alongCache = { route: routeVersion, version: chargersVersion, list: chargersAlong(nav.route.shape, tripChargers.list), length: along[along.length - 1] ?? 0 };
+    }
+    return alongCache;
+  };
+
+  /** "Laden in 12 km · 150 kW" for the next fast station ahead, or null. */
+  const nextChargerLine = (): string | null => {
+    if (!nav) return null;
+    const { list, length } = chargersOnRoute();
+    if (!list.length) return null;
+    const travelled = Math.max(0, length - progressOf(nav).distanceRemaining);
+    const next = nextAhead(list, travelled);
+    if (!next) return null;
+    const power = powerText(next.charger);
+    const d = formatDistance(next.along - travelled, locale);
+    return tr(messages, locale, power ? "g.charger" : "g.chargerNoPower", { d, p: power });
+  };
+
+  /** Fetches the stations along the trip once, the first time a driving route is up with the setting on. */
+  const ensureTripChargers = (): void => {
+    if (!nav || !data.chargers || data.mode !== "driving" || chargersAskedFor === tripSeq) return;
+    const forTrip = tripSeq;
+    chargersAskedFor = forTrip;
+    if (usesMockRouter(data)) {
+      tripChargers = { trip: forTrip, list: demoChargers(nav.route.shape) };
+      chargersVersion++;
+      return;
+    }
+    void chargerSource.along(nav.route.shape).then((outcome) => {
+      if (closed || forTrip !== tripSeq) return;
+      if (outcome.error) {
+        console.warn("[openglance] charging stations unavailable:", outcome.error);
+        // Asked too soon after another request: try again on a later draw.
+        if (outcome.error === "cooldown") chargersAskedFor = -1;
+        return;
+      }
+      tripChargers = { trip: forTrip, list: outcome.chargers };
+      chargersVersion++;
+      void draw();
     });
   };
 
@@ -248,9 +349,11 @@ async function boot(): Promise<void> {
     const view = { center, bearing, range: rangeFor(progress.distanceToManeuver) };
     const next = progress.maneuver && !progress.arrived ? nav.route.shape[progress.maneuver.shapeIndex] ?? null : null;
     const list = data.streets && streets.route === routeVersion ? streets.list : [];
+    const stations = chargersOnRoute().list;
     return {
       scene: {
         route: nav.route.shape, next, streets: list, view,
+        ...(stations.length ? { chargers: stations.map((c) => c.charger.at) } : {}),
         nextIndex: next && progress.maneuver ? progress.maneuver.shapeIndex : null,
         nextStreet: next ? progress.maneuver?.street : undefined,
         currentStreet: nav.route.maneuvers[nav.maneuverIndex]?.street,
@@ -264,6 +367,7 @@ async function boot(): Promise<void> {
         position: center,
         bearing,
         at: now,
+        ...(stations.length ? { chargers: chargersVersion } : {}),
       },
     };
   };
@@ -305,6 +409,7 @@ async function boot(): Promise<void> {
 
   const drawNow = async (): Promise<void> => {
     if (closed) return;
+    if (screen === "nav") ensureTripChargers();
     const kind = kindNow();
     const view = currentView(kind);
     const samePage = pageReady && pageKind === kind;
@@ -396,10 +501,31 @@ async function boot(): Promise<void> {
     }
   };
 
-  const computeRoute = async (from: LatLng): Promise<void> => {
-    const seq = ++routeSeq;
+  /** The trip for what is selected, begun at `from`: a saved route with its stops, or a single destination. */
+  const buildTrip = (from: LatLng): typeof trip => {
+    const saved = selectedRoute(data);
+    if (saved) {
+      const plan = planFrom(saved, from);
+      return { label: saved.name, to: plan.to.at, stops: plan.stops, kind: plan.kind };
+    }
     const destination = destinationOf(data);
-    if (!destination) { startPhase = null; errorKey = "err.noDestination"; await draw(); return; }
+    return destination ? { label: destination.label, to: destination.at, stops: [], kind: "asPlanned" } : null;
+  };
+
+  /**
+   * Routes from `from`. `fresh` starts a new trip from what is selected; a
+   * reroute keeps the trip and drops the stops already passed.
+   */
+  const computeRoute = async (from: LatLng, fresh = false): Promise<void> => {
+    const seq = ++routeSeq;
+    if (fresh || !trip) {
+      trip = buildTrip(from);
+      tripSeq++;
+    } else if (nav) {
+      trip = { ...trip, stops: routedStops.slice(stopsPassed(nav.route.maneuvers, nav.maneuverIndex, routedStops, nav.position)) };
+    }
+    const current = trip;
+    if (!current) { startPhase = null; errorKey = "err.noDestination"; await draw(); return; }
 
     rerouting = nav !== null;
     if (!nav) startPhase = "route";
@@ -419,7 +545,8 @@ async function boot(): Promise<void> {
     await routeGate.ready();
     if (seq !== routeSeq) return;
     lastRouteAt = Date.now();
-    const outcome = await router().route({ from, to: destination.at, mode: data.mode });
+    const stops = current.stops;
+    const outcome = await router().route({ from, to: current.to, mode: data.mode, ...(stops.length ? { via: stops.map((stop) => stop.at) } : {}) });
     if (seq !== routeSeq) return;
     rerouting = false;
     startPhase = null;
@@ -431,7 +558,9 @@ async function boot(): Promise<void> {
     } else {
       errorKey = null;
       routeVersion++;
-      nav = startNavigation(outcome.route as Route);
+      routedStops = stops;
+      // Arrivals at stops carry the stop's name ("Stopp 1: Ladepark").
+      nav = startNavigation(nameStops(outcome.route as Route, stops, tr(messages, locale, "g.stopWord")));
       // The mock router has no Overpass behind it: the demo brings its own named streets.
       if (usesMockRouter(data)) {
         const shape = nav.route.shape;
@@ -454,6 +583,8 @@ async function boot(): Promise<void> {
   const startNavigating = async (): Promise<void> => {
     const seq = ++routeSeq;
     screen = "nav";
+    // Remembered, so navigation picks up again after the phone has ended the app (screen lock).
+    if (!DEMO) saveData({ ...data, activeSince: Date.now() });
     nav = null;
     errorKey = null;
     rerouting = false;
@@ -478,12 +609,14 @@ async function boot(): Promise<void> {
       }
     }
     if (!position) { startPhase = null; errorKey = "err.noGps"; await draw(); return; }
-    await computeRoute(position);
+    await computeRoute(position, true);
   };
 
   /** Back to the destination list, with the cursor on the active destination. */
   const openList = (): void => {
     abortVoice();
+    chargerSeq++;
+    chargerList = null;
     screen = "list";
     cursor = cursorFor(data);
     void draw();
@@ -491,7 +624,11 @@ async function boot(): Promise<void> {
 
   const stopNavigating = async (): Promise<void> => {
     routeSeq++;
+    if (data.activeSince !== null) saveData({ ...data, activeSince: null });
     nav = null;
+    trip = null;
+    routedStops = [];
+    tripSeq++;
     errorKey = null;
     rerouting = false;
     startPhase = null;
@@ -511,6 +648,56 @@ async function boot(): Promise<void> {
   const navigateTo = (place: Destination): void => {
     saveData(chooseDestination(data, place));
     void startNavigating();
+  };
+
+  /** Starts a saved route: its way of travel, its stops, from wherever the glasses are. */
+  const startRoute = (route: SavedRoute): void => {
+    saveData({ ...data, destinationId: route.id, mode: route.mode });
+    void startNavigating();
+  };
+
+  // ---- Charging nearby (glasses list entry, setting "chargers") ----
+
+  const chargerError = (outcome: ChargerOutcome): ChargerListState => {
+    const code = outcome.error === "invalid" || outcome.error === "oversized" ? "server" : outcome.error ?? "server";
+    return { phase: "error", key: "c." + code, vars: { s: outcome.waitS ?? 30 } };
+  };
+
+  /** Shows the three nearest fast stations; asks the server at most every 30 s and reuses a recent answer. */
+  const openChargers = async (): Promise<void> => {
+    abortVoice();
+    const seq = ++chargerSeq;
+    screen = "chargers";
+    const fresh = position !== null && Date.now() - positionAt <= FRESH_FIX_MS;
+    chargerList = { phase: "loading", key: fresh || DEMO ? "c.loading" : "c.findingFix" };
+    void draw();
+    if (DEMO && position) {
+      chargerList = { phase: "results", list: nearestFast(demoChargers(null, position), position, 3), selected: 0 };
+      void draw();
+      return;
+    }
+    if (!fresh) {
+      const fix = await withTimeout(
+        bridge.getAppLocation({ accuracy: AppLocationAccuracy.High, timeoutMs: FIRST_FIX_MS }), FIRST_FIX_MS + 2000,
+      ).catch(() => null);
+      if (seq !== chargerSeq || screen !== "chargers") return;
+      if (fix && typeof fix.latitude === "number" && typeof fix.longitude === "number") {
+        position = { lat: fix.latitude, lon: fix.longitude };
+        positionAt = Date.now();
+      }
+    }
+    const here = position;
+    if (!here) { chargerList = { phase: "error", key: "c.noGps" }; void draw(); return; }
+    chargerList = { phase: "loading", key: "c.loading" };
+    void draw();
+    const outcome = await chargerSource.nearby(here);
+    if (seq !== chargerSeq || screen !== "chargers") return;
+    if (outcome.error) chargerList = chargerError(outcome);
+    else {
+      const list = nearestFast(outcome.chargers, here, 3);
+      chargerList = list.length ? { phase: "results", list, selected: 0 } : { phase: "error", key: "c.none" };
+    }
+    void draw();
   };
 
   // ---- Speaking a destination (hold on the list) ----
@@ -543,7 +730,13 @@ async function boot(): Promise<void> {
     if (DEMO) return;
     // Blocks may arrive before the answer to the request does; they must not be dropped.
     micActive = true;
-    const granted = await withTimeout(bridge.audioControl(true, AudioInputSource.Glasses), 5000).catch(() => false);
+    const request = bridge.audioControl(true, AudioInputSource.Glasses);
+    const granted = await withTimeout(request, 5000).catch(() => {
+      // A yes that comes after the timeout would leave the microphone on for
+      // good: switch it off as soon as it arrives (unless a new recording runs).
+      void request.then((late) => { if (late && !micActive) void bridge.audioControl(false).catch(() => undefined); }, () => undefined);
+      return false;
+    });
     if (seq !== voiceSeq) {
       // Cancelled while the microphone was starting: do not leave it on.
       if (granted) void bridge.audioControl(false).catch(() => undefined);
@@ -606,10 +799,12 @@ async function boot(): Promise<void> {
   }
 
   // Demo scenes start on a given page.
-  if (DEMO && position && screen === "nav") {
+  if (DEMO && SCENE === "chargers") {
+    void openChargers();
+  } else if (DEMO && position && screen === "nav") {
     await computeRoute(position);
     // Demo scenes put the car part-way along the made-up route.
-    const stop = SCENE === "near" ? 14 : SCENE === "map" ? 11 : 0;
+    const stop = SCENE === "near" ? 14 : SCENE === "map" ? 11 : SCENE === "stop" ? 20 : 0;
     const routed = nav as NavState | null;
     const spot = routed?.route.shape[stop];
     if (routed && spot && stop > 0) { position = spot; nav = update(routed, spot); await draw(); }
@@ -635,6 +830,8 @@ async function boot(): Promise<void> {
     if (nav) {
       nav = update(nav, position);
       announce();
+      // Arrived: nothing to resume any more.
+      if (nav.arrived && data.activeSince !== null) saveData({ ...data, activeSince: null });
       // Rerouting is automatic: a driver cannot be expected to ask for it. It
       // is spaced out, though, so someone lingering beside the route does not
       // hammer a free public server; a tap still reroutes at once.
@@ -661,18 +858,25 @@ async function boot(): Promise<void> {
       .then((leaving) => {
         exiting = false;
         if (!leaving || closed) return;
-        // Stop everything that could draw or listen again.
-        closed = true;
-        routeSeq++;
-        nav = null;
-        abortVoice();
-        tts.stop();
-        if (tickTimer !== null) clearInterval(tickTimer);
-        if (streetsTimer !== null) clearTimeout(streetsTimer);
-        if (typeof stopListening === "function") stopListening();
-        return bridge.stopAppLocationUpdates().then(() => undefined, () => undefined);
+        // Left on purpose: no navigation to pick up next time.
+        if (data.activeSince !== null) saveData({ ...data, activeSince: null });
+        return shutdown();
       });
   };
+
+  /** Stops everything that could draw or listen again. */
+  function shutdown(): Promise<void> {
+    closed = true;
+    routeSeq++;
+    nav = null;
+    abortVoice();
+    chargerSeq++;
+    tts.stop();
+    if (tickTimer !== null) clearInterval(tickTimer);
+    if (streetsTimer !== null) clearTimeout(streetsTimer);
+    if (typeof stopListening === "function") stopListening();
+    return bridge.stopAppLocationUpdates().then(() => undefined, () => undefined);
+  }
 
   /** Start page: swipe moves the cursor, tap starts (or switches the travel mode), hold speaks. */
   const onListGesture = (gesture: string): void => {
@@ -687,7 +891,10 @@ async function boot(): Promise<void> {
           return;
         }
         const item = items[cursor];
-        if (item) navigateTo(item.place);
+        if (!item) return;
+        if (item.kind === "chargers") void openChargers();
+        else if (item.kind === "route") startRoute(item.route);
+        else navigateTo(item.place);
         return;
       }
       case "longPress": void startVoice(); return;
@@ -731,6 +938,29 @@ async function boot(): Promise<void> {
     }
   };
 
+  /** Charging nearby: swipe chooses, tap navigates there; after a failure hold asks again, tap goes back. */
+  const onChargerGesture = (gesture: string): void => {
+    const state = chargerList;
+    if (!state) { openList(); return; }
+    if (state.phase === "results") {
+      const last = state.list.length - 1;
+      if (gesture === "scrollUp") { chargerList = { ...state, selected: Math.max(0, state.selected - 1) }; void draw(); return; }
+      if (gesture === "scrollDown") { chargerList = { ...state, selected: Math.min(last, state.selected + 1) }; void draw(); return; }
+      if (gesture === "longPress") { openList(); return; }
+      const hit = state.list[state.selected];
+      if (gesture === "click" && hit) {
+        chargerSeq++;
+        chargerList = null;
+        navigateTo({ id: "", label: hit.charger.name || tr(messages, locale, "c.noName"), at: hit.charger.at });
+      }
+      return;
+    }
+    if (state.phase === "error") {
+      if (gesture === "click") openList();
+      else if (gesture === "longPress") void openChargers();
+    }
+  };
+
   /** Navigating (also while starting and after a failure). */
   const onNavGesture = (gesture: string): void => {
     switch (gesture) {
@@ -756,6 +986,12 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // System lifecycle: back in front = draw afresh; ended by the system =
+    // everything off, but an active navigation stays remembered for the restart.
+    const systemType = (event as { sysEvent?: { eventType?: number } } | null)?.sysEvent?.eventType;
+    if (systemType === 4) { pageReady = false; lastView = null; void draw(); return; }
+    if (systemType === 5) return;
+    if (systemType === 6 || systemType === 7) { void shutdown(); return; }
     // PCM blocks of a recording arrive on the same channel as gestures.
     const audio = (event as { audioEvent?: { audioPcm?: unknown } } | null)?.audioEvent;
     if (audio !== undefined) {
@@ -769,13 +1005,14 @@ async function boot(): Promise<void> {
     if (!gesture) return;
     if (gesture.gesture === "doubleClick") {
       // Speaking is a page on top of the list: double tap goes back. Elsewhere it closes the app.
-      if (screen === "voice") { openList(); return; }
+      if (screen === "voice" || screen === "chargers") { openList(); return; }
       requestExit();
       return;
     }
     switch (screen) {
       case "list": onListGesture(gesture.gesture); return;
       case "voice": onVoiceGesture(gesture.gesture); return;
+      case "chargers": onChargerGesture(gesture.gesture); return;
       default: onNavGesture(gesture.gesture);
     }
   });
@@ -788,6 +1025,13 @@ async function boot(): Promise<void> {
   });
 
   tickTimer = setInterval(() => { void draw(); }, 2000);
+
+  // Navigation that was running when the phone ended the app (screen lock,
+  // memory): picked up again at once, if it is recent and the target still exists.
+  if (!DEMO && data.activeSince !== null) {
+    if (Date.now() - data.activeSince < RESUME_WITHIN_MS && selectionLabel(data) !== null) void startNavigating();
+    else saveData({ ...data, activeSince: null });
+  }
 
   mountPhoneUi({
     getData: () => data,
@@ -802,7 +1046,7 @@ async function boot(): Promise<void> {
       else cursor = clampCursor(data, cursor);
       if (!next.announce) tts.stop();
       await save(bridge, next);
-      if (routeChanged && nav && position) await computeRoute(position);
+      if (routeChanged && nav && position) await computeRoute(position, true);
       await draw();
     },
     getPosition: () => position,
@@ -815,6 +1059,19 @@ async function boot(): Promise<void> {
       void draw();
     },
     search: (query) => searchPlaces(query, { lang: locale, near: position }),
+    planRoute: async (points, mode): Promise<RouteOutcome> => {
+      const from = points[0];
+      const to = points[points.length - 1];
+      if (!from || !to || points.length < 2) return { route: null, error: "no points", code: "noRoute" };
+      const via = points.slice(1, -1);
+      const request = { from, to, mode, ...(via.length ? { via } : {}) };
+      if (usesMockRouter(data)) return createMockProvider().route(request);
+      await routeGate.ready();
+      return router().route(request);
+    },
+    chargersAlong: (line) => (usesMockRouter(data)
+      ? Promise.resolve({ chargers: demoChargers(line), error: null })
+      : chargerSource.along(line)),
   });
 }
 
