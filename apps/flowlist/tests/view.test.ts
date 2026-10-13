@@ -23,7 +23,9 @@ describe("empty state", () => {
 describe("running view", () => {
   it("shows the current step and its position", () => {
     const view = buildView(simple, startRun(simple));
-    expect(view.body[0]).toBe("step a");
+    // The step is drawn as a picture; the body only supports it.
+    expect(view.headline).toBe("step a");
+    expect(view.body).not.toContain("step a");
     expect(view.header).toContain("1/3");
   });
 
@@ -101,7 +103,7 @@ describe("finished view", () => {
     state = skip(mixed, state, 5000);
 
     const view = buildView(mixed, state, {}, 9000);
-    expect(view.body[0]).toBe("Complete.");
+    expect(view.headline).toBe("Complete.");
     expect(view.body.join(" ")).toContain("1 of 1 done");
     expect(view.body.join(" ")).toContain("1 skipped");
     expect(view.body.join(" ")).toContain("took 0:05");
@@ -182,5 +184,31 @@ describe("display budget", () => {
     const rows = wrap("see https://example.com/" + "x".repeat(80), 56);
     for (const row of rows) expect(row.length).toBeLessThanOrEqual(56);
     expect(rows.join("")).toContain("x".repeat(80));
+  });
+});
+
+describe("big step picture", () => {
+  const long = "word ".repeat(60).trim();
+
+  it("keeps the step out of the body when the picture shows it whole", () => {
+    const view = buildView(simple, startRun(simple), { headlineFits: () => true });
+    expect(view.headline).toBe("step a");
+    expect(view.body.join(" ")).not.toContain("step a");
+  });
+
+  it("repeats the full text in the body when the picture would have to cut it", () => {
+    const one = list(step("a", { text: long }));
+    const view = buildView(one, startRun(one), { headlineFits: () => false });
+    expect(view.headline).toBe(long);
+    expect(view.body.length).toBeGreaterThan(1);
+    expect(view.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
+    expect(view.body[0]).toContain("word word");
+  });
+
+  it("puts choices under the picture, up to four rows", () => {
+    const pick = list(step("a", { kind: "choice", choices: Array.from({ length: 6 }, (_, i) => ({ label: `Option ${i}`, next: "end" })) }));
+    const view = buildView(pick, startRun(pick), { headlineFits: () => true });
+    expect(view.body).toHaveLength(4);
+    expect(view.body[0]).toBe("> Option 0");
   });
 });

@@ -14,6 +14,8 @@ import { t } from "../messages";
  */
 export interface FlowView {
   readonly header: string;
+  /** The current step, drawn big as a picture (stepimage.ts); the body only holds what supports it. */
+  readonly headline: string;
   readonly body: readonly string[];
   readonly footer: string;
 }
@@ -27,15 +29,18 @@ export interface ViewOptions {
   readonly lineWidth?: number;
   /** Language of the app's own words; checklist text is shown as written. */
   readonly locale?: Locale;
+  /** Whether the big picture can show this text whole; when not, the body carries the full text too. */
+  readonly headlineFits?: (text: string) => boolean;
 }
 
 const DEFAULT_WIDTH = 56;
 
 /**
- * The body container holds seven rows; anything beyond is pushed off the
- * bottom of the display rather than shrunk to fit.
+ * The step itself is a picture across the top (96 px); the body container
+ * below it holds four rows of support: the confirm banner, choices, detail or
+ * the next step. Anything beyond is cut with an ellipsis.
  */
-export const MAX_BODY_ROWS = 7;
+export const MAX_BODY_ROWS = 4;
 /** Characters the header holds on one line in the G2's proportional font. */
 export const HEADER_WIDTH = 56;
 /**
@@ -62,7 +67,8 @@ export function buildView(
   if (list.steps.length === 0) {
     return {
       header: truncate(list.title || "FlowList", HEADER_TEXT_WIDTH),
-      body: [...wrap(t(locale, "g.empty.1"), width), ...wrap(t(locale, "g.empty.2"), width)],
+      headline: t(locale, "g.empty.1"),
+      body: clampRows(wrap(t(locale, "g.empty.2"), width), MAX_BODY_ROWS, width),
       footer: t(locale, "g.empty.footer"),
     };
   }
@@ -76,7 +82,9 @@ export function buildView(
   // the user noticing a subtle marker for something that matters.
   const head = state.awaitingConfirm ? [truncate(t(locale, "g.confirm"), width)] : [];
   const rows = MAX_BODY_ROWS - head.length;
-  const text = wrap(step.text, width);
+  // The picture shows the step whole when it can; otherwise the body repeats it in full.
+  const fits = options.headlineFits ? options.headlineFits(step.text) : true;
+  const text = fits ? [] : wrap(step.text, width);
 
   // Everything below the step text competes for the remaining rows. The step
   // text keeps at least two rows (one if that is all it needs).
@@ -98,6 +106,7 @@ export function buildView(
 
   return {
     header: headerText(list, state, step.section),
+    headline: step.text,
     body,
     footer: footerText(list, state, now, locale),
   };
@@ -105,12 +114,13 @@ export function buildView(
 
 function finishedView(list: Checklist, state: RunState, now: number, width: number, locale: Locale): FlowView {
   const p = progress(list, state);
-  const body = [t(locale, "g.done"), t(locale, "g.doneCount", { done: p.done, total: p.total })];
+  const body = [t(locale, "g.doneCount", { done: p.done, total: p.total })];
   if (p.skipped > 0) body.push(t(locale, "g.skipped", { skipped: p.skipped }));
   body.push(t(locale, "g.took", { time: formatDuration(elapsedSeconds(state, now)) }));
-  body.push("", t(locale, "g.otherList"));
+  body.push(t(locale, "g.otherList"));
   return {
     header: truncate(list.title || "FlowList", HEADER_TEXT_WIDTH),
+    headline: t(locale, "g.done"),
     body: clampRows(body.map((row) => truncate(row, width)), MAX_BODY_ROWS, width),
     footer: truncate(t(locale, "g.finished.footer"), FOOTER_WIDTH),
   };

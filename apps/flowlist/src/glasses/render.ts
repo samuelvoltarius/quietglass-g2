@@ -12,6 +12,7 @@ import {
 import type { FlowView } from "./view";
 import { encodeBitmap } from "./pixel";
 import { BAR_IMAGE_HEIGHT, BAR_IMAGE_WIDTH, type Bitmap } from "./progressbar";
+import { drawStepHalves, STEP_LEFT, STEP_RIGHT, type StepLayout } from "./stepimage";
 
 /**
  * Renders the checklist onto the G2.
@@ -35,7 +36,8 @@ interface ContainerSpec {
 
 const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
   header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
+  // Four rows of support under the big step picture (y 34 … 130).
+  body: { id: 2, name: "body", y: 132, height: 118 },
   footer: { id: 3, name: "footer", y: 252, height: 34 },
 };
 
@@ -51,7 +53,7 @@ export const PROGRESS_BAR = { id: 4, name: "progress", x: 292, y: 4 } as const;
 
 export function buildPage(view: FlowView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: 4,
+    containerTotalNum: 6,
     textObject: [
       text(CONTAINER.header, view.header, 1, false, HEADER_TEXT_PX),
       // Exactly one container may capture input; the body owns it.
@@ -59,10 +61,16 @@ export function buildPage(view: FlowView): CreateStartUpPageContainer {
       text(CONTAINER.footer, view.footer, 3, false),
     ],
     // Image containers take 20-288 x 20-144 px.
-    imageObject: [new ImageContainerProperty({
-      containerID: PROGRESS_BAR.id, containerName: PROGRESS_BAR.name, xPosition: PROGRESS_BAR.x, yPosition: PROGRESS_BAR.y,
-      width: BAR_IMAGE_WIDTH, height: BAR_IMAGE_HEIGHT, zOrderIndex: 4,
-    })],
+    imageObject: [
+      new ImageContainerProperty({
+        containerID: PROGRESS_BAR.id, containerName: PROGRESS_BAR.name, xPosition: PROGRESS_BAR.x, yPosition: PROGRESS_BAR.y,
+        width: BAR_IMAGE_WIDTH, height: BAR_IMAGE_HEIGHT, zOrderIndex: 4,
+      }),
+      ...[STEP_LEFT, STEP_RIGHT].map((half, index) => new ImageContainerProperty({
+        containerID: half.id, containerName: half.name, xPosition: half.x, yPosition: half.y,
+        width: half.width, height: half.height, zOrderIndex: 5 + index,
+      })),
+    ],
   });
 }
 
@@ -88,21 +96,34 @@ function text(
 }
 
 /**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
+ * Puts the page on the glasses: created once per bridge, every later call
+ * (reconnect) rebuilds it. The caller resends all images afterwards.
  */
+const started = new WeakSet<object>();
+
 export async function createPage(bridge: EvenAppBridge, view: FlowView): Promise<RenderResult> {
   const page = buildPage(view);
+  sentLength.clear();
+  // One creation per bridge, then only rebuilds: a rebuild before the first
+  // creation or a second creation leaves the page without its input route.
+  if (started.has(bridge)) {
+    try {
+      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
+  }
   try {
+    // Measured on real glasses: the first page needs one rebuild call before the creation
+    // (it registers input); the result is ignored.
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
-    // Expected on current firmware; the creation below is the real path.
+    // Expected to fail before the first page.
   }
-
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return { ok: true };
+    if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -157,6 +178,21 @@ export async function sendProgressBar(bridge: EvenAppBridge, bitmap: Bitmap): Pr
     const imageData = await encodeBitmap(bitmap);
     const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: PROGRESS_BAR.id, containerName: PROGRESS_BAR.name, imageData }));
     return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/** Sends the current step picture: the left and the right half, one after the other. */
+export async function sendStepImage(bridge: EvenAppBridge, layout: StepLayout | null): Promise<RenderResult> {
+  try {
+    const halves = drawStepHalves(layout);
+    for (const [index, half] of [STEP_LEFT, STEP_RIGHT].entries()) {
+      const imageData = await encodeBitmap(halves[index]!);
+      const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: half.id, containerName: half.name, imageData }));
+      if (result !== ImageRawDataUpdateResult.success) return { ok: false, reason: `image:${String(result)}` };
+    }
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }

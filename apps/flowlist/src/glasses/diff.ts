@@ -9,6 +9,7 @@ export function sameView(a: FlowView | null, b: FlowView): boolean {
   if (!a) return false;
   return (
     a.header === b.header &&
+    a.headline === b.headline &&
     a.footer === b.footer &&
     a.body.length === b.body.length &&
     a.body.every((line, i) => line === b.body[i])

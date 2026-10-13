@@ -5,7 +5,8 @@ import { dispatch } from "./input/dispatch";
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, progressBarFor, type FlowView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendProgressBar, updatePage } from "./glasses/render";
+import { createPage, sendProgressBar, sendStepImage, updatePage } from "./glasses/render";
+import { browserMeasure, layoutStep, sameLayout, type Measure, type StepLayout } from "./glasses/stepimage";
 import { drawProgressBar, sameProgressBar, type ProgressBarState } from "./glasses/progressbar";
 import { createImageSync } from "./glasses/image-sync";
 import { activeList, load, save, type FlowListData } from "./storage/persist";
@@ -32,13 +33,27 @@ async function boot(): Promise<void> {
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
 
+  let measureText: Measure | null = null;
+  const measure: Measure = (text, size) => (measureText ??= browserMeasure())(text, size);
   const currentView = (): FlowView =>
     buildView(list, state, {
       showNext: data.settings.showNext,
       showDetail,
       lineWidth: data.settings.lineWidth,
       locale,
+      headlineFits: (text) => !layoutStep(measure, text).truncated,
     });
+
+  /** The step as a big picture; sent on its own lane, and only when the layout changes. */
+  const stepImage = createImageSync<StepLayout>(sameLayout, async (next) => {
+    if (closed) return false;
+    const result = await sendStepImage(bridge, next.lines.length > 0 ? next : null);
+    if (!result.ok) console.warn("[flowlist] step image failed:", result.reason);
+    return result.ok;
+  });
+  const requestStepImage = (view: FlowView): void => {
+    stepImage.request(layoutStep(measure, view.headline));
+  };
 
   /**
    * The progress bar runs on its own lane: an image is a slow BLE transfer
@@ -54,7 +69,7 @@ async function boot(): Promise<void> {
 
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
-    if (pageReady) bar.request(progressBarFor(list, state));
+    if (pageReady) { bar.request(progressBarFor(list, state)); requestStepImage(view); }
     if (sameView(lastView, view)) return;
 
     const created = !pageReady;
@@ -63,7 +78,8 @@ async function boot(): Promise<void> {
       pageReady = true;
       lastView = view;
       // A new page starts with an empty image container.
-      if (created) { bar.reset(); bar.request(progressBarFor(list, state)); }
+      if (created) { bar.reset(); bar.request(progressBarFor(list, state)); stepImage.reset(); requestStepImage(view); }
+      else requestStepImage(view);
       return;
     }
     // Usually means the page is gone (relaunch, reconnect). Rebuild next time

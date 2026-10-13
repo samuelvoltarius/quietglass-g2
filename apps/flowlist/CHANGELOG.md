@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] — 2026-10-13
+
+### Added
+
+- The current step is drawn big and bold as a picture across the top (576 x 96, two image containers), word-wrapped, in the largest type that fits; the body below carries the confirm banner, choices, detail or the next step. A step too long even at the smallest size is also repeated in full in the body.
+
+### Changed
+
+- The body holds four rows. The page is created once per run and later only rebuilt (images are resent after every rebuild).
+
 ## [0.2.3] — 2026-10-13
 
 ### Changed

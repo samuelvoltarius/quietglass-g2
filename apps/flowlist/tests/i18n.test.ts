@@ -128,7 +128,8 @@ describe("glasses copy fits the display", () => {
     it(`${locale}: the empty screen says what to do and how to leave`, () => {
       const empty: Checklist = { id: "", title: "", steps: [] };
       const view = buildView(empty, startRun(empty), { locale });
-      expect(view.body.length).toBeGreaterThanOrEqual(2);
+      expect(view.headline).toBe(t(locale, "g.empty.1"));
+      expect(view.body.length).toBeGreaterThanOrEqual(1);
       expect(view.footer).toBe(t(locale, "g.empty.footer"));
     });
   }
@@ -148,7 +149,7 @@ describe("glasses copy fits the display", () => {
     expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("tippen = erledigt · runterwischen = auslassen  ·  0:00");
     const done = skip(list, optional, 65_000);
     const finished = buildView(list, done, { locale: "de" }, 65_000);
-    expect(finished.body).toContain("Fertig!");
+    expect(finished.headline).toBe("Fertig!");
     expect(finished.body).toContain("1 von 1 erledigt");
     expect(finished.footer).toBe("tippen = neu starten · doppeltippen = beenden");
   });

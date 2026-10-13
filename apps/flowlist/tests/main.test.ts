@@ -73,7 +73,11 @@ function fakeCanvas() {
   return {
     width: 0,
     height: 0,
-    getContext: () => ({ imageSmoothingEnabled: false, fillStyle: "", fillRect: () => undefined }),
+    getContext: () => ({
+      imageSmoothingEnabled: false, fillStyle: "", font: "", textBaseline: "", fillRect: () => undefined, fillText: () => undefined,
+      measureText: (text: string) => ({ width: text.length * 20 }),
+      getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    }),
     toBlob: (done: (blob: Blob | null) => void) => done(new Blob([new Uint8Array(4)])),
   };
 }
@@ -149,22 +153,26 @@ describe("flowlist lifecycle", () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.reconnect();
-    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2));
+    // One creation per run (after one first rebuild call); the page comes back by rebuild.
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer).toHaveBeenCalledTimes(2));
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
   });
 
   it("regression: does not create the page twice while a creation is in flight", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
-    const creating = deferred<number>();
-    fake.bridge.createStartUpPageContainer.mockImplementationOnce(() => creating.promise);
+    const creating = deferred<boolean>();
+    fake.bridge.rebuildPageContainer.mockImplementationOnce(() => creating.promise);
     fake.reconnect();
-    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer).toHaveBeenCalledTimes(2));
     fake.emit(0);
     fake.emit(0);
     await sleep(20);
-    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2);
-    creating.resolve(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Step number 3"));
+    expect(fake.bridge.rebuildPageContainer).toHaveBeenCalledTimes(2);
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+    creating.resolve(true);
+    // The step itself is a picture now; the body shows the step after it.
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Step number 4"));
   });
 
   it("regression: changing a display setting on the phone keeps the run going", async () => {
@@ -176,35 +184,38 @@ describe("flowlist lifecycle", () => {
     fake.emit(0);
     fake.emit(0);
     await sleep(50);
-    expect(lastBody(fake)).toContain("Step number 4");
+    expect(lastBody(fake)).toContain("Step number 5");
 
     root.get("#invert").checked = true;
     root.get("#invert").fire("change");
     await sleep(50);
-    expect(lastBody(fake)).toContain("Step number 4");
+    expect(lastBody(fake)).toContain("Step number 5");
   });
 
   it("sends the progress bar with the page, and again only when a step is done", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
+    const barWrites = (): number => fake.bridge.updateImageRawData.mock.calls.filter((call) => (call as unknown as [{ containerName?: string }])[0].containerName === "progress").length;
+    await vi.waitFor(() => expect(barWrites()).toBe(1));
     const page = (fake.bridge.createStartUpPageContainer.mock.calls[0] as unknown as [{ imageObject?: Array<{ width?: number; height?: number; containerName?: string }> }])[0];
     expect(page.imageObject?.[0]).toMatchObject({ containerName: "progress", width: 280, height: 24 });
+    expect(page.imageObject?.slice(1)).toMatchObject([{ containerName: "step-left", width: 288, height: 96 }, { containerName: "step-right", width: 288, height: 96 }]);
     await sleep(1300); // clock ticks change the footer, not the bar
-    expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1);
+    expect(barWrites()).toBe(1);
     fake.emit(0);
-    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(barWrites()).toBe(2));
   });
 
   it("the progress bar never holds up the text, even when its transfer hangs", async () => {
     const fake = fakeBridge(data());
     fake.bridge.updateImageRawData.mockImplementation(() => new Promise(() => undefined));
     await boot(fake);
-    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
+    // The bar and the step picture each hang on their own lane (one call each).
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(2));
     fake.emit(0);
     fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Step number 3"));
-    expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Step number 4"));
+    expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(2);
   });
 
   it("regression: never sends more body rows than the display holds", async () => {
@@ -212,6 +223,6 @@ describe("flowlist lifecycle", () => {
     const fake = fakeBridge(data({}, [{ id: "a", text: long, kind: "normal", detail: long }, { id: "b", text: long, kind: "normal" }]));
     await boot(fake);
     const rows = (bodies(fake)[0] ?? "").split("\n");
-    expect(rows.length).toBeLessThanOrEqual(7);
+    expect(rows.length).toBeLessThanOrEqual(4);
   });
 });
