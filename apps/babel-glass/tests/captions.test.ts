@@ -170,7 +170,7 @@ describe("mock providers are clearly mock", () => {
 
     await stt.start();
     vi.advanceTimersByTime(3100);
-    expect(seen[0]).toContain("mock recogniser");
+    expect(seen[0]).toContain("Good morning");
     await stt.stop();
     vi.useRealTimers();
   });

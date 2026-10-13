@@ -19,6 +19,10 @@ export interface Transcript {
   readonly final: boolean;
   /** BCP-47 tag if the provider detected one. */
   readonly language?: string;
+  /** Speaker label ("A", "B" …) from the server's change detector, finals only. */
+  readonly speaker?: string;
+  /** Part of a partial that two consecutive hypotheses agreed on (will not change). */
+  readonly stable?: string;
 }
 
 export type TranscriptHandler = (transcript: Transcript) => void;
@@ -50,6 +54,12 @@ export interface SttConfig {
   readonly language: string;
   readonly onTranscript: TranscriptHandler;
   readonly onStatus?: StatusHandler;
+  /**
+   * Ask for streaming (sliding window): frequent partial lines plus final lines
+   * with speaker labels. Servers that do not know it ignore the field and keep
+   * sending finals only, so this is always safe to turn on.
+   */
+  readonly stream?: boolean;
   /** Injectable for tests. */
   readonly WS?: typeof WebSocket;
 }
@@ -66,6 +76,8 @@ export interface SttConfig {
  */
 /** How long one connection attempt may take before it is abandoned and retried. */
 const CONNECT_TIMEOUT_MS = 8_000;
+/** How long stop() waits for the server to commit the last words. */
+export const STOP_GRACE_MS = 900;
 
 export function createWebSocketStt(config: SttConfig): SttProvider {
   const WS = config.WS ?? WebSocket;
@@ -99,6 +111,7 @@ export function createWebSocketStt(config: SttConfig): SttProvider {
           language: config.language,
           sampleRate: 16_000,
           encoding: "s16le",
+          ...(config.stream ? { stream: true } : {}),
           ...(config.token ? { token: config.token } : {}),
         }));
         resolve();
@@ -138,6 +151,13 @@ export function createWebSocketStt(config: SttConfig): SttProvider {
     async stop() {
       closing = true;
       clearTimeout(retryTimer);
+      // Streaming servers hold the last words until a pause; "stop" makes them
+      // commit those now. The final arrives on the still-open socket.
+      if (config.stream && socket && socket.readyState === 1) {
+        const open = socket;
+        try { open.send(JSON.stringify({ type: "stop" })); } catch { /* closing anyway */ }
+        await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS));
+      }
       socket?.close();
       socket = undefined;
       setStatus("idle");
@@ -166,8 +186,15 @@ export function parseTranscript(raw: unknown): Transcript | null {
       || value["type"] === "final";
 
     const language = typeof value["language"] === "string" ? value["language"] : undefined;
+    const speaker = typeof value["speaker"] === "string" && /^[A-Z]$/.test(value["speaker"]) ? value["speaker"] : undefined;
+    const stable = !final && typeof value["stable"] === "string" && value["stable"] ? value["stable"] : undefined;
 
-    return { text, final, ...(language ? { language } : {}) };
+    return {
+      text, final,
+      ...(language ? { language } : {}),
+      ...(speaker ? { speaker } : {}),
+      ...(stable ? { stable } : {}),
+    };
   } catch {
     return null;
   }
@@ -186,10 +213,18 @@ export function createMockStt(
     readonly locale?: () => Locale;
   },
 ): SttProvider {
-  const phrases = ["g.mock1", "g.mock2", "g.mock3"];
+  // A short made-up dialogue between two speakers, so the transcript, the
+  // speaker labels and the provisional line can be seen without a server.
+  const phrases = ["g.mock1", "g.mock2", "g.mock3", "g.mock4"];
   let index = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let half: ReturnType<typeof setTimeout> | undefined;
   let status: SttStatus = "idle";
+
+  const phrase = (n: number): { text: string; locale: Locale } => {
+    const locale = config.locale?.() ?? "en";
+    return { text: t(locale, phrases[n % phrases.length] ?? "g.mock1"), locale };
+  };
 
   return {
     name: "mock",
@@ -198,15 +233,23 @@ export function createMockStt(
       status = "ready";
       config.onStatus?.("ready");
       timer = setInterval(() => {
-        const locale = config.locale?.() ?? "en";
-        const text = t(locale, phrases[index % phrases.length] ?? "g.mock1");
+        const { text, locale } = phrase(index);
+        const speaker = index % 2 === 0 ? "A" : "B";
         index++;
-        config.onTranscript({ text, final: true, language: locale });
+        config.onTranscript({ text, final: true, language: locale, speaker });
+        // Halfway to the next line, show its first words as a provisional line.
+        clearTimeout(half);
+        half = setTimeout(() => {
+          const next = phrase(index);
+          const words = next.text.split(" ");
+          config.onTranscript({ text: words.slice(0, Math.ceil(words.length / 2)).join(" "), final: false, language: next.locale });
+        }, 1500);
       }, 3000);
     },
     send() { /* the mock ignores audio by design */ },
     async stop() {
       clearInterval(timer);
+      clearTimeout(half);
       status = "idle";
       config.onStatus?.("idle");
     },

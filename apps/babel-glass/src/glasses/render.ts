@@ -1,5 +1,8 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -7,6 +10,7 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { CaptionView } from "./view";
+import { ICON_HEIGHT, ICON_WIDTH, iconKey, iconPng, type PixelIcon } from "./icon";
 
 /**
  * Renders the captions onto the G2.
@@ -25,13 +29,16 @@ interface ContainerSpec {
   readonly name: string;
   readonly y: number;
   readonly height: number;
+  readonly width?: number;
 }
 
+/** Layout: sign top right in the header, captions on the full width below. */
 const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
-  header: { id: 1, name: "header", y: 0, height: 32 },
+  header: { id: 1, name: "header", y: 0, height: 32, width: SCREEN_WIDTH - ICON_WIDTH },
   body: { id: 2, name: "body", y: 36, height: 214 },
   footer: { id: 3, name: "footer", y: 252, height: 34 },
 };
+const ICON = { id: 4, name: "sign" } as const;
 
 export interface RenderResult {
   readonly ok: boolean;
@@ -41,13 +48,22 @@ export interface RenderResult {
 
 export function buildPage(view: CaptionView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: 3,
+    containerTotalNum: 4,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
       // Exactly one container may capture input; the body owns it.
       text(CONTAINER.body, view.body.join("\n"), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
+    imageObject: [new ImageContainerProperty({
+      containerID: ICON.id,
+      containerName: ICON.name,
+      xPosition: SCREEN_WIDTH - ICON_WIDTH,
+      yPosition: 1,
+      width: ICON_WIDTH,
+      height: ICON_HEIGHT,
+      zOrderIndex: 4,
+    })],
   });
 }
 
@@ -62,7 +78,7 @@ function text(
     containerName: spec.name,
     xPosition: 0,
     yPosition: spec.y,
-    width: SCREEN_WIDTH,
+    width: spec.width ?? SCREEN_WIDTH,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
@@ -83,6 +99,8 @@ const started = new WeakSet<object>();
  */
 export async function createPage(bridge: EvenAppBridge, view: CaptionView): Promise<RenderResult> {
   const page = buildPage(view);
+  // A new page has an empty image container: the sign must be sent again.
+  lastIcon.delete(bridge);
   if (started.has(bridge)) {
     try {
       const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
@@ -156,4 +174,37 @@ export function describeCreateResult(result: StartUpPageCreateResult): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Last sign sent per bridge, so an unchanged frame is never sent again. */
+const lastIcon = new WeakMap<object, string>();
+/** Bridges that cannot draw images (no canvas, no API): stop trying after a few failures. */
+const iconFailures = new WeakMap<object, number>();
+
+/**
+ * Sends the header sign. Cheap when nothing changed (same frame = no call);
+ * never throws - a missing sign must not stop the captions.
+ */
+export async function updateIcon(bridge: EvenAppBridge, icon: PixelIcon): Promise<boolean> {
+  const key = iconKey(icon);
+  if (lastIcon.get(bridge) === key) return true;
+  if ((iconFailures.get(bridge) ?? 0) >= 3) return false;
+  const fail = (): boolean => { iconFailures.set(bridge, (iconFailures.get(bridge) ?? 0) + 1); return false; };
+  try {
+    if (typeof (bridge as { updateImageRawData?: unknown }).updateImageRawData !== "function") return fail();
+    const imageData = await iconPng(icon);
+    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
+      containerID: ICON.id,
+      containerName: ICON.name,
+      imageData,
+    }));
+    if (result === ImageRawDataUpdateResult.success) {
+      lastIcon.set(bridge, key);
+      iconFailures.set(bridge, 0);
+      return true;
+    }
+    return fail();
+  } catch {
+    return fail();
+  }
 }

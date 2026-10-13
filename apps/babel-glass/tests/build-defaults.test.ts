@@ -12,7 +12,11 @@ describe("a private build ships its own servers", () => {
   });
   it("never overrides what the user set", () => {
     const own = { ...EMPTY_DATA, sttUrl: "wss://mine:1", translateUrl: "https://libre.example" };
-    expect(withBuildDefaults(own, defaults)).toEqual(own);
+    const merged = withBuildDefaults(own, defaults);
+    // The user's servers stay; only the empty LLM fields (summary, popups) get the build's server.
+    expect({ ...merged, llmUrl: "", llmModel: "" }).toEqual(own);
+    expect(merged.translateProvider).toBe("libretranslate");
+    expect(merged.llmUrl).toBe(defaults.llm);
   });
   it("the public build (no defaults) keeps asking for a server", () => {
     expect(withBuildDefaults(EMPTY_DATA, {})).toEqual(EMPTY_DATA);

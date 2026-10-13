@@ -374,7 +374,7 @@ describe("switching language on the phone redraws the glasses", () => {
     app.tap();
     await vi.advanceTimersByTimeAsync(3100);
     expect(app.screen.footer.startsWith("● MIC · MOCK")).toBe(true);
-    expect(app.screen.body).toContain("This is the mock recogniser.");
+    expect(app.screen.body).toContain("Good morning!");
 
     app.page.el("language").value = "de";
     app.page.fire("language", "change");
@@ -382,6 +382,6 @@ describe("switching language on the phone redraws the glasses", () => {
     expect(app.screen.footer.startsWith("● MIKRO · DEMO")).toBe(true);
 
     await vi.advanceTimersByTimeAsync(3000);
-    expect(app.screen.body).toContain("Sie zeigt feste Sätze, ganz ohne Server.");
+    expect(app.screen.body).toContain("Gern. Die Abnahme");
   });
 });

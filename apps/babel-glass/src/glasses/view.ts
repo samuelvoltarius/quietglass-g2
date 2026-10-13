@@ -45,13 +45,13 @@ export interface ModePreset {
 
 export const MODE_PRESETS: Readonly<Record<CaptionMode, ModePreset>> = {
   // Back and forth: few lines, both languages, so you can check a word.
-  conversation: { rows: 4, width: 44, showOriginal: true },
+  conversation: { rows: 4, width: 56, showOriginal: true },
   // One speaker at length: more history, translation only.
-  lecture: { rows: 6, width: 46, showOriginal: false },
+  lecture: { rows: 6, width: 58, showOriginal: false },
   // Signs and short exchanges: big and brief.
-  travel: { rows: 3, width: 40, showOriginal: true },
+  travel: { rows: 3, width: 48, showOriginal: true },
   // No translation at all — accessibility captions in one language.
-  captionOnly: { rows: 6, width: 46, showOriginal: true },
+  captionOnly: { rows: 6, width: 58, showOriginal: true },
 };
 
 export interface ViewOptions {
@@ -74,7 +74,25 @@ export interface ViewOptions {
   readonly translateError?: string | null;
   /** UI language of the glasses texts; captions are never touched by it. */
   readonly locale: Locale;
+  /** Prefix lines with the speaker label ("A: …") when the server sends one. */
+  readonly speakers?: boolean;
+  /** Clock for the header; omitted = no time shown. */
+  readonly now?: number;
+  /** A short explanation shown on top of the captions. */
+  readonly popup?: { readonly term: string; readonly info: string } | null;
+  /** End-of-conversation summary (shown while not listening). */
+  readonly summary?: SummaryState | null;
 }
+
+export type SummaryState =
+  | { readonly state: "working" }
+  | { readonly state: "done"; readonly short: readonly string[] }
+  | { readonly state: "error"; readonly error: string };
+
+/** Marks the line the recogniser may still change. */
+export const PENDING_MARK = "… ";
+/** Full-width body: the icon sits in the header, not beside the text. */
+export const POPUP_WIDTH = 56;
 
 /** The original caption as it should appear on the glasses. */
 export function originalText(line: CaptionLine, options: ViewOptions): string {
@@ -85,12 +103,24 @@ export function originalText(line: CaptionLine, options: ViewOptions): string {
   return transliterate(line.text, configured ?? line.language);
 }
 
+function clock(now: number | undefined): string {
+  if (now === undefined) return "";
+  const d = new Date(now);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function headerText(label: string, now: number | undefined): string {
+  const time = clock(now);
+  return time ? label + SEP + time : label;
+}
+
 export function buildView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
   const preset = MODE_PRESETS[options.mode];
 
   const x = (key: string): string => t(options.locale, key);
 
   if (!options.listening) {
+    if (options.summary) return summaryView(options.summary, options);
     return {
       header: x("g.title"),
       body: [x("g.notListening"), x("g.tapToStart")],
@@ -100,12 +130,17 @@ export function buildView(buffer: CaptionBuffer, options: ViewOptions): CaptionV
 
   const lines = visibleLines(buffer, preset.rows, options.offset);
   const body: string[] = [];
+  const pending = buffer.pending;
 
   for (const line of lines) {
     const original = originalText(line, options);
-    const primary = options.translating && line.translated !== undefined
+    const translated = options.translating && line.translated !== undefined
       ? line.translated
       : original;
+    const prefix = line === pending
+      ? PENDING_MARK
+      : options.speakers && line.speaker ? line.speaker + ": " : "";
+    const primary = prefix + translated;
     body.push(...wrap(primary, preset.width));
 
     // In conversation and travel modes the original is kept below the
@@ -117,12 +152,56 @@ export function buildView(buffer: CaptionBuffer, options: ViewOptions): CaptionV
 
   if (body.length === 0) body.push(statusLabel(options.status, options.locale));
 
+  const header = headerText(options.status === "ready" ? x("g.head.listening") : statusLabel(options.status, options.locale), options.now);
+
+  if (options.popup) {
+    // The explanation on top, the newest captions below it.
+    const info = [
+      ...wrap("? " + options.popup.term, POPUP_WIDTH),
+      ...wrap(options.popup.info, POPUP_WIDTH),
+    ].slice(0, BODY_ROWS - 2);
+    const room = BODY_ROWS - info.length - 1;
+    return {
+      header: headerText(x("g.head.info"), options.now),
+      body: [...info, "—".repeat(26), ...body.slice(-room)],
+      footer: popupFooter(options),
+    };
+  }
+
   return {
-    header: "",
+    header,
     // Keep the newest lines: the body clips at the bottom, so sending more
     // than BODY_ROWS would hide exactly the caption being spoken right now.
     body: body.slice(-Math.min(preset.rows * 2, BODY_ROWS)),
     footer: footerText(buffer, options, preset.rows),
+  };
+}
+
+function popupFooter(options: ViewOptions): string {
+  const x = (key: string): string => t(options.locale, key);
+  const fixed = [x("g.mic"), ...(options.mock ? [x("g.mock")] : [])];
+  const full = [...fixed, x("g.tapClose")].join(SEP);
+  return length(full) <= GLASS_COLS ? full : fixed.join(SEP);
+}
+
+function summaryView(summary: SummaryState, options: ViewOptions): CaptionView {
+  const x = (key: string, vars: Record<string, string> = {}): string => t(options.locale, key, vars);
+  const footer = options.mock ? x("g.mockProvider") + SEP + x("g.tapStart") : x("g.summaryFoot");
+  if (summary.state === "working") {
+    return { header: x("g.head.summary"), body: [x("g.summaryWorking")], footer: length(footer) <= GLASS_COLS ? footer : x("g.tapStart") };
+  }
+  if (summary.state === "error") {
+    return {
+      header: x("g.head.summary"),
+      body: wrap(x("g.summaryError", { error: translateErrorLabel(summary.error, options.locale) }), POPUP_WIDTH),
+      footer: length(footer) <= GLASS_COLS ? footer : x("g.tapStart"),
+    };
+  }
+  const body = summary.short.flatMap((line) => wrap("· " + line, POPUP_WIDTH)).slice(0, BODY_ROWS - 2);
+  return {
+    header: x("g.head.summary"),
+    body: [...body, "", x("g.summaryPhone")],
+    footer: length(footer) <= GLASS_COLS ? footer : x("g.tapStart"),
   };
 }
 

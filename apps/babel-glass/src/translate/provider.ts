@@ -202,7 +202,7 @@ export function createOpenAiTranslator(config: OpenAiTranslateConfig): Translati
   };
 }
 
-function readChatContent(value: Record<string, unknown>): string | null {
+export function readChatContent(value: Record<string, unknown>): string | null {
   const choices = value["choices"];
   if (!Array.isArray(choices) || choices.length === 0) return null;
   const first: unknown = choices[0];

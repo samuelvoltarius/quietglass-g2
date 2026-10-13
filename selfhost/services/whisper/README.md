@@ -51,6 +51,14 @@ In den Apps: `https://<server>.<tailnet>.ts.net:8457/v1/audio/transcriptions` bz
 - CORS ist eingebaut (Preflight 204 ohne Body, Origin wird gespiegelt) – die Brille braucht nichts weiter.
 - Kürzere/ältere Variante für Babel Glass allein: `apps/babel-glass/examples/whisper-server.py` (faster-whisper, auch CPU).
 - `WHISPER_PROMPT="Name1, Name2"` verbessert deutsche Eigennamen.
+- **Streaming für Babel Glass ≥ 0.3.0** (`babel_stream.py`, liegt neben `server.py`): schickt der Client
+  `"stream": true` im Start-Frame, wird alle ~0,8 s das laufende Stück neu erkannt → vorläufige Zeilen
+  (`partial` mit stabilem Präfix) und feste Zeilen (`final`) nach einer Pause von 0,7 s bzw. spätestens nach 12 s.
+  Alte Clients ohne das Feld bekommen weiter die 3-s-Fenster. Einstellbar: `STREAM_STEP`, `STREAM_SILENCE`,
+  `STREAM_MAX`.
+- **Sprecher-Buchstaben** (`"speaker":"A"`) im Streaming: grobe Erkennung über Tonhöhe + Klangfarbe (MFCC) auf
+  der CPU, braucht `librosa`. Deutlich verschiedene Stimmen klappen, ähnliche können denselben Buchstaben
+  bekommen. `SPEAKERS=0` schaltet ab, `SPK_THRESH` (Standard 5.0) stellt die Empfindlichkeit ein.
 
 ## English
 
@@ -60,4 +68,5 @@ requirements.txt` (torch matching your CUDA), copy `.env.example`, the unit and 
 download the model once with `HF_HUB_OFFLINE=0`, then publish both loopback ports with `tailscale serve`
 (never `serve reset`). The HTTP side has no login of its own (tailnet only); the WebSocket checks `TOKEN` /
 `TAILSCALE_USERS` when set. Without an NVIDIA GPU use `apps/babel-glass/examples/whisper-server.py`
-(faster-whisper) instead.
+(faster-whisper) instead. Streaming for Babel Glass ≥ 0.3.0 lives in `babel_stream.py` (opt-in per start frame
+`"stream": true`; partial + final lines, rough CPU speaker labels via `librosa`, `SPEAKERS=0` to disable).

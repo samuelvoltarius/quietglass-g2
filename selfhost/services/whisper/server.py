@@ -7,6 +7,7 @@ only through `tailscale serve` (see README.md next to this file)."""
 import os, re, json, asyncio, tempfile, threading
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 import numpy as np, torch, websockets, uvicorn
+import babel_stream  # streaming mode (partial/final lines, speaker labels)
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse, PlainTextResponse
 from transformers import WhisperForConditionalGeneration, WhisperProcessor, pipeline
@@ -142,6 +143,7 @@ def ws_transcribe(audio, lang):
 
 async def ws_handle(ws):
     lang = None; buf = bytearray(); need = int(WINDOW * SR * 2)
+    sess = None  # streaming session (opt-in, see babel_stream.py); None = old 3-s windows
     try:
         async for m in ws:
             if isinstance(m, str):
@@ -150,8 +152,16 @@ async def ws_handle(ws):
                 if isinstance(f, dict) and f.get("type") == "start":
                     if TOKEN and f.get("token") != TOKEN and not ts_user_ok(ws):
                         await ws.close(code=1008, reason="unauthorized"); return
-                    lang = lang_code(f.get("language", "auto")); print("start lang=", lang or "auto", flush=True)
+                    lang = lang_code(f.get("language", "auto"))
+                    path = getattr(getattr(ws, "request", None), "path", "") or ""
+                    if sess is None and babel_stream.wants_stream(f, path):
+                        sess = babel_stream.StreamSession(ws, lang, (lambda a, _l=lang: ws_transcribe(a, _l)), BAD, MIN_RMS).start()
+                    print("start lang=", lang or "auto", "stream" if sess else "windows", flush=True)
+                elif isinstance(f, dict) and f.get("type") == "stop" and sess is not None:
+                    await sess.flush()
                 continue
+            if sess is not None:
+                sess.feed(m); continue
             buf.extend(m)
             if len(buf) < need: continue
             a = np.frombuffer(bytes(buf), dtype=np.int16).astype(np.float32) / 32768.0; buf.clear()
@@ -161,6 +171,9 @@ async def ws_handle(ws):
             await ws.send(json.dumps({"text": text, "final": True, "language": lang or det or "auto"}, ensure_ascii=False))
     except websockets.ConnectionClosed:
         pass
+    finally:
+        if sess is not None:
+            await sess.close(flush=False)
 
 async def main():
     # Warm-up run so the first real request does not pay for compilation

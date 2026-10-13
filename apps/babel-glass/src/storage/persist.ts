@@ -36,6 +36,11 @@ export interface BabelData {
   /** Show the original line on the glasses in Latin letters. */
   readonly transliterateOriginal: boolean;
   readonly invertScroll: boolean;
+
+  /** Conversation companion (0.3.0): speaker labels, popups, summary on stop. */
+  readonly speakers: boolean;
+  readonly insights: boolean;
+  readonly autoSummary: boolean;
 }
 
 /**
@@ -55,6 +60,9 @@ export const EMPTY_DATA: BabelData = {
   targetLanguage: "en",
   transliterateOriginal: false,
   invertScroll: false,
+  speakers: true,
+  insights: true,
+  autoSummary: true,
 };
 
 export function usesMockStt(data: BabelData): boolean {
@@ -67,6 +75,11 @@ export function translationConfigured(data: BabelData): boolean {
     return data.llmUrl.trim() !== "" && data.llmModel.trim() !== "";
   }
   return data.translateUrl.trim() !== "";
+}
+
+/** Summary and popups need an OpenAI-compatible server, whatever translates. */
+export function companionConfigured(data: BabelData): boolean {
+  return data.llmUrl.trim() !== "" && data.llmModel.trim() !== "";
 }
 
 export function translationEnabled(data: BabelData): boolean {
@@ -99,6 +112,10 @@ export function withBuildDefaults(data: BabelData, defaults: BuildDefaults = BUI
   if (next.sttUrl.trim() === "" && defaults.stt) next = { ...next, sttUrl: defaults.stt };
   if (!translationConfigured(next) && defaults.llm) {
     next = { ...next, translateProvider: "openai", llmUrl: defaults.llm, llmModel: next.llmModel.trim() || defaults.model || "qwen" };
+  }
+  // The companion (summary, popups) uses the LLM even when LibreTranslate translates.
+  if (!companionConfigured(next) && defaults.llm && next.llmUrl.trim() === "") {
+    next = { ...next, llmUrl: defaults.llm, llmModel: next.llmModel.trim() || defaults.model || "qwen" };
   }
   return next;
 }
@@ -182,6 +199,10 @@ export function parseData(raw: string): BabelData {
       targetLanguage: target && target !== AUTO ? target : EMPTY_DATA.targetLanguage,
       transliterateOriginal: value.transliterateOriginal === true,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
+      // New in 0.3.0: absent in older settings = on.
+      speakers: value.speakers !== false,
+      insights: value.insights !== false,
+      autoSummary: value.autoSummary !== false,
     };
   } catch {
     return EMPTY_DATA;

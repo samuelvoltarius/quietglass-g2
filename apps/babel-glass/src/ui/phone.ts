@@ -1,5 +1,5 @@
 import {
-  isPlainHttp, maskSecret, translationEnabled, usesMockStt, validateHttpUrl,
+  companionConfigured, isPlainHttp, maskSecret, translationEnabled, usesMockStt, validateHttpUrl,
   validateWsUrl, type BabelData, type TranslateProvider,
 } from "../storage/persist";
 import { MODE_PRESETS, type CaptionMode } from "../glasses/view";
@@ -8,6 +8,23 @@ import {
 } from "../text/languages";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
+import { clockLabel, type TranscriptEntry } from "../companion/transcript";
+import type { Insight } from "../companion/llm";
+
+/** What the conversation card shows; owned by main.ts, read on every redraw. */
+export interface ConversationState {
+  readonly log: readonly TranscriptEntry[];
+  /** The provisional line, if the recogniser is still revising one. */
+  readonly pending: string | null;
+  readonly summary:
+    | { readonly state: "working" }
+    | { readonly state: "done"; readonly long: readonly string[] }
+    | { readonly state: "error"; readonly error: string }
+    | null;
+  readonly insights: readonly Insight[];
+  /** A summary can be asked for (language model configured or demo). */
+  readonly canSummarize: boolean;
+}
 
 /**
  * The phone companion: UI language, caption languages, mode and — under
@@ -24,6 +41,10 @@ export interface PhoneUiPorts {
   readonly getLocale?: () => Locale;
   /** The user picked another UI language: the host persists it and redraws the glasses. */
   readonly setLocale?: (locale: Locale) => void;
+  /** Conversation companion: transcript, summary, explanations. */
+  readonly getConversation?: () => ConversationState;
+  readonly onSummarize?: () => void;
+  readonly onClearTranscript?: () => void;
 }
 
 const PROVIDERS: readonly TranslateProvider[] = ["libretranslate", "openai"];
@@ -46,10 +67,74 @@ export function mountPhoneUiInto(root: UiRoot, ports: PhoneUiPorts): void {
       const html = globalThis.document?.documentElement;
       if (html) html.lang = locale;
     } catch { /* no document outside the WebView */ }
-    root.innerHTML = template(ports.getData(), notice, locale);
+    root.innerHTML = template(ports.getData(), notice, locale, ports.getConversation?.() ?? null);
     wire(root, ports, render);
   };
   render();
+}
+
+/**
+ * Redraws only the conversation card (called for every new line), so the
+ * settings form below is never rebuilt while someone types in it.
+ */
+export function renderConversation(root: UiRoot, state: ConversationState, locale: Locale): void {
+  const body = root.querySelector<HTMLElement>("#conv-body");
+  if (!body) return;
+  body.innerHTML = conversationInner(state, locale);
+  const lines = root.querySelector<HTMLElement>("#conv-lines");
+  if (lines && typeof lines.scrollHeight === "number") lines.scrollTop = lines.scrollHeight;
+}
+
+const SPEAKER_CLASSES = "ABCDEFGH";
+
+export function conversationInner(state: ConversationState, locale: Locale): string {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const shown = state.log.slice(-300);
+  const lines = shown.map((entry) => {
+    const who = entry.speaker
+      ? `<b class="spk spk-${SPEAKER_CLASSES.indexOf(entry.speaker) % 4}">${escapeHtml(entry.speaker)}</b> `
+      : "";
+    const translated = entry.translated ? `<br><small>${escapeHtml(entry.translated)}</small>` : "";
+    return `<p class="line">${who}<span class="time">${clockLabel(entry.at)}</span> ${escapeHtml(entry.text)}${translated}</p>`;
+  });
+  if (state.pending) {
+    lines.push(`<p class="line pending">… ${escapeHtml(state.pending)} <em>${x("p.convLive")}</em></p>`);
+  }
+  const transcript = lines.length
+    ? `<div id="conv-lines" class="transcript">${lines.join("")}</div>`
+    : `<p class="hint">${x("p.convEmpty")}</p>`;
+
+  let summary = "";
+  if (state.summary?.state === "working") {
+    summary = `<h3>${x("p.summaryTitle")}</h3><p class="hint">${x("p.summaryWorking")}</p>`;
+  } else if (state.summary?.state === "error") {
+    summary = `<h3>${x("p.summaryTitle")}</h3><p class="hint"><small class="warn">${escapeHtml(x("p.summaryError", { error: state.summary.error }))}</small></p>`;
+  } else if (state.summary?.state === "done") {
+    summary = `<h3>${x("p.summaryTitle")}</h3><ul class="summary">${state.summary.long.map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`;
+  }
+
+  const insights = state.insights.length
+    ? `<h3>${x("p.insightsTitle")}</h3><ul class="insights">${state.insights.map((i) =>
+        `<li><b>${escapeHtml(i.term)}</b> — ${escapeHtml(i.info)}</li>`).join("")}</ul>`
+    : "";
+
+  const count = state.log.length ? `<p class="hint">${x("p.lines", { count: state.log.length })}</p>` : "";
+  const buttons = state.log.length
+    ? `<div class="buttons">
+        ${state.canSummarize ? `<button id="summarize" type="button"${state.summary?.state === "working" ? " disabled" : ""}>${x("p.summarize")}</button>` : ""}
+        <button id="clear-log" type="button" class="secondary">${x("p.clear")}</button>
+      </div>`
+    : "";
+  return transcript + count + buttons + summary + insights;
+}
+
+function conversationCard(state: ConversationState | null, locale: Locale): string {
+  if (!state) return "";
+  return `
+  <section class="card" id="conv">
+    <h2>${t(locale, "p.convTitle")}</h2>
+    <div id="conv-body">${conversationInner(state, locale)}</div>
+  </section>`;
 }
 
 /** A language as listed in the pickers: its name in the UI language, plus its own name. */
@@ -81,7 +166,7 @@ function languageField(
       value="${isCustom ? escapeHtml(code) : ""}" placeholder="${escapeHtml(hint)}" aria-label="${escapeHtml(t(locale, "p.codeLabel", { label }))}" />`;
 }
 
-function template(data: BabelData, notice: string, locale: Locale): string {
+function template(data: BabelData, notice: string, locale: Locale, conversation: ConversationState | null = null): string {
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const secret = (value: string | undefined): string => escapeHtml(maskSecret(value, locale));
   const openai = data.translateProvider === "openai";
@@ -97,6 +182,8 @@ function template(data: BabelData, notice: string, locale: Locale): string {
   <section class="card compact">${languageSelect(locale)}</section>
 
   <p id="notice" class="notice" ${notice ? "" : "hidden"}>${escapeHtml(notice)}</p>
+
+  ${conversationCard(conversation, locale)}
 
   ${usesMockStt(data) ? `
   <section class="card">
@@ -158,6 +245,15 @@ function template(data: BabelData, notice: string, locale: Locale): string {
         <input id="llm-key" type="password" placeholder="${escapeHtml(x("p.llmKeyPlaceholder"))}" />
       </div>
     </details>
+  </section>
+
+  <section class="card">
+    <h2>${x("p.companionTitle")}</h2>
+    <label class="check"><input id="speakers" type="checkbox" ${data.speakers ? "checked" : ""} /> ${x("p.speakers")}</label>
+    <p class="hint">${x("p.speakersHint")}</p>
+    <label class="check"><input id="insights" type="checkbox" ${data.insights ? "checked" : ""} /> ${x("p.insights")}</label>
+    <label class="check"><input id="auto-summary" type="checkbox" ${data.autoSummary ? "checked" : ""} /> ${x("p.autoSummary")}</label>
+    <p class="hint">${companionConfigured(data) ? x("p.companionLlm") : x("p.companionNoLlm")}</p>
   </section>
 
   <section class="card">
@@ -269,6 +365,20 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
 
   byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
     commit({ invertScroll: (event.target as HTMLInputElement).checked });
+  });
+
+  for (const [id, key] of [["speakers", "speakers"], ["insights", "insights"], ["auto-summary", "autoSummary"]] as const) {
+    byId<HTMLInputElement>(id)?.addEventListener("change", (event) => {
+      commit({ [key]: (event.target as HTMLInputElement).checked } as Partial<BabelData>);
+    });
+  }
+
+  // The conversation card is redrawn on its own; listen on the card, not the buttons.
+  byId<HTMLElement>("conv")?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const id = target?.id ?? "";
+    if (id === "summarize") ports.onSummarize?.();
+    if (id === "clear-log") ports.onClearTranscript?.();
   });
 
   byId<HTMLSelectElement>("provider")?.addEventListener("change", (event) => {

@@ -16,6 +16,8 @@ export interface CaptionLine {
   readonly language?: string;
   /** Translation of `text`, when translation is on and has arrived. */
   readonly translated?: string;
+  /** Speaker label from the server ("A", "B" …), finals only. */
+  readonly speaker?: string;
 }
 
 export interface CaptionBuffer {
@@ -55,9 +57,11 @@ export function applyTranscript(
     return transcript.final ? { ...buffer, pending: null } : buffer;
   }
 
-  const line: CaptionLine = transcript.language
-    ? { text, at: now, language: transcript.language }
-    : { text, at: now };
+  const line: CaptionLine = {
+    text, at: now,
+    ...(transcript.language ? { language: transcript.language } : {}),
+    ...(transcript.final && transcript.speaker ? { speaker: transcript.speaker } : {}),
+  };
 
   if (!transcript.final) {
     return { ...buffer, pending: line };

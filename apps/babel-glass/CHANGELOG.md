@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.0] — 2026-10-13
+
+### Added — conversation companion
+
+- **Streaming speech recognition**: the app asks the server for streaming (`"stream": true`
+  in the start frame). A server that supports it re-transcribes a sliding window about
+  every 0.8 s and sends provisional lines (`partial`, with the agreed `stable` prefix)
+  and final lines; servers without it ignore the flag and keep working as before.
+  Reference server: `selfhost/services/whisper/babel_stream.py`.
+- **Transcript**: the phone page shows the running conversation (time, speaker,
+  translation, provisional line); the glasses show the newest lines, the provisional
+  one marked with `…`.
+- **Speaker labels** `A:` / `B:` from the server's lightweight change detector
+  (pitch + timbre, CPU). Clearly different voices work; similar voices may share a letter.
+- **Summary** when you stop listening (tap): short on the glasses, detailed on the phone,
+  in the UI language, from your own OpenAI-compatible language model.
+- **Explanations**: when the newest line holds a factual question or an unusual term,
+  the language model writes a short explanation that pops up on the glasses for 15 s
+  (tap closes it) and is listed on the phone. No web search.
+- **Header sign** top right: an ear with sound waves while listening, a notebook while
+  summarising, a light bulb for an explanation. Captions use the full width.
+- Settings: speaker labels, explanations, automatic summary (all on by default).
+- The demo (no server) is now a short two-speaker dialogue with a demo explanation and summary.
+
+### Changed
+
+- Hold clears the whole conversation (transcript, summary, explanations).
+- Wider caption lines (the body is full width).
+
 ## [0.2.3] — 2026-10-13
 
 ### Fixed

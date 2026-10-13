@@ -17,6 +17,14 @@ tippen stoppt sie. Wischen blättert zurück, Halten löscht die Mitschrift,
 Doppeltippen beendet die App. Solange das Mikrofon offen ist, steht
 **● MIKRO** auf der Brille.
 
+**Gesprächs-Begleiter (ab 0.3.0):** Mit einem Server, der Streaming kann
+(Referenz: `selfhost/services/whisper/`), erscheinen vorläufige Zeilen (mit
+„…“) schon während gesprochen wird, feste Zeilen bekommen Sprecher-Buchstaben
+(„A:“, „B:“). Die Handy-Seite schreibt das ganze Gespräch mit. Fällt eine
+Sachfrage oder ein Fachbegriff, erklärt dein eigenes Sprachmodell ihn kurz als
+Popup auf der Brille. Beim Stoppen gibt es eine Zusammenfassung – kurz auf der
+Brille, ausführlich auf dem Handy. Gesucht wird dabei nichts im Internet.
+
 Die App gibt es auf Deutsch und Englisch; sie folgt der Sprache deines
 Handys. Umstellen kannst du das oben auf der Handy-Seite unter „Sprache“ —
 die Brille wechselt sofort mit. Die Server trägst du auf der Handy-Seite
@@ -107,6 +115,20 @@ The server replies with JSON:
 
 `{"transcript":...}` and `{"is_final":true}` are accepted too, so several
 existing servers work without changes.
+
+**Streaming (optional, since 0.3.0).** The app adds `"stream": true` to the
+start frame and sends `{"type":"stop"}` before it closes. A server that
+supports streaming re-transcribes the current utterance about every 0.8 s and
+replies with
+
+```json
+{"type":"partial","text":"guten Tag ich","stable":"guten Tag","final":false}
+{"type":"final","text":"Guten Tag, ich komme morgen.","final":true,"language":"de","speaker":"A"}
+```
+
+`stable` is the prefix two consecutive hypotheses agreed on; `speaker` is an
+optional single capital letter. Servers that ignore `stream` keep working.
+The reference implementation is `selfhost/services/whisper/babel_stream.py`.
 
 ### Translation
 
@@ -242,16 +264,16 @@ npm run sim        # Even Hub simulator pointed at the dev server
 
 | Limitation | Detail |
 |---|---|
-| Latency depends on your server | The glasses add little; the model and window size dominate. The reference server transcribes in 2-second windows. |
-| No speaker separation | Who said what is not distinguished. |
-| Partial results depend on the server | The reference server sends finals only; the app supports partials if yours emits them. |
+| Latency depends on your server | The glasses add little; the model dominates. The streaming reference server shows a provisional line about every 0.8 s. |
+| Speaker labels are rough | The reference server tells voices apart by pitch and timbre only (no neural speaker model): clearly different voices work, similar voices may share a letter. |
+| Summary and explanations need a language model | Any OpenAI-compatible server (vLLM, Ollama …). No web search. |
 | Not verified on hardware | Built and tested against SDK 0.0.16; the simulator provides no meaningful speech. |
 | Cyrillic on the G2 font | Renders in the simulator; unverified on hardware. Use "Show original as Latin transliteration" if it does not render. |
 | Belarusian auto-detection | Whisper tends to report Belarusian as Russian; set the spoken language explicitly. |
 
 ## Roadmap
 
-- Speaker labels where the backend supplies them.
+- Neural speaker embeddings (e.g. ECAPA) in the reference server.
 - On-device language detection display.
 - Optional saving of a session transcript, explicitly opt-in.
 

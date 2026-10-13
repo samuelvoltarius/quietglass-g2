@@ -10,13 +10,17 @@ import {
   applyTranscript, applyTranslation, clearBuffer, createBuffer, type CaptionBuffer,
 } from "./captions/buffer";
 import { gestureFromEvent } from "./input/gestures";
-import { buildView, MODE_PRESETS, type CaptionView } from "./glasses/view";
+import { buildView, MODE_PRESETS, type CaptionView, type SummaryState } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, updateIcon, updatePage } from "./glasses/render";
+import { iconFrame, ICON_STEP_MS, type IconKind } from "./glasses/icon";
 import {
-  load, save, translationEnabled, usesMockStt, type BabelData,
+  companionConfigured, load, save, translationEnabled, usesMockStt, type BabelData,
 } from "./storage/persist";
-import { mountPhoneUi } from "./ui/phone";
+import { mountPhoneUi, renderConversation, type ConversationState } from "./ui/phone";
+import { appendEntry, attachTranslation, type TranscriptEntry } from "./companion/transcript";
+import { createCompanionLlm, createMockCompanion, type CompanionLlm, type Insight } from "./companion/llm";
+import { createInsightWatcher } from "./companion/insights";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 
@@ -56,6 +60,101 @@ async function boot(): Promise<void> {
   /** Captions were running when the exit dialog opened; cancel turns them back on. */
   let resumeListening = false;
 
+  // ---- Conversation companion (0.3.0) ----
+  /** Every final line of this conversation (memory only). */
+  let log: TranscriptEntry[] = [];
+  let summary: (SummaryState & { readonly long?: readonly string[] }) | null = null;
+  /** Bumped on clear/new summary: answers for an older request are dropped. */
+  let summaryRun = 0;
+  let insights: Insight[] = [];
+  let popup: (Insight & { readonly until: number }) | null = null;
+
+  let companionCache: { key: string; llm: CompanionLlm } | null = null;
+  /** The language model for summary and popups; the demo one only next to the demo recogniser. */
+  const companion = (): CompanionLlm | null => {
+    if (companionConfigured(data)) {
+      const key = data.llmUrl + "|" + data.llmModel + "|" + (data.llmKey ?? "");
+      if (companionCache?.key !== key) {
+        companionCache = {
+          key,
+          llm: createCompanionLlm({ url: data.llmUrl, model: data.llmModel, ...(data.llmKey ? { apiKey: data.llmKey } : {}) }),
+        };
+      }
+      return companionCache.llm;
+    }
+    return usesMockStt(data) ? createMockCompanion() : null;
+  };
+
+  const POPUP_MS = 15_000;
+  const watcher = createInsightWatcher({
+    llm: () => (data.insights ? companion() : null),
+    locale: () => locale,
+    onInsight: (insight) => {
+      insights = [...insights, insight].slice(-50);
+      if (listening && data.insights) popup = { ...insight, until: Date.now() + POPUP_MS };
+      void draw();
+      schedulePhone();
+    },
+    onError: (error) => { console.warn("[babelglass] explain failed:", error); },
+  });
+
+  const conversationState = (): ConversationState => ({
+    log,
+    pending: buffer.pending?.text ?? null,
+    summary: summary === null ? null
+      : summary.state === "done" ? { state: "done", long: summary.long ?? summary.short }
+      : summary,
+    insights,
+    canSummarize: companion() !== null,
+  });
+
+  let phoneTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The phone page follows the conversation at most every 250 ms. */
+  const schedulePhone = (): void => {
+    if (phoneTimer !== undefined) return;
+    phoneTimer = setTimeout(() => {
+      phoneTimer = undefined;
+      const root = globalThis.document?.getElementById?.("app");
+      if (root) renderConversation(root, conversationState(), locale);
+    }, 250);
+  };
+
+  const summarize = async (): Promise<void> => {
+    const llm = companion();
+    if (!llm || log.length === 0) return;
+    const run = ++summaryRun;
+    summary = { state: "working" };
+    void draw();
+    schedulePhone();
+    const result = await llm.summarize(log, locale).catch(() => ({ ok: false as const, error: "failed" }));
+    if (run !== summaryRun) return;
+    summary = result.ok
+      ? { state: "done", short: result.value.short, long: result.value.long }
+      : { state: "error", error: result.error };
+    void draw();
+    schedulePhone();
+  };
+
+  const clearConversation = (): void => {
+    buffer = clearBuffer();
+    offset = 0;
+    log = [];
+    insights = [];
+    popup = null;
+    summary = null;
+    summaryRun++;
+    watcher.reset();
+    void draw();
+    schedulePhone();
+  };
+
+  const iconKind = (): IconKind => {
+    if (listening) return popup ? "info" : "listening";
+    if (summary?.state === "working") return "thinking";
+    if (summary?.state === "done") return "done";
+    return "off";
+  };
+
   const currentView = (): CaptionView =>
     buildView(buffer, {
       mode: data.mode,
@@ -68,17 +167,30 @@ async function boot(): Promise<void> {
       sourceLanguage: data.sourceLanguage,
       translateError,
       locale,
+      speakers: data.speakers,
+      now: Date.now(),
+      popup: popup && popup.until > Date.now() ? popup : null,
+      summary: summary && summary.state === "done" ? { state: "done", short: summary.short } : summary,
     });
+
+  let iconBusy = false;
+  const drawIcon = async (): Promise<void> => {
+    if (closed || !pageReady || iconBusy) return;
+    iconBusy = true;
+    try { await updateIcon(bridge, iconFrame(iconKind(), Date.now())); } finally { iconBusy = false; }
+  };
 
   const draw = async (): Promise<void> => {
     if (closed) return;
+    if (popup && popup.until <= Date.now()) popup = null;
     const view = currentView();
-    if (sameView(lastView, view)) return;
+    if (sameView(lastView, view)) { void drawIcon(); return; }
 
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
     if (result.ok) {
       pageReady = true;
       lastView = view;
+      void drawIcon();
       return;
     }
     pageReady = false;
@@ -100,19 +212,34 @@ async function boot(): Promise<void> {
         return;
       }
       translateError = null;
-      if (result.text) buffer = applyTranslation(buffer, text, result.text);
+      if (result.text) {
+        buffer = applyTranslation(buffer, text, result.text);
+        log = attachTranslation(log, text, result.text.normalize("NFC"));
+        schedulePhone();
+      }
       void draw();
     });
   };
 
   const onTranscript = (transcript: Transcript): void => {
-    buffer = applyTranscript(buffer, transcript, Date.now());
+    const now = Date.now();
+    buffer = applyTranscript(buffer, transcript, now);
     // New speech pulls the view back to the live edge; reading history while
     // someone is talking is not what the user meant to do.
     if (transcript.final) {
       offset = 0;
-      translateLine(transcript.text.trim(), transcript.language);
+      const text = transcript.text.trim();
+      if (text) {
+        log = appendEntry(log, {
+          text, at: now,
+          ...(transcript.language ? { language: transcript.language } : {}),
+          ...(data.speakers && transcript.speaker ? { speaker: transcript.speaker } : {}),
+        });
+        if (data.insights) watcher.onFinal(log);
+      }
+      translateLine(text, transcript.language);
     }
+    schedulePhone();
     void draw();
   };
 
@@ -131,6 +258,8 @@ async function boot(): Promise<void> {
           url: data.sttUrl,
           ...(data.sttToken ? { token: data.sttToken } : {}),
           language: data.sourceLanguage,
+          // Partial lines + speaker labels; servers without it ignore the flag.
+          stream: true,
           onTranscript,
           onStatus: (s) => { status = s; void draw(); },
         });
@@ -152,13 +281,23 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  const stopListening = async (): Promise<void> => {
+  /** `withSummary`: the user stopped on purpose (tap), so the conversation may be summarised. */
+  const stopListening = async (withSummary = false): Promise<void> => {
     if (!listening) return;
     await bridge.audioControl(false).catch(() => undefined);
     await stt?.stop();
     stt = null;
     listening = false;
     status = "idle";
+    popup = null;
+    watcher.stop();
+    // A provisional line nobody will finish is dropped, not kept as history.
+    if (buffer.pending) buffer = { ...buffer, pending: null };
+    schedulePhone();
+    if (withSummary && data.autoSummary && log.length >= 2 && companion()) {
+      void summarize();
+      return;
+    }
     await draw();
   };
 
@@ -202,7 +341,11 @@ async function boot(): Promise<void> {
 
     switch (gesture.gesture) {
       case "click":
-        void (listening ? stopListening() : startListening());
+        // A tap first closes an explanation; otherwise it starts/stops listening.
+        if (popup) { popup = null; break; }
+        if (listening) { void stopListening(true); return; }
+        if (summary?.state !== "working") summary = null;
+        void startListening();
         return;
       case "scrollUp":
         offset = Math.min(offset + rows, 200);
@@ -211,9 +354,8 @@ async function boot(): Promise<void> {
         offset = Math.max(0, offset - rows);
         break;
       case "longPress":
-        buffer = clearBuffer();
-        offset = 0;
-        break;
+        clearConversation();
+        return;
       case "doubleClick":
         void exitWithDialog();
         return;
@@ -230,7 +372,16 @@ async function boot(): Promise<void> {
     }
   });
 
+  // Header clock, ear animation and popup timeout.
+  const ticker = setInterval(() => {
+    if (closed) { clearInterval(ticker); return; }
+    void draw();
+  }, ICON_STEP_MS);
+
   mountPhoneUi({
+    getConversation: conversationState,
+    onSummarize: () => { void summarize(); },
+    onClearTranscript: clearConversation,
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;

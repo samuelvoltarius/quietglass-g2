@@ -9,4 +9,5 @@ fastapi
 uvicorn
 python-multipart
 soundfile
+librosa          # optional: speaker labels in the Babel streaming mode (SPEAKERS=0 switches them off)
 # ffmpeg must also be installed on the system (apt install ffmpeg) - used to decode uploads.
