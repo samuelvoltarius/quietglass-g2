@@ -6,7 +6,7 @@ import { addEntry, attachToLatest, setSection, startInspection, toCsv, toMarkdow
 import { maskSecret, parseData, validateWsUrl } from "../src/storage/persist";
 import { safeName } from "../src/ui/phone";
 
-const GLASSES_WIDTH = 46;
+const GLASSES_WIDTH = 56;
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 /** Worst-case values for every placeholder that reaches the glasses. */
 const WORST: Record<string, string | number> = { major: 999, minor: 999, note: 999, time: "99h 59m", severity: "WICHTIG" };
@@ -85,7 +85,7 @@ const inspectionWith = (entries: number): Inspection => {
 describe("glasses copy fits the display", () => {
   const phases: Phase[] = ["idle", "pick", "recording", "transcribing", "review"];
   for (const locale of locales) {
-    it(`${locale}: every phase stays within 7 rows × 46 characters, with long content`, () => {
+    it(`${locale}: every phase stays within 7 rows × 56 characters, with long content`, () => {
       const long = "Riss im Putz über der Tür, ungefähr dreißig Zentimeter lang und bis zur Decke ".repeat(3);
       for (const entries of [0, 5]) {
         for (const phase of phases) {
@@ -125,7 +125,7 @@ describe("glasses copy fits the display", () => {
     const empty = buildView(startInspection("i", "Rundgang", 0), { ...base, phase: "idle" }, 60_000);
     expect(empty.body).toContain("Noch keine Einträge.");
     expect(empty.body).toContain("Nächster Eintrag: WICHTIG · wischen = ändern");
-    expect(empty.footer).toBe("1m · tippen = Notiz · halten = Foto");
+    expect(empty.footer).toBe("seit 1m · tippen = Notiz · halten = Foto");
     const review = buildView(startInspection("i", "R", 0), { ...base, phase: "review" });
     expect(review.header).toBe("Behalten?");
     expect(review.footer).toBe("tippen = ja · wischen = nein · halten = Foto");

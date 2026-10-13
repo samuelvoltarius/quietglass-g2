@@ -3,7 +3,7 @@ import type { Severity } from "./log/entries";
 
 /**
  * Every user-facing string, German and English. Keys starting with `g.` go to
- * the glasses and must fit one display row (46 characters); the tests check
+ * the glasses and must fit one display row (56 characters); the tests check
  * every German and English variant against it with worst-case values.
  */
 export const messages: Messages = {
@@ -16,8 +16,8 @@ export const messages: Messages = {
     "g.firstNote": "Tipp an die Brille für die erste Notiz.",
     "g.tally": "Wichtig {major} · Mängel {minor} · Notizen {note}",
     "g.nextSeverity": "Nächster Eintrag: {severity} · wischen = ändern",
-    "g.idle.quick": "{time} · tippen = Notiz · halten = Foto",
-    "g.idle.voice": "{time} · tippen = sprechen · halten = Foto",
+    "g.idle.quick": "seit {time} · tippen = Notiz · halten = Foto",
+    "g.idle.voice": "seit {time} · tippen = sprechen · halten = Foto",
     "g.photo": "[Foto]",
     "g.listening": "Ich höre zu …",
     "g.recording.footer": "tippen = stopp",
@@ -144,8 +144,8 @@ export const messages: Messages = {
     "g.firstNote": "Tap the glasses for your first note.",
     "g.tally": "{major} major · {minor} minor · {note} notes",
     "g.nextSeverity": "next entry: {severity} · swipe = change",
-    "g.idle.quick": "{time}  ·  tap = note  ·  hold = photo",
-    "g.idle.voice": "{time}  ·  tap = record  ·  hold = photo",
+    "g.idle.quick": "for {time}  ·  tap = note  ·  hold = photo",
+    "g.idle.voice": "for {time}  ·  tap = record  ·  hold = photo",
     "g.photo": "[photo]",
     "g.listening": "Listening…",
     "g.recording.footer": "tap = stop",

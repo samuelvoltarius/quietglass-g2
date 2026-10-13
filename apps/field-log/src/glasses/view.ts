@@ -42,14 +42,14 @@ export interface ViewOptions {
   readonly pickIndex?: number;
 }
 
-const DEFAULT_WIDTH = 44;
+const DEFAULT_WIDTH = 56;
 
 /** Rows the body container holds; more are pushed off the display. */
 export const MAX_BODY_ROWS = 7;
 /** Characters the header holds on one line in the G2's proportional font. */
-export const HEADER_WIDTH = 46;
+export const HEADER_WIDTH = 56;
 /** The footer is a single line too. */
-export const FOOTER_WIDTH = 46;
+export const FOOTER_WIDTH = 56;
 
 export function buildView(
   inspection: Inspection | null,

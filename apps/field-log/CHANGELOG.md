@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3] — 2026-10-13
+
+### Changed
+
+- Glasses rows use the full display width (56 instead of 44-46 characters): last entry, quick notes and the transcript to confirm wrap later.
+- Footer says how long the inspection has been running ("seit 23m" / "for 23m") instead of a bare duration.
+
 ## [0.3.2] — 2026-10-13
 
 ### Fixed

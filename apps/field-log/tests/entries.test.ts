@@ -256,13 +256,13 @@ describe("display budget", () => {
   });
 
   it("regression: an unbroken token is split instead of overflowing the line", () => {
-    for (const row of wrap("https://example.com/" + "x".repeat(90), 44)) {
-      expect(row.length).toBeLessThanOrEqual(44);
+    for (const row of wrap("https://example.com/" + "x".repeat(90), 56)) {
+      expect(row.length).toBeLessThanOrEqual(56);
     }
   });
 
   it("regression: a long section name is cut to one header line", () => {
     const view = buildView({ ...started(), section: long }, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false }, 0);
-    expect(view.header.length).toBeLessThanOrEqual(46);
+    expect(view.header.length).toBeLessThanOrEqual(56);
   });
 });
