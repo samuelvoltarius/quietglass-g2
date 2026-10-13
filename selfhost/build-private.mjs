@@ -56,14 +56,18 @@ const APPS = {
     }),
   },
   "openglance-nav": {
-    summary: "own Valhalla routing, voice destination (Whisper, optional)",
+    summary: "own Valhalla routing + street names, charging stations, voice destination, server voice (optional)",
     required: ["valhalla"],
-    optional: ["whisper"],
+    optional: ["whisper", "tts", "chargers"],
     plan: (s) => ({
-      origins: [s.valhalla, s.whisper].filter(Boolean),
+      origins: [s.valhalla, s.whisper, s.tts, s.chargers].filter(Boolean),
       env: {
         VITE_ROUTER_URL: s.valhalla,
+        // Street names along the route come from the same Valhalla (trace_attributes).
+        VITE_STREETS_URL: s.valhalla,
         ...(s.whisper ? { VITE_STT_URL: s.whisper } : {}),
+        ...(s.tts ? { VITE_TTS_URL: s.tts } : {}),
+        ...(s.chargers ? { VITE_CHARGERS_URL: s.chargers } : {}),
       },
     }),
   },
@@ -162,6 +166,7 @@ function loadConfig(file) {
     star: one("star"),
     sugar: one("sugar"),
     valhalla: one("valhalla"),
+    chargers: one("chargers"),
     tts: one("tts"),
     lumen: one("lumen"),
     xaventra: one("xaventra"),

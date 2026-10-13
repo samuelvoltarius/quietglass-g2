@@ -18,7 +18,20 @@ import { DEFAULT_OVERPASS_URLS } from "../overview/streets";
  * private ones, are left out. Power comes from `socket:*:output` (e.g.
  * "150 kW"), sockets from `socket:type2_combo` (CCS), `socket:chademo`,
  * `socket:type2`.
+ *
+ * Private build: with `VITE_CHARGERS_URL` the stations come from your own
+ * server instead (the EV planner's read-only `/chargers` endpoint: official
+ * Austrian register E-Control with ad-hoc prices, German register BNetzA),
+ * asked with a plain GET and answered in the same Overpass element format,
+ * plus `x:price_eur_kwh`. Without it, the public Overpass servers as before.
  */
+
+/** Build-time default of a private build; empty in the public one. */
+const BUILD_CHARGERS_URL: string | undefined = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_CHARGERS_URL;
+
+export function buildChargersUrl(): string {
+  return (BUILD_CHARGERS_URL ?? "").trim().replace(/\/+$/, "");
+}
 
 export interface Charger {
   readonly id: string;
@@ -34,6 +47,8 @@ export interface Charger {
   readonly type2: number;
   /** Cars that can charge at once; null when not mapped. */
   readonly capacity: number | null;
+  /** Ad-hoc price per kWh in euros (own server, official register); absent when unknown. */
+  readonly priceKwh?: number;
 }
 
 /** Fast charging, as far as the map says: from this power on. */
@@ -50,6 +65,9 @@ const FILTER = '["amenity"="charging_station"]';
 
 /** Coordinates to four decimals (about 10 m): enough for a 2 km corridor, and no more precise than needed. */
 const coord = (value: number): string => value.toFixed(4);
+
+/** At most one request this often to your own server. */
+export const OWN_MIN_INTERVAL_MS = 5_000;
 
 /** Stations within `radius` metres of a point. */
 export function buildNearbyQuery(at: LatLng, radius = NEARBY_RADIUS_M, serverTimeoutS = 12): string {
@@ -68,6 +86,14 @@ export const MAX_BOXES = 24;
  * exact corridor is then measured on the phone ({@link chargersAlong}).
  */
 export function buildCorridorQuery(line: readonly LatLng[], radius = CORRIDOR_M, serverTimeoutS = 15): string | null {
+  const boxes = corridorBoxes(line, radius);
+  if (!boxes) return null;
+  const parts = boxes.map((b) => `nwr${FILTER}(${b.map(coord).join(",")});`);
+  return `[out:json][timeout:${serverTimeoutS}];(${parts.join("")});out center tags qt;`;
+}
+
+/** The corridor as boxes [south, west, north, east], each stretch's box widened by `radius`. */
+export function corridorBoxes(line: readonly LatLng[], radius = CORRIDOR_M): [number, number, number, number][] | null {
   if (line.length === 0) return null;
   const along = cumulativeMeters(line);
   const total = along[along.length - 1] ?? 0;
@@ -85,12 +111,27 @@ export function buildCorridorQuery(line: readonly LatLng[], radius = CORRIDOR_M,
     }
     box.s = Math.min(box.s, p.lat); box.n = Math.max(box.n, p.lat); box.w = Math.min(box.w, p.lon); box.e = Math.max(box.e, p.lon);
   });
-  const parts = boxes.map((b) => {
+  return boxes.map((b) => {
     const dLat = radius / 111_320;
     const dLon = radius / (111_320 * Math.max(0.1, Math.cos((((b.s + b.n) / 2) * Math.PI) / 180)));
-    return `nwr${FILTER}(${coord(b.s - dLat)},${coord(b.w - dLon)},${coord(b.n + dLat)},${coord(b.e + dLon)});`;
+    return [b.s - dLat, b.w - dLon, b.n + dLat, b.e + dLon];
   });
-  return `[out:json][timeout:${serverTimeoutS}];(${parts.join("")});out center tags qt;`;
+}
+
+/** Own server: stations around a point, as a plain GET (no preflight). */
+export function buildNearbyUrl(base: string, at: LatLng, radius = NEARBY_RADIUS_M): string {
+  return `${base}/chargers?lat=${coord(at.lat)}&lon=${coord(at.lon)}&radius=${Math.round(radius)}`;
+}
+
+/** Own server: stations in the corridor boxes of a route line; null for an empty line. */
+export function buildCorridorUrl(base: string, line: readonly LatLng[], radius = CORRIDOR_M): string | null {
+  const boxes = corridorBoxes(line, radius);
+  if (!boxes) return null;
+  // Box edges rounded outwards, so rounding never shrinks the corridor.
+  const down = (v: number): string => (Math.floor(v * 1e4) / 1e4).toFixed(4);
+  const up = (v: number): string => (Math.ceil(v * 1e4) / 1e4).toFixed(4);
+  // Encoded: a literal ";" in a query is dropped by Go proxies such as `tailscale serve` (measured 2026-10-13).
+  return `${base}/chargers?boxes=${encodeURIComponent(boxes.map(([s, w, n, e]) => `${down(s)},${down(w)},${up(n)},${up(e)}`).join(";"))}`;
 }
 
 /** "150 kW", "22kW", "50 kVA", "11000 W", "3.7" → kW; the highest of a list ("22 kW;50 kW"). */
@@ -164,6 +205,7 @@ export function parseChargers(value: unknown): Charger[] | null {
     const text = (key: string): string => (typeof tags[key] === "string" ? (tags[key] as string).trim() : "");
     const operator = text("operator");
     const capacity = Number.parseInt(text("capacity:motorcar") || text("capacity"), 10);
+    const price = Number.parseFloat(text("x:price_eur_kwh"));
     out.push({
       id,
       at: { lat, lon },
@@ -174,6 +216,7 @@ export function parseChargers(value: unknown): Charger[] | null {
       chademo: count(tags["socket:chademo"]),
       type2: count(tags["socket:type2"]),
       capacity: Number.isFinite(capacity) && capacity > 0 ? Math.min(capacity, 999) : null,
+      ...(Number.isFinite(price) && price > 0 && price < 10 ? { priceKwh: price } : {}),
     });
   }
   return out;
@@ -248,6 +291,13 @@ export function socketsText(charger: Charger, locale: "de" | "en"): string {
   return parts.join(" · ");
 }
 
+/** "0,59 €/kWh" or "" */
+export function priceText(charger: Charger, locale: "de" | "en"): string {
+  if (charger.priceKwh === undefined) return "";
+  const value = charger.priceKwh.toFixed(2);
+  return `${locale === "de" ? value.replace(".", ",") : value} €/kWh`;
+}
+
 /** "150 kW" or "" */
 export function powerText(charger: Charger): string {
   if (charger.powerKw === null) return "";
@@ -265,6 +315,8 @@ export interface ChargerOutcome {
 
 export interface ChargerSourceConfig {
   readonly urls?: readonly string[];
+  /** Own server (private build); when set, the public Overpass servers are not asked. Default: VITE_CHARGERS_URL. */
+  readonly endpoint?: string;
   readonly fetchImpl?: typeof fetch;
   readonly timeoutMs?: number;
   readonly minIntervalMs?: number;
@@ -284,18 +336,22 @@ const NEARBY_REUSE_M = 1_500;
 
 export function createChargerSource(config: ChargerSourceConfig = {}): ChargerSource {
   const urls = config.urls ?? DEFAULT_OVERPASS_URLS;
+  const endpoint = (config.endpoint ?? buildChargersUrl()).replace(/\/+$/, "");
   const doFetch = config.fetchImpl ?? ((input, init) => fetch(input, init));
   const clock = config.clock ?? Date.now;
-  const minInterval = config.minIntervalMs ?? MIN_INTERVAL_MS;
+  const minInterval = config.minIntervalMs ?? (endpoint ? OWN_MIN_INTERVAL_MS : MIN_INTERVAL_MS);
   let lastRequestAt = Number.NEGATIVE_INFINITY;
   let nearbyCache: { at: LatLng; time: number; chargers: readonly Charger[] } | null = null;
   const lineCache = new Map<string, readonly Charger[]>();
 
-  const fetchOne = async (url: string, query: string): Promise<{ readonly chargers: Charger[] } | { readonly error: ChargerError }> => {
+  /** `query` = Overpass QL sent as a form POST; null = `url` is a complete GET to the own server. */
+  const fetchOne = async (url: string, query: string | null): Promise<{ readonly chargers: Charger[] } | { readonly error: ChargerError }> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 18_000);
     try {
-      const response = await doFetch(url, { method: "POST", body: new URLSearchParams({ data: query }), signal: controller.signal });
+      const response = await doFetch(url, query === null
+        ? { signal: controller.signal }
+        : { method: "POST", body: new URLSearchParams({ data: query }), signal: controller.signal });
       if (!response.ok) return { error: [406, 429, 503, 504].includes(response.status) ? "busy" : "server" };
       const declared = Number(response.headers?.get?.("content-length") ?? "0");
       if (declared > MAX_RESPONSE_BYTES) { controller.abort(); return { error: "oversized" }; }
@@ -313,12 +369,16 @@ export function createChargerSource(config: ChargerSourceConfig = {}): ChargerSo
     }
   };
 
-  const ask = async (query: string): Promise<ChargerOutcome> => {
+  const ask = async (query: string, ownUrl: string | null): Promise<ChargerOutcome> => {
     const now = clock();
     if (now - lastRequestAt < minInterval) {
       return { chargers: [], error: "cooldown", waitS: Math.ceil((minInterval - (now - lastRequestAt)) / 1000) };
     }
     lastRequestAt = now;
+    if (endpoint && ownUrl) {
+      const outcome = await fetchOne(ownUrl, null);
+      return "chargers" in outcome ? { chargers: outcome.chargers, error: null } : { chargers: [], error: outcome.error };
+    }
     let last: ChargerError = "server";
     for (const url of urls) {
       const outcome = await fetchOne(url, query);
@@ -334,7 +394,7 @@ export function createChargerSource(config: ChargerSourceConfig = {}): ChargerSo
       if (nearbyCache && clock() - nearbyCache.time < NEARBY_TTL_MS && distanceMeters(nearbyCache.at, at) <= NEARBY_REUSE_M) {
         return { chargers: nearbyCache.chargers, error: null };
       }
-      const outcome = await ask(buildNearbyQuery(at));
+      const outcome = await ask(buildNearbyQuery(at), endpoint ? buildNearbyUrl(endpoint, at) : null);
       if (!outcome.error) nearbyCache = { at, time: clock(), chargers: outcome.chargers };
       return outcome;
     },
@@ -343,7 +403,7 @@ export function createChargerSource(config: ChargerSourceConfig = {}): ChargerSo
       if (!query) return { chargers: [], error: null };
       const cached = lineCache.get(query);
       if (cached) return { chargers: cached, error: null };
-      const outcome = await ask(query);
+      const outcome = await ask(query, endpoint ? buildCorridorUrl(endpoint, line) : null);
       if (!outcome.error) {
         if (lineCache.size >= 8) lineCache.delete(lineCache.keys().next().value as string);
         lineCache.set(query, outcome.chargers);

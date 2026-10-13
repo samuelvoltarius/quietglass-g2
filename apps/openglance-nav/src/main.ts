@@ -26,6 +26,7 @@ import { overviewProjector } from "./overview/layout";
 import { thinPoints } from "./overview/project";
 import { needsMapImage, type MapFrame } from "./overview/refresh";
 import { createStreetSource, loadStreets, type Street } from "./overview/streets";
+import { buildStreetsUrl, createRouteStreetSource } from "./overview/route-streets";
 import { demoStreets } from "./overview/demo";
 import { createGeocoder, type Geocoder } from "./geocode/photon";
 import { resolveLocale, rememberLocale, setLocale, tr, type Locale } from "./i18n";
@@ -122,6 +123,8 @@ async function boot(): Promise<void> {
       data = { ...data, places: [...data.places, { id, label, at }], destinationId: id };
     }
   }
+  /** Development only: `?chargers=1` switches charging stations on (the simulator has no phone page to tick it). */
+  if (import.meta.env.DEV && new URLSearchParams(location.search).get("chargers") === "1") data = { ...data, chargers: true };
   /** Development only: `?heard=Tamsweg` stands in for what the speech server understood. */
   const devHeard = import.meta.env.DEV ? new URLSearchParams(location.search).get("heard") : null;
   let nav: NavState | null = null;
@@ -165,6 +168,10 @@ async function boot(): Promise<void> {
    * once and the streets join it when (if) they arrive.
    */
   const streetSource = createStreetSource();
+  // Private build: the route's own street names from your Valhalla (VITE_STREETS_URL), reliable;
+  // the streets around the route still come from Overpass when that answers.
+  const streetsUrl = buildStreetsUrl();
+  const routeStreetSource = streetsUrl ? createRouteStreetSource({ url: streetsUrl }) : null;
   let streets: { route: number; list: readonly Street[] } = { route: -1, list: [] };
   let streetsAskedFor = -1;
   let streetsVersion = 0;
@@ -390,13 +397,24 @@ async function boot(): Promise<void> {
   };
   const fetchStreets = (forRoute: number): void => {
     const points = overviewPoints();
-    void loadStreets(streetSource, overviewProjector(points), data.mode).then((result) => {
-      if (closed || forRoute !== routeVersion) return;
-      if (result.error) console.warn("[openglance] streets unavailable:", result.error);
-      if (!result.streets.length) return;
-      streets = { route: forRoute, list: result.streets };
+    // Two sources may answer, in any order: the route's own streets and the ones around it.
+    const parts: { own: readonly Street[]; around: readonly Street[] } = { own: [], around: [] };
+    const join = (which: "own" | "around", list: readonly Street[]): void => {
+      if (closed || forRoute !== routeVersion || !list.length) return;
+      parts[which] = list;
+      streets = { route: forRoute, list: [...parts.own, ...parts.around] };
       streetsVersion++;
       void draw();
+    };
+    if (routeStreetSource && nav) {
+      void routeStreetSource.load(nav.route.shape, data.mode).then((result) => {
+        if (result.error) console.warn("[openglance] route street names unavailable:", result.error);
+        join("own", result.streets);
+      });
+    }
+    void loadStreets(streetSource, overviewProjector(points), data.mode).then((result) => {
+      if (result.error) console.warn("[openglance] streets unavailable:", result.error);
+      join("around", result.streets);
     });
   };
 

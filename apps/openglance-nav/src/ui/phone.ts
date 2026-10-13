@@ -5,7 +5,8 @@ import {
 import type { LatLng } from "../geo/geometry";
 import { DEFAULT_ROUTER_URL, type RouteOutcome, type TravelMode } from "../routing/provider";
 import { addRoute, makeSavedRoute, removeRoute, renameRoute, type RoutePoint } from "../trip/saved";
-import { chargersAlong, type ChargerOutcome } from "../chargers/chargers";
+import { buildChargersUrl, chargersAlong, type ChargerOutcome } from "../chargers/chargers";
+import { buildStreetsUrl } from "../overview/route-streets";
 import { chargerErrorKey, emptyPlan, insertStop, planOf, plannerTemplate, withPoints, type PlanState } from "./planner";
 import { DEFAULT_GEOCODER_URL, type FoundPlace, type SearchOutcome } from "../geocode/photon";
 import type { GlassLayout } from "../glasses/view";
@@ -174,7 +175,7 @@ function template(
   <section class="card">
     <h2>${t("p.chargers")}</h2>
     <label class="check"><input id="chargers" type="checkbox"${data.chargers ? " checked" : ""} /> ${t("p.chargersOn")}</label>
-    <p class="hint">${escapeHtml(t("p.chargersHint"))}</p>
+    <p class="hint">${escapeHtml(t(buildChargersUrl() ? "p.chargersHintOwn" : "p.chargersHint"))}</p>
   </section>
 
   <section class="card">
@@ -230,15 +231,15 @@ function template(
     <label class="check"><input id="demo" type="checkbox"${data.demo ? " checked" : ""} /> ${t("p.demo")}</label>
     <label class="check"><input id="invert" type="checkbox"${data.invertScroll ? " checked" : ""} /> ${t("p.invertSwipe")}</label>
     <label class="check"><input id="streets" type="checkbox"${data.streets ? " checked" : ""} /> ${t("p.streets")}</label>
-    <p class="hint">${escapeHtml(t("p.streetsHint"))}</p>
+    <p class="hint">${escapeHtml(t(buildStreetsUrl() ? "p.streetsHintOwn" : "p.streetsHint"))}</p>
     ${languageSelect(locale)}
   </details>
 
   <footer class="hint">
     <p>${t("p.attribution")}</p>
     <p>${escapeHtml(t("p.routedBy", { provider: routerName }))} · ${escapeHtml(t("p.searchBy", { provider: searchName }))}</p>
-    ${data.streets && !usesMockRouter(data) ? `<p>${escapeHtml(t("p.streetsBy"))}</p>` : ""}
-    ${data.chargers ? `<p>${escapeHtml(t("p.chargersBy"))}</p>` : ""}
+    ${data.streets && !usesMockRouter(data) ? `<p>${escapeHtml(t(buildStreetsUrl() ? "p.streetsByOwn" : "p.streetsBy"))}</p>` : ""}
+    ${data.chargers ? `<p>${escapeHtml(t(buildChargersUrl() ? "p.chargersByOwn" : "p.chargersBy"))}</p>` : ""}
     <p>${escapeHtml(t("p.privacy"))}</p>
     <p>${escapeHtml(t("p.privacyRoutes"))}</p>
   </footer>`;

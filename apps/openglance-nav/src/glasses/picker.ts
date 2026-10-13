@@ -3,7 +3,7 @@ import { clip, LINE_WIDTH } from "./view";
 import type { FoundPlace } from "../geocode/photon";
 import type { Destination, NavData } from "../storage/persist";
 import type { SavedRoute } from "../trip/saved";
-import { powerText, socketsText, type NearbyCharger } from "../chargers/chargers";
+import { powerText, priceText, socketsText, type NearbyCharger } from "../chargers/chargers";
 import { formatDistance } from "../geo/geometry";
 import type { TravelMode } from "../routing/provider";
 import { tr, type Locale } from "../i18n";
@@ -134,7 +134,7 @@ export function chargerView(state: ChargerListState, locale: Locale): NavView {
         const power = powerText(charger);
         const name = charger.name || t(locale, "c.noName");
         body.push(row(index === state.selected, "", `${formatDistance(distance, locale)} · ${power ? power + " · " : ""}${name}`));
-        const detail = [socketsText(charger, locale), charger.capacity ? t(locale, "c.places", { n: charger.capacity }) : "", charger.operator && charger.operator !== name ? charger.operator : ""].filter(Boolean).join(" · ");
+        const detail = [priceText(charger, locale), socketsText(charger, locale), charger.capacity ? t(locale, "c.places", { n: charger.capacity }) : "", charger.operator && charger.operator !== name ? charger.operator : ""].filter(Boolean).join(" · ");
         if (detail) body.push(clip("      " + detail, LINE_WIDTH));
       }
       return { header, body, footer: t(locale, "c.resultsFooter") };

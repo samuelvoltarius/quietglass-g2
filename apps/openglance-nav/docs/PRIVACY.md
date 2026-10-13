@@ -58,6 +58,12 @@ about 10 m and a 15 km radius; for *Charging stations along the route* on the
 phone and while driving, boxes covering the route, rounded to about 10 m.
 Switched off, nothing is asked.
 
+In a **private build with your own servers** (`VITE_STREETS_URL`,
+`VITE_CHARGERS_URL`), the route's line goes to your own routing server for
+the street names, and the charging-station questions above (position rounded
+to about 10 m, or the route boxes) go to your own server instead of Overpass.
+The streets around the route are still asked from Overpass as described.
+
 Nothing else is sent, and nothing is sent anywhere else. With the demo route
 switched on, **nothing leaves the device at all**.
 

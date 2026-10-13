@@ -7,6 +7,7 @@
     "babel-llm": "https://my-server.tailnet-name.ts.net:8448",
     "oebb": "https://my-server.tailnet-name.ts.net:8458",
     "valhalla": "https://my-server.tailnet-name.ts.net:8455",
+    "chargers": "https://my-server.tailnet-name.ts.net:8464",
     "tts": "https://my-server.tailnet-name.ts.net:8459",
     "shoot-day": "https://my-server.tailnet-name.ts.net:8445",
     "klipper": "https://my-server.tailnet-name.ts.net:8447",

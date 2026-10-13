@@ -2,7 +2,7 @@ import { formatDistance, formatDuration, projectOntoPath, cumulativeMeters, dist
 import { MAX_STOPS, type Route, type TravelMode } from "../routing/provider";
 import type { FoundPlace } from "../geocode/photon";
 import type { RoutePoint, SavedRoute } from "../trip/saved";
-import { powerText, socketsText, speedOf, type ChargerError, type RouteCharger } from "../chargers/chargers";
+import { powerText, priceText, socketsText, speedOf, type ChargerError, type RouteCharger } from "../chargers/chargers";
 import { escapeHtml, tr, type Locale } from "../i18n";
 import { messages } from "../messages";
 
@@ -198,11 +198,12 @@ export function plannerTemplate(
       ${chargers.list.slice(0, 25).map((c, index) => {
         const power = powerText(c.charger);
         const sockets = socketsText(c.charger, locale);
+        const price = priceText(c.charger, locale);
         const fast = speedOf(c.charger) === "fast";
         return `
         <li>
           <span>${fast ? "⚡ " : ""}${escapeHtml(c.charger.name || tr(messages, locale, "c.noName"))}<br />
-            <small>${t("r.chargerAt", { d: formatDistance(c.along, locale) })}${power ? " · " + escapeHtml(power) : ""}${sockets ? " · " + escapeHtml(sockets) : ""}${c.charger.capacity ? " · " + t("c.places", { n: c.charger.capacity }) : ""} · ${c.off < 50 ? t("r.chargerOnRoute") : t("r.chargerOff", { d: formatDistance(c.off, locale) })}</small></span>
+            <small>${t("r.chargerAt", { d: formatDistance(c.along, locale) })}${power ? " · " + escapeHtml(power) : ""}${price ? " · " + escapeHtml(price) : ""}${sockets ? " · " + escapeHtml(sockets) : ""}${c.charger.capacity ? " · " + t("c.places", { n: c.charger.capacity }) : ""} · ${c.off < 50 ? t("r.chargerOnRoute") : t("r.chargerOff", { d: formatDistance(c.off, locale) })}</small></span>
           <button type="button" class="pick" data-charger="${index}"${full ? " disabled" : ""}>${t("r.addStop")}</button>
         </li>`;
       }).join("")}

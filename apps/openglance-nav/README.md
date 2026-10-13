@@ -118,6 +118,13 @@ thinned to whole pixels and capped at 1 500 segments, main roads kept first.
 
 ### Where the streets come from, and what happens when they don't
 
+**Private build with `VITE_STREETS_URL`** (your own Valhalla, usually the same
+server as `VITE_ROUTER_URL`; `selfhost/build-private.mjs` sets it): the street
+names along the route come from that server - `trace_attributes` with the
+route's own shape as one GET `?json=` (no preflight), 0.1-0.3 s even for a
+300 km route. Those names label the map reliably; the streets *around* the
+route still come from Overpass as below when it answers, and simply join in.
+
 Streets are OpenStreetMap data from the public **Overpass API**: one request
 per route, made only after the overview has been on screen for 1.5 s (so a
 swipe past it costs nothing), with only way geometry asked for and cut to
@@ -232,6 +239,14 @@ is announced as a stop, not as the destination. A reroute keeps the stops not
 yet passed.
 
 ## Charging stations (optional, off by default)
+
+**Private build with `VITE_CHARGERS_URL`**: the stations come from your own
+server instead of Overpass (see `selfhost/services/chargers`): official
+registers (E-Control Austria with the ad-hoc price per kWh, Bundesnetzagentur
+Germany), refreshed daily, asked with a plain GET (`/chargers?lat&lon&radius`
+or `?boxes=…`, no preflight), at most one request every 5 s, answered in the
+same element format. The price shows as "0,59 €/kWh" on the glasses list and
+the phone. Without the variable everything below applies unchanged.
 
 For electric cars: switch **Show charging stations** on under *Charging
 stations* on the phone. The stations come from OpenStreetMap

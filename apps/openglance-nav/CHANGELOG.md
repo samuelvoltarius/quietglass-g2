@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.7.1] — 2026-10-13
+
+Street names and charging stations from your own servers in a private build,
+because the public Overpass servers were unreliable (overpass-api.de answered
+406, overpass.private.coffee timed out).
+
+### Added
+
+- **`VITE_STREETS_URL`** (private build; `selfhost/build-private.mjs` sets it to
+  the own Valhalla): the street names along the route come from Valhalla's
+  `trace_attributes` with the route's own shape - one GET `?json=` without a
+  preflight, measured 0.13 s for a city route and 0.24 s for Salzburg-Vienna
+  (17 000 shape points). Consecutive edges of one street are joined, so a
+  road gets one label. The streets around the route still come from Overpass
+  when it answers and join in; failure of either is silent as before.
+- **`VITE_CHARGERS_URL`** (private build): charging stations from your own
+  read-only server (`selfhost/services/chargers`): official registers
+  (E-Control Austria incl. the ad-hoc price per kWh, Bundesnetzagentur
+  Germany), plain GET `/chargers?lat&lon&radius` or `?boxes=…`, the answer in
+  Overpass element format so the parser is unchanged. Overpass is not asked
+  then; at most one request every 5 s instead of 30 s.
+- **Price per kWh** ("0,59 €/kWh") on the glasses' "Charging nearby" list and
+  in the phone's list along a planned route, when the server knows it.
+- Development only: `?chargers=1` switches charging stations on in the
+  simulator.
+
+### Unchanged
+
+- Without the two variables (public build) everything works as in 0.7.0 with
+  the public Overpass servers. Error texts are the same.
+
 ## [0.7.0] — 2026-10-13
 
 Plan routes ahead on the phone, save them, and charging stations for the
