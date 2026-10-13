@@ -22,7 +22,11 @@ function fakeGlasses(stored: Record<string, string> = {}) {
   const bridge = {
     getLocalStorage: vi.fn(async (key: string) => storage.get(key) ?? ""),
     setLocalStorage: vi.fn(async (key: string, value: string) => { storage.set(key, value); return true; }),
-    rebuildPageContainer: vi.fn(async () => true),
+    updateImageRawData: vi.fn(async () => "success"),
+    rebuildPageContainer: vi.fn(async (page: { textObject?: Array<{ containerID?: number; content?: string }> }) => {
+      for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
+      return true;
+    }),
     createStartUpPageContainer: vi.fn(async (page: { textObject?: Array<{ containerID?: number; content?: string }> }) => {
       for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
       return 0;

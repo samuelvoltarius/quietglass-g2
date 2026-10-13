@@ -124,3 +124,49 @@ function controlView(state: ViewState): ScreenView {
 function ageText(seconds: number): string {
   return seconds < 120 ? `${Math.round(seconds)} s` : `${Math.round(seconds / 60)} min`;
 }
+
+/**
+ * The two page layouts: while a printer is online the HUD shows a progress ring
+ * with the text beside it and the nozzle curve below ("print"); everything
+ * else is the plain header / body / footer page ("plain").
+ */
+export type Layout = "print" | "plain";
+
+export function layoutFor(state: ViewState): Layout {
+  return state.screen === "hud" && state.connection.kind !== "setup" && state.status?.online === true ? "print" : "plain";
+}
+
+/** What the print layout writes: the usual three rows plus two temperature lines under the ring. */
+export interface PrintView extends ScreenView {
+  readonly temps: readonly string[];
+}
+
+/** Characters of the text column beside the ring (424 px wide). */
+export const SIDE_WIDTH = 40;
+/** Rows beside the ring. */
+export const SIDE_ROWS = 4;
+
+/** The online HUD for the print layout. Only valid when `layoutFor(state)` is "print". */
+export function buildPrintView(state: ViewState): PrintView {
+  const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
+  const status = state.status;
+  if (!status?.online) return { ...buildView(state), temps: [] };
+  const plain = hudView(state);
+  const left = duration(status.minutesLeft);
+  const temp = (value: { now: number; target: number } | null): string => (value ? `${value.now}/${value.target}` : "–");
+  const bridgeLine = state.connection.kind === "error"
+    ? L("g.noBridge", { reason: errorReason(state.locale, state.connection.code, state.connection.status) })
+    : "";
+  const side = [
+    status.file.replace(/\.gcode$/i, "") || "–",
+    status.layers ? L("g.layer", { layer: status.layer ?? "?", layers: status.layers, left }) : L("g.left", { left }),
+    L("g.speed", { speed: status.speed }),
+    bridgeLine || state.message || (status.message ? L("g.message", { message: status.message }) : ""),
+  ];
+  return {
+    header: plain.header,
+    body: side.slice(0, SIDE_ROWS).map((row) => fit(row, SIDE_WIDTH)),
+    footer: plain.footer,
+    temps: [L("g.nozzle", { temp: temp(status.nozzle) }), L("g.bed", { temp: temp(status.bed) })].map((row) => fit(row, 28)),
+  };
+}

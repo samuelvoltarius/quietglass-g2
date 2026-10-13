@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0] — 2026-10-13
+
+### Added
+
+- While a printer is online the HUD shows a progress ring (144 x 144 image) at the left with the percentage in large pixel digits, the file, layer, remaining time and speed beside it, and below them the nozzle temperature of the last five minutes as a curve (288 x 64 image) with nozzle and bed temperatures next to it. The ring is only resent when the percentage changes, the curve only with a new reading.
+- Offline, control and setup screens keep the plain text page; changing between the two layouts is a page rebuild.
+- `?demo=1&pct=73` starts the demo print at 73 % in the simulator.
+
+### Fixed
+
+- Page set-up on the glasses: one `rebuildPageContainer`, then exactly one `createStartUpPageContainer`; every later page is a rebuild.
+
 ## [0.1.4] — 2026-10-13
 
 ### Changed

@@ -5,9 +5,12 @@ import type { ScreenView } from "./screen";
  * only be written when something actually changed: each update crosses BLE,
  * and needless writes cost latency and battery for no visible benefit.
  */
-export function sameView(a: ScreenView | null, b: ScreenView): boolean {
+type View = ScreenView & { readonly temps?: readonly string[] };
+
+export function sameView(a: View | null, b: View): boolean {
   if (!a) return false;
   return (
+    (a.temps ?? []).join("|") === (b.temps ?? []).join("|") &&
     a.header === b.header &&
     a.footer === b.footer &&
     a.body.length === b.body.length &&

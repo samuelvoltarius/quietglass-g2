@@ -120,7 +120,7 @@ export function isLoopback(url: string): boolean {
  * An in-memory printer for `?demo=1`: a print that advances over ten minutes
  * and reacts to pause, resume and cancel. Labelled DEMO on the glasses.
  */
-export function createDemoPrinter(now: () => number = Date.now): PrinterApi {
+export function createDemoPrinter(now: () => number = Date.now, startPercent = 42): PrinterApi {
   const started = now();
   let pausedAt: number | null = null;
   let pausedTotal = 0;
@@ -129,7 +129,7 @@ export function createDemoPrinter(now: () => number = Date.now): PrinterApi {
   return {
     demo: true,
     status: async () => {
-      const seconds = elapsed() + 4 * 60 * 60 * 0.42;     // starts at ~42 %
+      const seconds = elapsed() + 4 * 60 * 60 * (startPercent / 100);     // starts at ~42 % unless told otherwise
       const progress = Math.min(99, Math.round((seconds / (4 * 60 * 60)) * 100));
       return parseStatus({
         online: true,

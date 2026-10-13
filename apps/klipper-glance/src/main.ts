@@ -5,13 +5,20 @@ import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
 import { t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import type { ScreenView } from "./glasses/screen";
-import { buildView, controlRows, errorReason, type Connection, type ViewState } from "./glasses/views";
+import {
+  buildPrintView, buildView, controlRows, errorReason, layoutFor, type Connection, type Layout, type PrintView, type ViewState,
+} from "./glasses/views";
+import { curveFrame, ringFrame } from "./glasses/charts";
+import { bitmapKey } from "./glasses/gfx";
+import { TempHistory, demoTempSamples } from "./printer/history";
 import { loadSettings, saveSettings, type Settings } from "./storage/persist";
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
+/** `?demo=1&pct=73` starts the demo print at 73 % (for the simulator). */
+const DEMO_PERCENT = Number(new URLSearchParams(globalThis.location?.search ?? "").get("pct"));
 
 /** How often the bridge is asked. */
 const POLL_MS = 5_000;
@@ -26,7 +33,7 @@ async function boot(): Promise<void> {
   let locale: Locale = await resolveLocale(bridge);
 
   const makeApi = (): PrinterApi | null => {
-    if (DEMO) return createDemoPrinter();
+    if (DEMO) return createDemoPrinter(Date.now, Number.isFinite(DEMO_PERCENT) && DEMO_PERCENT > 0 ? DEMO_PERCENT : 42);
     if (!settings.bridgeUrl) return null;
     return createClient({ baseUrl: settings.bridgeUrl, ...(settings.token ? { token: settings.token } : {}) });
   };
@@ -72,16 +79,36 @@ async function boot(): Promise<void> {
     message,
   });
 
-  let lastView: ScreenView | null = null;
+  const temps = new TempHistory();
+  if (DEMO) for (const sample of demoTempSamples(Date.now())) temps.add(sample.t, { now: sample.now, target: sample.target });
+  let lastView: ScreenView | PrintView | null = null;
+  let lastLayout: Layout = "plain";
+  let lastFrames = "";
   let pageReady = false;
+  /** createStartUpPageContainer runs once; afterwards a page is only ever rebuilt. */
+  let created = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
 
   const drawOnce = async (): Promise<void> => {
-    const view = buildView(viewState());
-    if (sameView(lastView, view)) return;
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
-    if (result.ok) { pageReady = true; lastView = view; return; }
+    const state = viewState();
+    const layout = layoutFor(state);
+    const view = layout === "print" ? buildPrintView(state) : buildView(state);
+    const percent = state.status?.online ? state.status.progress : 0;
+    const frames = { ring: ringFrame(percent), curve: curveFrame(temps.samples()) };
+    const key = layout === "print" ? bitmapKey(frames.ring) + "|" + bitmapKey(frames.curve) : "";
+    if (pageReady && layout === lastLayout && sameView(lastView, view) && key === lastFrames) return;
+    let result;
+    if (!pageReady) {
+      // After the first creation a page is only rebuilt: a second create would be refused as invalid.
+      result = created ? await rebuildPage(bridge, view, layout, frames) : await createPage(bridge, view, layout, frames);
+      if (result.ok) created = true;
+    } else if (layout !== lastLayout) {
+      result = await rebuildPage(bridge, view, layout, frames);
+    } else {
+      result = await updatePage(bridge, view, layout, frames, lastView);
+    }
+    if (result.ok) { pageReady = true; lastView = view; lastLayout = layout; lastFrames = key; return; }
     pageReady = false;
     lastView = null;
     console.warn("[klipperglance] draw failed:", result.reason);
@@ -146,6 +173,8 @@ async function boot(): Promise<void> {
       if (closed || generation !== startedIn) return;
       status = next;
       receivedAt = Date.now();
+      if (next.online && !DEMO) temps.add(receivedAt, next.nozzle);
+      else if (next.online) temps.add(receivedAt, next.nozzle);
       connection = { kind: "ok" };
     } catch (error) {
       if (closed || generation !== startedIn) return;
@@ -284,6 +313,7 @@ async function boot(): Promise<void> {
         api = makeApi();
         status = null;
         receivedAt = 0;
+        temps.clear();
         screen = "hud";
         disarm();
         connection = api ? { kind: "loading" } : { kind: "setup" };
