@@ -118,7 +118,7 @@ describe("first run", () => {
   it("says what to do when the motion sensor is unavailable", () => {
     const view = buildView(createMonitor(), DEFAULT_SETTINGS, { locale: "de", sensorOff: true });
     expect(view.body.join(" ")).toContain("öffne die App neu");
-    expect(view.footer).toContain("Doppeltippen");
+    expect(view.footer).toContain("2× = Ende");
   });
 
   it("leads the phone page with the next step, in German", () => {

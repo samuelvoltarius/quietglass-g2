@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1] — 2026-10-13
+
+### Fixed
+
+- Gestures are wired before the IMU is switched on. `imuControl` used to be awaited first; a call that never answered left the app deaf to everything, the double tap included. The call now runs in the background with a 5 s limit and ends in the "no motion sensor" screen.
+- Leaving through the system (another app, the system menu) switches the IMU off and stops drawing; coming back rebuilds the page and switches it on again. A system exit or crash switches it off for good. The demo nodding stops with the app.
+- A reconnect or a return to the foreground rebuilds the page even when nothing changed.
+
+### Changed
+
+- Overwriting a saved posture takes a second tap within 4 s ("Nochmal tippen = Haltung neu speichern"); the very first calibration still takes one tap. Clearing today's tally takes a second swipe ("Nochmal wischen = Zählung von heute löschen").
+- Wording: "85 % aufrecht", "nach vorne geneigt" throughout, footer "2× = Ende".
+
 ## [0.4.0] — 2026-10-13
 
 ### Added

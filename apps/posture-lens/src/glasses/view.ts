@@ -26,6 +26,8 @@ export interface ViewOptions {
   readonly justCalibrated?: boolean;
   /** The glasses refused IMU reporting: nothing can be measured until the app is reopened. */
   readonly sensorOff?: boolean;
+  /** A gesture that would overwrite something is armed: the footer says what doing it again does. */
+  readonly confirm?: "calibrate" | "reset" | null;
 }
 
 export function buildView(
@@ -34,7 +36,12 @@ export function buildView(
   options: ViewOptions = {},
   now = Date.now(),
 ): PostureView {
-  return fitView(composeView(monitor, settings, options, now));
+  const view = composeView(monitor, settings, options, now);
+  // An armed overwrite always says so in the footer, whatever the state shows.
+  const confirm = options.confirm && !options.sensorOff
+    ? t(options.locale ?? "en", options.confirm === "calibrate" ? "g.confirmCalibrate" : "g.confirmReset")
+    : null;
+  return fitView(confirm ? { ...view, footer: confirm } : view);
 }
 
 /** The view before the safety cut; tests check it never needs one. */

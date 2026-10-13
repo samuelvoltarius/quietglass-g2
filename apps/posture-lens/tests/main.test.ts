@@ -24,7 +24,8 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
   const imu: boolean[] = [];
   const saved: string[] = [];
   const images: string[] = [];
-  const writes = { count: 0, inFlight: 0, maxInFlight: 0 };
+  const writes = { count: 0, inFlight: 0, maxInFlight: 0, creates: 0, rebuilds: 0, footer: "" };
+  const imuAnswer = { hang: false };
   const write = async (): Promise<void> => {
     writes.count += 1;
     writes.inFlight += 1;
@@ -36,17 +37,21 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
     // Stored calibration, so the app starts measuring straight away.
     getLocalStorage: async () => stored,
     setLocalStorage: async (_key: string, value: string) => { saved.push(value); return true; },
-    rebuildPageContainer: async () => true,
-    createStartUpPageContainer: async () => { await write(); return 0; },
-    textContainerUpgrade: async () => { await write(); return true; },
+    rebuildPageContainer: async () => { writes.rebuilds += 1; return true; },
+    createStartUpPageContainer: async () => { writes.creates += 1; await write(); return 0; },
+    textContainerUpgrade: async (update: { containerID?: number; content?: string }) => {
+      if (update.containerID === 3) writes.footer = update.content ?? "";
+      await write();
+      return true;
+    },
     updateImageRawData: async (update: { containerName?: string }) => { images.push(update.containerName ?? ""); return ImageRawDataUpdateResult.success; },
-    imuControl: async (on: boolean) => { imu.push(on); return true; },
+    imuControl: (on: boolean): Promise<boolean> => { imu.push(on); return imuAnswer.hang ? new Promise(() => undefined) : Promise.resolve(true); },
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: (callback: (status: unknown) => void) => { statusHandler = callback; return () => undefined; },
   };
   return {
-    bridge, shutdown, imu, writes, saved, images,
+    bridge, shutdown, imu, writes, saved, images, imuAnswer,
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     sample: (y: number) => handler?.({ sysEvent: { eventType: IMU_DATA_REPORT, imuData: { x: 0, y, z: 1 } } }),
     reconnect: () => statusHandler?.({ connectType: "connected" }),
@@ -171,4 +176,112 @@ describe("posturelens loop", () => {
       expect(fake.images.slice(start).filter((n) => n === name).length, name).toBeLessThanOrEqual(15);
     }
   });
+
+  it("regression: a hanging IMU call never makes the glasses deaf — the double tap exits", async () => {
+    const fake = fakeBridge();
+    fake.imuAnswer.hang = true;
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.imu).toEqual([true]);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+  });
+
+  it("a hanging IMU call ends in the no-sensor screen instead of waiting forever", async () => {
+    const fake = fakeBridge();
+    fake.imuAnswer.hang = true;
+    harness.bridge = fake.bridge;
+    vi.stubGlobal("navigator", { language: "en-US" });
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(fake.writes.footer).toBe("2× = exit");
+  });
+
+  it("one tap does not overwrite a saved posture; a second tap within the window does", async () => {
+    vi.stubGlobal("navigator", { language: "en-US" });
+    const fake = await boot();
+    fake.sample(0.2);
+    await vi.advanceTimersByTimeAsync(600);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(fake.saved).toEqual([]);
+    expect(fake.writes.footer).toContain("tap again");
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.saved).toHaveLength(1);
+  });
+
+  it("an armed tap runs out after a few seconds", async () => {
+    vi.stubGlobal("navigator", { language: "en-US" });
+    const fake = await boot();
+    fake.sample(0.2);
+    await vi.advanceTimersByTimeAsync(600);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.writes.footer).not.toContain("tap again");
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.saved).toEqual([]);
+  });
+
+  it("one swipe does not clear today's tally; a second swipe does", async () => {
+    vi.stubGlobal("navigator", { language: "en-US" });
+    const fake = await boot();
+    for (let i = 0; i < 6; i++) { fake.sample(0); await vi.advanceTimersByTimeAsync(500); }
+    await vi.advanceTimersByTimeAsync(1100);
+    const before = fake.writes.footer;
+    expect(before).toContain("upright");
+    fake.emit(1);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(fake.writes.footer).toContain("swipe again");
+    fake.emit(2);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(fake.writes.footer).toBe("tracking");
+  });
+
+  it("leaving through the system switches the IMU off; coming back rebuilds and switches it on", async () => {
+    const fake = await boot();
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.imu.at(-1)).toBe(false);
+    const writes = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.writes.count).toBe(writes);
+    const rebuilds = fake.writes.rebuilds;
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.writes.rebuilds).toBe(rebuilds + 1);
+    expect(fake.writes.creates).toBe(1);
+    expect(fake.imu.at(-1)).toBe(true);
+  });
+
+  it("a system exit switches the IMU off and stops drawing", async () => {
+    const fake = await boot();
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(6);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.imu.at(-1)).toBe(false);
+    const writes = fake.writes.count;
+    for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(500); }
+    expect(fake.writes.count).toBe(writes);
+  });
+
+  it("a reconnect rebuilds the page, never creates it twice, and restarts the IMU", async () => {
+    const fake = await boot();
+    await vi.advanceTimersByTimeAsync(100);
+    const imuCalls = fake.imu.length;
+    fake.reconnect();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.writes.creates).toBe(1);
+    expect(fake.writes.rebuilds).toBe(2);
+    expect(fake.imu.length).toBe(imuCalls + 1);
+  });
 });
+
