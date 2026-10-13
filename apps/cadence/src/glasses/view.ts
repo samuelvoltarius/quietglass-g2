@@ -121,7 +121,11 @@ function footerText(state: MetronomeState, options: ViewOptions, locale: Locale)
   if (timed) parts.push(formatDuration(options.sessionSeconds ?? 0, locale));
 
   parts.push(t(locale, state.running ? "g.tapPause" : "g.tapStart"));
-  // The swipe hint goes where there is room; the session clock wins otherwise.
-  const withSwipe = [...parts, t(locale, "g.swipeTempo")].join(" · ");
-  return !timed || withSwipe.length <= LINE_COLS ? withSwipe : parts.join(" · ");
+  // As many gesture hints as fit, in this order; the session clock always stays.
+  const extras = [t(locale, "g.swipeTempo"), t(locale, "g.holdTop"), t(locale, "g.exit")];
+  for (let n = extras.length; n > 0; n--) {
+    const line = [...parts, ...extras.slice(0, n)].join(" · ");
+    if (line.length <= LINE_COLS) return line;
+  }
+  return parts.join(" · ");
 }

@@ -1,6 +1,6 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import {
-  clampBpm, createState, msPerBeat, msToNextBeat, reset, retime, toggle, type MetronomeState,
+  clampBpm, createState, msPerBeat, msToNextBeat, restartCount, retime, toggle, type MetronomeState,
 } from "./metronome/engine";
 import { addSession, nextSessionId, type PracticeSession } from "./practice/log";
 import { gestureFromEvent } from "./input/gestures";
@@ -9,7 +9,8 @@ import { sameView } from "./glasses/diff";
 import { createPage, updatePage, ICON_HEIGHT, ICON_WIDTH } from "./glasses/render";
 import { PENDULUM_MIDSWING_MAX_BPM, bpmFrame, pendulumFrame, pendulumSwing } from "./glasses/charts";
 import { bitmapKey, iconBitmap } from "./glasses/gfx";
-import { load, save, setSettings, type CadenceData } from "./storage/persist";
+import { load, loadRunRaw, parseRun, RUN_RESUME_MS, save, saveRun, setSettings, type CadenceData } from "./storage/persist";
+import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { createExitRequest } from "./exit";
@@ -18,6 +19,8 @@ const METRONOME_SIGN = ["....##....", "...####...", "...####...", "...#..#...", 
 
 /** Tempo step for a swipe on the glasses. */
 const BPM_STEP = 4;
+/** While the beat runs, its state is written this often, so a restart knows when it was last alive. */
+const HEARTBEAT_MS = 30_000;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -32,6 +35,9 @@ async function boot(): Promise<void> {
   let midTimer: ReturnType<typeof setTimeout> | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
   let closed = false;
+  /** In the background (left through the system): no drawing, no timers; the beat itself is time-based and carries on. */
+  let paused = false;
+  let lastHeartbeat = 0;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
   let locale: Locale = await resolveLocale(bridge);
@@ -46,7 +52,7 @@ async function boot(): Promise<void> {
     });
 
   const drawOnce = async (): Promise<void> => {
-    if (closed) return;
+    if (closed || paused) return;
     const view = currentView();
     // Pictures are pure in (tempo) and (state, now); they are only sent when they differ from what is shown.
     const frames = {
@@ -103,7 +109,7 @@ async function boot(): Promise<void> {
   const scheduleBeat = (): void => {
     clearTimeout(timer);
     clearTimeout(midTimer);
-    if (!state.running || closed) return;
+    if (!state.running || closed || paused) return;
     const delay = Math.max(20, msToNextBeat(state, data.settings, Date.now()));
     timer = setTimeout(() => {
       void draw();
@@ -115,9 +121,8 @@ async function boot(): Promise<void> {
     }, delay);
   };
 
-  const endSession = (): void => {
+  const endSession = (now = Date.now()): void => {
     if (sessionStartedAt === null) return;
-    const now = Date.now();
     // Only record something that was actually practised.
     if (data.activeItem && now - sessionStartedAt >= 10_000) {
       const session: PracticeSession = {
@@ -133,9 +138,58 @@ async function boot(): Promise<void> {
     sessionStartedAt = null;
   };
 
+  /** Writes the beat and the open session; a restart after a locked phone continues from here. */
+  const persistRun = (): void => {
+    lastHeartbeat = Date.now();
+    void saveRun(bridge, { ...state, sessionStartedAt, savedAt: lastHeartbeat })
+      .catch((error: unknown) => { console.warn("[cadence] saving the beat failed:", error); });
+  };
+
+  // Pick up the beat and the session from before a restart. Away too long:
+  // the session is logged up to the last sign of life and the beat waits.
+  const saved = parseRun(await loadRunRaw(bridge));
+  if (saved) {
+    const now = Date.now();
+    if (now - saved.savedAt <= RUN_RESUME_MS && saved.savedAt <= now + 60_000) {
+      state = { running: saved.running, startedAt: saved.startedAt, beatsBefore: saved.beatsBefore };
+      sessionStartedAt = saved.sessionStartedAt;
+    } else if (saved.sessionStartedAt !== null) {
+      sessionStartedAt = saved.sessionStartedAt;
+      endSession(saved.savedAt);
+      persistRun();
+    }
+  }
+
+  const stopTimers = (): void => {
+    clearTimeout(timer);
+    clearTimeout(midTimer);
+    clearInterval(tick);
+    tick = undefined;
+  };
+  const startTick = (): void => {
+    if (tick !== undefined || closed || paused) return;
+    // Keeps the session clock moving while paused; sameView drops idle ticks.
+    tick = setInterval(() => {
+      if (state.running && Date.now() - lastHeartbeat >= HEARTBEAT_MS) persistRun();
+      void draw();
+    }, 1000);
+  };
+  const resume = (): void => {
+    if (!paused || closed) return;
+    paused = false;
+    pageReady = false;
+    lastView = null;
+    lastFrames = "";
+    startTick();
+    scheduleBeat();
+    void draw();
+  };
+
   const requestExit = createExitRequest(bridge, {
     onConfirmed: () => {
       endSession();
+      state = createState();
+      persistRun();
       closed = true;
       clearTimeout(timer);
       clearTimeout(midTimer);
@@ -147,6 +201,12 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { paused = true; resume(); return; }
+    if (lifecycle === "background") { persistRun(); paused = true; stopTimers(); return; }
+    if (lifecycle === "exit") { persistRun(); closed = true; stopTimers(); return; }
+    // A gesture means the app is on the glasses again, even if no "foreground" came.
+    resume();
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -156,6 +216,7 @@ async function boot(): Promise<void> {
         state = toggle(state, data.settings, now);
         if (state.running) sessionStartedAt = sessionStartedAt ?? now;
         else endSession();
+        persistRun();
         scheduleBeat();
         break;
       }
@@ -170,7 +231,10 @@ async function boot(): Promise<void> {
         scheduleBeat();
         break;
       case "longPress":
-        state = reset();
+        // From the top: bar 1 again, a running beat keeps running.
+        state = restartCount(state, Date.now());
+        persistRun();
+        scheduleBeat();
         break;
       case "doubleClick":
         // System exit dialog; the beat keeps running until the user confirms.
@@ -189,8 +253,8 @@ async function boot(): Promise<void> {
     }
   });
 
-  // Keeps the session clock moving while paused; sameView drops idle ticks.
-  tick = setInterval(() => { void draw(); }, 1000);
+  startTick();
+  scheduleBeat();
 
   mountPhoneUi({
     getLocale: () => locale,

@@ -102,7 +102,7 @@ describe("first run", () => {
     const view = buildView(createState(), DEFAULT_SETTINGS, { locale: "de" }, 0);
     expect(view.header).toBe("Cadence");
     expect(view.body).toContain("Tippe einmal, um den Takt zu starten.");
-    expect(view.body[1]).toBe("100 Schläge/Min  4/4  Takt 1");
+    expect(view.body[1]).toBe("100 BPM  4/4  Takt 1");
     expect(view.footer).toBe("Pause · Tippen = Start · Wischen = Tempo");
   });
 

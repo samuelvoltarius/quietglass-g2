@@ -118,3 +118,48 @@ function readSignature(value: TimeSignature | undefined): TimeSignature {
     : DEFAULT_SETTINGS.signature.unit;
   return { beats, unit };
 }
+
+/**
+ * The running beat and the open practice session, kept apart from the data.
+ * The Even app unloads Cadence after the phone was locked for a while; the
+ * next start picks the beat and the session up again.
+ */
+export const RUN_KEY = "quietglass.cadence.run.v1";
+/** Longer away than this and the session is closed at the last sign of life. */
+export const RUN_RESUME_MS = 30 * 60 * 1000;
+
+export interface SavedRun {
+  readonly running: boolean;
+  readonly startedAt: number | null;
+  readonly beatsBefore: number;
+  readonly sessionStartedAt: number | null;
+  readonly savedAt: number;
+}
+
+export async function saveRun(bridge: EvenAppBridge, run: SavedRun): Promise<void> {
+  await bridge.setLocalStorage(RUN_KEY, JSON.stringify(run));
+}
+
+export async function loadRunRaw(bridge: EvenAppBridge): Promise<string> {
+  return (await bridge.getLocalStorage(RUN_KEY).catch(() => "")) ?? "";
+}
+
+export function parseRun(raw: string): SavedRun | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<SavedRun>;
+    if (typeof v.savedAt !== "number" || !Number.isFinite(v.savedAt)) return null;
+    const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
+    const startedAt = num(v.startedAt);
+    const running = v.running === true && startedAt !== null;
+    return {
+      running,
+      startedAt: running ? startedAt : null,
+      beatsBefore: Math.max(0, num(v.beatsBefore) ?? 0),
+      sessionStartedAt: num(v.sessionStartedAt),
+      savedAt: v.savedAt,
+    };
+  } catch {
+    return null;
+  }
+}

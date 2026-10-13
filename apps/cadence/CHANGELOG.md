@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1] — 2026-10-13
+
+### Fixed
+
+- Hold now does what the phone says: back to bar 1. A running beat keeps running from a fresh bar instead of stopping; a paused one only loses its count.
+- The beat and the open practice session survive a restart of the app (phone locked, Even app unloaded it). Away for more than 30 minutes, the session is logged up to the last sign of life.
+- Leaving through the system stops the beat timers and drawing; coming back rebuilds the page.
+
+### Changed
+
+- Glasses say "BPM" instead of "Schläge/Min"; the footer names hold and 2× when there is room.
+
 ## [0.4.0] — 2026-10-13
 
 ### Added

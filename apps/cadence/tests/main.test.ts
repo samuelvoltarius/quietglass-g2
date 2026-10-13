@@ -11,7 +11,7 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
 
-function fakeBridge(writeDelayMs = 0) {
+function fakeBridge(writeDelayMs = 0, storage = new Map<string, string>()) {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
@@ -25,8 +25,8 @@ function fakeBridge(writeDelayMs = 0) {
     writes.inFlight -= 1;
   };
   const bridge = {
-    getLocalStorage: async () => "",
-    setLocalStorage: async () => true,
+    getLocalStorage: async (key: string) => storage.get(key) ?? "",
+    setLocalStorage: async (key: string, value: string) => { storage.set(key, value); return true; },
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
       await write((page.textObject ?? []).find((part) => part.containerID === 2)?.content ?? "", true);
@@ -41,7 +41,7 @@ function fakeBridge(writeDelayMs = 0) {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, writes, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, storage, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 describe("cadence run loop", () => {
@@ -55,8 +55,8 @@ describe("cadence run loop", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  async function boot(writeDelayMs = 0) {
-    const fake = fakeBridge(writeDelayMs);
+  async function boot(writeDelayMs = 0, storage = new Map<string, string>()) {
+    const fake = fakeBridge(writeDelayMs, storage);
     harness.bridge = fake.bridge;
     vi.resetModules();
     await import("../src/main");
@@ -137,5 +137,48 @@ describe("cadence run loop", () => {
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.calls).toBe(1);
     expect(fake.writes.count).toBeGreaterThan(writesAtFailure);
+  });
+
+  it("hold starts the bar count over and keeps a running beat running", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fake.writes.body).toContain("bar 26");
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(fake.writes.body).toContain("bar 1");
+    expect(fake.writes.body).not.toContain("paused");
+    await vi.advanceTimersByTimeAsync(2400);
+    expect(fake.writes.body).toContain("bar 2");
+  });
+
+  it("picks the beat up again after a restart (phone locked, app unloaded)", async () => {
+    const storage = new Map<string, string>();
+    const first = await boot(0, storage);
+    first.emit(0);
+    await vi.advanceTimersByTimeAsync(30_000);
+    first.emit(5); // the system takes the app off the glasses
+    await vi.advanceTimersByTimeAsync(10);
+    expect(storage.get("quietglass.cadence.run.v1")).toContain('"running":true');
+
+    const second = await boot(0, storage);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(second.writes.body).toContain("bar ");
+    expect(second.writes.body).not.toContain("bar 1 ");
+    expect(second.writes.body).not.toContain("paused");
+  });
+
+  it("stops drawing in the background and rebuilds on return", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(10);
+    const count = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fake.writes.count).toBe(count);
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(fake.writes.count).toBeGreaterThan(count);
   });
 });

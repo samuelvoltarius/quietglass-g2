@@ -90,6 +90,14 @@ export function reset(): MetronomeState {
 }
 
 /**
+ * "From the top": the bar count goes back to 1. A running beat keeps running
+ * and starts a fresh bar right now; a paused one only loses its count.
+ */
+export function restartCount(state: MetronomeState, now: number): MetronomeState {
+  return state.running ? { running: true, startedAt: now, beatsBefore: 0 } : createState();
+}
+
+/**
  * Folds the beats already played at the old tempo into `beatsBefore`, so a
  * tempo change only affects beats from now on. Without this the whole run is
  * re-counted at the new tempo and the bar number jumps. The run is restarted
