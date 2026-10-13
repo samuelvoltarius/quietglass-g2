@@ -50,6 +50,20 @@ function fingerprint(bytes: Uint8Array): number {
   return hash >>> 0;
 }
 
+/** How long a location answer may take before navigation goes on without it. */
+const FIRST_FIX_MS = 10000;
+
+/** Rejects when the promise has not settled in time; the promise itself runs on. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timeout after ${ms} ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
@@ -369,11 +383,15 @@ async function boot(): Promise<void> {
     const seq = ++routeSeq;
     // A hold stops location updates to save battery; navigating again needs
     // them back, or the arrow froze on the first fix for the whole trip.
-    await bridge.startAppLocationUpdates({
+    void bridge.startAppLocationUpdates({
       accuracy: AppLocationAccuracy.High,
       distanceFilter: 5,
     }).catch(() => false);
-    const fix = await bridge.getAppLocation({ accuracy: AppLocationAccuracy.High }).catch(() => null);
+    // Bounded twice: the native timeout is only a hint, and a permission
+    // prompt can hold the answer back for as long as it stays open.
+    const fix = await withTimeout(
+      bridge.getAppLocation({ accuracy: AppLocationAccuracy.High, timeoutMs: FIRST_FIX_MS }), FIRST_FIX_MS + 2000,
+    ).catch(() => null);
     if (seq !== routeSeq) return;
     if (fix) position = { lat: fix.latitude, lon: fix.longitude };
     if (!position) { errorKey = "err.noGps"; await draw(); return; }
@@ -406,8 +424,10 @@ async function boot(): Promise<void> {
   } else await draw();
 
   // Location updates: the distance filter keeps the callback quiet while
-  // stationary, which matters for battery on a long walk.
-  await bridge.startAppLocationUpdates({
+  // stationary, which matters for battery on a long walk. Not awaited: the
+  // phone may be asking for permission, and until it answered the gesture
+  // handlers below were not installed — a tap to start did nothing.
+  void bridge.startAppLocationUpdates({
     accuracy: AppLocationAccuracy.High,
     distanceFilter: 5,
   }).catch(() => false);

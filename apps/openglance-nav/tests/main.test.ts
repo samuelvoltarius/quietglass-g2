@@ -222,6 +222,17 @@ describe("openglance lifecycle", () => {
     expect(fake.state.locationStarts).toBeGreaterThan(before);
   });
 
+  it("listens to the glasses while the phone still holds back the location", async () => {
+    // Regression: startAppLocationUpdates was awaited before the gesture
+    // handlers were installed; with a permission prompt open, a tap did nothing.
+    const fake = fakeBridge();
+    (fake.bridge as { startAppLocationUpdates: () => Promise<unknown> }).startAppLocationUpdates =
+      () => new Promise<never>(() => undefined);
+    await boot(fake);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+  });
+
   it("closes cleanly on double tap: no unhandled rejection and no redraw afterwards", async () => {
     // Regression: a failing shutDownPageContainer escaped as an unhandled
     // rejection, and the 2 s redraw kept running after the page was closed.
