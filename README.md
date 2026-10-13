@@ -62,6 +62,13 @@ Einrichtung (Deutsch, Schritt für Schritt, pro App): [docs/SETUP.md](docs/SETUP
 | [**Klipper Glance**](apps/klipper-glance) | Your 3D printer at a glance: progress, layer, time left and temperatures; pause, resume or cancel with a confirming second tap. | [`klipper-bridge.mjs`](apps/klipper-glance/examples/klipper-bridge.mjs) for Moonraker/Klipper | 57 |
 | [**Xaventra HUD**](apps/xaventra-hud) | Your self-hosted Xaventra agent on the glasses: status, open questions answered with tap or double tap (a confirming second tap for actions that reach outside), and voice by holding to speak. | The Even G2 endpoint of a Xaventra daemon (`/hud`, `/hud/answer`, `/hud/voice`) | 66 |
 
+**Host it all yourself — [`selfhost/`](selfhost).** Every server these apps need (Whisper speech-to-text, translation
+proxy, ÖBB proxy, Valhalla routing, Quiet Hub, Shoot Day, Klipper bridge, status server) with code or a pointer to
+it, systemd units, config templates and the `tailscale serve` command, plus `build-private.mjs`, which turns your
+tailnet addresses into the private `.ehpk` builds. Everything runs on your own machines and is reached only through
+your own Tailscale network — no public address, no token to type. Start with
+[`selfhost/README.md`](selfhost/README.md).
+
 ```
 2112 tests · 19 builds · every app confirmed rendering in the Even Hub simulator
 ```

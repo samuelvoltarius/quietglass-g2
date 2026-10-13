@@ -47,6 +47,12 @@ Der einfachste Weg ist **Tailscale**:
 > `tailscale serve status` siehst du den aktuellen Stand, mit
 > `tailscale serve --https=<Nummer> off` entfernst du gezielt nur eine Adresse.
 
+> **Alles selbst hosten?** Unter [`selfhost/`](../selfhost/README.md) liegen die Server-Dienste mit systemd-Units
+> und Konfig-Vorlagen sowie das Skript `build-private.mjs`, das aus deinen Tailscale-Adressen die **privaten Builds**
+> baut (auf der Brille sind nur **exakte Adressen** in der Netzwerk-Freigabe erlaubt, keine Platzhalter wie
+> `https://*`). Alles läuft auf deinen Rechnern und ist nur über dein Tailscale erreichbar; angemeldet wirst du
+> über den Tailscale-Login, ein Token musst du nicht eintippen.
+
 Wo im Text unten `<dein-rechner>.<dein-tailnet>.ts.net` steht, setzt du den
 Namen deines Servers im Tailscale-Netz ein.
 

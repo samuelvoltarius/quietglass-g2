@@ -1,0 +1,21 @@
+# Whisper (speech to text) for NextStop voice, Shoot Day, Quiet Hub and Babel Glass.
+# User service:  cp whisper-unified.service ~/.config/systemd/user/
+#                mkdir -p ~/.config/systemd/user/whisper-unified.service.d
+#                cp restart.conf ~/.config/systemd/user/whisper-unified.service.d/
+# Adjust the two paths below (repo clone and Python venv) if yours differ.
+[Unit]
+Description=Whisper unified (large-v3-turbo): HTTP :8017 + Babel WebSocket :8120
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/quietglass-g2/selfhost/services/whisper
+EnvironmentFile=-%h/.config/quietglass/whisper.env
+Environment=HF_HUB_OFFLINE=1 PYTHONWARNINGS=ignore
+# First start downloads the model: run once with HF_HUB_OFFLINE=0 (see README.md), then keep 1.
+ExecStart=%h/whisper-venv/bin/python %h/quietglass-g2/selfhost/services/whisper/server.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

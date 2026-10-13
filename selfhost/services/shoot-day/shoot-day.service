@@ -1,0 +1,21 @@
+# Shoot Day backend. User service:
+#   mkdir -p ~/.config/quietglass ~/.local/state/quietglass/shoot-day ~/.config/systemd/user
+#   cp .env.example ~/.config/quietglass/shoot-day.env && chmod 600 ~/.config/quietglass/shoot-day.env
+#   cp shoot-day.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now shoot-day
+#   loginctl enable-linger "$USER"
+# Code lives in the repo (not copied here): apps/shoot-day/examples/shoot-day-server.mjs (+ shoot-day-terminal.html next to it)
+[Unit]
+Description=Shoot Day backend (take planner)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/quietglass-g2/apps/shoot-day/examples
+EnvironmentFile=-%h/.config/quietglass/shoot-day.env
+ExecStart=/usr/bin/env node %h/quietglass-g2/apps/shoot-day/examples/shoot-day-server.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

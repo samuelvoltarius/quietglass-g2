@@ -1,0 +1,24 @@
+# Quiet Hub daemon. User service:
+#   mkdir -p ~/.config/quietglass ~/.config/systemd/user
+#   cp daemon.env.example ~/.config/quietglass/quiet-hub-daemon.env && chmod 600 ~/.config/quietglass/quiet-hub-daemon.env
+#   cp quiet-hub-daemon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now quiet-hub-daemon
+#   loginctl enable-linger "$USER"
+# Code lives in the repo (not copied here): apps/quiet-hub/examples/quiet-hub-daemon.mjs
+[Unit]
+Description=Quiet Hub daemon - agent events, Home Assistant and printer bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/quietglass-g2/apps/quiet-hub
+# If your agent CLIs (hermes, claude ...) live elsewhere, extend PATH here.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/quietglass/quiet-hub-daemon.env
+ExecStart=/usr/bin/env node examples/quiet-hub-daemon.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

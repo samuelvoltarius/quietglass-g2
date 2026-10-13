@@ -1,0 +1,30 @@
+# Valhalla routing (car / bicycle / pedestrian) for OpenGlance Nav and NextStop's walking legs.
+#   cp .env.example .env     # choose your region, see README.md
+#   docker compose up -d     # first start downloads the map and builds tiles (minutes to hours)
+#   docker compose logs -f
+#
+# Image: docker-valhalla by nilsnolde. The setup this guide was written from runs Valhalla 3.5.1
+# (image "latest" of July 2025). Once yours works, pin the digest in VALHALLA_IMAGE (.env.example).
+services:
+  valhalla:
+    image: ${VALHALLA_IMAGE:-ghcr.io/nilsnolde/docker-valhalla/valhalla:latest}
+    container_name: valhalla
+    # Loopback only. Publish with `tailscale serve --bg --https=8455 http://127.0.0.1:8112`.
+    ports:
+      - "127.0.0.1:8112:8002"
+    volumes:
+      - ./custom_files:/custom_files
+    environment:
+      # One or more .osm.pbf downloads (space separated). Smaller region = faster, smaller, cheaper.
+      - tile_urls=${TILE_URLS:-https://download.geofabrik.de/europe/austria-latest.osm.pbf}
+      - serve_tiles=True
+      - build_admins=True
+      # Elevation data: off. For all of Europe it would be ~100 GB more; turn on only for a small region.
+      - build_elevation=False
+      - force_rebuild=False
+      - server_threads=${SERVER_THREADS:-4}
+    # Hard caps so a tile build cannot starve the other services on this machine.
+    # Tile building needs RAM: roughly 16 GB for a country, ~48 GB for all of Europe.
+    cpus: ${CPUS:-8.0}
+    mem_limit: ${MEM_LIMIT:-16g}
+    restart: unless-stopped

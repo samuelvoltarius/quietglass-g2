@@ -1,0 +1,19 @@
+# Status Glass reference source (host metrics). One instance per machine you want to watch. User service:
+#   mkdir -p ~/.config/quietglass ~/.config/systemd/user
+#   cp .env.example ~/.config/quietglass/status-server.env && chmod 600 ~/.config/quietglass/status-server.env
+#   cp status-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now status-server
+#   loginctl enable-linger "$USER"
+# Code lives in the repo (not copied here): apps/status-glass/examples/reference-server.mjs
+[Unit]
+Description=Status Glass reference server (host metrics)
+After=network-online.target
+
+[Service]
+EnvironmentFile=-%h/.config/quietglass/status-server.env
+ExecStart=/usr/bin/env node %h/quietglass-g2/apps/status-glass/examples/reference-server.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

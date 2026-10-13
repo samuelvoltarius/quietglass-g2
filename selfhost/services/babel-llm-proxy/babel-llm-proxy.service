@@ -1,0 +1,18 @@
+# Translation proxy for Babel Glass. User service:
+#   mkdir -p ~/.config/quietglass ~/.config/systemd/user
+#   cp .env.example ~/.config/quietglass/babel-llm-proxy.env && chmod 600 ~/.config/quietglass/babel-llm-proxy.env
+#   cp babel-llm-proxy.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now babel-llm-proxy
+#   loginctl enable-linger "$USER"
+[Unit]
+Description=Babel Glass translation proxy (CORS/token/no-think -> OpenAI-compatible LLM)
+After=network-online.target
+
+[Service]
+EnvironmentFile=-%h/.config/quietglass/babel-llm-proxy.env
+ExecStart=/usr/bin/python3 %h/quietglass-g2/selfhost/services/babel-llm-proxy/babel_llm_proxy.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

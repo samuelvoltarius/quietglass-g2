@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to selfhost/config.json (git-ignored) and replace the placeholders with YOUR tailnet addresses: https://<machine>.<tailnet>.ts.net:<port>. Only https, no path. Delete the services you do not run.",
+  "services": {
+    "quiet-hub": "https://my-server.tailnet-name.ts.net:8443",
+    "whisper": "https://my-server.tailnet-name.ts.net:8457",
+    "babel-whisper-ws": "https://my-server.tailnet-name.ts.net:8449",
+    "babel-llm": "https://my-server.tailnet-name.ts.net:8448",
+    "oebb": "https://my-server.tailnet-name.ts.net:8458",
+    "valhalla": "https://my-server.tailnet-name.ts.net:8455",
+    "shoot-day": "https://my-server.tailnet-name.ts.net:8445",
+    "klipper": "https://my-server.tailnet-name.ts.net:8447",
+    "status": [
+      { "name": "Server", "url": "https://my-server.tailnet-name.ts.net:8451" },
+      { "name": "Raspberry Pi", "url": "https://my-pi.tailnet-name.ts.net:8451" }
+    ],
+    "agent-glass": ["https://my-server.tailnet-name.ts.net:8446"],
+    "lumen": "https://my-server.tailnet-name.ts.net:8454",
+    "xaventra": "https://my-server.tailnet-name.ts.net:8790"
+  },
+  "options": {
+    "babelModel": "qwen",
+    "rainRadar": false
+  }
+}

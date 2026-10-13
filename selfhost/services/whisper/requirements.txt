@@ -1,0 +1,12 @@
+# NVIDIA GPU with CUDA required (the model is moved to "cuda").
+# Install torch from the wheel index that matches your CUDA version (https://pytorch.org/get-started/),
+# then the rest:
+torch
+transformers>=4.44
+numpy
+websockets>=12
+fastapi
+uvicorn
+python-multipart
+soundfile
+# ffmpeg must also be installed on the system (apt install ffmpeg) - used to decode uploads.

@@ -1,0 +1,19 @@
+# CORS proxy for NextStop's OeBB live data. User service:
+#   mkdir -p ~/.config/quietglass ~/.config/systemd/user
+#   cp .env.example ~/.config/quietglass/oebb-proxy.env
+#   cp oebb-proxy.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now oebb-proxy
+#   loginctl enable-linger "$USER"
+# Code lives in the repo (not copied here): apps/nextstop/examples/oebb-cors-proxy.mjs
+[Unit]
+Description=OeBB CORS proxy for NextStop
+After=network-online.target
+
+[Service]
+EnvironmentFile=-%h/.config/quietglass/oebb-proxy.env
+ExecStart=/usr/bin/env node %h/quietglass-g2/apps/nextstop/examples/oebb-cors-proxy.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

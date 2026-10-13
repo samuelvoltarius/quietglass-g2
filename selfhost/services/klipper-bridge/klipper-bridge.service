@@ -1,0 +1,20 @@
+# Klipper Glance bridge (Moonraker -> glasses). Run it on a machine that can see the printer. User service:
+#   mkdir -p ~/.config/quietglass ~/.config/systemd/user
+#   cp .env.example ~/.config/quietglass/klipper-bridge.env && chmod 600 ~/.config/quietglass/klipper-bridge.env
+#   cp klipper-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now klipper-bridge
+#   loginctl enable-linger "$USER"
+# Code lives in the repo (not copied here): apps/klipper-glance/examples/klipper-bridge.mjs
+[Unit]
+Description=Klipper Glance bridge (Moonraker -> Even G2)
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/quietglass/klipper-bridge.env
+ExecStart=/usr/bin/env node %h/quietglass-g2/apps/klipper-glance/examples/klipper-bridge.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -23,5 +23,11 @@ relay*.json
 !relay.example.json
 
 # Private app.json with exact network origins (never commit)
-apps/*/app.private.json
+apps/*/app.private.json*
 HANDOVER-PRIVAT.md
+
+# Selfhost: your real tailnet addresses and per-machine service env files (never commit)
+selfhost/config.json
+selfhost/**/*.env
+selfhost/services/valhalla/custom_files/
+selfhost/services/valhalla/.env
