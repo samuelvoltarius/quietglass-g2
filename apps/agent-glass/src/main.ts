@@ -13,6 +13,7 @@ import { DecisionGate } from "./input/decision";
 import { decisionOnScreen, routeGesture } from "./input/route";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
+import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const DEMO_SESSION: Session = {
@@ -125,14 +126,21 @@ async function boot(): Promise<void> {
   let lastView: AgentView | null = null;
   let lastFace = "";
   let pageReady = false;
+  /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
+  let rebuildWanted = false;
+  /** In the background (system menu, another app): nothing is drawn, the ticker rests. */
+  let paused = false;
+  let drawing: Promise<void> | null = null;
+  let drawAgain = false;
 
   const backend = (): AgentBackend => activeBackend;
 
   const currentView = (): AgentView =>
-    screen === "sessions" ? sessionList(sessions, selected, locale) : buildView(state, new Date(), locale);
+    screen === "sessions" ? sessionList(sessions, selected, locale, state.session !== null) : buildView(state, new Date(), locale);
 
-  const draw = async (): Promise<void> => {
-    if (closed) return;
+  const drawOnce = async (): Promise<void> => {
+    if (closed || paused) return;
+    if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
     const view = currentView();
     // Only what was actually drawn may be answered by a swipe.
     const shown = decisionOnScreen(screen, state) ? state.pending : null;
@@ -146,6 +154,23 @@ async function boot(): Promise<void> {
     pageReady = false;
     gate.displayed(null, Date.now());
     console.warn("[agent-glass] draw failed:", result.reason);
+  };
+
+  /**
+   * One page write at a time. The ticker, the stream, gestures and the phone
+   * all ask for redraws; two overlapping first draws would both create the
+   * start-up page, and a second create leaves real glasses deaf.
+   */
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
   };
 
   const fail = (thrown: unknown): void => {
@@ -287,42 +312,33 @@ async function boot(): Promise<void> {
     }
   };
 
-  if (DEMO) {
-    await draw();
-  } else {
-    if (!settings.token) {
-      state = { ...state, error: "No token — enter one in the phone app." };
-    }
-    await draw();
-
-    if (settings.token) {
-      await loadSessions();
-      const previous = sessions.find((session) => session.id === settings.sessionId);
-      if (previous) await open(previous);
-      else if (sessions.length === 1 && sessions[0]) await open(sessions[0]);
-      else if (sessions.length > 1) { screen = "sessions"; await draw(); }
-    }
-  }
-
   // The elapsed counter moves with the clock and the face blinks or writes:
   // redraw twice a second, but only on the page that shows them. Unchanged
   // frames cost nothing (see draw).
-  const ticker = setInterval(() => { if (screen === "agent") void draw(); }, MASCOT_STEP_MS);
+  const ticker = setInterval(() => { if (screen === "agent" && !paused) void draw(); }, MASCOT_STEP_MS);
 
-  const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => {
-      closed = true;
-      generation += 1;
-      clearInterval(ticker);
-      stopStream?.();
-      stopStream = null;
-      activeBackend.dispose();
-      narrator.stop();
-    },
-  }, "agent-glass");
+  /** Everything off for good: after the exit dialog, a system exit or a crash. */
+  const shutDown = (): void => {
+    closed = true;
+    generation += 1;
+    clearInterval(ticker);
+    stopStream?.();
+    stopStream = null;
+    activeBackend.dispose();
+    narrator.stop();
+  };
 
+  const requestExit = createExitRequest(bridge, { onConfirmed: shutDown }, "agent-glass");
+
+  // Gestures and the exit come first. Loading sessions and opening one are
+  // network calls with up to 10 s timeouts each; awaited before this, a slow
+  // or dead backend left the glasses deaf for up to half a minute.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const step = lifecycleFromEvent(event);
+    if (step === "foregroundExit") { paused = true; return; }
+    if (step === "foregroundEnter") { paused = false; rebuildWanted = true; void draw(); return; }
+    if (isFinalExit(step)) { shutDown(); return; }
     const gesture = gestureFromEvent(event, { invertScroll: false });
     if (!gesture) return;
 
@@ -388,8 +404,24 @@ async function boot(): Promise<void> {
 
   bridge.onDeviceStatusChanged((status) => {
     if (closed) return;
-    if (status?.connectType === "connected") { pageReady = false; void draw(); }
+    if (status?.connectType === "connected") { rebuildWanted = true; void draw(); }
   });
+
+  // Only now the first page, then the network in the background.
+  if (!DEMO && !settings.token) {
+    state = { ...state, error: "No token — enter one in the phone app." };
+  }
+  void draw();
+  if (!DEMO && settings.token) {
+    void (async () => {
+      await loadSessions();
+      if (closed) return;
+      const previous = sessions.find((session) => session.id === settings.sessionId);
+      if (previous) await open(previous);
+      else if (sessions.length === 1 && sessions[0]) await open(sessions[0]);
+      else if (sessions.length > 1) { screen = "sessions"; await draw(); }
+    })().catch((thrown: unknown) => { fail(thrown); void draw(); });
+  }
 
   mountPhoneUi({
     getLocale: () => locale,

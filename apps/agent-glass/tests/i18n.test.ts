@@ -46,7 +46,7 @@ describe("translations", () => {
         if (key.startsWith("g.") || key.startsWith("e.")) {
           expect(text, key).not.toMatch(/[▸◆]/);
           // Only ASCII plus what the G2 font is known to draw.
-          expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○—]*$/);
+          expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○—×]*$/);
         }
       }
     }
@@ -216,7 +216,7 @@ describe("glasses text budget", () => {
     expect(buildView(asked, NOW, "de").header).toBe("Freigabe nötig");
     expect(buildView(asked, NOW, "de").footer).toBe("Hoch = erlauben · Runter = ablehnen");
     expect(buildView({ ...EMPTY_STATE, error: "Even Terminal unreachable" }, NOW, "de").body)
-      .toEqual(["", "Even Terminal nicht erreichbar", "", "Läuft Even Terminal mit", "--allow-cors?"]);
+      .toEqual(["", "Even Terminal nicht erreichbar", "", "Einrichtung in der Handy-App prüfen."]);
     expect(buildView({ ...EMPTY_STATE }, NOW, "de").footer).toBe("Halten = Sitzung wählen");
     expect(sessionList([], 0, "de").header).toBe("Sitzungen");
   });

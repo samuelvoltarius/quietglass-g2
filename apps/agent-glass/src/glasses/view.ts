@@ -88,12 +88,12 @@ export function shortTitle(title: string, width = 46): string {
 export function buildView(state: AgentState, now: Date, locale: Locale = "en"): AgentView {
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   if (state.error) {
-    // The CORS hint only helps against Even Terminal; under Hermes or OpenClaw
-    // it would send the user looking in the wrong place. The error text comes
-    // from the backend and can be arbitrarily long, so it is clipped to the
-    // rows that are left.
+    // The setup hint only helps against Even Terminal (the phone page names
+    // the --allow-cors flag); under Hermes or OpenClaw it would send the user
+    // looking in the wrong place. The error text comes from the backend and can
+    // be arbitrarily long, so it is clipped to the rows that are left.
     const hint = /Even Terminal/.test(state.error)
-      ? ["", x("g.corsHint1"), x("g.corsHint2")] : [];
+      ? ["", x("g.setupHint")] : [];
     const room = BODY_ROWS - 1 - hint.length;
     return {
       header: x("g.title"),
@@ -166,6 +166,8 @@ export function sessionList(
   sessions: readonly { title: string; cwd: string; status: string }[],
   selected: number,
   locale: Locale = "en",
+  /** A session is open behind the list: a double tap goes back to it. */
+  canGoBack = false,
 ): AgentView {
   if (sessions.length === 0) {
     return {
@@ -187,6 +189,6 @@ export function sessionList(
       const busy = session.status && session.status !== "idle" ? " *" : "";
       return `${cursor} ${shortTitle(session.title, 50)}${busy}`.slice(0, LINE_WIDTH);
     }),
-    footer: t(locale, "g.selectOpen"),
+    footer: t(locale, canGoBack ? "g.selectOpenBack" : "g.selectOpen"),
   };
 }

@@ -236,6 +236,14 @@ describe("gesture routing", () => {
     expect(routeGesture("click", broken)).toEqual({ kind: "retry" });
   });
 
+  it("a double tap on the session list goes back to the open session, and exits only at the root", () => {
+    const behind = context({ screen: "sessions", sessionCount: 3, state: { ...EMPTY_STATE, session: SESSION } });
+    expect(routeGesture("doubleClick", behind)).toEqual({ kind: "back" });
+    const root = context({ screen: "sessions", sessionCount: 3, state: EMPTY_STATE });
+    expect(routeGesture("doubleClick", root)).toEqual({ kind: "exit" });
+    expect(routeGesture("doubleClick", context({ state: { ...EMPTY_STATE, session: SESSION } }))).toEqual({ kind: "exit" });
+  });
+
   it("only lets demo mode exit", () => {
     expect(routeGesture("scrollUp", context({ demo: true })).kind).toBe("ignore");
     expect(routeGesture("doubleClick", context({ demo: true })).kind).toBe("exit");

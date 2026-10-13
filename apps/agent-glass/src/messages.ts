@@ -15,9 +15,8 @@ export const messages: Messages = {
   de: {
     // Glasses
     "g.title": "Agent Glass",
-    "g.tapRetry": "Tippen = erneut versuchen",
-    "g.corsHint1": "Läuft Even Terminal mit",
-    "g.corsHint2": "--allow-cors?",
+    "g.tapRetry": "Tippen = nochmal · 2× = Ende",
+    "g.setupHint": "Einrichtung in der Handy-App prüfen.",
     "g.noSession": "Keine Sitzung gewählt.",
     "g.holdChoose": "Halten = Sitzung wählen",
     "g.permission": "Freigabe nötig",
@@ -36,6 +35,7 @@ export const messages: Messages = {
     "g.agentRunning": "Läuft dort ein Agent?",
     "g.tapBack": "Tippen = zurück",
     "g.selectOpen": "Wischen = wählen · Tippen = öffnen",
+    "g.selectOpenBack": "Wischen = wählen · Tippen = öffnen · 2× = zurück",
     // Errors (glasses and phone)
     "e.noToken": "Kein Token — bitte in der Handy-App eintragen.",
     "e.watchOnly": "Diese Sitzung läuft nicht in Even Terminal — nur ansehen.",
@@ -138,9 +138,8 @@ export const messages: Messages = {
   en: {
     // Glasses
     "g.title": "Agent Glass",
-    "g.tapRetry": "tap = retry",
-    "g.corsHint1": "Is Even Terminal running with",
-    "g.corsHint2": "--allow-cors enabled?",
+    "g.tapRetry": "tap = retry · 2× = exit",
+    "g.setupHint": "Check the setup in the phone app.",
     "g.noSession": "No session selected.",
     "g.holdChoose": "hold = choose session",
     "g.permission": "Permission required",
@@ -159,6 +158,7 @@ export const messages: Messages = {
     "g.agentRunning": "Is an agent running there?",
     "g.tapBack": "tap = back",
     "g.selectOpen": "swipe = select · tap = open",
+    "g.selectOpenBack": "swipe = select · tap = open · 2× = back",
     // Errors (glasses and phone)
     "e.noToken": "No token — enter one in the phone app.",
     "e.watchOnly": "This session is not running under Even Terminal — watch only.",

@@ -169,7 +169,7 @@ describe("the working screen", () => {
 
   it("explains the CORS trap, which looks exactly like a dead server", () => {
     const view = buildView({ ...base, error: "Even Terminal unreachable" }, NOW, "en");
-    expect(view.body.join(" ")).toContain("--allow-cors");
+    expect(view.body.join(" ")).toContain("phone app");
   });
 
   it("fits the display even with a tool line", () => {

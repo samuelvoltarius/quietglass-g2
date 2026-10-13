@@ -65,6 +65,9 @@ export function routeGesture(gesture: Gesture, context: GestureContext): Gesture
     }
 
     case "doubleClick":
+      // 2× is "back" below the root and "exit" on it: the session list opened
+      // from a running session goes back to that session.
+      if (screen === "sessions" && state.session) return { kind: "back" };
       return { kind: "exit" };
 
     default:

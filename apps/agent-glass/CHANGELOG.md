@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.2] — 2026-10-13
+
+### Fixed
+
+- Gestures and the exit are wired before anything goes to the network. Loading the sessions and opening the last one (up to 10 s timeout each) used to run first, so a slow or dead backend left the glasses deaf for up to half a minute, even to the double tap.
+- Page writes run one at a time; overlapping first draws can no longer create the start-up page twice. A reconnect or a return to the foreground rebuilds the page.
+- Leaving through the system (another app, the system menu) stops drawing and the face animation; coming back rebuilds the page. A system exit or crash stops the stream, the narration and the ticker.
+
+### Changed
+
+- A double tap on the session list goes back to the open session (on the root it still exits); the footer says "2× = zurück".
+- Error footer "Tippen = nochmal · 2× = Ende"; the glasses no longer show the developer hint "Läuft Even Terminal mit --allow-cors?" but "Einrichtung in der Handy-App prüfen." (the phone page names the flag).
+
 ## [0.6.1] — 2026-10-13
 
 ### Fixed
