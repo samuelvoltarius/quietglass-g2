@@ -12,8 +12,8 @@ import { mountPhoneUi } from "../src/ui/phone";
 
 const vars = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 
-/** Header + 5 body rows + footer = the 7 rows of the display. */
-const BODY_ROWS = 5;
+/** The body container holds 7 rows; header and footer have their own containers. */
+const BODY_ROWS = 7;
 
 describe("translations", () => {
   it("has every key in German and English", () => {
@@ -204,10 +204,10 @@ describe("glasses text budget", () => {
     expect(empty!.body).toEqual(["Keine Quellen eingerichtet.", "Füge auf dem Handy eine hinzu."]);
     expect(ok!.body).toEqual(["1 von 1 ok"]);
     expect(ok!.footer).toBe("alles ok");
-    expect(broken!.header).toBe("KRITISCH  2");
+    expect(broken!.header).toBe("KRITISCH · 2");
     expect(broken!.body[0]).toBe("> ! pi Disk 99,5%");
     expect(broken!.footer).toBe("Tippen = gesehen");
-    expect(failures!.header).toBe("KEINE DATEN  9");
+    expect(failures!.header).toBe("KEINE DATEN · 9");
     expect(failures!.body.join("\n")).toContain("host3 Fehler 503");
     expect(failures!.body.join("\n")).toContain("host2 fehlgeschlagen");
     expect(acked!.body.some((line) => line.endsWith("(gesehen)"))).toBe(true);

@@ -27,7 +27,7 @@ export interface ViewOptions {
   readonly locale?: Locale;
 }
 
-const DEFAULT_ROWS = 5;
+const DEFAULT_ROWS = 7;
 
 /**
  * Roughly the characters that fit across the 576 px display in its
@@ -35,7 +35,7 @@ const DEFAULT_ROWS = 5;
  * from the sources themselves and can be any length; an uncut row wraps, and
  * five wrapped rows push the rest of the list off the body.
  */
-export const LINE_WIDTH = 46;
+export const LINE_WIDTH = 56;
 
 /** Shortens text to `width`, marking the cut. */
 export function fit(text: string, width: number = LINE_WIDTH): string {
@@ -108,7 +108,7 @@ function problemText(metric: Problem["metric"], locale: Locale): string {
 
 function headerFor(state: MetricState, count: number, locale: Locale): string {
   const label = state === "critical" ? "g.critical" : state === "warn" ? "g.warning" : "g.noData";
-  return t(locale, label) + "  " + count;
+  return t(locale, label) + " · " + count;
 }
 
 /** "4 of 4 ok" — enough to know monitoring is alive, nothing more. */

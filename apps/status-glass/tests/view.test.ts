@@ -32,7 +32,7 @@ describe("healthy display", () => {
 describe("problem display", () => {
   it("names the severity and the count", () => {
     const source = applyReport(createSource("s1", "nas"), broken, 0);
-    expect(buildView([source], {}, 0).header).toBe("CRITICAL  2");
+    expect(buildView([source], {}, 0).header).toBe("CRITICAL · 2");
   });
 
   it("puts the worst problem first", () => {
@@ -183,7 +183,7 @@ describe("review regressions", () => {
     }, 0);
     const down = applyError(createSource("s2", "nas"), "x".repeat(60), 0);
     const view = buildView([long, acknowledge(down, "__source")], {}, 0);
-    for (const row of view.body) expect(row.length).toBeLessThanOrEqual(46);
+    for (const row of view.body) expect(row.length).toBeLessThanOrEqual(56);
     expect(view.body.some((row) => row.endsWith("(ack)"))).toBe(true);
   });
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4] — 2026-10-13
+
+### Changed
+
+- Problem list and action list use all 7 body rows (was 5) and the full display width (56 instead of 46 characters), so long source names and messages are cut later.
+- Header reads "WARNUNG · 2" instead of "WARNUNG  2" (count was separated by a bare double space).
+
 ## [0.5.3] — 2026-10-13
 
 ### Fixed

@@ -42,7 +42,7 @@ export interface ActionsViewOptions {
   readonly locale?: Locale;
 }
 
-const DEFAULT_ROWS = 5;
+const DEFAULT_ROWS = 7;
 
 export function buildActionsView(
   actions: readonly AvailableAction[],
