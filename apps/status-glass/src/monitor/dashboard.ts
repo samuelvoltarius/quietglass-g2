@@ -16,6 +16,8 @@ export interface SourceStatus {
   readonly report: SourceReport | null;
   /** Null while never fetched. */
   readonly fetchedAt: number | null;
+  /** When a report last arrived successfully; null if never. */
+  readonly okAt: number | null;
   /** Transport or parse failure, if the last attempt failed. */
   readonly error: string | null;
   /** Metric ids the user has acknowledged; they stop being shouted about. */
@@ -23,7 +25,7 @@ export interface SourceStatus {
 }
 
 export function createSource(id: string, name: string): SourceStatus {
-  return { id, name, report: null, fetchedAt: null, error: null, acknowledged: [] };
+  return { id, name, report: null, fetchedAt: null, okAt: null, error: null, acknowledged: [] };
 }
 
 /** A source that has not answered within this long is treated as stale. */
@@ -133,7 +135,7 @@ export function applyReport(
   report: SourceReport,
   now: number,
 ): SourceStatus {
-  return clearRecovered({ ...source, report, fetchedAt: now, error: null });
+  return clearRecovered({ ...source, report, fetchedAt: now, okAt: now, error: null });
 }
 
 export function applyError(source: SourceStatus, error: string, now: number): SourceStatus {

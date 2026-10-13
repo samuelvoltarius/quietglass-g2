@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0] — 2026-10-13
+
+### Added
+
+- Overview of several machines: with two or more sources the status page shows one row per machine (up to four at a time): a light (disk = fine, triangle = warning, pulsing disk = critical, crossed ring = offline), the name, a CPU/load line and one line of text. A machine that does not answer is marked "offline seit 12 min" (or "noch nie erreicht"). Swipe moves between machines, a tap acknowledges the highlighted machine's worst problem.
+- Private builds can ship their own sources without typing: `VITE_STATUS_SOURCES="Name|https://host:port/status;Other|https://..."`. Sources missing from the stored list are added on start (also after an update); entries you added yourself stay.
+- A metric named `load` counts as the CPU line of the sparklines.
+
+### Fixed
+
+- Page set-up on the glasses: one `rebuildPageContainer`, then exactly one `createStartUpPageContainer`; every later page, also a layout change, is a rebuild, never a second create.
+
 ## [0.6.0] — 2026-10-13
 
 ### Added

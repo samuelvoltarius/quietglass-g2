@@ -226,3 +226,22 @@ describe("demo readings", () => {
     expect(levels("graph")).not.toContain("warn");
   });
 });
+
+describe("page installation", () => {
+  it("creates the page exactly once per bridge: one first rebuild, one create, then only rebuilds", async () => {
+    const calls: string[] = [];
+    const bridge = {
+      createStartUpPageContainer: async () => { calls.push("create"); return 0; },
+      rebuildPageContainer: async () => { calls.push("rebuild"); return true; },
+      textContainerUpgrade: async () => true,
+      updateImageRawData: async () => "success",
+    } as unknown as EvenAppBridge;
+    const sources = [applyReport(createSource("s", "nas"), report(20), 1000)];
+    const view = buildView(sources, {}, 1000);
+    const frames: Frames = { sign: signFrame("ok", 0), sparks: [] };
+    await createPage(bridge, view, "list", frames);
+    await createPage(bridge, view, "list", frames);
+    await rebuildPage(bridge, view, "graph", frames);
+    expect(calls).toEqual(["rebuild", "create", "rebuild", "rebuild"]);
+  });
+});

@@ -67,7 +67,10 @@ function fakeBridge() {
       sources: [{ id: "s1", name: "nas", url: "https://nas.test/status" }], pollSeconds: 30, invertScroll: false,
     }),
     setLocalStorage: async () => true,
-    rebuildPageContainer: async () => false,
+    rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+      for (const text of page.textObject ?? []) record(text.containerID, text.content);
+      return true;
+    },
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return 0;

@@ -18,3 +18,32 @@ export function demoNasReport(scene: string | null, step: number): SourceReport 
     ],
   };
 }
+
+export interface DemoMachine {
+  readonly id: string;
+  readonly name: string;
+  /** Base CPU load and RAM use of the demo machine. */
+  readonly cpu: number;
+  readonly ram: number;
+  /** More than 0: the machine has been unreachable for this many minutes. */
+  readonly offlineMinutes: number;
+}
+
+/** Four machines for `?demo=1&scene=fleet`: fine, warning, critical, offline. */
+export const DEMO_FLEET: readonly DemoMachine[] = [
+  { id: "spark", name: "Spark", cpu: 22, ram: 48, offlineMinutes: 0 },
+  { id: "pi5", name: "Pi5", cpu: 55, ram: 88, offlineMinutes: 0 },
+  { id: "ns1", name: "ns1", cpu: 90, ram: 70, offlineMinutes: 0 },
+  { id: "samuel", name: "samuel", cpu: 35, ram: 40, offlineMinutes: 12 },
+];
+
+export function demoFleetReport(machine: DemoMachine, step: number): SourceReport {
+  const wave = (base: number, amp: number, phase: number): number => Math.min(99, Math.max(1, Math.round(base + amp * Math.sin(step * 0.8 + phase))));
+  return {
+    name: machine.name,
+    metrics: [
+      { id: "load", label: "Load", value: wave(machine.cpu, 8, 0), unit: "%", warn: 70, critical: 85 },
+      { id: "memory", label: "RAM", value: wave(machine.ram, 3, 1), unit: "%", warn: 85, critical: 95 },
+    ],
+  };
+}

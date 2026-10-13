@@ -18,7 +18,7 @@ export const SPARK_ORDER: readonly SparkKey[] = ["cpu", "gpu", "ram"];
 export function sparkKey(metric: Pick<Metric, "id" | "label">): SparkKey | null {
   for (const text of [metric.id, metric.label]) {
     const name = text.trim().toLowerCase();
-    if (/^(cpu|processor|prozessor)(?![a-z])/.test(name)) return "cpu";
+    if (/^(cpu|processor|prozessor|load)(?![a-z])/.test(name)) return "cpu";
     if (/^gpu(?![a-z])/.test(name)) return "gpu";
     if (/^(ram|mem|memory|speicher|arbeitsspeicher)(?![a-z])/.test(name)) return "ram";
   }

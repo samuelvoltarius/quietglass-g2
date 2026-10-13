@@ -6,9 +6,10 @@ import {
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type StatusView } from "./glasses/view";
 import { MetricHistory, type SparkSeries } from "./monitor/history";
-import { demoNasReport } from "./monitor/demo";
+import { DEMO_FLEET, demoFleetReport, demoNasReport } from "./monitor/demo";
 import { PULSE_MS, signFrame, signState, sparklineFrame } from "./glasses/charts";
 import { bitmapKey } from "./glasses/gfx";
+import { fleetPulses, fleetRowFrame, fleetRows, fleetView } from "./glasses/fleet";
 import { availableActions, buildActionsView } from "./glasses/actions-view";
 import { sameView } from "./glasses/diff";
 import { BODY_ROWS, createPage, rebuildPage, updatePage, type Frames, type Layout } from "./glasses/render";
@@ -27,11 +28,13 @@ async function boot(): Promise<void> {
   let data: StatusData = await load(bridge);
   const NAS_DEMO = DEMO && SCENE !== null;
   if (DEMO) {
-    data = { ...data, sources: NAS_DEMO ? [{ id: "nas", name: "NAS", url: "http://demo.local/nas" }] : [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] };
+    data = { ...data, sources: SCENE === "fleet" ? DEMO_FLEET.map((m) => ({ id: m.id, name: m.name, url: `http://demo.local/${m.id}` })) : NAS_DEMO ? [{ id: "nas", name: "NAS", url: "http://demo.local/nas" }] : [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] };
   }
   const history = new MetricHistory();
   /** Which source's sparklines to show while nothing is wrong; a swipe changes it. */
   let sparkIndex = 0;
+  /** Which machine is highlighted in the overview (two or more sources). */
+  let fleetCursor = 0;
   let statuses = new Map<string, SourceStatus>();
   const failures = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -82,6 +85,8 @@ async function boot(): Promise<void> {
     readonly view: StatusView;
     readonly layout: Layout;
     readonly frames: Frames;
+    /** True while something on this page pulses and wants a redraw twice a second. */
+    readonly pulses: boolean;
   }
 
   /** The source whose sparklines are shown: the one with the highlighted problem, else the one a swipe picked. */
@@ -109,7 +114,18 @@ async function boot(): Promise<void> {
         locale,
       });
       // The sign stands still here: only the status page pulses.
-      return { view, layout: "list", frames: { sign: signFrame(signState(sources, now), 0), sparks: [] } };
+      return { view, layout: "list", frames: { sign: signFrame(signState(sources, now), 0), sparks: [] }, pulses: false };
+    }
+    // Two or more machines: one row each, light + name + load line, a failed one marked.
+    if (sources.length >= 2) {
+      fleetCursor = Math.min(fleetCursor, sources.length - 1);
+      const rows = fleetRows(sources, history, fleetCursor, locale, now);
+      return {
+        view: fleetView(sources, rows, locale, now),
+        layout: "fleet",
+        frames: { sign: signFrame(signState(sources, now), now), sparks: [], rows: rows.map((row) => fleetRowFrame(row, now)) },
+        pulses: fleetPulses(rows),
+      };
     }
     const focus = focusSeries(sources, now);
     const layout: Layout = focus ? "graph" : "list";
@@ -123,13 +139,15 @@ async function boot(): Promise<void> {
         sign: signFrame(signState(sources, now), now),
         sparks: focus ? focus.series.map((series) => sparklineFrame(series)) : [],
       },
+      pulses: signState(sources, now) === "critical",
     };
   };
 
   const draw = async (): Promise<void> => {
     if (closed) return;
     const { view, layout, frames } = currentScene(Date.now());
-    const key = [frames.sign, ...frames.sparks].map((frame) => (frame ? bitmapKey(frame) : "-")).join("|");
+    const pictures = layout === "fleet" ? frames.rows ?? [] : [frames.sign, ...frames.sparks];
+    const key = pictures.map((frame) => (frame ? bitmapKey(frame) : "-")).join("|");
     if (pageReady && layout === lastLayout && sameView(lastView, view) && key === lastFrames) return;
 
     let result;
@@ -238,7 +256,17 @@ async function boot(): Promise<void> {
   };
 
   syncSources();
-  if (NAS_DEMO) {
+  if (SCENE === "fleet") {
+    const now = Date.now();
+    for (const machine of DEMO_FLEET) {
+      const status = statuses.get(machine.id);
+      if (!status) continue;
+      const seen = machine.offlineMinutes > 0 ? now - machine.offlineMinutes * 60_000 : now;
+      for (let step = 0; step < 12; step += 1) history.record(machine.id, demoFleetReport(machine, step));
+      const fresh = applyReport(status, demoFleetReport(machine, 11), seen);
+      statuses.set(machine.id, machine.offlineMinutes > 0 ? applyError(fresh, "unreachable", now) : fresh);
+    }
+  } else if (NAS_DEMO) {
     const now = Date.now();
     const nas = statuses.get("nas");
     if (nas) {
@@ -311,25 +339,31 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const list = problems(sources, Date.now());
+    // In the overview the highlighted machine's problems are the list, worst first.
+    const fleet = sources.length >= 2;
+    const list = fleet
+      ? problems(sources.slice(fleetCursor, fleetCursor + 1), Date.now())
+      : problems(sources, Date.now());
 
     switch (gesture.gesture) {
       case "click": {
         // Acknowledging says "I know" — it never hides the problem, it just
         // stops it being the headline.
-        const problem = list[cursor];
+        const problem = list[fleet ? 0 : cursor];
         if (!problem) break;
         const status = statuses.get(problem.sourceId);
         if (status) statuses.set(problem.sourceId, acknowledge(status, problem.metric.id));
         break;
       }
       case "scrollUp":
+        if (fleet) fleetCursor = Math.max(0, fleetCursor - 1);
         // With nothing wrong a swipe switches the source whose sparklines are shown.
-        if (list.length === 0) sparkIndex -= 1;
+        else if (list.length === 0) sparkIndex -= 1;
         else cursor = Math.max(0, cursor - 1);
         break;
       case "scrollDown":
-        if (list.length === 0) sparkIndex += 1;
+        if (fleet) fleetCursor = Math.min(sources.length - 1, fleetCursor + 1);
+        else if (list.length === 0) sparkIndex += 1;
         else cursor = Math.min(Math.max(0, list.length - 1), cursor + 1);
         break;
       case "longPress":
@@ -366,7 +400,7 @@ async function boot(): Promise<void> {
   let ticks = 0;
   tickTimer = setInterval(() => {
     ticks += 1;
-    const pulsing = screen === "status" && signState([...statuses.values()], Date.now()) === "critical";
+    const pulsing = screen === "status" && currentScene(Date.now()).pulses;
     if (pulsing || ticks % 10 === 0) void draw();
   }, PULSE_MS);
 

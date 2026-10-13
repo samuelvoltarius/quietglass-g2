@@ -105,7 +105,7 @@ export const SEPARATOR = "  ·  ";
  * source that failed, a source gone quiet) are said in the chosen language;
  * a metric from a source keeps its own label.
  */
-function problemText(metric: Problem["metric"], locale: Locale): string {
+export function problemText(metric: Problem["metric"], locale: Locale): string {
   if (metric.id === "__stale") return t(locale, "g.stale");
   if (metric.id === "__source") return describeIssue(metric.label, locale);
   return formatMetric(metric, locale);

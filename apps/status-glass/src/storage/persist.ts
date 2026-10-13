@@ -38,7 +38,38 @@ export async function save(bridge: EvenAppBridge, data: StatusData): Promise<voi
 }
 
 export async function load(bridge: EvenAppBridge): Promise<StatusData> {
-  return parseData(await bridge.getLocalStorage(KEY));
+  return withBuildSources(parseData(await bridge.getLocalStorage(KEY)));
+}
+
+/**
+ * Sources a private build ships with, set at build time and never in the repo:
+ * `VITE_STATUS_SOURCES="Name|https://host:port/status;Other|https://..."`
+ * (entries separated by `;` or a new line, optional third part `|token`).
+ * A build without it ships none.
+ */
+export function parseBuildSources(raw: string | undefined): SourceConfig[] {
+  const out: SourceConfig[] = [];
+  for (const entry of (raw ?? "").split(/[;\n]/)) {
+    const [name = "", url = "", token = ""] = entry.split("|").map((part) => part.trim());
+    if (!url || !validateUrl(url).valid) continue;
+    out.push({ id: `build-${out.length + 1}`, name: name || url, url, ...(token ? { token } : {}) });
+  }
+  return out;
+}
+
+const ENV = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
+export const BUILD_SOURCES: readonly SourceConfig[] = parseBuildSources(ENV["VITE_STATUS_SOURCES"]);
+
+const trimSlash = (url: string): string => url.trim().replace(/\/+$/, "");
+
+/**
+ * Adds the build's own sources that are not in the stored list yet, so a
+ * private build works without typing anything - on a fresh install and after an
+ * update. Entries the user added themselves stay.
+ */
+export function withBuildSources(data: StatusData, defaults: readonly SourceConfig[] = BUILD_SOURCES): StatusData {
+  const missing = defaults.filter((d) => !data.sources.some((s) => trimSlash(s.url) === trimSlash(d.url)));
+  return missing.length === 0 ? data : { ...data, sources: [...missing, ...data.sources] };
 }
 
 export function nextSourceId(data: StatusData): string {
