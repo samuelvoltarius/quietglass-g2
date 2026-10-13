@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { clampLight, drawMoth, lightBar, mothLine, stateForLight } from "../src/lumen/moth";
 import {
-  blobFromBase64, describeError, fetchStatus, newQuest, parseStatus, submitPhoto, UPLOAD_TIMEOUT,
+  blobFromBase64, describeError, fetchStatus, newQuest, parseStatus, signIn, signOut, submitPhoto,
+  UPLOAD_TIMEOUT,
 } from "../src/lumen/client";
 import { buildView, questMeta, windowLabel, wrap } from "../src/glasses/view";
 import { EMPTY_DATA, isLocal, maskToken, parseData, validateUrl } from "../src/storage/persist";
@@ -156,32 +157,60 @@ describe("talking to LUMEN", () => {
     expect((await newQuest({ ...options, fetchImpl: fetchImpl as never })).value).toBe(true);
   });
 
-  it("submits the photo the way LUMEN's own form does", async () => {
+  const jsonAnswer = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  it("submits the photo the way LUMEN's own form does and reads its JSON verdict", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe("http://127.0.0.1:8077/quest/42/abgeben");
+      expect(url).toBe("http://127.0.0.1:8077/quest/42/abgeben?format=json");
       const body = init?.body as FormData;
       expect(body.get("datei")).toBeInstanceOf(Blob);
+      const headers = init?.headers as Record<string, string>;
       // The boundary must come from the platform; setting it by hand breaks parsing.
-      expect(init?.headers).toBeUndefined();
-      return new Response("", { status: 303 });
+      expect(headers["Content-Type"]).toBeUndefined();
+      expect(headers["Accept"]).toBe("application/json");
+      expect(init?.mode).toBeUndefined(); // a normal CORS request now, not no-cors
+      expect(init?.credentials).toBe("omit");
+      return jsonAnswer({ ergebnis: "erledigt", meldung: "Angenommen, 9 Licht und 28 XP", quest_id: 42 });
     });
     const outcome = await submitPhoto(
       { ...options, fetchImpl: fetchImpl as never },
       42, new Blob(["x"], { type: "image/jpeg" }),
     );
-    // A readable redirect back to the page still means it was accepted.
-    expect(outcome).toEqual({ value: "confirmed", error: null });
+    expect(outcome).toEqual({ value: { kind: "done", message: "Angenommen, 9 Licht und 28 XP" }, error: null });
   });
 
-  it("regression: uploads as a no-cors form post, because LUMEN's upload route has no CORS", async () => {
+  it("sends the token as Bearer on the upload", async () => {
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(init?.mode).toBe("no-cors");
-      expect(init?.credentials).toBe("omit");
-      // What a browser hands back for a no-cors answer: opaque, status 0.
-      return { type: "opaque", status: 0, ok: false } as unknown as Response;
+      expect((init?.headers as Record<string, string>)["Authorization"]).toBe("Bearer secret");
+      return jsonAnswer({ ergebnis: "erledigt", meldung: "ok" });
     });
+    await submitPhoto({ ...options, token: "secret", fetchImpl: fetchImpl as never }, 7, new Blob(["x"]));
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("a rejection carries LUMEN's reason", async () => {
+    const fetchImpl = vi.fn(async () => jsonAnswer({ ergebnis: "abgelehnt", meldung: "Kein Baum zu sehen." }));
     const outcome = await submitPhoto({ ...options, fetchImpl: fetchImpl as never }, 7, new Blob(["x"]));
-    expect(outcome).toEqual({ value: "sent", error: null });
+    expect(outcome).toEqual({ value: { kind: "rejected", message: "Kein Baum zu sehen." }, error: null });
+  });
+
+  it("a 401 means not signed in, a JSON error shows LUMEN's words", async () => {
+    const signedOut = vi.fn(async () => jsonAnswer({ ergebnis: "fehler", meldung: "nicht angemeldet" }, 401));
+    expect((await submitPhoto({ ...options, fetchImpl: signedOut as never }, 7, new Blob(["x"]))).error)
+      .toBe("not signed in to LUMEN");
+    const limit = vi.fn(async () => jsonAnswer({ ergebnis: "fehler", meldung: "Heute schon 20 Abgaben. Morgen wieder." }, 429));
+    expect((await submitPhoto({ ...options, fetchImpl: limit as never }, 7, new Blob(["x"]))).error)
+      .toBe("Heute schon 20 Abgaben. Morgen wieder.");
+  });
+
+  it("fallback: an unreadable answer (older LUMEN without CORS) leaves it to the status check", async () => {
+    const blocked = vi.fn(async () => { throw new TypeError("Failed to fetch"); });
+    expect((await submitPhoto({ ...options, fetchImpl: blocked as never }, 7, new Blob(["x"]))).value)
+      .toEqual({ kind: "unknown", message: null });
+    const redirect = vi.fn(async () => new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } }));
+    expect((await submitPhoto({ ...options, fetchImpl: redirect as never }, 7, new Blob(["x"]))).value)
+      .toEqual({ kind: "unknown", message: null });
   });
 
   it("regression: the upload gets far more time than a status request", async () => {
@@ -197,11 +226,43 @@ describe("talking to LUMEN", () => {
       const pending = submitPhoto({ ...options, fetchImpl: fetchImpl as never }, 7, new Blob(["x"]));
       await vi.advanceTimersByTimeAsync(30_000); // a judged photo, well past the old 8 s
       expect(signal?.aborted).toBe(false);
-      answer({ type: "opaque", status: 0, ok: false } as unknown as Response);
-      expect((await pending).value).toBe("sent");
+      answer(jsonAnswer({ ergebnis: "erledigt", meldung: "ok" }));
+      expect((await pending).value?.kind).toBe("done");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("signs in with name and password and returns only the token", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("http://127.0.0.1:8077/api/anmelden");
+      expect(init?.method).toBe("POST");
+      expect(init?.credentials).toBe("omit");
+      expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+      expect(JSON.parse(String(init?.body))).toEqual({ name: "Alex", passwort: "pw-12345678" });
+      return jsonAnswer({ token: "tok-abc", laeuft_ab: "2026-11-12T10:00:00" });
+    });
+    const outcome = await signIn({ ...options, fetchImpl: fetchImpl as never }, "Alex", "pw-12345678");
+    expect(outcome).toEqual({ value: { kind: "token", token: "tok-abc" }, error: null });
+  });
+
+  it("sign-in tells wrong password, open mode and lockout apart", async () => {
+    const answer = (status: number, body: unknown) => vi.fn(async () => jsonAnswer(body, status));
+    expect((await signIn({ ...options, fetchImpl: answer(401, { fehler: "x" }) as never }, "a", "b")).value).toEqual({ kind: "wrong" });
+    expect((await signIn({ ...options, fetchImpl: answer(409, { offen: true }) as never }, "a", "b")).value).toEqual({ kind: "open" });
+    expect((await signIn({ ...options, fetchImpl: answer(429, { warte_s: 60 }) as never }, "a", "b")).value).toEqual({ kind: "locked" });
+    const down = vi.fn(async () => { throw new TypeError("Failed to fetch"); });
+    expect((await signIn({ ...options, fetchImpl: down as never }, "a", "b")).error).toBe("LUMEN unreachable");
+  });
+
+  it("signs out with the token as Bearer", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("http://127.0.0.1:8077/api/abmelden");
+      expect((init?.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok");
+      return new Response(null, { status: 204 });
+    });
+    await signOut({ ...options, token: "tok", fetchImpl: fetchImpl as never });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("regression: never sends a Cookie header or credentials; a token goes as Bearer", async () => {
@@ -346,7 +407,8 @@ describe("configuration", () => {
   });
 
   it("never reveals the session token", () => {
-    expect(maskToken("abcdef", "en")).toBe("set (6 chars)");
+    expect(maskToken("abcdef", "en")).toBe("signed in");
+    expect(maskToken("abcdef", "de")).not.toContain("abcdef");
     expect(maskToken("abcdef", "en")).not.toContain("abcdef");
   });
 

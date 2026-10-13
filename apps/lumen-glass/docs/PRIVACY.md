@@ -43,9 +43,11 @@ else.
 
 ## The access token
 
-Only needed if your LUMEN asks for one. It is sent as an `Authorization`
-header, never in a URL, and the phone app shows only that it is set and how
-long it is.
+Only needed if your LUMEN asks for a sign-in. You enter name and password on
+the phone page; they go to your LUMEN once and the password is never stored.
+The app keeps only the session token LUMEN returns, sends it as an
+`Authorization` header (never in a URL) and shows only whether you are signed
+in. "Sign out" ends the session on LUMEN and forgets the token.
 
 ## Where your data goes
 

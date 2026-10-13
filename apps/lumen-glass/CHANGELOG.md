@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1] — 2026-10-13
+
+### Changed
+
+- **The verdict shows right away:** a photo now goes to `/quest/<id>/abgeben?format=json` as a normal CORS request with `Accept: application/json` (and the token as Bearer). A current LUMEN answers with JSON, so the glasses say "Quest erledigt" or show LUMEN's reason for a rejection without a second request. The "no-cors" workaround is gone; when the answer cannot be read (an older LUMEN without CORS on that route), `/api/status` still decides whether the quest was ticked off.
+- **Sign-in on the phone page:** for a LUMEN in closed mode, enter name and password; the app asks LUMEN for a session token (`POST /api/anmelden`), keeps only that token in its own storage and sends it as `Authorization: Bearer`. The password is never stored. "Sign out" ends the session on LUMEN (`POST /api/abmelden`) and forgets the token. The manual token field is gone.
+- LUMEN's own limit messages (too many submissions, file too large) are shown instead of a bare HTTP code.
+
 ## [0.5.0] — 2026-10-13
 
 ### Fixed

@@ -100,8 +100,10 @@ than letting you shoot and have it rejected.
 3. Enter the address in the phone app. The default is already LUMEN's own;
    a private build can bring its own (`VITE_LUMEN_URL=https://… npm run build`),
    and an old stored default is then replaced by it.
-   An access token for a LUMEN that asks for one sits under **Advanced** and is
-   sent as `Authorization: Bearer` (a cookie cannot be sent from the glasses).
+   If your LUMEN asks for a sign-in (closed mode), enter name and password
+   under **Sign in**: they go to LUMEN once (`POST /api/anmelden`), only the
+   session token it returns is kept, and it travels as `Authorization: Bearer`
+   (a cookie cannot be sent from the glasses). The password is never stored.
 
 The app speaks German and English. It follows the phone's language, and you
 can switch it at the top of the phone page; the glasses change along at once.
@@ -110,7 +112,7 @@ can switch it at the top of the phone page; the glasses change along at once.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5200
 npm run build      # typecheck + production bundle
-npm test           # 73 unit tests
+npm test           # 107 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -120,10 +122,12 @@ Without CORS headers the glasses say **"LUMEN unreachable"** while `curl`
 reaches the same URL fine — the server answered, the browser discarded it. The
 app sends no credentials (`credentials: "omit"`): a credentialed request fails
 unless the server also sends `Access-Control-Allow-Credentials`. Photo uploads
-go to LUMEN's form route `/quest/<id>/abgeben`, which usually has no CORS; the
-app posts them as a "no-cors" form (the photo arrives, the answer is opaque) and
-then reads `/api/status` to see whether the quest was ticked off. Details in
-[examples/PATCH.md](examples/PATCH.md).
+go to LUMEN's form route `/quest/<id>/abgeben?format=json` with
+`Accept: application/json`; a current LUMEN answers with CORS and JSON
+(`erledigt` / `abgelehnt` and its reason), so the glasses show the verdict at
+once. An older LUMEN without CORS on that route leaves the answer unreadable;
+the app then reads `/api/status` to see whether the quest was ticked off.
+Details in [examples/PATCH.md](examples/PATCH.md).
 
 ## Privacy
 

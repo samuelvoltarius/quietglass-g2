@@ -56,10 +56,12 @@ rather than opening it to everything.
 ### The upload route
 
 CORS above is often added for `/api/*` only. The photo upload, however, posts
-to LUMEN's web-form route `/quest/<id>/abgeben` and answers with a redirect to
-an HTML page. Lumen Glass therefore sends the photo as a "no-cors" form post
-(it arrives; the answer cannot be read) and checks `/api/status` afterwards.
-If you add CORS to that route too, the app reads the answer directly.
+to LUMEN's web-form route `/quest/<id>/abgeben`. Lumen Glass (0.5.1+) sends it
+as `/quest/<id>/abgeben?format=json` with `Accept: application/json`; a LUMEN
+that answers that with CORS and JSON (`{"ergebnis": "erledigt" | "abgelehnt" |
+"fehler", "meldung": "…"}`) lets the glasses show the verdict at once. If the
+answer cannot be read (no CORS on that route, or an HTML redirect), the app
+checks `/api/status` afterwards to see whether the quest was ticked off.
 
 ### Credentials
 
@@ -67,7 +69,9 @@ Lumen Glass sends no cookies (`credentials: "omit"`): `Cookie` is a forbidden
 header in a browser, and a credentialed request also needs
 `Access-Control-Allow-Credentials: true`. A token, if set, goes as
 `Authorization: Bearer <token>`; a closed LUMEN has to accept that header to
-let the glasses in.
+let the glasses in. The phone page gets the token by posting name and password
+once to `POST /api/anmelden` (JSON answer `{"token": "…"}`); the password is
+never stored.
 
 ---
 

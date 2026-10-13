@@ -174,17 +174,30 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // LUMEN's answer to an upload cannot be read (no CORS on its form route),
-    // so its status tells what happened: a quest that is no longer the open
-    // one was ticked off. The view words the outcome in the current language.
+    // LUMEN answers with JSON: say right away what it decided, then fetch the
+    // moth's new light in the background.
+    const submission = outcome.value!;
+    if (submission.kind !== "unknown") {
+      result = submission.kind === "done"
+        ? { ok: true, text: "done" }
+        : { ok: false, text: submission.message ?? t("en", "g.err.notTicked") };
+      phase = "result";
+      await draw();
+      void refresh(true);
+      return;
+    }
+
+    // The answer could not be read (an older LUMEN without CORS on its form
+    // route), so its status tells what happened: a quest that is no longer
+    // the open one was ticked off. The view words it in the current language.
     const check = await fetchStatus(options());
     if (closed) return;
     if (check.error === null && check.value !== null) {
       status = check.value;
       error = null;
       const ticked = check.value.quest?.id !== quest.id;
-      result = ticked || outcome.value === "confirmed"
-        ? { ok: true, text: ticked ? "done" : "" }
+      result = ticked
+        ? { ok: true, text: "done" }
         : { ok: false, text: t("en", "g.err.notTicked") };
     } else {
       result = { ok: true, text: "" };

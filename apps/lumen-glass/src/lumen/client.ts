@@ -69,11 +69,16 @@ const DEFAULT_TIMEOUT = 8000;
 export const UPLOAD_TIMEOUT = 90_000;
 
 /**
- * How a submission ended. `confirmed`: LUMEN answered readably. `sent`: the
- * photo went out and the server took it, but its answer (a redirect to an
- * HTML page without CORS) cannot be read — the caller checks the status.
+ * How a submission ended, as LUMEN says it (JSON answer since 13.10.2026):
+ * `done` = quest ticked off, `rejected` = LUMEN looked and said no (`message`
+ * says why, in LUMEN's words). `unknown` = the photo may have gone out but the
+ * answer could not be read (an older LUMEN without CORS on its upload route,
+ * or an HTML redirect) — the caller asks `/api/status` what became of the quest.
  */
-export type Submission = "confirmed" | "sent";
+export interface Submission {
+  readonly kind: "done" | "rejected" | "unknown";
+  readonly message: string | null;
+}
 
 export async function fetchStatus(options: ClientOptions): Promise<LumenOutcome<LumenStatus>> {
   const outcome = await request(options, "/api/status", { method: "GET" });
@@ -93,8 +98,10 @@ export async function newQuest(options: ClientOptions): Promise<LumenOutcome<tru
  * Submits a photo for a quest.
  *
  * LUMEN expects `multipart/form-data` with a `datei` field, exactly as its web
- * form sends it — so the glasses use the same path as the browser rather than
- * a second, parallel one that could drift.
+ * form sends it — so the glasses use the same route as the browser rather than
+ * a second, parallel one that could drift. With `Accept: application/json` and
+ * `?format=json` LUMEN answers with JSON ({"ergebnis": "erledigt" | "abgelehnt"
+ * | "fehler", "meldung"}) and CORS instead of a redirect to its HTML page.
  */
 export async function submitPhoto(
   options: ClientOptions,
@@ -105,33 +112,82 @@ export async function submitPhoto(
   const form = new FormData();
   form.append("datei", photo, filename);
 
-  // LUMEN's upload route is its web form's route: it answers with a 303 to an
-  // HTML page and sends no CORS headers (only /api/* has them). A normal
-  // cross-origin fetch therefore fails although the photo arrived. A
-  // "no-cors" form post is a simple request that goes out all the same; its
-  // answer is opaque, so the caller asks /api/status what became of the quest.
-  // No header of our own (none would survive no-cors), no Content-Type: the
-  // browser adds the multipart boundary.
   const doFetch = options.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? UPLOAD_TIMEOUT);
+  // No Content-Type of our own: the platform adds the multipart boundary.
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (options.token) headers["Authorization"] = "Bearer " + options.token;
   try {
-    const response = await doFetch(joinUrl(options.baseUrl, "/quest/" + questId + "/abgeben"), {
-      method: "POST",
-      body: form,
-      mode: "no-cors",
-      credentials: "omit",
-      signal: controller.signal,
-    });
-    if (response.type === "opaque" || response.status === 0) return { value: "sent", error: null };
-    if (response.status === 401 || response.status === 403) return { value: null, error: "not signed in to LUMEN" };
+    const response = await doFetch(
+      joinUrl(options.baseUrl, "/quest/" + questId + "/abgeben?format=json"),
+      { method: "POST", body: form, headers, credentials: "omit", signal: controller.signal },
+    );
+    const answer = await readJson(response);
+    const kind = answer?.["ergebnis"];
+    const message = typeof answer?.["meldung"] === "string" ? answer["meldung"] as string : null;
+    if (response.status === 401) return { value: null, error: "not signed in to LUMEN" };
+    if (kind === "erledigt") return { value: { kind: "done", message }, error: null };
+    if (kind === "abgelehnt") return { value: { kind: "rejected", message }, error: null };
+    if (kind === "fehler" || response.status === 403) {
+      return { value: null, error: message ?? "HTTP " + response.status };
+    }
+    // An answer without our JSON (an older LUMEN's redirect to its page):
+    // a 2xx/3xx still means it took the photo; let the status tell the rest.
     const accepted = response.ok || (response.status >= 300 && response.status < 400);
-    return accepted ? { value: "confirmed", error: null } : { value: null, error: "HTTP " + response.status };
+    return accepted
+      ? { value: { kind: "unknown", message: null }, error: null }
+      : { value: null, error: "HTTP " + response.status };
   } catch (error) {
+    // A TypeError is what the WebView throws when it may not read the answer
+    // (an older LUMEN without CORS on this route): the photo may well have
+    // arrived, so the status decides instead of reporting a false failure.
+    if (error instanceof TypeError) return { value: { kind: "unknown", message: null }, error: null };
     return { value: null, error: describeError(error) };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Signs in to a LUMEN in closed mode and returns its session token — the same
+ * token the browser keeps in its cookie. The password is sent once and never
+ * stored; the caller keeps only the token, in the app's own storage.
+ */
+export type SignIn =
+  | { readonly kind: "token"; readonly token: string }
+  | { readonly kind: "open" }
+  | { readonly kind: "wrong" }
+  | { readonly kind: "locked" };
+
+export async function signIn(
+  options: Pick<ClientOptions, "baseUrl" | "timeoutMs" | "fetchImpl">,
+  name: string,
+  password: string,
+): Promise<LumenOutcome<SignIn>> {
+  const outcome = await call(options, "/api/anmelden", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, passwort: password }),
+  });
+  if (outcome.error !== null) return { value: null, error: outcome.error };
+  const { status, body } = outcome.value!;
+  if (status === 200 && typeof body?.["token"] === "string" && body["token"]) {
+    return { value: { kind: "token", token: body["token"] as string }, error: null };
+  }
+  if (status === 409) return { value: { kind: "open" }, error: null };
+  if (status === 401) return { value: { kind: "wrong" }, error: null };
+  if (status === 429) return { value: { kind: "locked" }, error: null };
+  return { value: null, error: "HTTP " + status };
+}
+
+/** Ends the session of this token on LUMEN. Failures are ignored: the app forgets the token anyway. */
+export async function signOut(options: ClientOptions): Promise<void> {
+  if (!options.token) return;
+  await call(options, "/api/abmelden", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + options.token },
+  });
 }
 
 /** Turns a base64 payload from the phone camera into a Blob for upload. */
@@ -185,6 +241,40 @@ async function request(
     return { value: null, error: describeError(error) };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function call(
+  options: Pick<ClientOptions, "baseUrl" | "timeoutMs" | "fetchImpl">,
+  path: string,
+  init: RequestInit,
+): Promise<LumenOutcome<{ status: number; body: Record<string, unknown> | null }>> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT);
+  try {
+    const response = await doFetch(joinUrl(options.baseUrl, path), {
+      ...init,
+      headers: { Accept: "application/json", ...((init.headers as Record<string, string>) ?? {}) },
+      credentials: "omit",
+      signal: controller.signal,
+    });
+    return { value: { status: response.status, body: await readJson(response) }, error: null };
+  } catch (error) {
+    return { value: null, error: describeError(error) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readJson(response: Response): Promise<Record<string, unknown> | null> {
+  const type = response.headers?.get?.("content-type") ?? "";
+  if (!type.includes("json")) return null;
+  try {
+    const value: unknown = await response.json();
+    return value && typeof value === "object" ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
   }
 }
 

@@ -164,11 +164,25 @@ describe("phone page", () => {
     expect(html).toContain('<option value="de" selected>');
     expect(html.indexOf('id="language"')).toBeLessThan(html.indexOf("Nicht verbunden"));
     expect(html).toContain("Speichern");
-    expect(html).toContain("gesetzt (6 Zeichen)");
+    expect(html).toContain("angemeldet");
     expect(html).not.toContain("abcdef");
-    // The cookie sits under "Erweitert", not on the main page.
-    expect(html.indexOf("<summary>Erweitert</summary>")).toBeLessThan(html.indexOf("Zugangsschlüssel (Token)"));
+    expect(html).toContain('id="signout"');
+    // Signed in: no password field is offered, only signing out.
+    expect(html).not.toContain('id="password"');
   });
+});
+
+it("offers name and password when not signed in, never a stored password", () => {
+  let html = "";
+  const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null };
+  vi.stubGlobal("document", { getElementById: () => root });
+  vi.stubGlobal("setInterval", () => 0);
+  mountPhoneUi({ getData: () => ({ ...EMPTY_DATA }), setData: async () => undefined, shoot: () => undefined, getStatus: () => null, getLocale: () => "de" });
+  expect(html).toContain('id="name"');
+  expect(html).toContain('id="password" type="password"');
+  expect(html).toContain("Anmelden");
+  expect(html).toContain("nicht angemeldet");
+  vi.unstubAllGlobals();
 });
 
 describe("switching language on the phone", () => {
@@ -237,5 +251,41 @@ describe("switching language on the phone", () => {
     expect(glasses.footer).toBe("Tippen = nochmal · 2× = Ende");
     expect(html).toContain("Nicht verbunden");
     expect(stored.get("quietglass.locale")).toBe("de");
+  });
+});
+
+describe("phone sign-in", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("regression: signs in at the address saved after the page was drawn, and keeps only the token", async () => {
+    const handlers = new Map<string, () => void>();
+    const values: Record<string, string> = { name: "Alex", password: "pw-12345678", url: "https://lumen.example" };
+    const element = (id: string) => ({
+      value: values[id] ?? "",
+      checked: false,
+      addEventListener: (_type: string, handler: () => void) => { handlers.set(id, handler); },
+    });
+    const root = { innerHTML: "", querySelector: (selector: string) => element(selector.replace("#", "")) };
+    vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("setInterval", () => 0);
+    let data: import("../src/storage/persist").LumenData = { ...EMPTY_DATA, baseUrl: "http://127.0.0.1:8077" };
+    const saved: unknown[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toBe("https://lumen.example/api/anmelden");
+      return new Response(JSON.stringify({ token: "tok-1" }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mountPhoneUi({
+      getData: () => data,
+      setData: async (next) => { data = next; saved.push(next); },
+      shoot: () => undefined, getStatus: () => null, getLocale: () => "en",
+    });
+    handlers.get("save")!();          // the address changes without a redraw
+    handlers.get("signin")!();
+    await new Promise((done) => setTimeout(done, 0));
+    await new Promise((done) => setTimeout(done, 0));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(data.token).toBe("tok-1");
+    expect(JSON.stringify(saved)).not.toContain("pw-12345678");
   });
 });

@@ -224,7 +224,7 @@ describe("lumen polling loop", () => {
 });
 
 /** A LUMEN with an open quest that records what was asked of it. */
-function questLumen(options: { tickOnUpload: boolean }) {
+function questLumen(options: { tickOnUpload: boolean; unreadable?: boolean }) {
   let questId = 9;
   const calls: string[] = [];
   const json = (body: unknown) => ({ ok: true, status: 200, type: "basic", headers: { get: () => "application/json" }, json: async () => body } as unknown as Response);
@@ -232,8 +232,12 @@ function questLumen(options: { tickOnUpload: boolean }) {
     calls.push((init?.method ?? "GET") + " " + url.replace(/^https?:\/\/[^/]+/, ""));
     if (url.endsWith("/api/quest/neu")) { questId += 1; return json({}); }
     if (url.includes("/abgeben")) {
-      if (options.tickOnUpload) questId += 1;
-      return { type: "opaque", status: 0, ok: false } as unknown as Response;
+      if (options.unreadable) {
+        if (options.tickOnUpload) questId += 1;
+        throw new TypeError("Failed to fetch");
+      }
+      if (options.tickOnUpload) { questId += 1; return json({ ergebnis: "erledigt", meldung: "Angenommen" }); }
+      return json({ ergebnis: "abgelehnt", meldung: "Kein Baum zu sehen." });
     }
     return json({ kreatur: { licht: 50, zustand: "wach", geste: "g", streak: 0 }, quest: { id: questId, titel: "Q" + questId, aufgabe: "Task " + questId, medium: "foto" } });
   });
@@ -285,7 +289,7 @@ describe("lumen gestures with an open quest", () => {
     expect(lumen.calls.some((call) => call.includes("/api/quest/neu"))).toBe(false);
   });
 
-  it("a photo LUMEN ticked off shows as done, checked through the status", async () => {
+  it("a photo LUMEN ticked off shows as done straight from its JSON answer", async () => {
     const lumen = questLumen({ tickOnUpload: true });
     const fake = await bootWith(lumen.fetchMock);
     fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
@@ -295,8 +299,27 @@ describe("lumen gestures with an open quest", () => {
     expect(fake.writes.body).toContain("Quest done");
   });
 
-  it("a photo LUMEN did not tick off says so instead of claiming success", async () => {
+  it("a photo LUMEN rejected shows LUMEN's reason", async () => {
     const lumen = questLumen({ tickOnUpload: false });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.writes.body).toContain("Kein Baum zu sehen.");
+  });
+
+  it("fallback: an unreadable answer is settled through the status (ticked off)", async () => {
+    const lumen = questLumen({ tickOnUpload: true, unreadable: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(lumen.calls.some((call) => call.startsWith("POST /quest/9/abgeben"))).toBe(true);
+    expect(fake.writes.body).toContain("Quest done");
+  });
+
+  it("fallback: an unreadable answer and an open quest says so instead of claiming success", async () => {
+    const lumen = questLumen({ tickOnUpload: false, unreadable: true });
     const fake = await bootWith(lumen.fetchMock);
     fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
     fake.emit(0);

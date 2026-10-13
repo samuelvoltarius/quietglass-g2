@@ -1,6 +1,6 @@
 import { isLocal, maskToken, validateUrl, type LumenData } from "../storage/persist";
 import { drawMoth, lightBar, mothLine } from "../lumen/moth";
-import type { LumenStatus } from "../lumen/client";
+import { signIn, signOut, type LumenStatus } from "../lumen/client";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
 
@@ -92,14 +92,22 @@ function template(data: LumenData, status: LumenStatus | null, notice: string, l
 
     <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
 
-    <details${data.token ? " open" : ""}>
-      <summary>${x("p.advanced")}</summary>
-      <label for="token">${x("p.token")} — <em>${escapeHtml(maskToken(data.token, locale))}</em></label>
-      <input id="token" type="password" placeholder="${x("p.tokenPlaceholder")}" />
-      <p class="hint">${x("p.tokenHint")}</p>
-    </details>
-
     <button id="save" type="button">${x("p.save")}</button>
+  </section>
+
+  <section class="card">
+    <h2>${x("p.signInTitle")}</h2>
+    <p class="hint">${x("p.token")} — <em>${escapeHtml(maskToken(data.token, locale))}</em></p>
+    ${data.token ? `
+      <button id="signout" type="button">${x("p.signOut")}</button>
+    ` : `
+      <label for="name">${x("p.name")}</label>
+      <input id="name" type="text" autocomplete="username" autocapitalize="none" />
+      <label for="password">${x("p.password")}</label>
+      <input id="password" type="password" autocomplete="current-password" />
+      <button id="signin" type="button">${x("p.signIn")}</button>
+    `}
+    <p class="hint">${x("p.tokenHint")}</p>
   </section>
 
   <section class="card">
@@ -124,7 +132,6 @@ function wire(
   rerender: () => void,
 ): void {
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
-  const data = ports.getData();
 
   byId<HTMLSelectElement>("language")?.addEventListener("change", (event) => {
     const value = (event.target as HTMLSelectElement).value;
@@ -142,13 +149,43 @@ function wire(
     const check = validateUrl(url, locale);
     if (!check.valid) { notify(check.errors.join(" ")); return; }
 
-    const token = byId<HTMLInputElement>("token")?.value ?? "";
+    // Read the stored token now, not when the page was drawn: a sign-in in
+    // between must not be undone by saving the address.
+    const token = ports.getData().token;
     void ports.setData({
       baseUrl: url,
-      // An empty field means "leave the stored token alone", not "clear it".
-      ...(token ? { token } : data.token ? { token: data.token } : {}),
+      ...(token ? { token } : {}),
       invertScroll: byId<HTMLInputElement>("invert")?.checked ?? false,
     });
+  });
+
+  // Name and password go to LUMEN once; only the session token it returns is
+  // kept, in the app's own storage. The password is never stored.
+  byId<HTMLButtonElement>("signin")?.addEventListener("click", () => {
+    const name = byId<HTMLInputElement>("name")?.value.trim() ?? "";
+    const password = byId<HTMLInputElement>("password")?.value ?? "";
+    if (!name || !password) { notify(t(locale, "p.needBoth")); return; }
+    void (async () => {
+      const outcome = await signIn({ baseUrl: ports.getData().baseUrl }, name, password);
+      const answer = outcome.value;
+      if (answer?.kind === "token") {
+        await ports.setData({ ...ports.getData(), token: answer.token });
+        notify(t(locale, "p.signedIn"));
+      } else if (answer?.kind === "open") notify(t(locale, "p.signInOpen"));
+      else if (answer?.kind === "wrong") notify(t(locale, "p.signInWrong"));
+      else if (answer?.kind === "locked") notify(t(locale, "p.signInLocked"));
+      else notify(t(locale, "p.signInFailed", { error: outcome.error ?? "?" }));
+    })();
+  });
+
+  byId<HTMLButtonElement>("signout")?.addEventListener("click", () => {
+    void (async () => {
+      const current = ports.getData();
+      await signOut({ baseUrl: current.baseUrl, ...(current.token ? { token: current.token } : {}) });
+      const { token: _dropped, ...rest } = current;
+      await ports.setData(rest);
+      notify(t(locale, "p.signedOut"));
+    })();
   });
 }
 
