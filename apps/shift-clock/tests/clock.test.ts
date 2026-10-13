@@ -277,8 +277,8 @@ describe("display budget", () => {
   it("regression: a long project name is cut to the line", () => {
     const name = "Very long client name with a job number and a task ".repeat(2);
     const picker = buildView(STOPPED, [], { projects: [name], selecting: name }, 0);
-    for (const row of picker.body) expect(row.length).toBeLessThanOrEqual(38);
+    for (const row of picker.body) expect(row.length).toBeLessThanOrEqual(46);
     const running = buildView(startProject(STOPPED, name, 0, ids()).state, [], { projects: [name] }, 1000);
-    expect(running.header.length).toBeLessThanOrEqual(46);
+    expect(running.header.length).toBeLessThanOrEqual(56);
   });
 });

@@ -23,12 +23,12 @@ export interface ClockView {
 /** Rows the body container holds; more are pushed off the display. */
 export const MAX_BODY_ROWS = 7;
 /** Characters the header holds on one line in the G2's proportional font. */
-export const HEADER_WIDTH = 46;
+export const HEADER_WIDTH = 56;
 /** The body sits beside the pixel icon, so its lines are shorter. */
-export const BODY_WIDTH = 38;
+export const BODY_WIDTH = 46;
 
 /** The footer is one full-width line, like the header. */
-export const FOOTER_WIDTH = 46;
+export const FOOTER_WIDTH = 56;
 
 /**
  * Picker row that leaves the list without starting anything. A control

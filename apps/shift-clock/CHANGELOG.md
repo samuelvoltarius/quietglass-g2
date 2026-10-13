@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] — 2026-10-13
+
+### Changed
+
+- Text beside the day bar gets 46 characters per row (was 38); header and footer use the full 56 characters, so long project names and German hints are cut later.
+
 ## [0.3.2] — 2026-10-13
 
 ### Fixed

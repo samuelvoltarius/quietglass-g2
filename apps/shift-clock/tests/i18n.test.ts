@@ -24,8 +24,8 @@ describe("message catalogue", () => {
     }
   });
 
-  it("keeps every glasses string within its row: 46 in header/footer, 38 beside the icon", () => {
-    expect(HEADER_WIDTH).toBe(46);
+  it("keeps every glasses string within its row: 56 in header/footer, 46 beside the day bar", () => {
+    expect(HEADER_WIDTH).toBe(56);
     for (const locale of locales) {
       for (const key of Object.keys(messages[locale]).filter((k) => k.startsWith("g."))) {
         expect(t(locale, key, WORST).length, `${locale}:${key}`).toBeLessThanOrEqual(widthOf(key));
