@@ -1,4 +1,5 @@
 import { tr, type Locale, type Messages } from "./i18n";
+import { routeStrings } from "./route/strings";
 
 /**
  * Every string NextStop shows. Keys starting with `g.` go to the glasses and
@@ -109,6 +110,7 @@ export const messages: Messages = {
     "p.urlScheme": "Adresse muss mit http:// oder https:// beginnen.",
     "p.urlInvalid": "Das ist keine gültige Adresse.",
     "p.invalid": "Ungültig",
+    ...routeStrings.de,
   },
   en: {
     // Glasses: waiting and loading
@@ -207,6 +209,7 @@ export const messages: Messages = {
     "p.urlScheme": "The address must start with http:// or https://.",
     "p.urlInvalid": "That is not a valid address.",
     "p.invalid": "Invalid",
+    ...routeStrings.en,
   },
 };
 

@@ -1,0 +1,158 @@
+[
+ {
+  "type": "STOP",
+  "name": "Salzburg Hauptbahnhof",
+  "id": "at-Railway-Current-Reference-Data-2026_Pat:45:50002",
+  "lat": 47.81305999999999,
+  "lon": 13.045127999999998,
+  "zip": "5020",
+  "country": "AT",
+  "areas": [
+   {
+    "name": "Österreich",
+    "adminLevel": 2,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 4,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 6,
+    "matched": false,
+    "unique": true,
+    "default": true
+   },
+   {
+    "name": "Elisabeth-Vorstadt",
+    "adminLevel": 10,
+    "matched": false,
+    "unique": false,
+    "default": false
+   }
+  ]
+ },
+ {
+  "type": "PLACE",
+  "name": "Hauptbahnhof",
+  "id": "node/[2223479993]",
+  "lat": 47.8122834,
+  "lon": 13.0467185,
+  "zip": "5020",
+  "country": "AT",
+  "areas": [
+   {
+    "name": "Österreich",
+    "adminLevel": 2,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 4,
+    "matched": true,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 6,
+    "matched": false,
+    "unique": true,
+    "default": true
+   },
+   {
+    "name": "Schallmoos",
+    "adminLevel": 10,
+    "matched": false,
+    "unique": false,
+    "default": false
+   }
+  ]
+ },
+ {
+  "type": "PLACE",
+  "name": "B+R Salzburg Hauptbahnhof",
+  "id": "node/[2367308771]",
+  "lat": 47.8119021,
+  "lon": 13.0464337,
+  "zip": "5020",
+  "country": "AT",
+  "areas": [
+   {
+    "name": "Österreich",
+    "adminLevel": 2,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 4,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 6,
+    "matched": false,
+    "unique": true,
+    "default": true
+   },
+   {
+    "name": "Schallmoos",
+    "adminLevel": 10,
+    "matched": false,
+    "unique": false,
+    "default": false
+   }
+  ]
+ },
+ {
+  "type": "PLACE",
+  "name": "P+R Salzburg Hauptbahnhof",
+  "id": "way/[30902558]",
+  "lat": 47.8130161,
+  "lon": 13.0435302,
+  "zip": "5020",
+  "country": "AT",
+  "areas": [
+   {
+    "name": "Österreich",
+    "adminLevel": 2,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 4,
+    "matched": false,
+    "unique": false,
+    "default": false
+   },
+   {
+    "name": "Salzburg",
+    "adminLevel": 6,
+    "matched": false,
+    "unique": true,
+    "default": true
+   },
+   {
+    "name": "Elisabeth-Vorstadt",
+    "adminLevel": 10,
+    "matched": false,
+    "unique": false,
+    "default": false
+   }
+  ]
+ }
+]

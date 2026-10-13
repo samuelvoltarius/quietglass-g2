@@ -157,3 +157,16 @@ function readNumberField(record: Record<string, unknown>, ...keys: string[]): nu
   }
   return undefined;
 }
+
+/**
+ * Item chosen in the native contextual menu. Menu clicks arrive as a
+ * `menuItemClickEvent` of their own, never through the capture container.
+ * Zero means "no item": the menus here never use it as an id.
+ */
+export function menuItemIdFromEvent(event: unknown): number | null {
+  if (!event || typeof event !== "object") return null;
+  const payload = pickRecord(event as Record<string, unknown>, "menuItemClickEvent");
+  if (payload === null) return null;
+  const id = readNumberField(payload, "itemID", "itemId", "Item_ID", "item_id");
+  return id !== undefined && id > 0 ? id : null;
+}

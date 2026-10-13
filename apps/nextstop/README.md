@@ -25,6 +25,11 @@
 
 Am Bahnsteig: was fährt hier weg, und ist es pünktlich.
 Im Bus: welcher Halt kommt als Nächstes, und wann bin ich da.
+Unterwegs zu einem Ziel: **Route planen** und Schritt für Schritt begleiten lassen (seit 0.3.0).
+
+> **Neu in 0.3.0 – Route planen:** Am Handy unter „Ziele“ Orte suchen und als Favoriten speichern („Heim“, „Arbeit“ …). Auf der Brille tippen und halten für das Menü ▸ **Route planen**: Ziel wählen, 3–4 Verbindungen ab deinem Standort ansehen (`in 4 min · Bus 3 → O-Bus 7 · an 14:52 · 1×`), mit **Tippen** startet die Begleitung: „Geh zu Haltestelle …“, „Bus 3 Richtung … um 14:32“, „Aussteigen: Mirabellplatz – noch 2 Halte“, „Umsteigen: O-Bus 7, Steig B“, „Ziel erreicht“. **Doppeltippen** geht einen Schritt zurück (in der Begleitung erst nach Rückfrage). Verbindungen, Orte und Favoriten kommen von Transitous; die Favoriten bleiben auf dem Handy.
+>
+> **New in 0.3.0 – route planning:** Under "Destinations" on the phone, search for places and save favourites ("Home", "Work" …). On the glasses, tap and hold for the menu, then **Plan a route**: pick a destination, see 3–4 connections from where you are (`in 4 min · Bus 3 → O-Bus 7 · arr 14:52 · 1×`), **tap** to start guidance: walk to the stop, which bus at what time, "Get off: …, 2 stops left", "Change to …", "You have arrived". **Double-tap** goes back (in the guide it asks once more). Connections and place search come from Transitous; favourites stay on the phone.
 
 ---
 
@@ -118,6 +123,48 @@ Das Zeichen gleich nach der Zeit ist der Punkt, an dem die meisten Abfahrtstafel
 Die Tilde ist die wichtigste. Eine Tafel, die eine geplante Zeit genauso
 druckt wie eine gemessene, wird genauso geglaubt — und ist genauso oft falsch.
 
+### Route planen
+
+```
+Wohin? · 14:29                   → Heim · 14:29
+> Jetzt: Getreidegasse 10        > in 4 min · O-Bus 2 → O-Bus 10 · an 14:46 · 1×
+  Heim                             in 17 min · O-Bus 10 · an 14:56
+  Arbeit                           in 17 min · O-Bus 2 → O-Bus 10 · an 15:00 · 1×
+  Hauptbahnhof
+                                 Ab Salzburg Vogelweiderstraße
+                                 Gehen 15 min · Dauer 35 min
+```
+
+**Ziel sprechen (optional):** Auf der Zielliste Touchpad **halten** und das Ziel sagen,
+beim Loslassen (oder nach spätestens 8 s) geht die Aufnahme als WAV an einen
+Whisper-Server (OpenAI-kompatibel, `/v1/audio/transcriptions`, Formular-Upload ohne eigene
+Header, damit kein CORS-Preflight nötig ist). Die Brille zeigt „Verstanden: …“ und bis zu drei
+Treffer der Ortssuche; Wischen wählt, Tippen sucht Verbindungen, Doppeltippen verwirft, im
+Menü „Als Favorit merken“. Die Adresse des Servers steht am Handy unter „Erweitert“; die
+öffentliche App hat keine Vorgabe (dann sagt die Brille, dass ein eigener Server nötig ist), ein
+privater Build kann sie mit `VITE_STT_URL` vorgeben. Aufnahmen werden nur gesendet, solange du
+hältst, und nicht gespeichert.
+
+**Fußwege mit Abbiegehinweisen:** Die Begleitung führt jede Etappe: Auf Fußwegen steht oben die
+nächste Abbiegung (`←  60 m  links abbiegen`, Straße, Rest der Strecke), aktualisiert per GPS.
+Die Abbiegungen kommen von Valhalla (`costing: pedestrian`, öffentlicher OSM-Server von FOSSGIS,
+oder `VITE_ROUTER_URL` in einem privaten Build): MOTIS' eigene Fußschritte sagen nur „geradeaus“
+und nennen kaum Straßen. Entfernt sich der Gehende mehr als 80 m von der Route, wird sie vom
+aktuellen Standort neu berechnet („Neu berechnet“ in der Fußzeile). Die Etappen wechseln von
+selbst (Fußweg → „Warte auf Bus 3“ → Fahrt mit „Danach aussteigen“ einen Halt vorher →
+Umstiegsweg → … → „Ziel erreicht“); der Kopf zeigt Etappe, Uhrzeit und die erwartete Ankunft.
+Ein verpasstes Fahrzeug erkennt die App am Standort und bietet per Tippen eine neue Verbindung an.
+Die Pfeile sind Textzeichen (die Brille kann Text nicht vergrößern); ein Bild-Pfeil wäre der
+nächste Schritt.
+
+Die Ziele liegen auf dem Handy (SDK-Speicher, mit localStorage als Spiegel). Orte
+sucht die App über die Ortssuche von Transitous (`/api/v1/geocode`), Verbindungen über
+`/api/v1/plan`; beides auf derselben Adresse wie die Abfahrten, die Brille braucht
+also nur **eine** Netzwerk-Freigabe. Geplant wird immer über MOTIS, auch wenn die
+Abfahrtstafel auf ÖBB steht. Während der Begleitung werden die Zeiten der nächsten
+beiden Fahrzeuge einmal pro Minute über `/api/v1/trip` aufgefrischt, damit
+gemeldete Verspätungen ankommen.
+
 ### Unterwegs
 
 ```
@@ -147,6 +194,12 @@ optimistisch sein. Das steht dann auch da.
 | **Tippen** | Fahrt verfolgen — und zurück |
 | **Halten** | nächste Haltestelle in der Nähe |
 | **Doppeltippen** | NextStop verlassen |
+| **Tippen und halten** | Menü der Seite: Route planen, Abfahrten, … (das Menü zeichnet die Brille) |
+
+Auf den Route-Seiten: **Wischen** wählt das Ziel bzw. die Verbindung, **Tippen** öffnet
+die Verbindungen bzw. startet die Begleitung, **Doppeltippen** geht zurück. In der
+Begleitung bedeutet Tippen „nächster Schritt“ und Wischen blättert vor und zurück;
+das Beenden fragt einmal nach. Auf der ersten Seite beendet Doppeltippen NextStop wie bisher.
 
 ## Einrichten
 
@@ -192,9 +245,10 @@ ausdrücklich dazu, dass die Position gesetzt und nicht gemessen ist.
 ## Datenschutz
 
 Wo jemand hinfährt, ist ungefähr so persönlich wie Daten nur werden können.
-NextStop speichert deshalb **nichts davon** — keine Fahrten, keine
-Lieblingshaltestellen, keine Historie. Gespeichert werden ausschließlich die
-gewählte Quelle und deren Adresse.
+NextStop speichert deshalb **keine Fahrten und keine Historie**. Gespeichert werden
+die gewählte Quelle und deren Adresse und — nur wenn du sie selbst anlegst — deine
+Favoriten (Name und Koordinaten) und das „Ziel jetzt“. Sie bleiben auf dem Handy;
+an den Fahrplandienst gehen nur Suchtext und Koordinaten, wenn du suchst oder planst.
 
 Die Position wird an den gewählten Dienst geschickt, um die nächste Haltestelle
 zu finden — anders geht es nicht. Wer MOTIS selbst betreibt, kann auch das im
@@ -208,12 +262,16 @@ eigenen Netz halten.
 | Nur Deutsch | Brille und Handy-App sprechen derzeit nur Deutsch. |
 | ÖBB ist keine Open-Data-API | Es ist der Endpunkt der ÖBB-eigenen App. Kein Schlüssel nötig, aber niemand garantiert, dass er so bleibt. Jedes Feld wird als optional gelesen: ändert sich etwas, fällt die App auf Fahrplanzeiten zurück statt abzustürzen. |
 | Transitous-Abdeckung schwankt | Ganze Regionen können fehlen. Die App sagt das, statt eine leere Liste zu zeigen. |
-| Keine Umstiege | Diese App beantwortet „was fährt jetzt" und „wo muss ich raus", nicht „wie komme ich hin". Eine Verbindungsauskunft ist ein Bildschirm fürs Handy. |
+| Route nur über MOTIS | Verbindungen kommen von Transitous (oder deinem MOTIS). Die ÖBB-Quelle kennt nur Abfahrtstafel und Fahrt. In Österreich sind die Zeiten meist Fahrplan (`~`), nicht live. |
+| Eigener Server auf der Brille | Die öffentliche `app.json` erlaubt nur `https://api.transitous.org`. Wer einen eigenen MOTIS- oder ÖBB-Server nutzt, packt mit einer eigenen `app.private.json`, die genau diese Adresse zusätzlich in der Whitelist hat (Platzhalter `*` blockiert die echte Brille). |
+| Spracheingabe braucht einen Server | Whisper läuft nicht in der App. Ohne eigenen Server (Handy, „Erweitert“, oder `VITE_STT_URL` im privaten Build) bleibt es bei der Suche am Handy. |
+| Pfeil als Textzeichen | `←`, `→`, `↖`, `↗` werden im Simulator gezeichnet; auf der echten Brille nicht geprüft. |
+| Begleitung ohne GPS | Dann entscheidet die Uhr; die Fußzeile zeigt „Uhr“ statt „GPS“, und Tippen schaltet von Hand weiter. |
 | Nicht auf Hardware geprüft | Gebaut und geprüft gegen SDK 0.0.16 und den Simulator — aber gegen **echte, laufende Dienste**, nicht gegen Attrappen. |
 
 ## Nächste Schritte
 
-- Umstiegswarnung, wenn der Anschluss laut Echtzeit nicht mehr zu schaffen ist.
+- Umstiegswarnung, wenn der Anschluss laut Echtzeit nicht mehr zu schaffen ist (die Begleitung frischt die Zeiten schon auf, warnt aber noch nicht).
 - Steiermark-Echtzeit über Transitous nutzen, wo die ÖBB nichts weiß.
 - Alarm kurz vor dem eigenen Ausstieg, statt selbst mitzählen zu müssen.
 

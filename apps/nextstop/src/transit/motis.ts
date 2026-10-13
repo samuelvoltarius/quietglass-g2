@@ -1,5 +1,7 @@
 import type { Departure, Ride, RideStop, Stop, TransitBackend } from "./types";
 import { metresBetween } from "./types";
+import { parsePlan, type Destination, type Journey } from "../route/journey";
+import { parseGeocode, type GeoResult } from "../route/geocode";
 
 /**
  * Transitous backend.
@@ -80,7 +82,7 @@ export class MotisBackend implements TransitBackend {
     this.#timeoutMs = options.timeoutMs ?? 12000;
   }
 
-  async #get(path: string, params: Record<string, string>): Promise<unknown> {
+  async #get(path: string, params: Record<string, string> = {}): Promise<unknown> {
     const url = new URL(this.#baseUrl + path);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
@@ -98,7 +100,7 @@ export class MotisBackend implements TransitBackend {
           // Browsers forbid scripts from setting this header and will drop it
           // silently; there the WebView's own agent is sent, which is fine.
           // It matters for Node, where there may be no agent at all.
-          "User-Agent": "NextStop/0.1 (Quietglass; +https://github.com/samuelvoltarius/quietglass)",
+          "User-Agent": "NextStop/0.3 (Quietglass; +https://github.com/samuelvoltarius/quietglass)",
         },
         signal: controller.signal,
       });
@@ -170,6 +172,40 @@ export class MotisBackend implements TransitBackend {
         tripId,
       }];
     });
+  }
+
+  /**
+   * Connections from a position to a destination, leaving now.
+   *
+   * `detailedLegs=false` leaves out the route geometry and the turn-by-turn
+   * steps: the answer for four connections shrinks from about 130 kB to about
+   * 57 kB, which matters on a phone's mobile connection.
+   */
+  async plan(
+    from: { readonly lat: number; readonly lon: number },
+    to: Destination,
+    language: "de" | "en" = "de",
+    count = 4,
+  ): Promise<readonly Journey[]> {
+    const raw = await this.#get("/api/v1/plan", {
+      fromPlace: `${from.lat},${from.lon}`,
+      toPlace: `${to.lat},${to.lon}`,
+      numItineraries: String(count),
+      detailedLegs: "false",
+      language,
+    });
+    return parsePlan(raw, to, language);
+  }
+
+  /** Place search, nearest first when a position is known. */
+  async geocode(
+    text: string,
+    near: { readonly lat: number; readonly lon: number } | null,
+    language: "de" | "en" = "de",
+  ): Promise<readonly GeoResult[]> {
+    const params: Record<string, string> = { text, language };
+    if (near) params["place"] = `${near.lat},${near.lon}`;
+    return parseGeocode(await this.#get("/api/v1/geocode", params));
   }
 
   async ride(tripId: string): Promise<Ride | null> {

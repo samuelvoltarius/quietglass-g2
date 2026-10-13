@@ -1,0 +1,185 @@
+{
+ "trip": {
+  "summary": {
+   "has_time_restrictions": false,
+   "has_toll": false,
+   "has_highway": false,
+   "has_ferry": false,
+   "min_lat": 47.805422,
+   "min_lon": 13.043978,
+   "max_lat": 47.809186,
+   "max_lon": 13.057076,
+   "time": 861.053,
+   "length": 1.17,
+   "cost": 885.669
+  },
+  "legs": [
+   {
+    "shape": "wf`ezAib}{WkATnDhr@~C~y@b@\\r@n@d@ZVRTK`Bc@RnERnErAt`@FhBd@rNf@dNhAt]LhDPnFJdDx@fVFvBt@fUt@nTpB`n@`@`MRdGPtErAMXAfBhf@`@rCHnFJfFFb@~ObNtJlIbFhEp@OpAjAx@r@NdAnOnMxExDzK|IVY^Vn@z@x@x@RLNz@~QfN|I~HjAy@hBbIbAlEeBpJ}@xBmBvEnBrDv@dD`DrP|AfJYN\\jAZjAb@xALd@fMpq@b@|BTjAHh@TlAVrAtPh|@F\\TfAb@vBNp@bCxLP\\`@b@^\\dHtZnAfE",
+    "summary": {
+     "has_time_restrictions": false,
+     "has_toll": false,
+     "has_highway": false,
+     "has_ferry": false,
+     "min_lat": 47.805422,
+     "min_lon": 13.043978,
+     "max_lat": 47.809186,
+     "max_lon": 13.057076,
+     "time": 861.053,
+     "length": 1.17,
+     "cost": 885.669
+    },
+    "maneuvers": [
+     {
+      "type": 1,
+      "instruction": "Auf Fußweg Richtung Norden laufen.",
+      "length": 0.004,
+      "time": 2.823,
+      "begin_shape_index": 0,
+      "end_shape_index": 1
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußweg abbiegen.",
+      "length": 0.133,
+      "time": 103.905,
+      "begin_shape_index": 1,
+      "end_shape_index": 3
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußweg abbiegen.",
+      "length": 0.009,
+      "time": 11.352,
+      "begin_shape_index": 3,
+      "end_shape_index": 7
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußweg abbiegen.",
+      "length": 0.007,
+      "time": 4.941,
+      "begin_shape_index": 7,
+      "end_shape_index": 9
+     },
+     {
+      "type": 10,
+      "instruction": "Rechts auf Sterneckstraße/B1 abbiegen.",
+      "street_names": [
+       "Sterneckstraße",
+       "B1"
+      ],
+      "length": 0.333,
+      "time": 239.658,
+      "begin_shape_index": 9,
+      "end_shape_index": 27
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußweg abbiegen.",
+      "length": 0.006,
+      "time": 4.235,
+      "begin_shape_index": 27,
+      "end_shape_index": 29
+     },
+     {
+      "type": 10,
+      "instruction": "Rechts auf Fußweg abbiegen.",
+      "length": 0.195,
+      "time": 142.112,
+      "begin_shape_index": 29,
+      "end_shape_index": 42
+     },
+     {
+      "type": 22,
+      "instruction": "Geradeaus halten auf Fußweg.",
+      "length": 0.039,
+      "time": 30.07,
+      "begin_shape_index": 42,
+      "end_shape_index": 44
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußweg abbiegen.",
+      "length": 0.002,
+      "time": 1.411,
+      "begin_shape_index": 44,
+      "end_shape_index": 45
+     },
+     {
+      "type": 10,
+      "instruction": "Rechts auf Fußgängerübergang abbiegen.",
+      "length": 0.072,
+      "time": 57.595,
+      "begin_shape_index": 45,
+      "end_shape_index": 52
+     },
+     {
+      "type": 15,
+      "instruction": "Links abbiegen.",
+      "length": 0.005,
+      "time": 3.529,
+      "begin_shape_index": 52,
+      "end_shape_index": 53
+     },
+     {
+      "type": 10,
+      "instruction": "Rechts abbiegen.",
+      "length": 0.021,
+      "time": 17.529,
+      "begin_shape_index": 53,
+      "end_shape_index": 55
+     },
+     {
+      "type": 10,
+      "instruction": "Rechts abbiegen.",
+      "length": 0.031,
+      "time": 23.941,
+      "begin_shape_index": 55,
+      "end_shape_index": 58
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußweg abbiegen.",
+      "length": 0.016,
+      "time": 10.39,
+      "begin_shape_index": 58,
+      "end_shape_index": 60
+     },
+     {
+      "type": 23,
+      "instruction": "Rechts halten auf Fußweg.",
+      "length": 0.037,
+      "time": 26.117,
+      "begin_shape_index": 60,
+      "end_shape_index": 62
+     },
+     {
+      "type": 10,
+      "instruction": "Rechts auf Fußweg abbiegen.",
+      "length": 0.002,
+      "time": 1.411,
+      "begin_shape_index": 62,
+      "end_shape_index": 63
+     },
+     {
+      "type": 15,
+      "instruction": "Links auf Fußgängerübergang abbiegen.",
+      "length": 0.254,
+      "time": 180.025,
+      "begin_shape_index": 63,
+      "end_shape_index": 84
+     },
+     {
+      "type": 4,
+      "instruction": "Ziel erreicht.",
+      "length": 0,
+      "time": 0,
+      "begin_shape_index": 84,
+      "end_shape_index": 84
+     }
+    ]
+   }
+  ]
+ }
+}

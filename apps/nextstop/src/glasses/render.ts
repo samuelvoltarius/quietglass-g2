@@ -3,10 +3,13 @@ import {
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { StopView } from "./view";
+import type { MenuSpec } from "../route/menu";
 
 /**
  * Renders the departure board and the ride onto the G2.
@@ -39,8 +42,17 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: StopView): CreateStartUpPageContainer {
-  return new CreateStartUpPageContainer({
+/** Native contextual menu of the page; the SDK checks count, ids and the 32-byte labels. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({
+    menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })),
+  });
+}
+
+function pageParts(view: StopView, menu: MenuSpec | null) {
+  const menuObject = buildMenu(menu);
+  return {
     containerTotalNum: 3,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
@@ -48,7 +60,12 @@ export function buildPage(view: StopView): CreateStartUpPageContainer {
       text(CONTAINER.body, view.body.join("\n"), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-  });
+    ...(menuObject === undefined ? {} : { menuObject }),
+  };
+}
+
+export function buildPage(view: StopView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer(pageParts(view, menu));
 }
 
 function text(
@@ -76,8 +93,8 @@ function text(
  * though it is reported to always fail on hardware: the call itself registers
  * event routing, and skipping it leaves the app deaf to input.
  */
-export async function createPage(bridge: EvenAppBridge, view: StopView): Promise<RenderResult> {
-  const page = buildPage(view);
+export async function createPage(bridge: EvenAppBridge, view: StopView, menu: MenuSpec | null = null): Promise<RenderResult> {
+  const page = buildPage(view, menu);
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
@@ -88,6 +105,24 @@ export async function createPage(bridge: EvenAppBridge, view: StopView): Promise
     const result = await bridge.createStartUpPageContainer(page);
     if (result === StartUpPageCreateResult.success) return { ok: true };
     return { ok: false, reason: describeCreateResult(result) };
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/**
+ * Another page means another menu, and the menu can only change with a
+ * rebuild: the one reason to pay for it. `menuObject` is supplied again
+ * because a rebuild without it would clear the menu. A refused rebuild leaves
+ * the old page (and its text lengths) in place; the caller then falls back to
+ * the fast path so the text at least moves on.
+ */
+export async function rebuildPage(bridge: EvenAppBridge, view: StopView, menu: MenuSpec | null): Promise<RenderResult> {
+  try {
+    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu)));
+    if (!ok) return { ok: false, reason: "rebuild refused" };
+    sentLength.clear();
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }

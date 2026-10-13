@@ -5,9 +5,11 @@ import { t } from "../messages";
 /**
  * Which backend to ask, and where it lives. Nothing else is kept.
  *
- * No journey history, no home stop, no favourites. Where somebody travels is
- * about as personal as data gets, and the only way to be sure it is not
- * leaked is not to hold it.
+ * No journey history. Where somebody travels is about as personal as data
+ * gets, and the only way to be sure it is not leaked is not to hold it. The
+ * favourite destinations the passenger adds by hand live apart, in
+ * src/route/places.ts, and are never sent anywhere except as the coordinates
+ * of a connection search.
  */
 
 export type BackendId = "oebb" | "motis";
@@ -18,6 +20,12 @@ export interface Settings {
   readonly oebbUrl: string;
   /** Transitous, or your own MOTIS. */
   readonly motisUrl: string;
+  /**
+   * A Whisper server (OpenAI-compatible) for speaking a destination. Empty
+   * means the build's default (VITE_STT_URL in a private build), and without
+   * one the voice input says it needs a server of your own.
+   */
+  readonly sttUrl: string;
   /** Seconds between refreshes while a board is on screen. */
   readonly refreshSeconds: number;
 }
@@ -35,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   backend: "motis",
   oebbUrl: "http://127.0.0.1:8079/oebb",
   motisUrl: "https://api.transitous.org",
+  sttUrl: "",
   refreshSeconds: 30,
 };
 
@@ -79,6 +88,7 @@ export function parseSettings(raw: string): Settings {
         ? String(value.oebbUrl).trim() : DEFAULT_SETTINGS.oebbUrl,
       motisUrl: validateUrl(String(value.motisUrl ?? "")).valid
         ? String(value.motisUrl).trim() : DEFAULT_SETTINGS.motisUrl,
+      sttUrl: validateUrl(String(value.sttUrl ?? "")).valid ? String(value.sttUrl).trim() : "",
       // A refresh faster than ten seconds hammers a service run by
       // volunteers without telling the user anything new — most feeds do not
       // update that often anyway.

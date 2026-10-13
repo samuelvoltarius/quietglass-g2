@@ -1,0 +1,163 @@
+{
+ "from": {
+  "name": "START",
+  "lat": 47.8095,
+  "lon": 13.055
+ },
+ "to": {
+  "name": "END",
+  "lat": 47.807,
+  "lon": 13.05
+ },
+ "direct": [
+  {
+   "duration": 509,
+   "startTime": "2026-10-12T23:30:00Z",
+   "endTime": "2026-10-12T23:38:00Z",
+   "transfers": 0,
+   "legs": [
+    {
+     "mode": "WALK",
+     "from": {
+      "name": "START",
+      "lat": 47.8095,
+      "lon": 13.055,
+      "departure": "2026-10-12T23:30:00Z",
+      "scheduledDeparture": "2026-10-12T23:30:00Z"
+     },
+     "to": {
+      "name": "END",
+      "lat": 47.807,
+      "lon": 13.05,
+      "arrival": "2026-10-12T23:38:00Z",
+      "scheduledArrival": "2026-10-12T23:38:00Z"
+     },
+     "duration": 509,
+     "startTime": "2026-10-12T23:30:00Z",
+     "endTime": "2026-10-12T23:38:00Z",
+     "scheduledStartTime": "2026-10-12T23:30:00Z",
+     "scheduledEndTime": "2026-10-12T23:38:00Z",
+     "realTime": false,
+     "distance": 606
+    }
+   ]
+  }
+ ],
+ "itineraries": [
+  {
+   "duration": 480,
+   "startTime": "2026-10-13T02:35:00Z",
+   "endTime": "2026-10-13T02:43:00Z",
+   "transfers": 0,
+   "legs": [
+    {
+     "mode": "WALK",
+     "from": {
+      "name": "START",
+      "lat": 47.8095,
+      "lon": 13.055,
+      "tz": "Europe/Vienna",
+      "departure": "2026-10-13T02:35:00Z",
+      "scheduledDeparture": "2026-10-13T02:35:00Z"
+     },
+     "to": {
+      "name": "Salzburg Vogelweiderstraße",
+      "stopId": "at-PTA-Salzburg-Flex-2026_at:45:50009:0:2",
+      "lat": 47.80913962,
+      "lon": 13.0570935,
+      "tz": "Europe/Vienna",
+      "arrival": "2026-10-13T02:38:00Z",
+      "scheduledArrival": "2026-10-13T02:38:00Z"
+     },
+     "duration": 180,
+     "startTime": "2026-10-13T02:35:00Z",
+     "endTime": "2026-10-13T02:38:00Z",
+     "scheduledStartTime": "2026-10-13T02:35:00Z",
+     "scheduledEndTime": "2026-10-13T02:38:00Z",
+     "realTime": false,
+     "distance": 203
+    },
+    {
+     "mode": "BUS",
+     "from": {
+      "name": "Salzburg Vogelweiderstraße",
+      "stopId": "at-PTA-Salzburg-Flex-2026_at:45:50009:0:2",
+      "lat": 47.80913962,
+      "lon": 13.0570935,
+      "tz": "Europe/Vienna",
+      "departure": "2026-10-13T02:38:00Z",
+      "scheduledDeparture": "2026-10-13T02:38:00Z",
+      "cancelled": false
+     },
+     "to": {
+      "name": "Salzburg Stelzhamerstraße",
+      "stopId": "at-PTA-Salzburg-Flex-2026_at:45:50842:0:2",
+      "lat": 47.807383959999996,
+      "lon": 13.048873919999997,
+      "tz": "Europe/Vienna",
+      "arrival": "2026-10-13T02:40:00Z",
+      "scheduledArrival": "2026-10-13T02:40:00Z",
+      "cancelled": false
+     },
+     "duration": 120,
+     "startTime": "2026-10-13T02:38:00Z",
+     "endTime": "2026-10-13T02:40:00Z",
+     "scheduledStartTime": "2026-10-13T02:38:00Z",
+     "scheduledEndTime": "2026-10-13T02:40:00Z",
+     "realTime": false,
+     "headsign": "Walserfeld",
+     "routeShortName": "2",
+     "routeLongName": "Wals Walserfeld Schule-Salzburg Obergnigl",
+     "displayName": "2",
+     "tripId": "20261013_04:35_at-PTA-Salzburg-Flex-2026_at:svv:200::j26|20|TA|101",
+     "agencyName": "Salzburg AG (OBus)",
+     "cancelled": false,
+     "intermediateStops": [
+      {
+       "name": "Salzburg Bayerhamerstraße",
+       "stopId": "at-PTA-Salzburg-Flex-2026_at:45:50845:0:2",
+       "lat": 47.808650930000006,
+       "lon": 13.0513353,
+       "tz": "Europe/Vienna",
+       "arrival": "2026-10-13T02:39:00Z",
+       "departure": "2026-10-13T02:39:00Z",
+       "scheduledArrival": "2026-10-13T02:39:00Z",
+       "scheduledDeparture": "2026-10-13T02:39:00Z",
+       "cancelled": false
+      }
+     ]
+    },
+    {
+     "mode": "WALK",
+     "from": {
+      "name": "Salzburg Stelzhamerstraße",
+      "stopId": "at-PTA-Salzburg-Flex-2026_at:45:50842:0:2",
+      "lat": 47.807383959999996,
+      "lon": 13.048873919999997,
+      "tz": "Europe/Vienna",
+      "arrival": "2026-10-13T02:40:00Z",
+      "departure": "2026-10-13T02:40:00Z",
+      "scheduledArrival": "2026-10-13T02:40:00Z",
+      "scheduledDeparture": "2026-10-13T02:40:00Z",
+      "cancelled": false
+     },
+     "to": {
+      "name": "END",
+      "lat": 47.807,
+      "lon": 13.05,
+      "tz": "Europe/Vienna",
+      "arrival": "2026-10-13T02:43:00Z",
+      "scheduledArrival": "2026-10-13T02:43:00Z"
+     },
+     "duration": 180,
+     "startTime": "2026-10-13T02:40:00Z",
+     "endTime": "2026-10-13T02:43:00Z",
+     "scheduledStartTime": "2026-10-13T02:40:00Z",
+     "scheduledEndTime": "2026-10-13T02:43:00Z",
+     "realTime": false,
+     "distance": 170
+    }
+   ]
+  }
+ ]
+}

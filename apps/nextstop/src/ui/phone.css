@@ -97,3 +97,21 @@ details.advanced summary { cursor: pointer; color: var(--muted); font-weight: 60
 /* Language picker at the top of the page. */
 .card.compact label { margin: 0; }
 .card.compact select { margin-top: 6px; }
+
+/* Destinations: search, results, favourites. */
+.card h2 { margin-top: 0; }
+.search-row { display: flex; gap: 8px; align-items: stretch; }
+.search-row input { flex: 1; min-width: 0; padding: 10px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; font: inherit; }
+.search-row button { margin-top: 0; }
+ul.places { list-style: none; margin: 6px 0 0; padding: 0; }
+ul.places li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+ul.places li:last-child { border-bottom: 0; }
+.place-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 160px; }
+.place-text .hint { margin: 0; }
+.place-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+button.small { margin: 0; padding: 7px 11px; font-size: 14px; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+button:disabled { opacity: 0.35; cursor: default; }
+input.fav-name { flex: 1 1 140px; min-width: 0; padding: 8px 10px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; font: inherit; }
+.now-line { margin: 6px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.hint.demo { color: var(--accent); }

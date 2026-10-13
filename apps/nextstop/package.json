@@ -1,7 +1,7 @@
 {
   "name": "@quietglass/nextstop",
-  "version": "0.2.2",
-  "description": "Quietglass NextStop \u2014 public transport departures and live ride tracking",
+  "version": "0.3.0",
+  "description": "Quietglass NextStop — public transport departures, route planning and live ride tracking",
   "author": "Quietglass",
   "license": "MIT",
   "private": false,

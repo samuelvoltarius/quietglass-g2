@@ -4,6 +4,9 @@ import { DEFAULT_SETTINGS, validateUrl, type Settings } from "../storage/persist
 import { nextStep } from "../text";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
+import type { GeoResult } from "../route/geocode";
+import { addFavorite, MAX_FAVORITES, moveFavorite, removeFavorite, renameFavorite, setNow, type Places } from "../route/places";
+import { favoritesHtml, fullText, nowHtml, resultsHtml } from "./places-ui";
 
 /**
  * The phone side: which service to ask, and where it lives.
@@ -26,6 +29,13 @@ export interface PhoneUiPorts {
   getLocale?(): Locale;
   /** Called when the language is changed on this page; must redraw the glasses. */
   setLocale?(locale: Locale): void;
+  /** Destinations; the whole "Ziele" section is left out when a port is missing. */
+  getPlaces?(): Places;
+  setPlaces?(next: Places): Promise<void>;
+  /** Looks a place up by name; rejects when the service cannot be reached. */
+  searchPlaces?(text: string): Promise<readonly GeoResult[]>;
+  /** True in demo mode: the destinations are examples and nothing is saved. */
+  isDemo?(): boolean;
 }
 
 export function mountPhoneUi(ports: PhoneUiPorts): void {
@@ -33,6 +43,11 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   if (!root) return;
 
   const locale = (): Locale => ports.getLocale?.() ?? "en";
+
+  // Search state outlives a rebuild of the page (a language switch, say).
+  let query = "";
+  let results: readonly GeoResult[] = [];
+  let searchNote = "";
 
   const statusText = (): string => {
     const lang = locale();
@@ -59,6 +74,109 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     if (next) next.textContent = nextStep(ports.getPosition() !== null, ports.getStops().length, locale());
   };
 
+  const placesCard = (lang: Locale): string => `
+      <div class="card" id="places-card">
+        <h2>${t(lang, "p.goals")}</h2>
+        <p class="hint">${t(lang, "p.goalsHint")}</p>
+        ${ports.isDemo?.() ? `<p class="hint demo">${t(lang, "p.demo")}</p>` : ""}
+        <label for="place-q">${t(lang, "p.searchLabel")}</label>
+        <div class="search-row">
+          <input id="place-q" type="text" enterkeyhint="search" autocomplete="off" spellcheck="false" />
+          <button id="place-go" type="button">${t(lang, "p.search")}</button>
+        </div>
+        <p class="hint" id="place-note"></p>
+        <ul class="places" id="place-results"></ul>
+        <label>${t(lang, "p.favoritesTitle")}</label>
+        <ul class="places" id="place-favs"></ul>
+        <label>${t(lang, "p.nowTitle")}</label>
+        <p class="now-line" id="place-now"></p>
+        <p class="hint">${t(lang, "p.placesPrivacy")}</p>
+      </div>`;
+
+  /**
+   * Wires the destination section. Only the lists are redrawn on a change, never
+   * the search field, so a name half typed is not lost when a favourite is saved.
+   */
+  const bindPlaces = (lang: Locale): void => {
+    if (!ports.getPlaces || !ports.setPlaces || !ports.searchPlaces) return;
+    const card = root.querySelector<HTMLElement>("#places-card");
+    const input = root.querySelector<HTMLInputElement>("#place-q");
+    const go = root.querySelector<HTMLButtonElement>("#place-go");
+    const note = root.querySelector<HTMLElement>("#place-note");
+    const list = root.querySelector<HTMLElement>("#place-results");
+    const favs = root.querySelector<HTMLElement>("#place-favs");
+    const now = root.querySelector<HTMLElement>("#place-now");
+    if (!card || !input || !go || !note || !list || !favs || !now) return;
+    const getPlaces = ports.getPlaces.bind(ports);
+    const setPlaces = ports.setPlaces.bind(ports);
+    const searchPlaces = ports.searchPlaces.bind(ports);
+
+    const drawLists = (): void => {
+      list.innerHTML = resultsHtml(results, lang);
+      favs.innerHTML = favoritesHtml(getPlaces(), lang);
+      now.innerHTML = nowHtml(getPlaces(), lang);
+      note.textContent = searchNote;
+    };
+    const commit = async (next: Places): Promise<void> => {
+      await setPlaces(next);
+      drawLists();
+    };
+
+    input.value = query;
+    drawLists();
+
+    const run = async (): Promise<void> => {
+      query = input.value.trim();
+      if (query.length < 2) return;
+      searchNote = t(lang, "p.searching");
+      results = [];
+      drawLists();
+      try {
+        results = await searchPlaces(query);
+        searchNote = results.length === 0 ? t(lang, "p.noResults") : "";
+      } catch {
+        searchNote = t(lang, "p.searchFailed");
+      }
+      drawLists();
+    };
+    go.addEventListener("click", () => { void run(); });
+    input.addEventListener("keydown", (event: Event) => {
+      if ((event as KeyboardEvent).key === "Enter") { event.preventDefault(); void run(); }
+    });
+
+    card.addEventListener("click", (event: Event) => {
+      const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]");
+      if (!target) return;
+      const act = target.dataset["act"];
+      const id = target.dataset["id"] ?? "";
+      const result = results[Number(target.dataset["i"] ?? -1)];
+      const current = getPlaces();
+      if (act === "save" && result) {
+        const next = addFavorite(current, result);
+        if (next === current && current.favorites.length >= MAX_FAVORITES) {
+          searchNote = fullText(lang);
+          drawLists();
+          return;
+        }
+        searchNote = "";
+        void commit(next);
+      } else if (act === "now" && result) {
+        void commit(setNow(current, result));
+      } else if (act === "clear-now") {
+        void commit(setNow(current, null));
+      } else if (act === "remove") {
+        void commit(removeFavorite(current, id));
+      } else if (act === "up" || act === "down") {
+        void commit(moveFavorite(current, id, act === "up" ? -1 : 1));
+      }
+    });
+    card.addEventListener("change", (event: Event) => {
+      const field = event.target as HTMLInputElement | null;
+      if (!field?.classList.contains("fav-name")) return;
+      void commit(renameFavorite(getPlaces(), field.dataset["id"] ?? "", field.value));
+    });
+  };
+
   const render = (): void => {
     const settings = ports.getSettings();
 
@@ -70,6 +188,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       <div class="brand"><span class="brand-mark">Quietglass</span> NextStop</div>
       <div class="card compact">${languageSelect(lang)}</div>
       <p class="next" id="next"></p>
+
+      ${ports.getPlaces && ports.setPlaces ? placesCard(lang) : ""}
 
       <div class="card">
         <label for="backend">${x("p.sourceLabel")}</label>
@@ -93,7 +213,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           <strong>${x("p.tap")}</strong> — ${x("p.tapDoes")}<br />
           <strong>${x("p.hold")}</strong> — ${x("p.holdDoes")}<br />
           <strong>${x("p.doubleTap")}</strong> — ${x("p.doubleTapDoes")}<br />
-          ${x("p.legend")}
+          ${x("p.legend")}<br />
+          ${x("p.routeHowTo")}
         </p>
       </div>
 
@@ -116,6 +237,12 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           </p>
         </div>
 
+        <div id="stt-card">
+          <label for="stt-url">${x("p.sttUrl")}</label>
+          <input id="stt-url" type="url" inputmode="url" spellcheck="false" placeholder="https://" />
+          <p class="hint">${x("p.sttUrlHint")}</p>
+        </div>
+
         <label for="refresh">${x("p.refreshEvery", { value: '<span id="refresh-value"></span>' })}</label>
         <input id="refresh" type="range" min="10" max="120" step="5" />
         <p class="hint">
@@ -132,6 +259,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const oebbUrl = root.querySelector<HTMLInputElement>("#oebb-url");
     const motisUrl = root.querySelector<HTMLInputElement>("#motis-url");
     const refresh = root.querySelector<HTMLInputElement>("#refresh");
+    const sttUrl = root.querySelector<HTMLInputElement>("#stt-url");
     const refreshValue = root.querySelector<HTMLElement>("#refresh-value");
     const backendHint = root.querySelector<HTMLElement>("#backend-hint");
     const oebbCard = root.querySelector<HTMLElement>("#oebb-card");
@@ -142,6 +270,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     oebbUrl.value = settings.oebbUrl;
     motisUrl.value = settings.motisUrl;
     refresh.value = String(settings.refreshSeconds);
+    if (sttUrl) sttUrl.value = settings.sttUrl;
     if (refreshValue) refreshValue.textContent = String(settings.refreshSeconds);
 
     // Only the relevant address is shown; two URL fields at once invites
@@ -158,6 +287,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     }
 
     updateStatus();
+    bindPlaces(lang);
 
     // Each edit starts from the settings as they are now, not as they were when
     // the page was built: otherwise saving the refresh interval after changing
@@ -186,6 +316,22 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         commit({ [key]: field.value.trim() });
       });
     }
+
+    // Empty is allowed here: it means "the app's default", which a public build leaves unset.
+    sttUrl?.addEventListener("change", () => {
+      const text = sttUrl.value.trim();
+      if (text !== "") {
+        const check = validateUrl(text, lang);
+        if (!check.valid) {
+          sttUrl.setCustomValidity(check.error ?? x("p.invalid"));
+          sttUrl.reportValidity();
+          sttUrl.value = ports.getSettings().sttUrl;
+          return;
+        }
+      }
+      sttUrl.setCustomValidity("");
+      commit({ sttUrl: text });
+    });
 
     // The language applies to the glasses too: the port redraws them at once.
     const language = root.querySelector<HTMLSelectElement>("#language");

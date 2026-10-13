@@ -2,23 +2,26 @@
   "package_id": "glass.quiet.nextstop",
   "edition": "202601",
   "name": "NextStop",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Load departures from Transitous, or from your own MOTIS server or ÖBB add-on if you set one up.",
+      "desc": "Load departures, connections and place search from Transitous (MOTIS), and walking directions from the OpenStreetMap routing server of FOSSGIS e.V.",
       "whitelist": [
         "https://api.transitous.org",
-        "http://*",
-        "https://*"
+        "https://valhalla1.openstreetmap.de"
       ]
     },
     {
       "name": "location",
-      "desc": "Find the stops near you and the next stop while riding."
+      "desc": "Find the stops near you, plan routes from where you are, guide you on foot and by vehicle, and follow the next stop while riding."
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Record the destination you say, only while you hold the touchpad on the destinations page. The recording is sent to a speech-to-text server you set up and is not stored."
     }
   ],
   "supported_languages": [

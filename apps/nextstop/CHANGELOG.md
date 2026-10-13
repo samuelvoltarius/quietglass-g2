@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.3.0] — 2026-10-13
+
+### Added
+
+- Route planning. On the phone, a new "Destinations" section: search for a place,
+  address or stop (Transitous geocoder), save it as a favourite with a name of
+  your own ("Home", "Work" …), reorder or remove favourites, or set a one-off
+  "go now" destination. Stored with the SDK store and mirrored in localStorage.
+- Glasses: new pages "Where to?" (destinations), connections (3–4 options from your
+  position, one line each: `in 4 min · Bus 3 → O-Bus 7 · arr 14:52 · 1×`, details of the
+  selected one below) and a step-by-step guide (walk to the stop, which vehicle at what time,
+  "get off: …, n stops left", changes with stand and time, "arrived"). The guide works
+  from GPS where there is a fix and from the clock otherwise, can be stepped by hand,
+  notices a missed vehicle, refreshes the times of the next vehicles every minute and asks
+  once before it is ended by double tap.
+- Native contextual menu (tap and hold) per page to move between departures, destinations,
+  connections and guide. The departures page and its gestures are unchanged; a double tap there
+  still opens the system exit dialog.
+- Voice input for the destination: hold the touchpad on the destinations page, speak, release
+  (8 s at most). The recording goes as a WAV (16 kHz mono PCM) in a multipart form without custom
+  headers to an OpenAI-compatible Whisper endpoint (`/v1/audio/transcriptions`); the glasses
+  show "Heard: …" and up to three place hits (swipe, tap = connections, double-tap = drop, menu =
+  save as favourite). The server address is a phone setting ("Advanced"); the public build has
+  none, a private build can set a default with `VITE_STT_URL`. New permission `g2-microphone`.
+- Guidance on every stage including the walks: turn arrow, distance to the turn, street and
+  distance left, from a Valhalla pedestrian route (public FOSSGIS server, or `VITE_ROUTER_URL`),
+  re-planned from the current position when the walker is more than 80 m off the route. Stages
+  change by themselves ("Wait for Bus 3" at the stop, a warning one stop before getting off,
+  change walk, "arrived"); every header shows the expected arrival of the whole journey.
+- `?demo=1` (development): offline sample destinations, an invented connection built from a
+  recorded Transitous answer, and `scene=`/`t=` to open a page directly in the simulator.
+
+### Changed
+
+- Network permission: `app.json` now lists exactly `https://api.transitous.org` and
+  `https://valhalla1.openstreetmap.de` (walking directions). The
+  wildcards `http://*` and `https://*` were blocked on the real glasses. A server of your own
+  (MOTIS, ÖBB add-on, Whisper, Valhalla) needs its exact origin in a private `app.private.json`
+  (git-ignored).
+- Privacy text: favourites are now stored (on the phone only), see `docs/PRIVACY.md`.
+
+### Geändert
+
+- Route planen: Ziele am Handy anlegen (Ortssuche, Favoriten, „Ziel jetzt“), auf der Brille
+  Verbindungen ansehen und Schritt für Schritt begleitet werden. Netzwerk-Freigabe nur noch
+  für `https://api.transitous.org`.
+
 ## [0.2.2] — 2026-10-13
 
 ### Fixed
