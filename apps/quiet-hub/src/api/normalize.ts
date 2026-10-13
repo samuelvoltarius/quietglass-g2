@@ -10,7 +10,7 @@ export function normalizeReport(raw: HubReport): HubReport {
     label: raw.agent.provider,
     kind: "hermes",
     machine: "",
-    online: raw.connection !== "missing" && raw.connection !== "error",
+    online: raw.connection !== "missing" && raw.connection !== "error" && raw.connection !== "loading",
     busy: raw.agent.busy,
     mode: "auto",
     activity: "",

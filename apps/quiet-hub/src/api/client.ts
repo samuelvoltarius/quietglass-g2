@@ -92,8 +92,8 @@ export function createClient(options: ClientOptions): HubApi {
         body: new Blob([wav.slice().buffer], { type: "audio/wav" }),
       });
     },
-    approve: async (cardId, decision) => {
-      await call("/agent/approve", { method: "POST", body: JSON.stringify({ cardId, decision }) });
+    approve: async (cardId, decision, note) => {
+      await call("/agent/approve", { method: "POST", body: JSON.stringify(note ? { cardId, decision, note } : { cardId, decision }) });
     },
     cancel: async (agentId) => {
       await call("/agent/cancel", { method: "POST", body: JSON.stringify({ agentId }) });
@@ -111,8 +111,8 @@ export function createClient(options: ClientOptions): HubApi {
     printer: async (action) => {
       await call("/printer", { method: "POST", body: JSON.stringify({ action }) });
     },
-    readEvent: async (id) => {
-      await call("/events/read", { method: "POST", body: JSON.stringify({ id }) });
+    readEvent: async (id, open) => {
+      await call("/events/read", { method: "POST", body: JSON.stringify(open === true ? { id, open: true } : { id }) });
     },
   };
 }

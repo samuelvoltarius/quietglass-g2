@@ -278,7 +278,8 @@ describe("visible feedback and help", () => {
     expect(buildView(decide(ask, "click", T0).model, "de", T0 + 1).footer).toMatch(/^Gesendet: /);
     const withCard = model("agent", { ...demoReport(), approvals: [card] });
     expect(buildView(decide(withCard, "click", T0).model, "de", T0 + 1).footer).toBe("Erlaubt");
-    expect(buildView(decide(withCard, "doubleClick", T0, "en").model, "en", T0 + 1).footer).toBe("Denied");
+    expect(buildView(decide(decide(withCard, "scrollDown", T0, "en").model, "click", T0, "en").model, "en", T0 + 1).footer).toBe("Denied");
+    expect(buildView(decide(withCard, "doubleClick", T0, "en").model, "en", T0 + 1).footer).toBe("Approval still waiting");
     const running = { ...ask, report: patchAgents(ask.report, (_a, i) => (i === 0 ? { busy: true } : {})) };
     expect(buildView(decide(running, "doubleClick", T0).model, "de", T0 + 1).footer).toContain("gestoppt");
     expect(decide({ ...model("inbox"), report: { ...demoReport(), inbox: { selected: 0, events: [] } } }, "click", T0).model.message?.text).toBe("Nichts ausgewählt");
@@ -440,8 +441,8 @@ describe("tool lines and permission cards", () => {
     expect(view.body[0]).toBe("! Freigabe · claude-win");
     expect(view.body[1]).toBe("Tool: Bash");
     expect(view.body[2]).toBe("npm test -- --run");
-    expect(view.footer).toBe("Tippen = erlauben · 2× = ablehnen");
-    expect(buildView(withCard, "en", T0).footer).toBe("Tap = allow · 2× = deny");
+    expect(view.footer).toBe("Wischen · Tippen = senden · 2× zurück");
+    expect(buildView(withCard, "en", T0).footer).toBe("Swipe · Tap = send · 2× back");
   });
 
   it("older daemons (no tool field) still split tool and command from the title", () => {

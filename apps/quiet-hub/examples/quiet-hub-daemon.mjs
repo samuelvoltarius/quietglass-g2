@@ -28,6 +28,8 @@ import { createController, nodeSpawn } from "./quiet-hub-agents.mjs";
 
 const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den Tag zusammen"];
 const MAX_AUDIO = 12 * 1024 * 1024;
+// A suggestion is one body row on the glasses (~46 characters); the prompt asks for 28.
+const MAX_SUGGESTION_CHARS = 38;
 const RELAY_STALE_MS = 45_000;
 const POLL_HOLD_MS = 25_000;
 const RPC_TIMEOUT_MS = 45_000; // a CLI that updates itself on start (seen on one Hermes host) needs ~30 s
@@ -56,7 +58,7 @@ export function createHub(options = {}) {
     whisperLang: options.whisperLang ?? env.WHISPER_LANG ?? "de",
     vllmUrl: options.vllmUrl ?? env.VLLM_URL ?? "http://127.0.0.1:8000/v1",
     vllmModel: options.vllmModel ?? env.VLLM_MODEL ?? "qwen",
-    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 30000),
+    suggestTimeoutMs: Number(options.suggestTimeoutMs ?? env.SUGGEST_TIMEOUT_MS ?? 60000),
     suggestions: options.suggestions ?? (env.VLLM_URL !== "off"),
     lang: options.lang ?? env.HUB_LANG ?? "de",
   };
@@ -131,6 +133,7 @@ export function createHub(options = {}) {
       answer: old?.answer ?? null,
       lastQuestion: old?.lastQuestion ?? null,
       suggestions: old?.suggestions ?? [],
+      lastShown: old?.lastShown ?? [],
       busy: false,
       activity: "",
       error: null,
@@ -242,24 +245,26 @@ export function createHub(options = {}) {
       if (status === "cancelled") agent.stopped = true;
       agent.answer = clipTail(finalText ?? "", 4000);
       if ((agent.answer ?? "") !== "") pushChat(agent, "assistant", agent.answer);
-      if (status === "done" && cfg.suggestions) {
-        const question = job.question;
-        agent.suggestions = [];
-        agent.suggesting = true;
-        void suggestFor(question, agent.answer).then((list) => {
-          if (agent.jobId === null && agent.lastQuestion === question) { agent.suggestions = list; agent.suggesting = false; }
-        });
-      } else {
-        agent.suggestions = [];
-        agent.suggesting = false;
-      }
+      // New suggestions for exactly this answer (question, answer, tool steps); never the old list.
+      if (status === "done") suggestForAgent(agent, { question: job.question, answer: agent.answer });
+      else clearSuggestions(agent);
     }
     if (agent && (status === "done" || status === "error")) {
       // The question as title, the answer itself as detail, plus where it lives.
-      addEvent(agent.id, status, String(job.question ?? "").replace(/s+/g, " ").trim() || "Antwort", status === "error" ? (agent.error ?? "Fehler") : (agent.answer ?? ""), { agentId: agent.id, sessionId: agent.session?.id ?? null });
+      addEvent(agent.id, status, String(job.question ?? "").replace(/\s+/g, " ").trim() || "Antwort", status === "error" ? (agent.error ?? "Fehler") : (agent.answer ?? ""), { agentId: agent.id, sessionId: agent.session?.id ?? null });
     }
     job.waiters.forEach((resolve) => resolve({ status, text: agent?.answer ?? text ?? "" }));
     job.waiters.length = 0;
+    // A card answered with "no, do this instead": that instruction is the next message.
+    if (agent && agent.followUp && agent.jobId === null) {
+      const followUp = agent.followUp;
+      agent.followUp = null;
+      if (status === "cancelled") return;
+      setTimeout(() => {
+        const started = startAsk(agent.id, followUp);
+        log(started.job ? `follow-up after denied card: ${agent.id}` : `follow-up not sent: ${started.error}`);
+      }, 0).unref?.();
+    }
     setTimeout(() => jobs.delete(job.id), 60_000).unref?.();
   }
 
@@ -303,8 +308,7 @@ export function createHub(options = {}) {
     agent.answer = "";
     agent.activity = "";
     agent.error = null;
-    agent.suggestions = [];
-    agent.suggesting = false;
+    clearSuggestions(agent);
     agent.lastQuestion = question;
     pushChat(agent, "user", question);
     agent.stopped = false;
@@ -453,38 +457,103 @@ export function createHub(options = {}) {
     timer.unref?.();
     card.timer = timer;
     card.suggestions = [];
+    card.options = [];
     if (cfg.suggestions) {
-      void suggestions("card", card.title, "").then((list) => { if (approvals.has(card.id)) card.suggestions = list; });
+      // The card's own context: what the user asked, what the agent did so far, the tool and its command/file.
+      const agent = agents.get(agentId);
+      void suggestions("card", contextOf(agent, { tool, detail: summary || card.title }), lastCardOptions).then((list) => {
+        if (!approvals.has(card.id)) return;
+        card.options = list;
+        card.suggestions = list.map((option) => option.text);
+        if (list.length > 0) lastCardOptions = card.suggestions.slice(0, 3);
+      });
     }
     return { card, promise };
   }
 
-  function settleApproval(cardId, decision) {
+  let lastCardOptions = [];
+  /** "deny" with a note: the agent gets the note as its next message once the run is over. */
+  function settleApproval(cardId, decision, note = "") {
     const card = approvals.get(cardId);
     if (!card) return false;
     approvals.delete(cardId);
     clearTimeout(card.timer);
-    card.resolve(decision === "allow" ? "allow" : "deny");
+    const verdict = decision === "allow" ? "allow" : "deny";
+    const text = String(note ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    const agent = agents.get(card.agentId);
+    if (verdict === "deny" && text !== "" && agent) agent.followUp = text;
+    card.resolve(verdict);
     return true;
   }
 
   // ------------------------------------------------------------- speech / AI helpers
+  const oneLine = (value, max) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+  const norm = (value) => oneLine(value, 64).toLowerCase().replace(/[.!?…]+$/, "");
+
+  /**
+   * What the vLLM needs to know about a conversation: the last question, the
+   * last answer, the tool steps of the run and (for a card) the tool and its
+   * command or file. Earlier turns only as short background.
+   */
+  function contextOf(agent, extra = {}) {
+    const chat = Array.isArray(agent?.chat) ? agent.chat : [];
+    const question = extra.question ?? agent?.lastQuestion ?? [...chat].reverse().find((t) => t.role === "user")?.text ?? "";
+    const answer = extra.answer ?? agent?.answer ?? [...chat].reverse().find((t) => t.role === "assistant")?.text ?? "";
+    // Background: the turns before the last exchange, newest last.
+    const lastUser = chat.map((t) => t.role).lastIndexOf("user");
+    const earlier = (lastUser > 0 ? chat.slice(0, lastUser) : []).slice(-4);
+    return {
+      question: oneLine(question, 400),
+      answer: oneLine(answer, 1400),
+      earlier: earlier.map((t) => `${t.role === "user" ? "U" : "A"}: ${oneLine(t.text, 160)}`),
+      steps: (agent?.steps ?? []).slice(-6).map((step) => oneLine(step, 80)),
+      session: oneLine(agent?.session?.title ?? "", 60),
+      tool: extra.tool ? oneLine(extra.tool, 40) : "",
+      detail: extra.detail ? oneLine(extra.detail, 300) : "",
+    };
+  }
+
+  function suggestionPrompt(kind, ctx, avoid) {
+    const de = cfg.lang !== "en";
+    const lines = [];
+    const add = (label, value) => { if (value) lines.push(`${label}: ${value}`); };
+    if (de) {
+      add("Sitzung", ctx.session);
+      if (ctx.earlier.length > 0) lines.push(`Davor:\n${ctx.earlier.join("\n")}`);
+      add("Letzte Frage des Nutzers", ctx.question ? `"${ctx.question}"` : "");
+      add(kind === "card" ? "Agent bisher" : "Antwort des Agenten", ctx.answer ? `"${ctx.answer}"` : "");
+      add("Werkzeugschritte", ctx.steps.join(" | "));
+    } else {
+      add("Session", ctx.session);
+      if (ctx.earlier.length > 0) lines.push(`Before:\n${ctx.earlier.join("\n")}`);
+      add("User's last question", ctx.question ? `"${ctx.question}"` : "");
+      add(kind === "card" ? "Agent so far" : "Agent's answer", ctx.answer ? `"${ctx.answer}"` : "");
+      add("Tool steps", ctx.steps.join(" | "));
+    }
+    const context = lines.join("\n");
+    const quoted = avoid.map((a) => `"${a}"`).join(", ");
+    const avoidLine = avoid.length === 0 ? "" : (de ? `\nNicht wiederholen: ${quoted}.` : `\nDo not repeat: ${quoted}.`);
+    if (kind === "card") {
+      return de
+        ? `Ein KI-Agent bittet seinen Nutzer (Datenbrille, ein Tipp) um Freigabe.\n${context}\nWerkzeug: ${ctx.tool || "?"}\nVorhaben: "${ctx.detail || "?"}"\nGib 3 kurze, zur Situation passende Antworten des Nutzers. Jede hat "decision": "allow" (es darf laufen) oder "deny" (es läuft nicht; der Text geht danach als Anweisung an den Agenten, z. B. was er stattdessen tun soll – etwa erst sichern, erst den Diff zeigen, nur lesen). Bezieh dich auf das konkrete Werkzeug und den Befehl/die Datei. Keine bloßen "Ja"/"Nein"/"Erlauben"/"Ablehnen". Du-Form, Deutsch, je höchstens 28 Zeichen.${avoidLine}\nNur ein JSON-Array wie [{"text":"…","decision":"deny"}].`
+        : `An AI agent asks its user (smart glasses, one tap) for permission.\n${context}\nTool: ${ctx.tool || "?"}\nAction: "${ctx.detail || "?"}"\nGive 3 short replies that fit this situation. Each has "decision": "allow" (it may run) or "deny" (it does not run; the text is then sent to the agent as an instruction, e.g. what to do instead - back up first, show the diff first, read only). Refer to the concrete tool and command/file. No bare "Yes"/"No"/"Allow"/"Deny". English, each at most 28 characters.${avoidLine}\nOnly a JSON array like [{"text":"…","decision":"deny"}].`;
+    }
+    return de
+      ? `Du schlägst Antworten vor, die der Nutzer per Datenbrille mit einem Tipp an seinen KI-Agenten zurückschickt.\n${context}\nGib 3 verschiedene, konkrete nächste Nachrichten des Nutzers an den Agenten, die genau dieses Gespräch sinnvoll weiterführen: z. B. den Vorschlag des Agenten umsetzen lassen, gezielt zu einem genannten Detail nachhaken, oder eine passende nächste Aufgabe. Bezieh dich auf konkrete Inhalte der Antwort (Namen, Dateien, Zahlen). Keine Floskeln wie "Danke", "Ok", "Erzähl mehr", keine Wiederholung der Frage. Du-Form, Deutsch, je höchstens 28 Zeichen.${avoidLine}\nNur ein JSON-Array von 3 Strings.`
+      : `You suggest replies the user sends back to their AI agent with one tap on smart glasses.\n${context}\nGive 3 different, concrete next messages from the user that move exactly this conversation forward: e.g. have the agent carry out what it proposed, dig into a specific detail it mentioned, or a fitting next task. Refer to concrete content of the answer (names, files, numbers). No filler like "Thanks", "Ok", "Tell me more", don't repeat the question. English, each at most 28 characters.${avoidLine}\nOnly a JSON array of 3 strings.`;
+  }
+
   /**
    * Follow-up options for the glasses. ALWAYS from the Spark vLLM, for every
    * agent kind and for permission cards; never from the agent itself and never
    * a canned fallback: if vLLM fails or is slow, there are no suggestions.
+   * Each call builds a new list from the conversation it is about; options the
+   * wearer just saw (`avoid`) are filtered out so two alerts never look alike.
+   * Answers give strings, cards give {text, decision}.
    */
-  async function suggestions(kind, subject, answer) {
+  async function suggestions(kind, ctx, avoid = []) {
     const started = now();
-    const de = cfg.lang !== "en";
-    const text = (value, max) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-    const prompt = kind === "card"
-      ? (de
-        ? `Ein Agent bittet um Freigabe: "${text(subject, 300)}"\nNenne 3 sehr kurze Antwortoptionen des Nutzers (je höchstens 32 Zeichen, Deutsch). Nur ein JSON-Array von Strings, sonst nichts.`
-        : `An agent asks for permission: "${text(subject, 300)}"\nGive 3 very short reply options for the user (each at most 32 characters, English). Only a JSON array of strings, nothing else.`)
-      : (de
-        ? `Du schlägst Antworten vor, die der Nutzer per Datenbrille mit einem Tipp an seinen KI-Agenten zurückschickt.\nNutzer: "${text(subject, 300)}"\nAgent: "${text(answer, 1200)}"\nGib 3 verschiedene, konkrete nächste Nachrichten des Nutzers an den Agenten, die das Gespräch sinnvoll weiterführen: z. B. den Vorschlag des Agenten umsetzen lassen, gezielt zu einem genannten Detail nachhaken, oder eine passende nächste Aufgabe. Bezieh dich auf konkrete Inhalte der Antwort. Keine Floskeln wie "Danke", "Ok", "Erzähl mehr", keine Wiederholung der Frage. Du-Form, Deutsch, je höchstens 28 Zeichen. Nur ein JSON-Array von 3 Strings.`
-        : `You suggest replies the user sends back to their AI agent with one tap on smart glasses.\nUser: "${text(subject, 300)}"\nAgent: "${text(answer, 1200)}"\nGive 3 different, concrete next messages from the user that move the conversation forward: e.g. have the agent carry out what it proposed, dig into a specific detail it mentioned, or a fitting next task. Refer to concrete content of the answer. No filler like "Thanks", "Ok", "Tell me more", don't repeat the question. English, each at most 28 characters. Only a JSON array of 3 strings.`);
+    const avoidSet = new Set(avoid.map(norm));
     try {
       const res = await fetchImpl(`${cfg.vllmUrl}/chat/completions`, {
         method: "POST",
@@ -492,10 +561,10 @@ export function createHub(options = {}) {
         signal: AbortSignal.timeout(cfg.suggestTimeoutMs),
         body: JSON.stringify({
           model: cfg.vllmModel,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.5,
+          messages: [{ role: "user", content: suggestionPrompt(kind, ctx, avoid.slice(0, 3)) }],
+          temperature: 0.7,
           chat_template_kwargs: { enable_thinking: false },
-          max_tokens: 120,
+          max_tokens: kind === "card" ? 200 : 140,
         }),
       });
       if (!res.ok) throw new Error(`vllm http ${res.status}`);
@@ -505,15 +574,55 @@ export function createHub(options = {}) {
       const end = raw.lastIndexOf("]");
       if (start < 0 || end <= start) throw new Error("vllm returned no JSON array");
       const list = JSON.parse(raw.slice(start, end + 1));
-      const clean = (Array.isArray(list) ? list : []).map((item) => String(item).trim()).filter((item) => item !== "" && Buffer.byteLength(item) <= 32).slice(0, 3);
-      log(`suggestions (${kind}): vLLM ${cfg.vllmModel} ok, ${clean.length} in ${now() - started} ms`);
+      const seen = new Set();
+      const fits = (item) => {
+        const key = norm(item);
+        if (item === "" || [...item].length > MAX_SUGGESTION_CHARS || avoidSet.has(key) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      };
+      const items = Array.isArray(list) ? list : [];
+      const clean = kind === "card"
+        ? items
+          .map((item) => (item && typeof item === "object"
+            ? { text: String(item.text ?? "").trim(), decision: item.decision === "allow" ? "allow" : "deny" }
+            : { text: String(item ?? "").trim(), decision: "deny" }))
+          .filter((item) => fits(item.text)).slice(0, 3)
+        : items.map((item) => String(item).trim()).filter(fits).slice(0, 3);
+      const dropped = items.length - clean.length;
+      log(`suggestions (${kind}): vLLM ${cfg.vllmModel} ok, ${clean.length} in ${now() - started} ms${dropped > 0 ? ` (${dropped} dropped: too long, repeated or shown before)` : ""}`);
       return clean;
     } catch (error) {
       log(`suggestions (${kind}): vLLM failed (${String(error?.message ?? error).slice(0, 100)}), showing none`);
       return [];
     }
   }
-  const suggestFor = (question, answer) => suggestions("answer", question, answer);
+
+  /**
+   * Fresh suggestions for the agent's current conversation. A generation number
+   * makes sure a late answer for an earlier question or another session is
+   * dropped instead of showing up under the wrong conversation.
+   */
+  function suggestForAgent(agent, extra = {}) {
+    agent.suggestGen = (agent.suggestGen ?? 0) + 1;
+    const gen = agent.suggestGen;
+    agent.suggestions = [];
+    if (!cfg.suggestions) { agent.suggesting = false; return; }
+    agent.suggesting = true;
+    const avoid = agent.lastShown ?? [];
+    void suggestions("answer", contextOf(agent, extra), avoid).then((list) => {
+      if (agent.suggestGen !== gen || agent.jobId !== null) return;
+      agent.suggestions = list;
+      agent.suggesting = false;
+      if (list.length > 0) agent.lastShown = list.slice(0, 3);
+    });
+  }
+  /** Drops whatever was shown or on its way (new question, other session). */
+  function clearSuggestions(agent) {
+    agent.suggestGen = (agent.suggestGen ?? 0) + 1;
+    agent.suggestions = [];
+    agent.suggesting = false;
+  }
 
   /** Self-hosted Whisper (OpenAI-compatible). Audio goes nowhere else. */
   async function transcribe(bytes, mime) {
@@ -552,7 +661,7 @@ export function createHub(options = {}) {
         suggestions: main?.suggestions ?? [],
       },
       agents: list,
-      approvals: [...approvals.values()].map(({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: options_ }) => ({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: options_ ?? [] })),
+      approvals: [...approvals.values()].map(({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: texts, options: choices }) => ({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: texts ?? [], options: choices ?? [] })),
       home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
       printer: moon ? moon.printer() : printerDemo,
       inbox: { events: state.events, selected: 0 },
@@ -646,10 +755,23 @@ export function createHub(options = {}) {
       return;
     }
     if (post && path === "/events/read") {
-      const { id } = await readJson(req);
+      const { id, open } = await readJson(req);
       if (typeof id !== "string" || id === "") { sendJson(res, 400, { error: "id required" }); return; }
       state.events = state.events.map((event) => (event.id === id ? { ...event, read: true } : event));
       saveEvents();
+      // The wearer opened the alert's conversation: it gets suggestions of its own. When the
+      // agent could not tell what was said in that session, the alert itself is the context.
+      const event = open === true ? state.events.find((entry) => entry.id === id) : undefined;
+      const agent = event?.agentId ? agents.get(event.agentId) : undefined;
+      if (event && agent && event.status === "done" && !agent.busy && agent.suggestions.length === 0 && agent.suggesting !== true &&
+          (event.sessionId === null || agent.session?.id === event.sessionId)) {
+        if ((agent.answer ?? "") === "" && (event.detail ?? "") !== "") {
+          agent.lastQuestion = event.title;
+          agent.answer = event.detail;
+          if ((agent.chat ?? []).length === 0) agent.chat = [{ role: "user", text: event.title }, { role: "assistant", text: event.detail }];
+        }
+        if ((agent.answer ?? "") !== "") suggestForAgent(agent);
+      }
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -718,13 +840,13 @@ export function createHub(options = {}) {
     }
 
     if (post && path === "/agent/approve") {
-      const { cardId, decision } = await readJson(req);
+      const { cardId, decision, note } = await readJson(req);
       if (typeof cardId !== "string" || (decision !== "allow" && decision !== "deny")) {
         sendJson(res, 400, { error: "cardId and decision (allow|deny) required" });
         return;
       }
-      if (!settleApproval(cardId, decision)) { sendJson(res, 404, { error: "unknown or expired card" }); return; }
-      log("approval", cardId, decision);
+      if (!settleApproval(cardId, decision, typeof note === "string" ? note : "")) { sendJson(res, 404, { error: "unknown or expired card" }); return; }
+      log("approval", cardId, decision, typeof note === "string" && note !== "" ? "(with note)" : "");
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -772,8 +894,8 @@ export function createHub(options = {}) {
       agent.stopConfirmed = false;
       agent.error = null;
       agent.activity = "";
-      agent.suggestions = [];
-      agent.suggesting = false;
+      agent.steps = [];
+      clearSuggestions(agent);
       if (isNew) {
         const id = typeof data.id === "string" && data.id !== "" ? data.id : null;
         setSession(agent, { id, title: "", fresh: id === null });
@@ -781,10 +903,14 @@ export function createHub(options = {}) {
         agent.answer = null;
         agent.lastQuestion = null;
       } else {
-        setSession(agent, { id: body.sessionId, title: typeof body.title === "string" ? body.title.slice(0, 60) : "", fresh: false });
+        // No title given (e.g. opened from an alert): the session's last question names it.
+        const title = typeof body.title === "string" && body.title !== "" ? body.title.slice(0, 60) : String(data.lastUser ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+        setSession(agent, { id: body.sessionId, title, fresh: false });
         agent.answer = typeof data.lastAssistant === "string" ? clipTail(data.lastAssistant, 4000) : null;
         agent.chat = chatFrom(data);
         agent.lastQuestion = typeof data.lastUser === "string" ? data.lastUser.slice(0, 200) : null;
+        // A reopened session (e.g. from an alert) gets its own suggestions, never the previous session's.
+        if ((agent.answer ?? "") !== "") suggestForAgent(agent);
       }
       log(isNew ? "session new:" : "session select:", agent.id);
       sendJson(res, 200, { ok: true, session: { id: agent.session.id, title: agent.session.title }, transport: agent.transport });

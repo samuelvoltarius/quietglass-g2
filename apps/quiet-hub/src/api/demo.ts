@@ -85,7 +85,13 @@ export function demoReport(locale: Locale = "de", scene: DemoScene = "default"):
   if (scene === "card") {
     return { ...report, agents: patchAgent("claude-win", { busy: true, activity: "Bash: npm test" }), approvals: [{
       id: "card-1", agentId: "claude-win", tool: "Bash", title: "Bash: npm test -- --run src/hub", detail: "npm test -- --run src/hub",
-      createdAt: new Date(0).toISOString(), expiresAt: Date.now() + 120_000, suggestions: de ? ["Ja, einmal", "Nein", "Immer erlauben"] : ["Yes, once", "No", "Always allow"],
+      createdAt: new Date(0).toISOString(), expiresAt: Date.now() + 120_000,
+      ...(() => {
+        const options = de
+          ? [{ text: "Ja, nur src/hub testen", decision: "allow" as const }, { text: "Erst tsc laufen lassen", decision: "deny" as const }, { text: "Zeig erst den Diff", decision: "deny" as const }]
+          : [{ text: "Yes, only src/hub", decision: "allow" as const }, { text: "Run tsc first", decision: "deny" as const }, { text: "Show me the diff first", decision: "deny" as const }];
+        return { options, suggestions: options.map((option) => option.text) };
+      })(),
     }] };
   }
   if (scene === "busy") {
@@ -101,7 +107,7 @@ export function demoReport(locale: Locale = "de", scene: DemoScene = "default"):
     return { ...report, agents: [], agent: { ...report.agent, provider: "Hermes", suggestions: [] }, home: { selected: 0, devices: [] }, printer: { ...report.printer, job: null, state: "ready", progress: 0 }, inbox: { selected: 0, events: [] } };
   }
   if (scene === "alerts") {
-    const mk = (id: string, provider: string, status: "done" | "waiting" | "error", title: string, detail: string | null, read: boolean) => ({ id, provider, status, title, detail, createdAt: new Date(0).toISOString(), read });
+    const mk = (id: string, provider: string, status: "done" | "waiting" | "error", title: string, detail: string | null, read: boolean) => ({ id, provider, status, title, detail, createdAt: new Date(0).toISOString(), read, agentId: provider, sessionId: `s-${id}` });
     return { ...report, inbox: { selected: 0, events: [
       mk("a1", "claude-win", "error", de ? "Build fehlgeschlagen" : "Build failed", de ? "tsc: 2 Fehler in model.ts" : "tsc: 2 errors in model.ts", false),
       mk("a2", "codex-win", "done", de ? "Repository-Check fertig" : "Repository check complete", de ? "Tests bestanden" : "Tests passed", false),

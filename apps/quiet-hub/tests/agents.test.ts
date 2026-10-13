@@ -93,9 +93,13 @@ describe("agent list", () => {
 describe("approval cards", () => {
   const withCard = (): HubModel => onAgents({ ...demoReport(), approvals: [card] });
 
-  it("tap allows, double tap denies", () => {
+  it("tap allows; swipe to Ablehnen + tap denies; double tap only goes back (0.6.5)", () => {
     expect(decide(withCard(), "click", T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
-    expect(decide(withCard(), "doubleClick", T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
+    const onDeny = decide(withCard(), "scrollDown", T0).model;
+    expect(decide(onDeny, "click", T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
+    const back = decide(withCard(), "doubleClick", T0);
+    expect(back.effect).toBeUndefined();
+    expect(back.model.screen).toBe("root");
   });
 
   it("nothing else can happen while a card waits", () => {

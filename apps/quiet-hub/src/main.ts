@@ -15,6 +15,7 @@ import { pixelIconFor } from "./glasses/icons";
 import { MASCOT_STEP_MS } from "./glasses/mascot";
 import type { ScreenView } from "./glasses/screen";
 import { buildWav } from "./audio/wav";
+import { MicGuard, type MicStart } from "./audio/mic-guard";
 import { mountPhoneUi, type ConnView, type SettingsResult } from "./ui/phone";
 import { loadSettings, saveSettings } from "./setup/settings";
 import { decodeQr, parseSetupQr } from "./setup/qr";
@@ -29,7 +30,7 @@ const POLL_MS = 5000;
 const BUSY_POLL_MS = 1500;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.6.4";
+const BUILD = "0.6.5";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -94,13 +95,10 @@ async function boot(): Promise<void> {
     // No server, or an http:// server that an https page may not call (mixed content): do not even try.
     markFailure(null);
   } else {
-    try {
-      model = createModel(await api.report());
-      markOk();
-    } catch (error) {
-      console.warn("[quiethub] initial report failed:", error);
-      markFailure(error);
-    }
+    // No network wait before the gesture handler exists (a slow daemon made the
+    // glasses deaf and black for up to 8 s): draw "connecting", the first poll
+    // after the handlers fetches the report.
+    model = createModel(emptyReport("loading"));
   }
   const savedUi = await loadUiState(bridge);
   let launchSource: "appMenu" | "glassesMenu" | null = null;
@@ -115,6 +113,8 @@ async function boot(): Promise<void> {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let fast = false;
   let newestEventId: string | null = model.report.inbox.events[0]?.id ?? null;
+  // The first report is what was there at start, not news: it must not auto-open a page.
+  let firstReport = !DEMO;
   // Spoken answers on the phone (AirPods / headphones), opt-in on the phone page.
   // Piper server voice (private build: VITE_TTS_URL), browser voice as fallback.
   const serverTts = new ServerTts({ url: buildTtsUrl(), voices: DEFAULT_VOICES });
@@ -133,7 +133,6 @@ async function boot(): Promise<void> {
   // ---- microphone (voice notes) ------------------------------------------
   const micChunks: Uint8Array[] = [];
   const MIC_DRAIN_MS = 150;
-  let micActive = false;
 
   /**
    * audioPcm arrives as Uint8Array, number[] or base64 depending on the host
@@ -156,37 +155,34 @@ async function boot(): Promise<void> {
     return null;
   };
 
-  let recordTimer: ReturnType<typeof setTimeout> | null = null;
-  const clearRecordTimer = (): void => {
-    if (recordTimer !== null) clearTimeout(recordTimer);
-    recordTimer = null;
-  };
-
-  const startMic = async (): Promise<boolean> => {
-    micChunks.length = 0;
-    micActive = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
-    if (!micActive) {
-      console.warn("[quiethub] microphone refused");
-      return false;
-    }
-    // Hard stop: a recording must end even when the release event never arrives.
-    clearRecordTimer();
-    recordTimer = setTimeout(() => {
-      recordTimer = null;
+  // The guard closes the two ways the mic used to stay open: a release before the
+  // mic answered (late "on" is switched off again) and a missing release (hard limit).
+  const mic = new MicGuard({
+    control: (on) => (on ? bridge.audioControl(true, AudioInputSource.Glasses) : bridge.audioControl(false)),
+    maxMs: MAX_RECORD_MS,
+    onLimit: () => {
       if (!model.recording) return;
       model = { ...model, message: { text: tr(messages, locale, "voice.limit", { s: MAX_RECORD_MS / 1000 }), until: Date.now() + MESSAGE_MS } };
       onGesture("longPressRelease");
-    }, MAX_RECORD_MS);
-    return true;
+    },
+  });
+  let micDraining = false;
+
+  const startMic = async (): Promise<MicStart> => {
+    micChunks.length = 0;
+    const started = await mic.start();
+    if (started === "refused") console.warn("[quiethub] microphone refused");
+    if (started === "cancelled") console.info("[quiethub] hold released before the mic was on: mic switched off again");
+    return started;
   };
 
   const stopMic = async (): Promise<void> => {
-    clearRecordTimer();
-    micActive = false;
-    await bridge.audioControl(false).catch(() => undefined);
+    micDraining = true;
+    await mic.stop();
     // In-flight blocks still arrive after the off-switch; without the drain the
     // recording loses its tail (drain rule).
     await new Promise((resolve) => setTimeout(resolve, MIC_DRAIN_MS));
+    micDraining = false;
   };
 
   let lastIconShown = "";
@@ -261,15 +257,20 @@ async function boot(): Promise<void> {
     try {
       const report = await api.report();
       const nextId = report.inbox.events[0]?.id ?? null;
-      const isNew = nextId !== null && nextId !== newestEventId;
-      const newCard = report.approvals.length > 0 && model.report.approvals.length === 0;
+      const isNew = !firstReport && nextId !== null && nextId !== newestEventId;
+      const newCard = !firstReport && report.approvals.length > 0 && model.report.approvals.length === 0;
+      firstReport = false;
       newestEventId = nextId;
       applyReport(report);
       // A permission card must be answered, so it opens the agent page. A plain
       // "done" notice never pulls the wearer out of a page they are working in:
       // it only opens from the overview (it is waiting in Meldungen otherwise).
       if (newCard && settings.autoOpenNotifications && !model.recording) {
-        model = { ...model, screen: "agent", agentView: "list", confirm: null };
+        // After the decision the wearer sees that agent's conversation; 2× is back at the overview.
+        const cardAgent = model.report.agents.findIndex((agent) => agent.id === report.approvals[0]?.agentId);
+        model = cardAgent >= 0
+          ? { ...model, screen: "agent", agentView: "ask", agentIndex: cardAgent, chatScroll: 0, questionIndex: 0, origin: "inbox", cardIndex: 0, confirm: null }
+          : { ...model, screen: "agent", agentView: "list", cardIndex: 0, confirm: null };
       } else if (isNew && settings.autoOpenNotifications && !model.recording && model.screen === "root") {
         model = { ...model, screen: "inbox", confirm: null };
       }
@@ -291,7 +292,8 @@ async function boot(): Promise<void> {
     if (effect === undefined) return;
     try {
       if (effect.kind === "recordStart") {
-        if (!(await startMic())) {
+        // "cancelled": the hold was released meanwhile - the release already handles the rest.
+        if ((await startMic()) === "refused") {
           // Say why nothing is happening instead of a silent dead microphone.
           model = { ...model, recording: false, recordAgent: null, message: { text: tr(messages, locale, "voice.mic"), until: Date.now() + MESSAGE_MS } };
           await draw();
@@ -347,7 +349,7 @@ async function boot(): Promise<void> {
       } else if (effect.kind === "ask") {
         await api.ask(effect.question, effect.agentId);
       } else if (effect.kind === "approve") {
-        await api.approve(effect.cardId, effect.decision);
+        await api.approve(effect.cardId, effect.decision, effect.note);
       } else if (effect.kind === "cancel") {
         await api.cancel(effect.agentId);
       } else if (effect.kind === "newSession") {
@@ -361,8 +363,9 @@ async function boot(): Promise<void> {
       } else if (effect.kind === "readEvent") {
         await api.readEvent(effect.id);
       } else if (effect.kind === "openEvent") {
-        await api.readEvent(effect.id);
+        // Switch first, then mark read: the daemon then knows which conversation the alert opened.
         if (effect.sessionId !== null) await api.selectSession(effect.agentId, effect.sessionId, "");
+        await api.readEvent(effect.id, true);
       } else if (effect.kind === "toggle") {
         await api.toggle(effect.device);
       } else {
@@ -422,8 +425,7 @@ async function boot(): Promise<void> {
     if (systemType === 6 || systemType === 7) {
       closed = true;
       if (pollTimer !== null) clearTimeout(pollTimer);
-      clearRecordTimer();
-      if (micActive) void bridge.audioControl(false).catch(() => false);
+      if (mic.active) void mic.stop();
       saveUiState(bridge, model);
       unsubscribeEvents();
       unsubscribeDevice();
@@ -433,7 +435,7 @@ async function boot(): Promise<void> {
     // they are the only thing that matters.
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
-    if (micActive && audio !== undefined) {
+    if ((mic.active || micDraining) && audio !== undefined) {
       const bytes = toBytes(pcm);
       if (bytes !== null && bytes.length > 0) micChunks.push(bytes);
       return;
@@ -473,7 +475,7 @@ async function boot(): Promise<void> {
   if (phoneRoot !== null) {
     const connView = (): ConnView => ({
       configured: settings.serverUrl.trim() !== "",
-      connected: model.link === null && model.report.connection !== "missing" && model.report.connection !== "error",
+      connected: model.link === null && model.report.connection !== "missing" && model.report.connection !== "error" && model.report.connection !== "loading",
       host: serverHost(settings.serverUrl),
       lastOkAt: conn.lastOkAt,
       problem: conn.lastProblem,

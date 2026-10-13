@@ -87,8 +87,9 @@ The **Help** entry shows the control sheet; any gesture closes it.
 - **Long answers** are split into pages of six rows; swipe turns the page, the
   last page is the question list, a tap on a text page jumps to it. Tool calls
   are one line (`» Bash: npm test`).
-- **Permission card**: who asks, `Tool: Bash`, the command, and
-  `Tippen = erlauben · 2× = ablehnen`.
+- **Permission card**: who asks, `Tool: Bash`, the command, then Erlauben / Ablehnen and the vLLM's replies
+  for this card (a deny reply goes to the agent as its next message);
+  `Wischen · Tippen = senden · 2× zurück` (2× leaves the card waiting).
 - Input is read defensively: a missing `eventType` is a CLICK, a missing
   `currentSelectItemIndex` is 0, one swipe (a burst of scroll events) counts
   once (300 ms cooldown), selections live in the app state.
@@ -222,8 +223,8 @@ loginctl enable-linger $USER
   in `cwd`. In mode `ask` the relay adds `--permission-prompt-tool
   mcp__quiethub__approve` and a tiny stdio MCP server
   (`quiet-hub-approve-mcp.mjs`). Each permission request becomes a **card** on
-  the glasses (`Bash: npm test`, `Edit: src/a.ts`): **tap = allow, double tap =
-  deny**, no answer for 2 minutes = deny. Follow-up questions resume the same
+  the glasses (`Bash: npm test`, `Edit: src/a.ts`): **tap = allow, swipe + tap =
+  deny or a reply, double tap = back (card keeps waiting)**, no answer for 2 minutes = deny. Follow-up questions resume the same
   Claude session. The MCP config file holds no secret (`${QUIET_HUB_TOKEN}` is
   expanded from the child environment).
 - **Codex** runs through `codex app-server` (JSON-RPC, no PTY) with

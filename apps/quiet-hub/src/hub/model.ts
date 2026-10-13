@@ -7,11 +7,14 @@
  * requires the native exit dialog. The agent page is three levels:
  *   agents (list) -> sessions of that agent -> the open session (ask).
  * Double tap climbs ask -> sessions -> agents -> overview; while an agent is
- * running, double tap in the open session is a real STOP first. Hold-to-talk
- * speaks into the selected session; the transcript is shown and needs a tap
- * to be sent (2x discards). A pending permission card takes over the agent
- * page: tap = allow, double tap = deny. While recording, double tap discards
- * the recording, so no state can trap the wearer.
+ * running, double tap in the open session is a real STOP first. A session
+ * opened from an alert remembers that: there double tap always goes straight
+ * back to the overview (one level, never a stop; the menu still has Stop).
+ * Hold-to-talk speaks into the selected session; the transcript is shown and
+ * needs a tap to be sent (2x discards). A pending permission card takes over
+ * the agent page: swipe picks allow / deny / a vLLM reply, tap sends it,
+ * double tap goes back to the overview without deciding. While recording,
+ * double tap discards the recording, so no state can trap the wearer.
  *
  * Every page also has a native contextual menu (tap + hold, drawn by the glasses
  * OS) with the page's actions; gestures stay as shortcuts. The R1 ring double
@@ -22,7 +25,7 @@ import { fit, marked, wrap } from "../glasses/screen";
 import { describeActivity, elapsedShort, workingDots } from "./activity";
 import { tr, type Locale } from "../i18n";
 import { messages } from "../messages";
-import type { AgentEvent, AgentInfo, Approval, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot, SessionInfo } from "../api/types";
+import type { AgentEvent, AgentInfo, Approval, ApprovalOption, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot, SessionInfo } from "../api/types";
 import { normalizeReport } from "../api/normalize";
 
 export type Screen = "root" | "agent" | "home" | "printer" | "inbox";
@@ -95,6 +98,10 @@ export interface HubModel {
   readonly answerPage: number;
   /** Identifies the answer being paged, so a new answer starts on page 0. */
   readonly answerKey: string;
+  /** Where the open session was opened from ("inbox" = an alert): double tap returns to the overview. */
+  readonly origin?: "inbox" | null;
+  /** Selected row of a permission card: 0 = allow, 1 = deny, 2.. = vLLM replies. */
+  readonly cardIndex?: number;
 }
 
 export interface SessionsState {
@@ -113,7 +120,7 @@ export type Effect =
   | { readonly kind: "newSession"; readonly agentId: string }
   | { readonly kind: "selectSession"; readonly agentId: string; readonly sessionId: string; readonly title: string }
   | { readonly kind: "recordStop"; readonly agentId: string }
-  | { readonly kind: "approve"; readonly cardId: string; readonly decision: "allow" | "deny" }
+  | { readonly kind: "approve"; readonly cardId: string; readonly decision: "allow" | "deny"; readonly note?: string }
   | { readonly kind: "cancel"; readonly agentId: string }
   | { readonly kind: "exit" }
   | { readonly kind: "refresh" }
@@ -245,7 +252,7 @@ export function paginate(text: string): string[][] {
 function openScreen(model: HubModel, target: Screen, now: number, locale: Locale, announce: boolean): { model: HubModel; effect?: Effect } {
   const report = model.report;
   const base: HubModel = {
-    ...model, screen: target, confirm: null, picker: null, help: false, questionIndex: 0, sessionIndex: 1,
+    ...model, screen: target, confirm: null, picker: null, help: false, questionIndex: 0, sessionIndex: 1, origin: null, cardIndex: 0,
     agentView: report.agents.length > 1 ? "list" : "sessions", answerPage: 0,
     message: announce ? { text: tr(messages, locale, "ack.opened", { page: tr(messages, locale, `screen.${target}`) }), until: now + MESSAGE_MS } : null,
   };
@@ -386,11 +393,21 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   }
   if (gesture === "ringDoubleClick") return { model };
 
-  // A permission card owns the agent page: tap allows, double tap denies.
+  // A permission card owns the agent page: swipe picks allow / deny / a reply,
+  // tap sends it, double tap goes back to the overview and leaves it open.
   const card = model.screen === "agent" ? pendingApproval(report) : undefined;
   if (card !== undefined) {
-    if (gesture === "click") return { model: say(model, t("ack.allowed"), now), effect: { kind: "approve", cardId: card.id, decision: "allow" } };
-    if (gesture === "doubleClick") return { model: say(model, t("ack.denied"), now), effect: { kind: "approve", cardId: card.id, decision: "deny" } };
+    const choices = cardChoices(card, locale);
+    const index = clampIndex(model.cardIndex ?? 0, choices.length);
+    if (gesture === "scrollUp" || gesture === "scrollDown") {
+      return { model: { ...model, confirm: null, cardIndex: cycle(choices.length, index, gesture === "scrollUp" ? -1 : 1) } };
+    }
+    if (gesture === "click") {
+      const choice = choices[index] ?? choices[0];
+      if (choice === undefined) return { model };
+      return { model: say({ ...model, cardIndex: 0 }, t(choice.decision === "allow" ? "ack.allowed" : "ack.denied"), now), effect: approveEffect(card, choice) };
+    }
+    if (gesture === "doubleClick") return { model: say(backToOverview(model), t("approval.later"), now) };
     return { model };
   }
 
@@ -471,8 +488,13 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       if (target !== undefined && event.agentId) {
         // Straight into the conversation the event is about, at the start of its answer.
         const sameSession = event.sessionId === null || event.sessionId === undefined || target.session?.id === event.sessionId;
+        // The alert leaves the list at once; another session never shows the previous session's chat or suggestions.
+        const readReport = { ...report, inbox: { ...report.inbox, events: report.inbox.events.map((entry) => (entry.id === event.id ? { ...entry, read: true } : entry)) } };
+        const opened = sameSession ? readReport : patchAgent(readReport, target.id, {
+          session: { id: event.sessionId ?? null, title: "" }, chat: [], steps: [], answer: null, lastQuestion: null, suggestions: [], suggesting: true, stopped: false, error: null,
+        });
         return {
-          model: { ...model, screen: "agent", agentView: "ask", agentIndex, questionIndex: 0, answerPage: 0, confirm: null, message: null },
+          model: { ...model, report: opened, screen: "agent", agentView: "ask", agentIndex, questionIndex: 0, answerPage: 0, chatScroll: 0, confirm: null, message: null, origin: "inbox" },
           effect: { kind: "openEvent", id: event.id, agentId: event.agentId, sessionId: sameSession ? null : (event.sessionId ?? null) },
         };
       }
@@ -525,12 +547,42 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (model.screen === "root") return { model, effect: { kind: "exit" } };
   if (model.screen === "agent") {
     const agent = selectedAgent(model);
+    // Opened from an alert: one double tap is back at the overview, never a stop.
+    if (model.agentView === "ask" && model.origin === "inbox") return { model: backToOverview(model) };
     // A running agent: double tap is a real stop. Idle: climb one level.
     if (agent !== undefined && agent.busy && model.agentView === "ask") return stopAgent(model, agent, now, locale);
     if (model.agentView === "ask" && agent !== undefined) return openSessions({ ...model, message: null }, agent);
     if (model.agentView === "sessions" && report.agents.length > 1) return { model: { ...model, agentView: "list", message: null } };
   }
   return { model: { ...model, screen: "root", confirm: null, message: null } };
+}
+
+/** The overview, the cursor on a waiting card ("Agent") or on "Meldungen" while unread alerts are left. */
+function backToOverview(model: HubModel): HubModel {
+  const unread = unreadEvents(model.report.inbox).length > 0;
+  return {
+    ...model, screen: "root", origin: null, cardIndex: 0, confirm: null, message: null, chatScroll: 0, picker: null,
+    // A waiting card first (one tap opens it again), else the next unread alert.
+    rootSelected: model.report.approvals.length > 0 ? ROOT_ITEMS.indexOf("agent") : unread ? ROOT_ITEMS.indexOf("inbox") : model.rootSelected,
+  };
+}
+
+export interface CardChoice { readonly label: string; readonly decision: "allow" | "deny"; readonly note?: string }
+
+/** Rows of a permission card: allow, deny, then the vLLM's replies for this very card. */
+export function cardChoices(card: Approval, locale: Locale): CardChoice[] {
+  const options: readonly ApprovalOption[] = card.options ?? [];
+  return [
+    { label: tr(messages, locale, "approval.allow"), decision: "allow" },
+    { label: tr(messages, locale, "approval.deny"), decision: "deny" },
+    ...options.map((option): CardChoice => ({ label: option.text, decision: option.decision, note: option.text })),
+  ];
+}
+
+function approveEffect(card: Approval, choice: CardChoice): Effect {
+  return choice.note === undefined
+    ? { kind: "approve", cardId: card.id, decision: choice.decision }
+    : { kind: "approve", cardId: card.id, decision: choice.decision, note: choice.note };
 }
 
 function stopAgent(model: HubModel, agent: AgentInfo, now: number, locale: Locale): { model: HubModel; effect: Effect } {
@@ -601,8 +653,13 @@ export function applyMenu(model: HubModel, itemId: number, now: number, locale: 
     case MENU.home: return openScreen(base, "home", now, locale, true);
     case MENU.printer: return openScreen(base, "printer", now, locale, true);
     case MENU.inbox: return openScreen(base, "inbox", now, locale, true);
-    case MENU.allow: return decide(base, "click", now, locale);
-    case MENU.deny: return decide(base, "doubleClick", now, locale);
+    case MENU.allow:
+    case MENU.deny: {
+      const card = base.screen === "agent" ? pendingApproval(report) : undefined;
+      if (card === undefined) return { model: say(base, t("ack.nothing"), now) };
+      const decision = itemId === MENU.allow ? "allow" : "deny";
+      return { model: say({ ...base, cardIndex: 0 }, t(decision === "allow" ? "ack.allowed" : "ack.denied"), now), effect: { kind: "approve", cardId: card.id, decision } };
+    }
     case MENU.stop: {
       const agent = selectedAgent(base);
       if (agent === undefined || !agent.busy) return { model: say(base, t("ack.noRun"), now) };
@@ -654,6 +711,8 @@ export function withVoiceFailed(model: HubModel, text: string, now: number): Hub
  */
 export function agentItems(agent: AgentInfo, questions: readonly string[]): readonly string[] {
   if (agent.suggestions.length > 0) return agent.suggestions;
+  // Fresh ones for this conversation are on their way: never fill the gap with other lists.
+  if (agent.suggesting === true) return [];
   // After an answer only real vLLM suggestions count; the canned starters are for an empty session.
   if ((agent.answer ?? "") !== "" || agent.busy) return [];
   return questions;
@@ -716,15 +775,16 @@ function sessionRows(model: HubModel, locale: Locale): string[] {
   return [head, ...list, ...(note === null ? [] : [fit(note)])];
 }
 
-function approvalRows(card: Approval, total: number, locale: Locale): string[] {
-  const rows = [fit(`! ${tr(messages, locale, "approval.title")} · ${card.agentId}${total > 1 ? ` (${total})` : ""}`)];
+function approvalRows(card: Approval, total: number, selected: number, locale: Locale): string[] {
+  const head = fit(`! ${tr(messages, locale, "approval.title")} · ${card.agentId}${total > 1 ? ` (${total})` : ""}`);
   const tool = card.tool ?? (card.title.includes(":") ? card.title.slice(0, card.title.indexOf(":")) : "");
   const command = card.detail ?? (card.tool !== undefined || !card.title.includes(":") ? card.title : card.title.slice(card.title.indexOf(":") + 1).trim());
-  if (tool !== "") rows.push(fit(tr(messages, locale, "approval.tool", { tool })));
-  rows.push(...wrap(command).slice(0, tool !== "" ? 3 : 4));
-  const options = card.suggestions ?? [];
-  if (options.length > 0) rows.push(fit(options.join(" / ")));
-  return rows;
+  // Tool, command (one or two rows), then the choices below (scrolling when there are more).
+  const what = [...(tool !== "" ? [fit(tr(messages, locale, "approval.tool", { tool }))] : []), ...wrap(command).slice(0, 2)];
+  const choices = cardChoices(card, locale);
+  const index = clampIndex(selected, choices.length);
+  const room = 7 - 1 - what.length;
+  return [head, ...what, ...windowed(choices.map((choice, i) => marked(choice.label, i === index)), index, room)];
 }
 
 function homeRows(home: HomeSnapshot, locale: Locale): string[] {
@@ -902,7 +962,7 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
     const card = pendingApproval(report);
     const agent = selectedAgent(model);
     if (card !== undefined) {
-      body = approvalRows(card, report.approvals.length, locale);
+      body = approvalRows(card, report.approvals.length, model.cardIndex ?? 0, locale);
       footer = tr(messages, locale, "approval.hint");
     } else if (model.agentView === "list") {
       body = agentListRows(model, locale, now);
@@ -912,7 +972,7 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       footer = tr(messages, locale, "sessions.help");
     } else {
       body = agent === undefined ? [tr(messages, locale, "agent.none")] : chatRows(model, agent, locale);
-      footer = tr(messages, locale, agent?.busy === true ? "agent.running"
+      footer = tr(messages, locale, agent?.busy === true ? (model.origin === "inbox" ? "agent.runningBack" : "agent.running")
         : agent?.stopped === true ? "agent.stoppedHelp"
           : (model.chatScroll ?? 0) > 0 ? "chat.scrolledHelp" : "chat.help");
     }

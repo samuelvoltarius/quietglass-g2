@@ -106,8 +106,12 @@ export async function createPage(bridge: EvenAppBridge, view: ScreenView, icon: 
   const page = buildPage(view, menu);
   sentLength.clear();
   try {
+    // Measured on real glasses (13.10.2026): the first page of a bridge is one
+    // rebuild (result ignored) and then exactly one create. The rebuild also
+    // revives a page that survived a WebView reload, where a second create fails.
+    const rebuilt = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu))).catch(() => false);
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) { renderStats.creates += 1; lastIconKey = ""; return updatePixel(bridge, icon); }
+    if (result === StartUpPageCreateResult.success || rebuilt === true) { renderStats.creates += 1; lastIconKey = ""; return updatePixel(bridge, icon); }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };

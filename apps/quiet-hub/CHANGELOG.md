@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.6.5
+
+Getting out of alerts, suggestions that fit the alert.
+
+- **One double tap out of an alert.** A session opened from Meldungen used to
+  climb session -> session list (reloading) -> agent list -> overview: three
+  double taps, and on a running agent the first one was STOP. Now double tap in
+  a session opened from an alert goes straight to the overview, never stops
+  (Stop stays in the menu); the cursor sits on "Meldungen" while unread alerts
+  are left. Footer: "läuft … · 2× zurück · Menü: Stopp". Opened alerts leave the
+  list at once.
+- **Suggestions with context.** The Spark vLLM now gets the last question, the
+  last answer, the tool steps and earlier turns of the session; permission cards
+  also get the tool and the command or file. Every answer, reopened session and
+  opened alert gets a new list (a generation number drops late answers for
+  another question/session); the three options shown last are filtered out and
+  named in the prompt; temperature 0.7. On failure still none (no fallback).
+  An alert from another session never shows the previous session's list.
+- **Permission cards.** Swipe picks "Erlauben", "Ablehnen" or one of the vLLM's
+  replies for this card (each with allow/deny); a deny reply is sent to the
+  agent as its next message once the run ends. Double tap now goes back to the
+  overview and leaves the card waiting (it used to deny); the menu still allows
+  or denies directly.
+- **Glasses react at once.** The first report is no longer awaited before the
+  gesture handler (a slow daemon made the glasses black and deaf for up to 8 s);
+  "verbinde …" is drawn first.
+- **Microphone never stays open.** Releasing "hold" before the mic answered left
+  it open for good; a late "on" is now switched off again, and the 18 s limit
+  always ends a recording.
+- Daemon: event titles no longer lose every "s" (regex typo).
+
 ## 0.5.1
 
 Never show demo data when disconnected; connection diagnostics.
