@@ -27,6 +27,8 @@ export interface HudModel {
   readonly online: boolean;
   /** Short, already localised problem text shown instead of the feed. */
   readonly problem: string;
+  /** The server answered with a problem (auth, HTTP error, bad reply), as opposed to not answering at all. */
+  readonly fault: boolean;
   readonly feed: HudFeed | null;
   readonly index: number;
   /** Card id waiting for the confirming second tap. */
@@ -38,7 +40,7 @@ export interface HudModel {
 }
 
 export const EMPTY_MODEL: HudModel = {
-  configured: false, online: false, problem: "", feed: null, index: 0,
+  configured: false, online: false, problem: "", fault: false, feed: null, index: 0,
   confirm: null, message: "", voice: null, rec: "off",
 };
 

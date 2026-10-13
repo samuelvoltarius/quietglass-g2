@@ -28,6 +28,7 @@ function fakeBridge(stored: Record<string, string> = {}) {
       for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
       return 0;
     }),
+    updateImageRawData: vi.fn(async () => "success"),
     textContainerUpgrade: vi.fn(async (update: { containerID?: number; content?: string }) => {
       screen.set(update.containerID ?? 0, update.content ?? "");
       return true;

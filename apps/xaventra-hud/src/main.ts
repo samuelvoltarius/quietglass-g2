@@ -7,7 +7,8 @@ import { gestureFromEvent, type Gesture } from "./input/gestures";
 import { errorText } from "./hud/errors";
 import { t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, faceKey, updatePage } from "./glasses/render";
+import { MASCOT_STEP_MS, headerIcon } from "./glasses/face";
 import type { ScreenView } from "./glasses/screen";
 import { CONFIRM_MS, EMPTY_MODEL, buildView, currentCard, decide, type HudAction, type HudGesture, type HudModel } from "./hud/model";
 import { loadSettings, saveSettings, type Settings } from "./storage/persist";
@@ -46,7 +47,7 @@ async function boot(): Promise<void> {
   let closed = false;
 
   const makeApi = (): XaventraApi | null => {
-    if (DEMO) return createDemoApi(locale);
+    if (DEMO) return createDemoApi(locale, new URLSearchParams(globalThis.location?.search ?? "").get("scene"));
     if (!settings.serverUrl) return null;
     return createClient({ baseUrl: settings.serverUrl, ...(settings.token ? { token: settings.token } : {}) });
   };
@@ -61,16 +62,20 @@ async function boot(): Promise<void> {
 
   // ---- drawing -----------------------------------------------------------
   let lastView: ScreenView | null = null;
+  let lastFace = "";
   let pageReady = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
   let refreshPhone: () => void = () => undefined;
 
   const drawOnce = async (): Promise<void> => {
-    const view = buildView(model, locale, new Date());
-    if (sameView(lastView, view)) return;
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
-    if (result.ok) { pageReady = true; lastView = view; return; }
+    const now = new Date();
+    const view = buildView(model, locale, now);
+    const face = headerIcon(model, now.getTime());
+    const key = faceKey(face);
+    if (pageReady && sameView(lastView, view) && key === lastFace) return;
+    const result = pageReady ? await updatePage(bridge, view, face, lastView) : await createPage(bridge, view, face);
+    if (result.ok) { pageReady = true; lastView = view; lastFace = key; return; }
     pageReady = false;
     lastView = null;
     console.warn("[xaventrahud] draw failed:", result.reason);
@@ -147,14 +152,17 @@ async function boot(): Promise<void> {
           const cards = feed.cards;
           const confirmGone = model.confirm !== null && !cards.some((card) => card.id === model.confirm);
           patch({
-            feed, online: true, problem: "",
+            feed, online: true, problem: "", fault: false,
             index: Math.min(model.index, Math.max(0, cards.length - 1)),
             ...(confirmGone ? { confirm: null } : {}),
           });
           await draw();
         } catch (error) {
           if (generation !== pollGeneration || closed) return;
-          patch({ online: false, problem: errorText(locale, error) });
+          patch({
+            online: false, problem: errorText(locale, error),
+            fault: error instanceof ApiError && (error.code === "auth" || error.code === "http" || error.code === "bad-reply"),
+          });
           await draw();
           await pause(error instanceof ApiError && error.code === "auth" ? RETRY_AUTH_MS : RETRY_MS, abort.signal);
         }
@@ -393,8 +401,9 @@ async function boot(): Promise<void> {
     }
   });
 
-  // The clock in the header: redraw once a minute (an unchanged view is skipped).
-  const clockTimer = setInterval(() => { if (!closed) void draw(); else clearInterval(clockTimer); }, 30_000);
+  // The clock in the header and the face (blinks, writes, listens): redraw twice a
+  // second. An unchanged view and an unchanged face cost nothing (see drawOnce).
+  const clockTimer = setInterval(() => { if (!closed) void draw(); else clearInterval(clockTimer); }, MASCOT_STEP_MS);
 
   const phone = mountPhoneUi({
     getSettings: () => settings,

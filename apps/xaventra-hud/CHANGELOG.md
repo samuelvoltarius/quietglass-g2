@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0] — 2026-10-13
+
+### Added
+
+- A face in the top-right corner of the header (64 x 30 image) that shows Xaventra's mood: it blinks when all is quiet, writes in a notebook while Xaventra works on a status, opens its eyes wide while a card waits for your yes or no, listens while you speak, shows a cross when the server answers with a problem and sleeps when it cannot be reached. The header text now ends 64 px before the right edge.
+- The face and the clock redraw twice a second; pictures are sent to the glasses only when they change, text containers only when their text changed.
+- `?demo=1&scene=idle|working|error|offline` shows the other moods in the simulator.
+
 ## [0.1.4] — 2026-10-13
 
 ### Changed
