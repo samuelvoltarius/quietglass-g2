@@ -127,9 +127,16 @@ export function fleetRowFrame(row: FleetRow, now: number): Bitmap {
       break;
     case "critical": {
       const bright = Math.floor(now / PULSE_MS) % 2 === 0;
-      disk(b, cx, cy, 10, bright ? FULL : DIM);
-      fillRect(b, cx - 1, cy - 6, 3, 8, 0);
-      fillRect(b, cx - 1, cy + 4, 3, 3, 0);
+      if (bright) {
+        disk(b, cx, cy, 10, FULL);
+        fillRect(b, cx - 1, cy - 6, 3, 8, 0);
+        fillRect(b, cx - 1, cy + 4, 3, 3, 0);
+      } else {
+        // Dim phase: only the outline and the mark, so the pulse stays visible whatever the gray levels do.
+        ring(b, cx, cy, 10, 8, MID);
+        fillRect(b, cx - 1, cy - 6, 3, 8, MID);
+        fillRect(b, cx - 1, cy + 4, 3, 3, MID);
+      }
       break;
     }
     case "offline":

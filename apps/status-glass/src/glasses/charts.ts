@@ -98,7 +98,8 @@ export function signFrame(state: SignState, now: number): Bitmap {
     case "critical": {
       const b = createBitmap(ICON_WIDTH, ICON_HEIGHT);
       const bright = Math.floor(now / PULSE_MS) % 2 === 0;
-      strokeRect(b, 1, 1, ICON_WIDTH - 2, ICON_HEIGHT - 2, bright ? FULL : DIM, 3);
+      // Bright: a thick frame. Dim: a thin one, so the pulse stays visible whatever the gray levels do.
+      strokeRect(b, 1, 1, ICON_WIDTH - 2, ICON_HEIGHT - 2, bright ? FULL : DIM, bright ? 3 : 1);
       const scale = 3;
       drawText(b, "!", Math.floor((ICON_WIDTH - textWidth("!", scale)) / 2), Math.floor((ICON_HEIGHT - 7 * scale) / 2), scale, FULL);
       return b;

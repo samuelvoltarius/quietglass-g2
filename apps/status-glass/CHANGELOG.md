@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.1] — 2026-10-13
+
+### Changed
+
+- The pulse of a critical machine or sign now changes shape (thick frame / thin frame, disk / outline) instead of only brightness, so it stays visible whatever the gray levels do.
+
 ## [0.7.0] — 2026-10-13
 
 ### Added
