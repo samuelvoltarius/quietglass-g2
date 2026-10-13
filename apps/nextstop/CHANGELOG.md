@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7
+
+- Hängt nicht mehr beim Start: Die Brille hört sofort auf Tippen, Halten (Ziel per Sprache) und Doppeltippen, auch während das Handy noch nach dem Standort fragt oder der erste GPS-Fix dauert. Der erste Standort wartet höchstens 10 s.
+
+## 0.3.6
+
+- Ansagen mit natürlicher Server-Stimme: Abbiegen zu Fuß, Bus kommt, Aussteigen, verpasste Verbindung, Ziel erreicht.
+
 ## 0.3.3
 
 - Startseite: Halten = Ziel per Sprache sagen; „Andere Haltestelle“ ist jetzt im Menü.

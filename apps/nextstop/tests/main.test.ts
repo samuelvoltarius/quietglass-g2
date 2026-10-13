@@ -161,6 +161,20 @@ describe("nextstop lifecycle", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("listens to the glasses while the location is still pending", async () => {
+    // Regression: the handlers were installed only after the first location
+    // answer. A permission prompt on the phone or a slow GPS fix left the
+    // glasses deaf — no hold for the voice goal, not even the double tap.
+    const fake = fakeBridge();
+    const never = (): Promise<never> => new Promise<never>(() => undefined);
+    (fake.bridge as { startAppLocationUpdates: () => Promise<unknown> }).startAppLocationUpdates = never;
+    (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = never;
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Warte auf deinen Standort"));
+    fake.gesture(3); // double tap
+    await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
+  });
+
   it("closes cleanly once the exit dialog is confirmed: no redraw afterwards", async () => {
     // Regression: the 2 s redraw kept drawing onto a closed page.
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });

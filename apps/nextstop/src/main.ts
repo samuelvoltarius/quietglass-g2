@@ -66,6 +66,20 @@ export function positionFromUrl(search: string): Position | null {
   return { lat, lon };
 }
 
+/** How long the first location answer may take before the app goes on without it. */
+const FIRST_FIX_MS = 10000;
+
+/** Rejects when the promise has not settled in time; the promise itself runs on. */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timeout after ${ms} ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
@@ -672,17 +686,6 @@ async function boot(): Promise<void> {
 
   await draw();
 
-  await bridge.startAppLocationUpdates({
-    accuracy: AppLocationAccuracy.High,
-    distanceFilter: 10,
-  }).catch(() => false);
-
-  const firstFix = await bridge.getAppLocation({ accuracy: AppLocationAccuracy.High })
-    .catch(() => null);
-  if (firstFix && typeof firstFix.latitude === "number") {
-    // A real fix always wins over the URL parameter.
-    position = { lat: firstFix.latitude, lon: firstFix.longitude };
-  }
   // Not awaited: the handlers below must be in place before the first board
   // arrives, or a slow backend left the glasses deaf — even to the double tap
   // that leaves — for as long as the request took.
@@ -908,6 +911,24 @@ async function boot(): Promise<void> {
       void draw();
     }
   });
+
+  // Location starts only now, with every handler in place: the phone may be
+  // asking for permission, and a cold GPS fix indoors can take long. Awaited
+  // before the handlers, either one left the glasses deaf — no tap, no hold
+  // for the voice goal, not even the double tap that leaves.
+  void (async () => {
+    await withTimeout(bridge.startAppLocationUpdates({
+      accuracy: AppLocationAccuracy.High,
+      distanceFilter: 10,
+    }), FIRST_FIX_MS).catch(() => false);
+    const firstFix = await withTimeout(
+      bridge.getAppLocation({ accuracy: AppLocationAccuracy.High }), FIRST_FIX_MS,
+    ).catch(() => null);
+    if (closed || !firstFix || typeof firstFix.latitude !== "number") return;
+    // A real fix always wins over the URL parameter.
+    position = { lat: firstFix.latitude, lon: firstFix.longitude };
+    if (!ride) void findStops();
+  })();
 
   // A second beat so the countdown stays honest between data refreshes.
   tickTimer = setInterval(() => { void ensureWalk(); announce(); void draw(); }, 2000);
