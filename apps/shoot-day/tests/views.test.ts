@@ -27,7 +27,8 @@ function state(locale: Locale, patch: Partial<ViewState> = {}): ViewState {
       shots: Array.from({ length: 120 }, (_, i) => ({ scene: "12A" + i, shot: "B" + i, desc: LONG, size: "Insert" })),
       cursor: 118,
       screen: "card",
-      actionCursor: 4,
+      actionCursor: 5,
+      rollingSince: null,
       noteCursor: 6,
       ok: 999,
       ng: 999,
@@ -124,8 +125,8 @@ describe("what the glasses say", () => {
   });
 
   it("the actions list marks the selection", () => {
-    const view = buildView(state("de", { mode: "takes", takes: { ...state("de").takes, screen: "actions", actionCursor: 1 } }));
-    expect(view.body.slice(0, TAKE_ACTIONS.length)).toEqual(["  Take OK", "> Take NG", "  Notiz zum letzten Take", "  Sprechen", "  Zurück"]);
+    const view = buildView(state("de", { mode: "takes", takes: { ...state("de").takes, screen: "actions", actionCursor: 2 } }));
+    expect(view.body.slice(0, TAKE_ACTIONS.length)).toEqual(["  Take starten", "  Take OK", "> Take NG", "  Notiz zum letzten Take", "  Sprechen", "  Zurück"]);
   });
 
   it("the packing list uses glyphs the G2 draws", () => {

@@ -13,7 +13,8 @@ import { fit, marked, MAX_BODY_ROWS, type ScreenView } from "./screen";
 export type Mode = "menu" | "takes" | "prompter" | "schedule" | "pack";
 export const MENU: readonly Exclude<Mode, "menu">[] = ["takes", "prompter", "schedule", "pack"];
 export type TakeScreen = "card" | "actions" | "notes";
-export const TAKE_ACTIONS = ["ok", "ng", "note", "voice", "back"] as const;
+/** "roll" starts (or, while a take is running, cancels) a take; the menu opens on "ok". */
+export const TAKE_ACTIONS = ["roll", "ok", "ng", "note", "voice", "back"] as const;
 export type TakeAction = (typeof TAKE_ACTIONS)[number];
 
 export type LoadStatus =
@@ -61,6 +62,8 @@ export interface ViewState {
     readonly ng: number;
     readonly last: LastTake | null;
     readonly nextN: number;
+    /** When the running take was started (ms), null while no take runs. */
+    readonly rollingSince: number | null;
     readonly notes: readonly string[];
   };
   readonly prompter: {
@@ -83,6 +86,10 @@ export interface ViewState {
 
 /** Rows of the schedule shown below the now/next lines. */
 export const SCHEDULE_ROWS = 4;
+/** The schedule page keeps a strip for the day bar, so its body holds one row less than the others... */
+export const SCHEDULE_BODY_ROWS = 6;
+/** ...and header text stops 64 px before the right edge, where the sign sits. */
+export const HEADER_WIDTH = 46;
 /** Rows of the packing list shown at once; the last body row is for feedback. */
 export const PACK_ROWS = 6;
 
@@ -100,7 +107,7 @@ export function buildView(state: ViewState): ScreenView {
 /** Fits every row and pads nothing: what is returned is exactly what is drawn. */
 function screen(header: string, body: readonly string[], footer: string): ScreenView {
   return {
-    header: fit(header),
+    header: fit(header, HEADER_WIDTH),
     body: body.slice(0, MAX_BODY_ROWS).map((row) => fit(row)),
     footer: fit(footer),
   };
@@ -144,7 +151,9 @@ function takesView(state: ViewState): ScreenView {
   if (!shot) return screen(demoTag(state, L("g.menu.takes").toUpperCase()), [L("g.takes.empty.1"), L("g.takes.empty.2")], L("g.retry"));
 
   if (state.takes.screen === "actions") {
-    const body = TAKE_ACTIONS.map((action, index) => marked(L("g.actions." + action), index === state.takes.actionCursor));
+    const label = (action: (typeof TAKE_ACTIONS)[number]): string =>
+      L("g.actions." + (action === "roll" && state.takes.rollingSince !== null ? "rollStop" : action));
+    const body = TAKE_ACTIONS.map((action, index) => marked(label(action), index === state.takes.actionCursor));
     body.push("", state.message);
     return screen(L("g.actions.header", { scene: shot.scene, shot: shot.shot, n: state.takes.nextN }), body, L("g.list.footer"));
   }
@@ -161,10 +170,13 @@ function takesView(state: ViewState): ScreenView {
     ? L("g.takes.last", { n: last.n, status: last.status, time: clock(last.ts), note: last.note }).trimEnd()
     : L("g.takes.none");
   const desc = shot.desc.trim();
+  const rolling = state.takes.rollingSince === null
+    ? ""
+    : L("g.takes.rolling", { n: state.takes.nextN, time: stopwatch(state.now.getTime() - state.takes.rollingSince) });
   const body = [
     L("g.takes.id", { scene: shot.scene, shot: shot.shot }) + (shot.size ? " · " + shot.size : ""),
     desc,
-    "",
+    rolling,
     L("g.takes.counts", { ok: state.takes.ok, ng: state.takes.ng }),
     lastLine,
     "",
@@ -196,20 +208,19 @@ function scheduleView(state: ViewState): ScreenView {
   const body: string[] = [];
   if (now) body.push(L("g.sched.now", { time: now.time, what: now.what }));
   else body.push(L("g.sched.place", { place: sheet.location || "–" }));
-  if (next) body.push(L("g.sched.next", { time: next.time, what: next.what, min: inMinutes ?? 0 }));
+  if (next) body.push(L("g.sched.next", { time: next.time, what: next.what, when: minutesText(inMinutes ?? 0) }));
   else if (sheet.schedule.length > 0) body.push(L("g.sched.done"));
   if (sheet.contact) body.push(L("g.sched.contact", { contact: sheet.contact }));
-  body.push("");
   if (sheet.schedule.length === 0) {
     body.push(L("g.sched.empty"));
   } else {
-    const rows = MAX_BODY_ROWS - body.length;
+    const rows = SCHEDULE_BODY_ROWS - body.length;
     const first = Math.max(0, Math.min(scroll, sheet.schedule.length - rows));
     for (const row of sheet.schedule.slice(first, first + rows)) {
       body.push(`${row === now ? "● " : "  "}${row.time.padEnd(6)}${row.what}`);
     }
   }
-  return screen(header, body, L("g.sched.footer"));
+  return { ...screen(header, body, L("g.sched.footer")), body: body.slice(0, SCHEDULE_BODY_ROWS).map((row) => fit(row)) };
 }
 
 function packView(state: ViewState): ScreenView {
@@ -246,6 +257,21 @@ function recView(state: ViewState, rec: RecView): ScreenView {
     [L(prefix + "1"), L(prefix + "2"), L(prefix + "3")],
     L(rec.via === "hold" ? "g.rec.footer.hold" : "g.rec.footer.tap"),
   );
+}
+
+/** "45 min" below two hours, "21 h 59 min" from there on (1319 minutes is not something to do sums with). */
+export function minutesText(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes));
+  if (total < 120) return `${total} min`;
+  return `${Math.floor(total / 60)} h ${String(total % 60).padStart(2, "0")} min`;
+}
+
+/** m:ss, or h:mm:ss after an hour. */
+export function stopwatch(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const s = String(seconds % 60).padStart(2, "0");
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}:${s}`;
+  return `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}:${s}`;
 }
 
 function clock(ts: number): string {

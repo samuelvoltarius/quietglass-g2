@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0] — 2026-10-13
+
+### Added
+
+- A sign in the top-right corner of the header (64 x 30 image) for every page. While a take runs on the takes page it is a recording dot that pulses once a second.
+- "Take läuft": a new first entry "Take starten" in the take menu (it opens on "Take OK") starts a take; the card shows "● Take 3 läuft · 0:23". Logging OK or NG, moving to another shot or leaving ends it; while it runs the entry reads "Take abbrechen".
+- Day bar on the schedule page (image, 288 x 20): from the call time to the last entry, filled up to now, a tick per entry and a marker for now, start and end time below.
+
+### Changed
+
+- "in 1319 min" now reads "in 21 h 59 min" from two hours on.
+- The header text ends 64 px before the right edge; the schedule page shows six body rows to make room for the bar. Going to or from the schedule page is a page rebuild.
+
+### Fixed
+
+- Page set-up on the glasses: one `rebuildPageContainer`, then exactly one `createStartUpPageContainer`, later pages are rebuilds.
+
 ## [0.1.4] — 2026-10-13
 
 ### Changed

@@ -6,10 +6,12 @@ import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { gestureFromEvent, type Gesture } from "./input/gestures";
 import { takeNotes, t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
-import { MAX_BODY_ROWS, wrap, type ScreenView } from "./glasses/screen";
+import { createPage, rebuildPage, updatePage, type Layout } from "./glasses/render";
+import { PULSE_MS, dayBarFrame, headerIcon } from "./glasses/charts";
+import { bitmapKey } from "./glasses/gfx";
+import { wrap, type ScreenView } from "./glasses/screen";
 import {
-  buildView, errorText, MENU, TAKE_ACTIONS, type LastTake, type LoadStatus, type Mode, type TakeScreen, type ViewState,
+  buildView, errorText, MENU, SCHEDULE_BODY_ROWS, TAKE_ACTIONS, type LastTake, type LoadStatus, type Mode, type TakeScreen, type ViewState,
 } from "./glasses/views";
 import {
   loadOutbox, loadSettings, saveOutbox, saveSettings, type PendingTake, type Settings,
@@ -82,6 +84,8 @@ async function boot(): Promise<void> {
   let takeScreen: TakeScreen = "card";
   let actionCursor = 0;
   let noteCursor = 0;
+  /** When the running take started; null while no take runs. */
+  let rollingSince: number | null = null;
 
   let prompterLines: string[] = [];
   let prompterPos = 0;
@@ -164,6 +168,7 @@ async function boot(): Promise<void> {
         ng: all.filter((take) => take.status === "NG").length,
         last,
         nextN: all.length + 1,
+        rollingSince,
         notes: notes(),
       },
       prompter: { lines: prompterLines, pos: prompterPos, speed: prompterSpeed, playing },
@@ -173,15 +178,31 @@ async function boot(): Promise<void> {
   };
 
   let lastView: ScreenView | null = null;
+  let lastLayout: Layout = "plain";
+  let lastFrames = "";
   let pageReady = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
 
   const drawOnce = async (): Promise<void> => {
-    const view = buildView(viewState());
-    if (sameView(lastView, view)) return;
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
-    if (result.ok) { pageReady = true; lastView = view; return; }
+    const state = viewState();
+    const view = buildView(state);
+    const layout: Layout = mode === "schedule" && !rec ? "schedule" : "plain";
+    const now = Date.now();
+    const frames = {
+      sign: headerIcon(mode, rollingSince !== null, now),
+      bar: layout === "schedule" && currentLoad().kind === "ready"
+        ? dayBarFrame(sheet, state.now.getHours() * 60 + state.now.getMinutes())
+        : null,
+    };
+    const key = bitmapKey(frames.sign) + "|" + (frames.bar ? bitmapKey(frames.bar) : "-");
+    if (pageReady && layout === lastLayout && sameView(lastView, view) && key === lastFrames) return;
+    const result = !pageReady
+      ? await createPage(bridge, view, layout, frames)
+      : layout !== lastLayout
+        ? await rebuildPage(bridge, view, layout, frames)
+        : await updatePage(bridge, view, layout, frames, lastView);
+    if (result.ok) { pageReady = true; lastView = view; lastLayout = layout; lastFrames = key; return; }
     pageReady = false;
     lastView = null;
     console.warn("[shootday] draw failed:", result.reason);
@@ -322,6 +343,8 @@ async function boot(): Promise<void> {
     const shot = shots[shotCursor];
     const client = api;
     if (!shot || !client) return;
+    // A logged take is a finished take.
+    rollingSince = null;
     const pending: PendingTake = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       project, scene: shot.scene, shot: shot.shot, status, note, ts: Date.now(),
@@ -521,7 +544,7 @@ async function boot(): Promise<void> {
     generation++;
     mode = next;
     say("");
-    if (next === "takes") { takeScreen = "card"; actionCursor = 0; }
+    if (next === "takes") { takeScreen = "card"; actionCursor = TAKE_ACTIONS.indexOf("ok"); rollingSince = null; }
     if (next === "pack") showMissing = false;
     load.delete(next);
     requestLoad(next);
@@ -531,6 +554,7 @@ async function boot(): Promise<void> {
     cancelRec(false);
     stopPrompter();
     generation++;
+    rollingSince = null;
     mode = "menu";
     showMissing = false;
     say("");
@@ -604,7 +628,8 @@ async function boot(): Promise<void> {
       else if (gesture === "click") {
         const action = TAKE_ACTIONS[actionCursor];
         takeScreen = "card";
-        if (action === "ok") addTake("OK");
+        if (action === "roll") rollingSince = rollingSince === null ? Date.now() : null;
+        else if (action === "ok") addTake("OK");
         else if (action === "ng") addTake("NG");
         else if (action === "note") { takeScreen = "notes"; noteCursor = 0; }
         else if (action === "voice") { background(startRec("takes", "tap"), "starting the microphone"); return; }
@@ -625,11 +650,13 @@ async function boot(): Promise<void> {
       case "scrollUp":
       case "scrollDown":
         shotCursor = wrapIndex(shotCursor + step(gesture), shots.length);
+        // A running take belongs to its shot.
+        rollingSince = null;
         say("");
         break;
       case "click":
         takeScreen = "actions";
-        actionCursor = 0;
+        actionCursor = TAKE_ACTIONS.indexOf("ok");
         break;
       case "longPress":
         background(startRec("takes", "hold"), "starting the microphone");
@@ -680,7 +707,7 @@ async function boot(): Promise<void> {
     if (gesture === "click") { requestLoad("schedule"); return; }
     if (currentLoad().kind !== "ready") return;
     if (gesture === "scrollUp" || gesture === "scrollDown") {
-      const rows = Math.max(1, MAX_BODY_ROWS - 4);
+      const rows = Math.max(1, SCHEDULE_BODY_ROWS - 3);
       scheduleScroll = Math.max(0, Math.min(Math.max(0, sheet.schedule.length - rows), scheduleScroll + step(gesture)));
       void draw();
     }
@@ -760,7 +787,14 @@ async function boot(): Promise<void> {
     }
   });
 
-  clock = setInterval(() => { if (mode === "schedule") void draw(); }, CLOCK_TICK_MS);
+  // The recording dot pulses twice a second while a take runs on the takes page,
+  // the schedule follows the clock every 30 s. Unchanged frames cost nothing.
+  let ticks = 0;
+  clock = setInterval(() => {
+    ticks += 1;
+    if (mode === "takes" && rollingSince !== null && !rec) void draw();
+    else if (mode === "schedule" && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
+  }, PULSE_MS);
 
   const phone = mountPhoneUi({
     getSettings: () => settings,
