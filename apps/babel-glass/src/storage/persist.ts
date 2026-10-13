@@ -3,13 +3,14 @@ import type { CaptionMode } from "../glasses/view";
 import { AUTO, normalizeLanguageCode } from "../text/languages";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import type { TranscriptEntry } from "../companion/transcript";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
  *
- * No captions and no audio are ever written here. The transcript exists in
- * memory for the session and is gone when the app closes — a record of
- * everything said around someone is not something this app is willing to keep.
+ * No audio is ever written here. The transcript exists in memory for the
+ * session and is gone when the app closes — unless the user switches on
+ * "keep the last transcript" (off by default), see `saveConversation`.
  */
 
 /** Which translation backend to talk to. */
@@ -41,6 +42,8 @@ export interface BabelData {
   readonly speakers: boolean;
   readonly insights: boolean;
   readonly autoSummary: boolean;
+  /** Keep the last transcript (and summary) on the phone across the lock and a restart. Off by default. */
+  readonly keepTranscript: boolean;
 }
 
 /**
@@ -63,6 +66,7 @@ export const EMPTY_DATA: BabelData = {
   speakers: true,
   insights: true,
   autoSummary: true,
+  keepTranscript: false,
 };
 
 export function usesMockStt(data: BabelData): boolean {
@@ -203,9 +207,67 @@ export function parseData(raw: string): BabelData {
       speakers: value.speakers !== false,
       insights: value.insights !== false,
       autoSummary: value.autoSummary !== false,
+      // New in 0.3.1: opt-in, absent = off.
+      keepTranscript: value.keepTranscript === true,
     };
   } catch {
     return EMPTY_DATA;
+  }
+}
+
+/**
+ * The last conversation, kept only when the user switched "keep the last
+ * transcript" on: the phone lock (after ~5 min the WebView is restarted) must
+ * not wipe what was just said. Capped, and cleared with the transcript.
+ */
+const CONVERSATION_KEY = "quietglass.babelglass.conversation.v1";
+export const KEPT_LINES = 300;
+
+export interface KeptConversation {
+  readonly log: readonly TranscriptEntry[];
+  readonly summary: { readonly short: readonly string[]; readonly long: readonly string[] } | null;
+}
+
+export async function saveConversation(bridge: EvenAppBridge, conversation: KeptConversation | null): Promise<void> {
+  const value = conversation === null || (conversation.log.length === 0 && conversation.summary === null)
+    ? ""
+    : JSON.stringify({ log: conversation.log.slice(-KEPT_LINES), summary: conversation.summary });
+  await bridge.setLocalStorage(CONVERSATION_KEY, value);
+}
+
+export async function loadConversation(bridge: EvenAppBridge): Promise<KeptConversation | null> {
+  return parseConversation(await bridge.getLocalStorage(CONVERSATION_KEY));
+}
+
+export function parseConversation(raw: string): KeptConversation | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as { log?: unknown; summary?: unknown } | null;
+    if (!value || typeof value !== "object") return null;
+    const strings = (list: unknown): string[] =>
+      Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+    const log = Array.isArray(value.log)
+      ? value.log.flatMap((item): TranscriptEntry[] => {
+          if (!item || typeof item !== "object") return [];
+          const entry = item as Record<string, unknown>;
+          if (typeof entry.text !== "string" || !entry.text.trim() || typeof entry.at !== "number") return [];
+          return [{
+            text: entry.text,
+            at: entry.at,
+            ...(typeof entry.speaker === "string" ? { speaker: entry.speaker } : {}),
+            ...(typeof entry.language === "string" ? { language: entry.language } : {}),
+            ...(typeof entry.translated === "string" ? { translated: entry.translated } : {}),
+          }];
+        }).slice(-KEPT_LINES)
+      : [];
+    const rawSummary = value.summary as { short?: unknown; long?: unknown } | null | undefined;
+    const summary = rawSummary && typeof rawSummary === "object" && strings(rawSummary.short).length > 0
+      ? { short: strings(rawSummary.short), long: strings(rawSummary.long) }
+      : null;
+    if (log.length === 0 && summary === null) return null;
+    return { log, summary };
+  } catch {
+    return null;
   }
 }
 

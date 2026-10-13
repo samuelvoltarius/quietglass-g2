@@ -134,3 +134,189 @@ describe("babel-glass microphone with an unreachable recogniser", () => {
     expect(fake.mic.open).toBe(true);
   });
 });
+
+/** A fuller fake: page counts, the text per container, storage, reconnect. */
+function richBridge(options: { stored?: Record<string, string>; micAnswer?: boolean; createHangs?: boolean } = {}) {
+  let handler: ((event: unknown) => void) | undefined;
+  let deviceHandler: ((status: unknown) => void) | undefined;
+  const storage = new Map<string, string>(Object.entries(options.stored ?? {}));
+  const shutdown = { modes: [] as (number | undefined)[] };
+  const mic = { open: false, calls: [] as boolean[] };
+  const page = { creates: 0, rebuilds: 0, text: new Map<number, string>() };
+  const remember = (parts: { containerID?: number; content?: string }[] | undefined): void => {
+    for (const part of parts ?? []) if (part.containerID !== undefined) page.text.set(part.containerID, part.content ?? "");
+  };
+  const bridge = {
+    getLocalStorage: async (key: string) => storage.get(key) ?? "",
+    setLocalStorage: async (key: string, value: string) => { storage.set(key, value); return true; },
+    rebuildPageContainer: async (built: { textObject?: { containerID?: number; content?: string }[] }) => {
+      page.rebuilds += 1;
+      if (page.creates > 0) remember(built.textObject);
+      return true;
+    },
+    createStartUpPageContainer: (built: { textObject?: { containerID?: number; content?: string }[] }): Promise<number> => {
+      page.creates += 1;
+      if (options.createHangs) return new Promise(() => undefined);
+      remember(built.textObject);
+      return Promise.resolve(0);
+    },
+    textContainerUpgrade: async (update: { containerID?: number; content?: string }) => { remember([update]); return true; },
+    updateImageRawData: async () => "success",
+    audioControl: async (isOpen: boolean) => {
+      mic.calls.push(isOpen);
+      if (isOpen && options.micAnswer === false) return false;
+      mic.open = isOpen;
+      return true;
+    },
+    shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.modes.push(mode); return Promise.resolve(true); },
+    onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
+    onDeviceStatusChanged: (callback: (status: unknown) => void) => { deviceHandler = callback; return () => undefined; },
+  };
+  return {
+    bridge, shutdown, mic, page, storage,
+    body: () => page.text.get(2) ?? "",
+    footer: () => page.text.get(3) ?? "",
+    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
+    reconnect: () => deviceHandler?.({ connectType: "connected" }),
+    ready: () => handler !== undefined,
+  };
+}
+
+const SETTINGS_KEY = "quietglass.babelglass.v1";
+const CONVERSATION_KEY = "quietglass.babelglass.conversation.v1";
+
+describe("babel-glass robustness", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+    vi.useFakeTimers();
+    vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
+    vi.stubGlobal("navigator", { language: "en-US" });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  async function boot(fake: ReturnType<typeof richBridge>) {
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    await vi.advanceTimersByTimeAsync(50);
+    return fake;
+  }
+
+  it("regression: gestures work while the first page is still being created", async () => {
+    const fake = await boot(richBridge({ createHangs: true }));
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.modes).toEqual([1]);
+  });
+
+  it("regression: a reconnect rebuilds the page even when the text did not change, never a second create", async () => {
+    const fake = await boot(richBridge());
+    expect(fake.page.creates).toBe(1);
+    const rebuilds = fake.page.rebuilds;
+    fake.reconnect();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.page.rebuilds).toBe(rebuilds + 1);
+    expect(fake.page.creates).toBe(1);
+  });
+
+  it("regression: a refused microphone is said on the glasses", async () => {
+    const fake = await boot(richBridge({ micAnswer: false }));
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.body()).toContain("Microphone not allowed");
+  });
+
+  it("switches the microphone off when the speech server stays away, and says why", async () => {
+    class HangingSocket {
+      readyState = 0;
+      onopen: unknown; onmessage: unknown; onerror: unknown; onclose: unknown;
+      send(): void { /* never connected */ }
+      close(): void { /* nothing to close */ }
+    }
+    vi.stubGlobal("WebSocket", HangingSocket);
+    const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ sttUrl: "wss://speech.example:8449" }) } }));
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic.open).toBe(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fake.mic.open).toBe(true);
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(fake.mic.open).toBe(false);
+    expect(fake.body()).toContain("Speech server unreachable");
+  });
+
+  it("one hold does not clear the transcript; a second hold within the window does", async () => {
+    const kept = JSON.stringify({ log: [{ text: "Hallo", at: 1 }], summary: { short: ["Kurz gesagt"], long: ["Lang"] } });
+    const fake = await boot(richBridge({ stored: {
+      [SETTINGS_KEY]: JSON.stringify({ keepTranscript: true }),
+      [CONVERSATION_KEY]: kept,
+    } }));
+    expect(fake.body()).toContain("Kurz gesagt");
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.footer()).toContain("hold again");
+    expect(fake.storage.get(CONVERSATION_KEY)).toBe(kept);
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.storage.get(CONVERSATION_KEY)).toBe("");
+    expect(fake.body()).not.toContain("Kurz gesagt");
+  });
+
+  it("an armed hold runs out", async () => {
+    const fake = await boot(richBridge());
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.footer()).toContain("hold again");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.footer()).not.toContain("hold again");
+  });
+
+  it("without the opt-in nothing of the conversation is stored", async () => {
+    const fake = await boot(richBridge());
+    fake.emit(0); // mock captions
+    await vi.advanceTimersByTimeAsync(10_000);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(fake.storage.has(CONVERSATION_KEY)).toBe(false);
+  });
+
+  it("with the opt-in the conversation is stored when captions stop", async () => {
+    const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ keepTranscript: true, autoSummary: false }) } }));
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    const stored = JSON.parse(fake.storage.get(CONVERSATION_KEY) ?? "{}") as { log?: unknown[] };
+    expect(stored.log?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("leaving through the system closes the microphone; coming back rebuilds without reopening it", async () => {
+    const fake = await boot(richBridge());
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic.open).toBe(true);
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic.open).toBe(false);
+    const rebuilds = fake.page.rebuilds;
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.page.rebuilds).toBe(rebuilds + 1);
+    expect(fake.mic.open).toBe(false);
+    expect(fake.page.creates).toBe(1);
+  });
+
+  it("a system exit closes the microphone for good", async () => {
+    const fake = await boot(richBridge());
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(7);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic.open).toBe(false);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic.open).toBe(false);
+  });
+});

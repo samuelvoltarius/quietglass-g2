@@ -199,7 +199,7 @@ describe("glasses text budget", () => {
     expect(idle).toEqual({
       header: "Babel Glass",
       body: ["Mikrofon ist aus.", "Tippe, um Untertitel zu starten."],
-      footer: "Tippen = Start",
+      footer: "Tippen = Start · 2× = Ende",
     });
     const listening = buildView(createBuffer(), { ...base, locale: "de" });
     expect(listening.body).toEqual(["hört zu…"]);

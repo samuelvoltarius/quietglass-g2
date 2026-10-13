@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.1] — 2026-10-13
+
+### Fixed
+
+- **Blank glasses after a Bluetooth drop:** a reconnect set the page as lost but kept the last view, so an unchanged caption skipped the rebuild. A reconnect or a return to the foreground now always rebuilds the page (never a second `createStartUpPageContainer`).
+- Gestures are wired before the first page is drawn, and page writes run one at a time (the ticker could start a second creation while the first was still on its way).
+- A refused microphone is said on the glasses ("Mikrofon nicht freigegeben. In der Even-App erlauben, dann tippen.") instead of looking like an ignored tap.
+- The microphone no longer stays open for ever: it switches off after 60 s without the speech server ("Spracherkennung nicht erreichbar – Mikro aus.") and in any case after 90 minutes.
+- A recogniser that throws while stopping no longer leaves the app believing it still listens.
+- Leaving through the system (another app, the system menu) closes the microphone; coming back rebuilds the page — the microphone reopens only on a tap. A system exit or crash closes it for good.
+
+### Changed
+
+- Clearing the transcript takes a second hold within 4 s; the footer says "Nochmal halten = Mitschrift löschen".
+- New opt-in on the phone, off by default: "Letzte Mitschrift auf diesem Handy behalten" — the last conversation (at most 300 lines) and its summary survive the phone lock and a restart. Clearing the transcript or switching the option off deletes the stored copy. Privacy notes and store text say so.
+- Footer "Tippen = Start · 2× = Ende"; the speaker hint names the voice print (ECAPA) instead of "grob an Stimmlage".
+
 ## [0.3.0] — 2026-10-13
 
 ### Added — conversation companion

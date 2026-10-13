@@ -253,6 +253,8 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
     <p class="hint">${x("p.speakersHint")}</p>
     <label class="check"><input id="insights" type="checkbox" ${data.insights ? "checked" : ""} /> ${x("p.insights")}</label>
     <label class="check"><input id="auto-summary" type="checkbox" ${data.autoSummary ? "checked" : ""} /> ${x("p.autoSummary")}</label>
+    <label class="check"><input id="keep-transcript" type="checkbox" ${data.keepTranscript ? "checked" : ""} /> ${x("p.keepTranscript")}</label>
+    <p class="hint">${x("p.keepTranscriptHint")}</p>
     <p class="hint">${companionConfigured(data) ? x("p.companionLlm") : x("p.companionNoLlm")}</p>
   </section>
 
@@ -367,7 +369,7 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
     commit({ invertScroll: (event.target as HTMLInputElement).checked });
   });
 
-  for (const [id, key] of [["speakers", "speakers"], ["insights", "insights"], ["auto-summary", "autoSummary"]] as const) {
+  for (const [id, key] of [["speakers", "speakers"], ["insights", "insights"], ["auto-summary", "autoSummary"], ["keep-transcript", "keepTranscript"]] as const) {
     byId<HTMLInputElement>(id)?.addEventListener("change", (event) => {
       commit({ [key]: (event.target as HTMLInputElement).checked } as Partial<BabelData>);
     });

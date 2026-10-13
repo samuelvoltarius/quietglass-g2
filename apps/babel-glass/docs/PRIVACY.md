@@ -43,9 +43,16 @@ Audio is never written to storage, on the phone or anywhere else.
 
 Captions live **in memory only**, bounded to the most recent lines, and are
 discarded when the app closes. A record of everything said around a person is
-not something this app is willing to keep.
+not something this app keeps unless you ask for it.
 
-Holding the temple pad clears the transcript immediately.
+**Opt-in, off by default:** "Keep the last transcript on this phone" stores the
+last conversation (at most 300 lines) and its summary in the Even app's
+per-app storage on the phone, so it survives the phone lock and a restart of
+the app. It never leaves the phone. Switching the option off deletes the stored
+copy.
+
+Holding the temple pad twice (the second hold within 4 seconds) clears the
+transcript, including a stored copy; so does "Clear transcript" on the phone.
 
 ## What is stored
 
@@ -54,6 +61,7 @@ Holding the temple pad clears the transcript immediately.
 | Server URLs, LLM model name | Even app per-app storage, on the phone | No |
 | Tokens / API keys | same | Only to that server |
 | Languages, mode, display options | same | No |
+| Last transcript and summary — only with "keep the last transcript" on | same, under `quietglass.babelglass.conversation.v1` | No |
 
 Finished captions are sent to the translation server you select
 (LibreTranslate-compatible or an OpenAI-compatible LLM server) and nowhere
@@ -86,7 +94,8 @@ and always showing a visible indicator that the microphone is live.
 ## Removing your data
 
 Clear the server addresses and tokens in the phone app to forget them. The
-transcript is never stored, so there is nothing else to delete. Uninstalling
+transcript is only stored if you switched "keep the last transcript" on;
+"Clear transcript" or switching the option off deletes it. Uninstalling
 removes everything.
 
 ## Third-party code

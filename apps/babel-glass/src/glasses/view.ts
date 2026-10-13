@@ -82,6 +82,24 @@ export interface ViewOptions {
   readonly popup?: { readonly term: string; readonly info: string } | null;
   /** End-of-conversation summary (shown while not listening). */
   readonly summary?: SummaryState | null;
+  /** Why the microphone is off although the user wanted it on. */
+  readonly notice?: MicNotice | null;
+  /** A hold armed "clear the transcript": the footer says what a second hold does. */
+  readonly confirmClear?: boolean;
+}
+
+/** The microphone was refused, the server stayed away, or the time limit ran out. */
+export type MicNotice =
+  | { readonly kind: "micDenied" }
+  | { readonly kind: "noServer" }
+  | { readonly kind: "micLimit"; readonly minutes: number };
+
+function noticeLines(notice: MicNotice, locale: Locale): string[] {
+  switch (notice.kind) {
+    case "micDenied": return [t(locale, "g.micDenied"), t(locale, "g.micDenied2")];
+    case "noServer": return [t(locale, "g.noServer")];
+    case "micLimit": return [t(locale, "g.micLimit", { minutes: String(notice.minutes) })];
+  }
 }
 
 export type SummaryState =
@@ -115,11 +133,24 @@ function headerText(label: string, now: number | undefined): string {
 }
 
 export function buildView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
+  const view = composeView(buffer, options);
+  // An armed "clear" always says so, whatever else is on screen.
+  return options.confirmClear ? { ...view, footer: t(options.locale, "g.confirmClear") } : view;
+}
+
+function composeView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
   const preset = MODE_PRESETS[options.mode];
 
   const x = (key: string): string => t(options.locale, key);
 
   if (!options.listening) {
+    if (options.notice) {
+      return {
+        header: x("g.title"),
+        body: [...noticeLines(options.notice, options.locale), "", x("g.tapToStart")],
+        footer: x("g.tapStart"),
+      };
+    }
     if (options.summary) return summaryView(options.summary, options);
     return {
       header: x("g.title"),
