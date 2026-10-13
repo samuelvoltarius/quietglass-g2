@@ -59,7 +59,7 @@ describe("what the glasses show", () => {
     expect(view.body.join("\n")).toContain("> Prüft Drucker — Schritt 1/2");
     expect(view.body.join("\n")).toContain("Frage 2/2 (physisch)");
     expect(view.body.join("\n")).toContain("Drucker starten?");
-    expect(view.footer).toBe("Ja · 2x Nein · Wischen · Halten sprechen");
+    expect(view.footer).toBe("Tippen = Ja · 2× = Nein · Wischen · Halten = sprechen");
   });
 
   it("asks for the second tap on the footer, and names the effect in English", () => {
@@ -78,7 +78,7 @@ describe("what the glasses show", () => {
     const view = buildView(withCards([inner], { rec: "listening" }), "de", NOW);
     expect(view.header).toContain("● MIC");
     expect(view.body.join("\n")).toContain("Loslassen = senden");
-    expect(view.body.join("\n")).toContain("2x Tap = abbrechen");
+    expect(view.body.join("\n")).toContain("2× = abbrechen");
   });
 
   it("shows the transcript and the reply, and offers to close", () => {
@@ -88,7 +88,7 @@ describe("what the glasses show", () => {
     expect(view.footer).toBe("Tippen = schließen");
   });
 
-  it("never exceeds seven rows of 46 characters, with worst-case server text, in both languages", () => {
+  it("never exceeds seven rows of 56 characters, with worst-case server text, in both languages", () => {
     const long = "Wort ".repeat(120);
     const wide: HudCard = { id: "w", title: long, text: long, effect: "nach außen und sonst noch etwas Langes" };
     const models: HudModel[] = [

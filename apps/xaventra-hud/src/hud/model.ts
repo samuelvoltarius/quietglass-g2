@@ -88,6 +88,14 @@ function effectLabel(effect: string, locale: Locale): string {
   return effect;
 }
 
+/** First `rows` rows; when something is left out the last kept row ends in an ellipsis. */
+function cut(rows: readonly string[], keep: number): string[] {
+  if (rows.length <= keep) return [...rows];
+  const kept = rows.slice(0, Math.max(0, keep));
+  if (kept.length > 0) kept[kept.length - 1] = fit(kept[kept.length - 1] + "…");
+  return kept;
+}
+
 const clock = (now: Date): string => `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
 export function buildView(model: HudModel, locale: Locale, now: Date): ScreenView {
@@ -131,8 +139,8 @@ export function buildView(model: HudModel, locale: Locale, now: Date): ScreenVie
   const effect = effectLabel(card.effect, locale);
   const label = x("g.card", { n: Math.min(model.index, total - 1) + 1, total }) + (effect ? ` (${effect})` : "");
   const room = MAX_BODY_ROWS - status.length - 2;
-  const titleRows = wrap(card.title).slice(0, Math.min(2, room - 1));
-  const textRows = wrap(card.text).slice(0, Math.max(0, room - titleRows.length));
+  const titleRows = cut(wrap(card.title), Math.min(2, room - 1));
+  const textRows = cut(wrap(card.text), Math.max(0, room - titleRows.length));
   const body = [...status, "", fit(label), ...titleRows, ...textRows].slice(0, MAX_BODY_ROWS);
   const footer = model.confirm === card.id
     ? x("g.confirm")

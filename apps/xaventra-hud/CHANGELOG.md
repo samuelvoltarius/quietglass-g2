@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4] — 2026-10-13
+
+### Changed
+
+- German gesture hints no longer mix in English ("Tap Ja · 2x Tap Nein" is now "Tippen = Ja · 2× = Nein · Halten = sprechen"); English hints follow the same pattern.
+- Glasses rows use the full display width (56 instead of 46 characters); card title and text that do not fit end in an ellipsis instead of being cut silently.
+
 ## [0.1.3] — 2026-10-13
 
 ### Fixed
