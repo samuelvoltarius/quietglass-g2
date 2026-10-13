@@ -161,7 +161,7 @@ describe("the connections page", () => {
     expect(view.body.slice(0, 4).map((line) => line[0])).toEqual([" ", ">", " ", " "]);
     expect(view.body[5]).toBe("Ab Salzburg Sterneckstraße · Steig D");
     expect(view.body[6]).toMatch(/^Gehen \d+ min · Dauer 42 min$/);
-    expect(view.footer).toBe("tippen = los · × = Umstiege · 2× zurück");
+    expect(view.footer).toBe("Tippen = los · Wischen = andere · 2× = zurück");
   });
 
   for (const locale of ["de", "en"] as const) {

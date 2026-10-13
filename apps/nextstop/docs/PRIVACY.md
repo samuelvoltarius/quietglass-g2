@@ -6,7 +6,10 @@ NextStop braucht deinen Standort, um die nächsten Haltestellen und während der
 Fahrt die nächste Station zu finden. Dafür schickt die App einen Kartenausschnitt
 rund um deine Position an Transitous (Standard) — oder, wenn du es einstellst,
 an deinen eigenen MOTIS-Server bzw. über dein eigenes ÖBB-Zusatzprogramm an die
-ÖBB. Der Standort wird nirgends gespeichert und nicht weitergegeben. Gespeichert
+ÖBB. Der Standort wird nirgends gespeichert und nicht weitergegeben. Damit eine
+laufende Begleitung oder ein verfolgter Bus einen Neustart der App übersteht
+(z. B. nach gesperrtem Handy), merkt sich NextStop bis zu 2 Stunden Haltestellen,
+Zeiten und Ziel dieser Fahrt – nicht deine Position. Gespeichert
 werden deine Einstellungen (Anbieter, Server-Adressen, Aktualisierungs-
 intervall) und — nur wenn du sie selbst anlegst — deine Favoriten (Name und
 Koordinaten) und das „Ziel jetzt“ für die Routenplanung, alles nur auf dem Handy.
@@ -62,11 +65,12 @@ identifier, account or token of its own.
 | Your MOTIS and ÖBB proxy addresses | same | No |
 | Refresh interval | same | No |
 | Favourite destinations (name, coordinates) and the destination of "now" — only if you add them | same, mirrored in the WebView localStorage | No (only the coordinates of one destination, when you plan a route to it) |
+| The journey running right now: guide (stops, times, destination) or the followed bus, and the picked stop — kept at most 2 hours so a restart of the app (phone locked) carries on; never your position | Even app per-app storage, on the phone | No |
 
 Settings are written through `setLocalStorage()` under `quietglass.nextstop.v1`,
-destinations under `quietglass.nextstop.places.v1`. Positions, stops,
-connections and departures are held **in memory only**; there is no trip
-history.
+destinations under `quietglass.nextstop.places.v1`, the running journey under
+`quietglass.nextstop.session.v1` (overwritten by the next one, dropped after
+2 hours). Positions are held **in memory only**; there is no trip history.
 
 ## What is not collected
 

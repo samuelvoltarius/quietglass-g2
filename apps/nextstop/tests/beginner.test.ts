@@ -39,7 +39,7 @@ describe("what the glasses say when something is missing", () => {
     const view = loadingView(TEXT.waitingForLocation, TEXT.waitingHint, "de");
     fits(view.body);
     expect(view.body.join(" ")).toContain("Erlaube den Standort in der Even-App");
-    expect(view.footer).toBe("doppeltippen = beenden");
+    expect(view.footer).toBe("2× = Ende");
   });
 
   it("explains an empty area per data source", () => {

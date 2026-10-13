@@ -213,7 +213,7 @@ describe("the guide on the glasses", () => {
   it("tells the walk to the stop, and what comes after it", () => {
     const view = show(guideState(steps, T0, null), T0);
     expect(view.header).toBe(`Zu Fuß · ${clock(T0)}`);
-    expect(view.body[0]).toBe("> Geh zu Haltestelle");
+    expect(view.body[0]).toBe("> Geh zur Haltestelle");
     expect(view.body[1]).toBe("Salzburg Vogelweiderstraße");
     expect(view.body[2]).toBe("200 m · 3 min zu Fuß");
     expect(view.body[4]).toBe("Dann: O-Bus 2 Richtung Walserfeld");
@@ -291,7 +291,7 @@ describe("the guide on the glasses", () => {
     const done = show(guideState(steps, rideDone, position), rideDone, position);
     expect(done.header).toBe(`Ziel erreicht · ${clock(rideDone)}`);
     expect(done.body).toEqual(["> Ziel erreicht", "Heim", "", "Tippen = zurück zu den Zielen"]);
-    expect(done.footer).toBe("tippen = fertig");
+    expect(done.footer).toBe("Tippen = fertig");
   });
 
   it("says plainly that the vehicle has gone", () => {

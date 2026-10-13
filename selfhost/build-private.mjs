@@ -42,15 +42,16 @@ const wss = (origin) => origin.replace(/^https:/, "wss:");
 
 const APPS = {
   nextstop: {
-    summary: "ÖBB live data, voice destination, own routing (all optional)",
+    summary: "ÖBB live data, voice destination, own routing, server voice (all optional)",
     required: [],
-    optional: ["oebb", "whisper", "valhalla"],
+    optional: ["oebb", "whisper", "valhalla", "tts"],
     plan: (s) => ({
-      origins: [s.oebb, s.whisper, s.valhalla].filter(Boolean),
+      origins: [s.oebb, s.whisper, s.valhalla, s.tts].filter(Boolean),
       env: {
         ...(s.whisper ? { VITE_STT_URL: `${s.whisper}/v1/audio/transcriptions` } : {}),
         ...(s.oebb ? { VITE_OEBB_URL: `${s.oebb}/oebb` } : {}),
         ...(s.valhalla ? { VITE_ROUTER_URL: s.valhalla } : {}),
+        ...(s.tts ? { VITE_TTS_URL: s.tts } : {}),
       },
     }),
   },
@@ -88,8 +89,8 @@ const APPS = {
       env: { VITE_STATUS_SOURCES: s.status.map((x) => `${x.name}|${x.url}/status`).join(";") },
     }),
   },
-  "shoot-day": { summary: "Shoot Day backend", required: ["shootDay"], optional: [], plan: (s) => ({ origins: [s.shootDay], env: {} }) },
-  "klipper-glance": { summary: "Klipper bridge", required: ["klipper"], optional: [], plan: (s) => ({ origins: [s.klipper], env: {} }) },
+  "shoot-day": { summary: "Shoot Day backend", required: ["shootDay"], optional: [], plan: (s) => ({ origins: [s.shootDay], env: { VITE_SHOOTDAY_URL: s.shootDay } }) },
+  "klipper-glance": { summary: "Klipper bridge", required: ["klipper"], optional: [], plan: (s) => ({ origins: [s.klipper], env: { VITE_KLIPPER_URL: s.klipper } }) },
   "star-glass": { summary: "Star Glass bridge next to N.I.N.A.", required: ["star"], optional: [], plan: (s) => ({ origins: [s.star], env: { VITE_STAR_URL: s.star } }) },
   "sugar-glass": { summary: "Sugar Glass bridge in front of Nightscout (no token in the build)", required: ["sugar"], optional: [], plan: (s) => ({ origins: [s.sugar], env: { VITE_NS_URL: s.sugar } }) },
   "lumen-glass": { summary: "your LUMEN server (separate project)", required: ["lumen"], optional: [], plan: (s) => ({ origins: [s.lumen], env: {} }) },
@@ -161,6 +162,7 @@ function loadConfig(file) {
     star: one("star"),
     sugar: one("sugar"),
     valhalla: one("valhalla"),
+    tts: one("tts"),
     lumen: one("lumen"),
     xaventra: one("xaventra"),
     agents: list("agent-glass").map((u, i) => origin(u, `services.agent-glass[${i}]`)),

@@ -12,6 +12,8 @@ import { boardScene, bySoonest, followLoadingScene, followScene, messageScene } 
 import { sameScene } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
+import { loadSession, saveSession, type SavedSession } from "./storage/session";
+import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 import { Companion } from "./speech/companion";
@@ -70,6 +72,8 @@ export function positionFromUrl(search: string): Position | null {
 const FIRST_FIX_MS = 10000;
 /** A request that has not been answered by then is reported as a failure the passenger can tap away. */
 const RIDE_TIMEOUT_MS = 15000;
+/** The glasses' microphone answers within this, or the voice page says it is not available. */
+const MIC_TIMEOUT_MS = 5000;
 
 /** Rejects when the promise has not settled in time; the promise itself runs on. */
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -177,6 +181,10 @@ async function boot(): Promise<void> {
   let tickTimer: ReturnType<typeof setInterval> | null = null;
   let beatTimer: ReturnType<typeof setInterval> | null = null;
   let closed = false;
+  /** Left through the system: no GPS, no microphone, no timers, nothing drawn until the app is back. */
+  let backgrounded = false;
+  /** The stop picked before a restart, chosen again once the nearby stops are known. */
+  let wantedStopId: string | null = null;
   /**
    * Every request for the board or a ride takes a number; an answer that comes
    * back after a newer request was started is dropped. Without it, holding to
@@ -303,7 +311,7 @@ async function boot(): Promise<void> {
 
   const drawOnce = async (): Promise<void> => {
     // After the double tap the page is gone; drawing again would bring it back.
-    if (closed) return;
+    if (closed || backgrounded) return;
     const scene = currentScene();
     const menu = menuFor(screen, locale);
     const layout = `${menu.key}|${scene.kind}`;
@@ -398,7 +406,10 @@ async function boot(): Promise<void> {
       if (seq !== requestSeq) return;
       stops = found;
       departures = [];
-      stopIndex = 0;
+      // Back at the stop picked before a restart, when it is still among the nearby ones.
+      const again = wantedStopId ? stops.findIndex((stop) => stop.id === wantedStopId) : -1;
+      wantedStopId = null;
+      stopIndex = Math.max(0, again);
       selected = 0;
       const backendId = settings.backend;
       error = stops.length === 0
@@ -417,9 +428,9 @@ async function boot(): Promise<void> {
    * follow when they arrive, and a failure or a timeout is shown rather than
    * left as a board that seems to ignore the tap.
    */
-  const startFollow = async (): Promise<void> => {
-    const departure = departures[selected];
-    const stop = currentStop();
+  const startFollow = async (picked?: { departure: Departure; stop: Stop }): Promise<void> => {
+    const departure = picked?.departure ?? departures[selected];
+    const stop = picked?.stop ?? currentStop();
     if (!departure || !stop) return;
     const seq = ++requestSeq;
     following = { departure, stop, status: "loading", ride: null, boarding: -1 };
@@ -473,7 +484,7 @@ async function boot(): Promise<void> {
 
   /** The companion's next spoken line for the guide on screen, if there is one. */
   const announce = (): void => {
-    if (closed || screen !== "guide" || !guide || !settings.announce || demo.enabled) return;
+    if (closed || backgrounded || screen !== "guide" || !guide || !settings.announce || demo.enabled) return;
     const now = clock();
     const at = guidePosition();
     const state = guideState(guide.steps, now, at, guide.override);
@@ -566,7 +577,12 @@ async function boot(): Promise<void> {
     micChunks.length = 0;
     // Blocks may arrive before the answer to the request does; they must not be dropped.
     micActive = true;
-    const granted = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
+    const asked = bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
+    const granted = await withTimeout(asked, MIC_TIMEOUT_MS).catch(() => {
+      // No answer in time: should the microphone come on later after all, it goes off again at once.
+      void asked.then((late) => { if (late) void bridge.audioControl(false).catch(() => undefined); });
+      return false;
+    });
     if (seq !== voiceSeq) {
       // Cancelled while the microphone was starting: do not leave it on.
       if (granted) void bridge.audioControl(false).catch(() => undefined);
@@ -697,11 +713,11 @@ async function boot(): Promise<void> {
     void draw();
   };
 
-  const startGuide = (journey: Journey, target: Destination): void => {
+  const startGuide = (journey: Journey, target: Destination, override: StepOverride | null = null): void => {
     walkState = null;
     stopGuideTimer();
     journeyId += 1;
-    guide = { journey, steps: buildSteps(journey), override: null, target };
+    guide = { journey, steps: buildSteps(journey), override, target };
     confirmStopUntil = 0;
     screen = "guide";
     guideTimer = setInterval(() => { void refreshGuide(); }, 60000);
@@ -732,6 +748,7 @@ async function boot(): Promise<void> {
   const scheduleRefresh = (): void => {
     if (refreshTimer !== null) clearInterval(refreshTimer);
     if (closed) return;
+    if (backgrounded) return;
     refreshTimer = setInterval(() => {
       // A request the passenger started — a stop switch, a ride being loaded —
       // is never pre-empted by the background refresh.
@@ -743,11 +760,37 @@ async function boot(): Promise<void> {
     }, settings.refreshSeconds * 1000);
   };
 
-  await draw();
+  // Not awaited: the handlers below must be in place before the first page and
+  // the first board arrive, or a slow page or backend left the glasses deaf —
+  // even to the double tap that leaves — for as long as it took.
+  void draw();
 
-  // Not awaited: the handlers below must be in place before the first board
-  // arrives, or a slow backend left the glasses deaf — even to the double tap
-  // that leaves — for as long as the request took.
+  // What was running before a restart (phone locked, app unloaded): the guide
+  // carries on at the right step, a followed bus is followed again.
+  const saved: SavedSession | null = demo.enabled ? null : await loadSession(bridge);
+  if (saved) {
+    wantedStopId = saved.stopId;
+    if (saved.guide) startGuide(saved.guide.journey, saved.guide.target, saved.guide.override);
+    else if (saved.screen === "places") screen = "places";
+    if (saved.follow) void startFollow(saved.follow);
+  }
+  let lastSaved = "";
+  const persistSession = (): void => {
+    if (demo.enabled) return;
+    const session: SavedSession = {
+      savedAt: Date.now(),
+      screen: screen === "guide" && guide ? "guide" : screen === "board" ? "board" : "places",
+      stopId: currentStop()?.id ?? wantedStopId,
+      follow: following ? { departure: following.departure, stop: following.stop } : null,
+      guide: guide ? { journey: guide.journey, target: guide.target, override: guide.override } : null,
+    };
+    // savedAt alone does not make it new: written only when something else changed, or every few minutes.
+    const key = JSON.stringify({ ...session, savedAt: Math.floor(session.savedAt / 300_000) });
+    if (key === lastSaved) return;
+    lastSaved = key;
+    void saveSession(bridge, session).catch((thrown: unknown) => { console.warn("[nextstop] saving the session failed:", thrown); });
+  };
+
   void findStops();
   scheduleRefresh();
 
@@ -917,9 +960,13 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { comeBack(); return; }
+    if (lifecycle === "background") { void goBackground(); return; }
+    if (lifecycle === "exit") { void goBackground().then(() => { void shutDown(); }); return; }
     // Native contextual menu: arrives on its own event, whatever container captures input.
     const menuId = menuItemIdFromEvent(event);
-    if (menuId !== null) { onMenu(menuId); return; }
+    if (menuId !== null) { if (backgrounded) comeBack(); onMenu(menuId); persistSession(); return; }
 
     // PCM blocks of a recording arrive on the same channel as gestures.
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
@@ -933,36 +980,92 @@ async function boot(): Promise<void> {
 
     const gesture = gestureFromEvent(event, { invertScroll: false });
     if (!gesture) return;
+    // A gesture means the app is on the glasses again, even if no "foreground" came first.
+    if (backgrounded) { comeBack(); return; }
     switch (screen) {
-      case "voice": onVoiceGesture(gesture.gesture); return;
-      case "places": onPlacesGesture(gesture.gesture); return;
-      case "plans": onPlansGesture(gesture.gesture); return;
-      case "guide": onGuideGesture(gesture.gesture); return;
+      case "voice": onVoiceGesture(gesture.gesture); break;
+      case "places": onPlacesGesture(gesture.gesture); break;
+      case "plans": onPlansGesture(gesture.gesture); break;
+      case "guide": onGuideGesture(gesture.gesture); break;
       default: onBoardGesture(gesture.gesture);
     }
+    persistSession();
   });
 
   /**
    * Only a confirmed exit stops everything that could draw again or keep GPS
    * awake. A cancelled or failed dialog leaves the app exactly as it was.
    */
+  /** Everything off for good: after a confirmed exit, or when the system ends the app. */
+  const shutDown = async (): Promise<void> => {
+    closed = true;
+    requestSeq++;
+    planSeq++;
+    abortVoice();
+    if (refreshTimer !== null) clearInterval(refreshTimer);
+    if (tickTimer !== null) clearInterval(tickTimer);
+    if (beatTimer !== null) clearInterval(beatTimer);
+    stopGuideTimer();
+    refreshTimer = null;
+    tickTimer = null;
+    beatTimer = null;
+    if (typeof stopListening === "function") stopListening();
+    await bridge.stopAppLocationUpdates().catch(() => undefined);
+  };
   const requestExit = createExitRequest(bridge, {
     onConfirmed: async () => {
-      closed = true;
-      requestSeq++;
-      planSeq++;
-      abortVoice();
-      if (refreshTimer !== null) clearInterval(refreshTimer);
-      if (tickTimer !== null) clearInterval(tickTimer);
-      if (beatTimer !== null) clearInterval(beatTimer);
-      stopGuideTimer();
-      refreshTimer = null;
-      tickTimer = null;
-      beatTimer = null;
-      if (typeof stopListening === "function") stopListening();
-      await bridge.stopAppLocationUpdates().catch(() => undefined);
+      // Left on purpose: a guide or a followed bus is over, the next start begins on the board.
+      following = null;
+      guide = null;
+      screen = "board";
+      persistSession();
+      await shutDown();
     },
   }, "nextstop");
+
+  /**
+   * Left through the system (not by the double tap): GPS, microphone and the
+   * timers stop, what was running is saved. The guide itself is kept; it is
+   * worked out from the clock and the position, so it is right again on return.
+   */
+  const goBackground = async (): Promise<void> => {
+    if (backgrounded || closed) return;
+    persistSession();
+    backgrounded = true;
+    abortVoice();
+    tts.stop();
+    if (refreshTimer !== null) clearInterval(refreshTimer);
+    if (tickTimer !== null) clearInterval(tickTimer);
+    if (beatTimer !== null) clearInterval(beatTimer);
+    if (guideTimer !== null) clearInterval(guideTimer);
+    refreshTimer = null;
+    tickTimer = null;
+    beatTimer = null;
+    guideTimer = null;
+    await bridge.stopAppLocationUpdates().catch(() => undefined);
+  };
+
+  const comeBack = (): void => {
+    if (!backgrounded || closed) return;
+    backgrounded = false;
+    if (screen === "voice") { voice = null; screen = "places"; }
+    pageReady = false;
+    menuKey = "";
+    lastScene = null;
+    startLocation(false);
+    scheduleRefresh();
+    startTimers();
+    if (guide) {
+      guideTimer = setInterval(() => { void refreshGuide(); }, 60000);
+      void refreshGuide();
+      void ensureWalk();
+    }
+    void draw();
+    if (screen === "board") {
+      if (following?.status === "ready") void refreshFollow();
+      else if (!following) void loadDepartures();
+    }
+  };
 
   bridge.onDeviceStatusChanged((status) => {
     if (status?.connectType === "connected" && !closed) {
@@ -976,29 +1079,37 @@ async function boot(): Promise<void> {
   // asking for permission, and a cold GPS fix indoors can take long. Awaited
   // before the handlers, either one left the glasses deaf — no tap, no hold
   // for the voice goal, not even the double tap that leaves.
-  void (async () => {
-    await withTimeout(bridge.startAppLocationUpdates({
-      accuracy: AppLocationAccuracy.High,
-      distanceFilter: 10,
-    }), FIRST_FIX_MS).catch(() => false);
-    const firstFix = await withTimeout(
-      bridge.getAppLocation({ accuracy: AppLocationAccuracy.High }), FIRST_FIX_MS,
-    ).catch(() => null);
-    if (closed || !firstFix || typeof firstFix.latitude !== "number") return;
-    // A real fix always wins over the URL parameter.
-    position = { lat: firstFix.latitude, lon: firstFix.longitude };
-    if (!following) void findStops();
-  })();
+  function startLocation(initial: boolean): void {
+    void (async () => {
+      await withTimeout(bridge.startAppLocationUpdates({
+        accuracy: AppLocationAccuracy.High,
+        distanceFilter: 10,
+      }), FIRST_FIX_MS).catch(() => false);
+      const firstFix = await withTimeout(
+        bridge.getAppLocation({ accuracy: AppLocationAccuracy.High }), FIRST_FIX_MS,
+      ).catch(() => null);
+      if (closed || backgrounded || !firstFix || typeof firstFix.latitude !== "number") return;
+      // A real fix always wins over the URL parameter.
+      position = { lat: firstFix.latitude, lon: firstFix.longitude };
+      // On return from the background the board is only refreshed (comeBack), not searched anew.
+      if (initial && !following) void findStops();
+    })();
+  }
+  startLocation(true);
 
-  // A second beat so the countdown stays honest between data refreshes.
-  tickTimer = setInterval(() => { void ensureWalk(); announce(); void draw(); }, 2000);
-
-  // The half-second beat of the animated guide pages (the bus, the pulse of
-  // "get off"): it redraws only while such a page is on screen, so the quiet
-  // pages keep their 2 s rhythm and send nothing in between.
-  beatTimer = setInterval(() => {
-    if (!closed && lastScene?.animated && (screen === "guide" || screen === "board")) void draw();
-  }, BEAT_MS);
+  function startTimers(): void {
+    if (tickTimer !== null) clearInterval(tickTimer);
+    if (beatTimer !== null) clearInterval(beatTimer);
+    // A second beat so the countdown stays honest between data refreshes.
+    tickTimer = setInterval(() => { void ensureWalk(); announce(); void draw(); persistSession(); }, 2000);
+    // The half-second beat of the animated guide pages (the bus, the pulse of
+    // "get off"): it redraws only while such a page is on screen, so the quiet
+    // pages keep their 2 s rhythm and send nothing in between.
+    beatTimer = setInterval(() => {
+      if (!closed && lastScene?.animated && (screen === "guide" || screen === "board")) void draw();
+    }, BEAT_MS);
+  }
+  startTimers();
 
   mountPhoneUi({
     getLocale: () => locale,

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.2] — 2026-10-13
+
+### Fixed
+
+- A running guide, a followed bus and the picked stop survive a restart of the app (phone locked, Even app unloaded it), for up to 2 hours; a guide until 30 minutes after its arrival. Your position is not part of it.
+- Leaving through the system stops GPS, microphone, voice and refreshes; coming back rebuilds the page, restarts GPS and refreshes.
+- The microphone request has a 5 s limit; a late "yes" switches it off again.
+- The glasses listen before the first page is built.
+
+### Changed
+
+- Footers in one style (`Tippen = …`, `Halten = …`, `2× = …`); "Halte das Touchpad gedrückt", "Geh zur Haltestelle", "Am nächsten Halt aussteigen"; the plans footer no longer uses the cryptic "× = Umstiege".
+- Store text describes the route, the voice destination and the hold gesture.
+
 ## 0.4.1
 
 - Begleitung beim Fahren: Unter „noch N Stationen“ stehen die Halte jetzt als kurze Liste in Fahrtreihenfolge – nächster Halt mit Zeit („jetzt“, wenn der Bus dort ist), der Halt vor dem Ausstieg (mit „…“, wenn dazwischen noch Halte liegen) und der Ausstieg markiert: „● Mirabellplatz AUSSTEIGEN · 12:14“. Bei zwei Stationen bleiben zwei Zeilen, beim letzten nur der Ausstieg (groß und pulsierend wie bisher).

@@ -139,7 +139,7 @@ export class Companion {
       this.#said.add(`${tag}:ride`);
       if (this.#once(`${tag}:alight1`)) {
         return {
-          text: de ? `Nächster Halt aussteigen: ${stopName}.${onwardText}` : `Next stop, get off: ${stopName}.${onwardText}`,
+          text: de ? `Am nächsten Halt aussteigen: ${stopName}.${onwardText}` : `Next stop, get off: ${stopName}.${onwardText}`,
           priority: 3, key: `${tag}:alight`, maxAgeMs: 20_000,
         };
       }

@@ -215,7 +215,7 @@ describe("saying a destination", () => {
 
     fake.gesture(CLICK);
     // The connections: the first one big (pictures), where to board and the next two as rows.
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen: los/));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
     await vi.waitFor(() => expect(fake.state.body).toMatch(/^Ab .+ zu Fuß\nin \d+ min · /));
   });
 

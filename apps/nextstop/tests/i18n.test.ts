@@ -132,7 +132,7 @@ describe("translations", () => {
     }
     // English glasses text: ASCII plus the glyphs the display is known to draw.
     for (const [key, text] of Object.entries(messages.en)) {
-      if (key.startsWith("g.")) expect(text, key).toMatch(/^[\x20-\x7eäöüÄÖÜß●→…·○]*$/);
+      if (key.startsWith("g.")) expect(text, key).toMatch(/^[\x20-\x7eäöüÄÖÜß●→…·○×]*$/);
     }
   });
 
@@ -218,14 +218,14 @@ describe("German output stays exactly as reviewed", () => {
         "  4 min ~  REX 1  Wien Westbahnhof über L… · 3",
         "  15 min +3  Railjet Xpress 563  Wien H… · 10A",
       ],
-      footer: "tippen = folgen · halten = Ziel · ● live",
+      footer: "Tippen = folgen · Halten = Ziel · ● live",
     });
     expect(departureBoard(STOP, [], null, "de")).toEqual({
       header: "Salzburg Mirabellplatz",
       body: ["", "Keine Abfahrten in der nächsten Stunde.", "", "Betriebsschluss, oder diese Haltestelle", "wird gerade nicht bedient."],
-      footer: "Halten: Ziel · Menü: andere Haltestelle",
+      footer: "Halten = Ziel · Menü = andere Haltestelle",
     });
-    expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("tippen = folgen · halten = Ziel · Fahrplan");
+    expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("Tippen = folgen · Halten = Ziel · Fahrplan");
   });
 
   it("pins the ride", () => {
@@ -234,17 +234,17 @@ describe("German output stays exactly as reviewed", () => {
     expect(ridingView(trackRide(simple, at, null)!, at, simple.line, simple.headsign, "de")).toEqual({
       header: "O-Bus 6 → Itzling West",
       body: ["> Halt 3 · gleich", "  Halt 4 · 2 min", "  Halt 5 · 3 min", "  Halt 6 · 4 min", "  Halt 7 · 5 min", "", "noch 6 Stationen · Ziel 7 min"],
-      footer: "nach Fahrplan geschätzt · tippen = zurück",
+      footer: "nach Fahrplan geschätzt · Tippen = zurück",
     });
     const gps = ridingView(trackRide(simple, at, { lat: 47.8 + 2.7 * 0.0045, lon: 13.04 })!, at, "O-Bus 6", "Itzling", "de");
-    expect(gps.footer).toBe("GPS · 150 m · tippen = zurück");
+    expect(gps.footer).toBe("GPS · 150 m · Tippen = zurück");
     const two = ride(3);
     expect(ridingView(trackRide(two, minutes(0.2), null)!, minutes(0.2), "1", "X", "de").body.at(-1)).toBe("noch 1 Station · Ziel 2 min");
     expect(ridingView(trackRide(two, minutes(1.9), null)!, minutes(1.9), "1", "X", "de").body.at(-1)).toBe("letzte Station");
     expect(ridingView(trackRide(two, minutes(99), null)!, minutes(99), "1", "X", "de")).toEqual({
       header: "1 → X",
       body: ["", "Endstation Halt 2.", "", "Die Fahrt ist zu Ende."],
-      footer: "tippen = zurück zur Haltestelle",
+      footer: "Tippen = zurück zur Haltestelle",
     });
     const cancelled = ride(3, { cancelFirst: true });
     expect(ridingView(trackRide(cancelled, minutes(-3), null)!, minutes(-3), "1", "X", "de").body[0]).toBe("> Halt 0 · fällt aus");
@@ -255,7 +255,7 @@ describe("German output stays exactly as reviewed", () => {
     expect(loadingView(text.waitingForLocation, text.waitingHint, "de")).toEqual({
       header: "NextStop",
       body: ["", "Warte auf deinen Standort …", "", "Erlaube den Standort in der Even-App. Draußen", "klappt es am schnellsten."],
-      footer: "doppeltippen = beenden",
+      footer: "2× = Ende",
     });
     expect(explainFailure("Failed to fetch", "oebb", "de")).toEqual({
       error: "ÖBB nicht erreichbar", hint: "ÖBB-Echtzeit braucht ein Zusatzprogramm. Ohne: am Handy „Überall“ wählen.",
@@ -264,7 +264,7 @@ describe("German output stays exactly as reviewed", () => {
     expect(errorView(text.noStops, noStopsHint("motis", "de"), "de")).toEqual({
       header: "NextStop",
       body: ["", "Keine Haltestelle in der Nähe", "", "Hier sind keine Fahrplandaten hinterlegt. In", "Österreich: am Handy ÖBB wählen."],
-      footer: "tippen = nochmal versuchen",
+      footer: "Tippen = nochmal versuchen",
     });
     expect(validateUrl("ftp://x", "de").error).toBe("Adresse muss mit http:// oder https:// beginnen.");
   });
@@ -386,14 +386,14 @@ describe("switching the language on the phone", () => {
     await vi.waitFor(() => expect(root.innerHTML).toContain("Woher kommen die Abfahrten?"));
     // The headline is drawn as a picture now; the hint and the footer stay text.
     await vi.waitFor(() => expect(glasses.body).toContain("Erlaube den Standort in der Even-App."));
-    expect(glasses.footer).toBe("doppeltippen = beenden");
+    expect(glasses.footer).toBe("2× = Ende");
 
     const language = root.querySelector("#language");
     language.value = "en";
     language.fire("change");
 
     await vi.waitFor(() => expect(glasses.body).toContain("Allow location in the Even app."));
-    expect(glasses.footer).toBe("double-tap = exit");
+    expect(glasses.footer).toBe("2× = close");
     expect(root.innerHTML).toContain("Where do the departures come from?");
     expect(root.innerHTML).toContain('<option value="en" selected>');
     expect(root.innerHTML).not.toContain("Woher");

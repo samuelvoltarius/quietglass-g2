@@ -125,7 +125,7 @@ describe("the route pages", () => {
     // The board: O-Bus 3 big (pictures), the next ones as rows.
     await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
     expect(fake.state.kind).toBe("board");
-    expect(fake.state.footer).toBe("1/4 · Tippen: verfolgen · Halten: Ziel");
+    expect(fake.state.footer).toBe("1/4 · Tippen = verfolgen · Halten = Ziel");
     // The first page carries the native menu with the way to the route pages.
     expect(fake.state.menus[0]).toEqual(["Route planen", "Andere Haltestelle", "Neu laden"]);
 
@@ -142,7 +142,7 @@ describe("the route pages", () => {
 
     fake.gesture(CLICK);
     // The connections: the first one big, where to board and two more as rows.
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen: los/));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
     expect(fake.state.kind).toBe("board");
     expect(fake.state.body.split("\n")[0]).toMatch(/^Ab .+ · \d+ min zu Fuß$/);
     expect(fake.state.body.split("\n")[1]).toMatch(/^in \d+ min · O-Bus 10 · an \d\d:\d\d$/);
@@ -177,7 +177,7 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal doppeltippen = Begleitung beenden"));
     expect(fake.state.kind).toBe("wait");
     fake.gesture(DOUBLE);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/4 · Tippen: los/));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/4 · Tippen = los/));
     expect(fake.state.kind).toBe("board");
 
     fake.gesture(DOUBLE); // connections -> goals
@@ -195,7 +195,7 @@ describe("the route pages", () => {
     await boot(fake, "?demo=1&lang=de&scene=guide");
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Schritt 1\//));
     fake.menu(8);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen: los/));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
   });
 
   it("says what is missing when there is no location, instead of searching", async () => {
@@ -208,7 +208,7 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.body).toBe("> Heim"));
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
-    expect(fake.state.footer).toBe("tippen = nochmal versuchen");
+    expect(fake.state.footer).toBe("Tippen = nochmal versuchen");
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -237,7 +237,7 @@ describe("the route pages", () => {
     expect(plan.searchParams.get("fromPlace")).toBe("47.8095,13.055");
     expect(plan.searchParams.get("toPlace")).toBe("47.796,13.016");
     await vi.waitFor(() => expect(fake.state.body).toBe("Bitte gleich nochmal versuchen."));
-    expect(fake.state.footer).toBe("tippen = nochmal versuchen");
+    expect(fake.state.footer).toBe("Tippen = nochmal versuchen");
     expect(new Set(urls.map((url) => new URL(url).origin))).toEqual(new Set(["https://api.transitous.org"]));
   });
 });

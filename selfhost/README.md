@@ -66,13 +66,14 @@ auf dem Rechner lauscht, „Tailscale“ = die HTTPS-Nummer für `tailscale serv
 | [`star-bridge`](services/star-bridge) (auf dem N.I.N.A.-Rechner, Windows) | 8893 | **8460** | Star Glass |
 | [`sugar-bridge`](services/sugar-bridge) (neben Nightscout; Nightscout selbst nur lokal) | 8466 | **8462** | Sugar Glass |
 | [`valhalla`](services/valhalla) (Docker) | 8112 | **8455** | OpenGlance Nav, NextStop (Fußwege) |
+| Sprachausgabe: Piper-TTS-Server mit OpenAI-kompatiblem `POST /v1/audio/speech` und CORS (extern) | 8014 | **8459** | NextStop (Ansagen; ohne = Handy-Stimme) |
 | Agent-Endpunkt (Even Terminal / Hermes-Bridge / OpenClaw, extern) | 8765 | **8446** | Agent Glass |
 | LUMEN (eigenes Projekt, **nicht** Teil dieses Repos) | – | **8454** | Lumen Glass |
 | Xaventra (eigenes Projekt: github.com/samuelvoltarius/xaventra) | – | **8790** | Xaventra HUD |
 
 | App | benötigt | Bemerkung |
 |---|---|---|
-| NextStop | optional `oebb-proxy`, `whisper`, `valhalla` | ohne alles läuft es mit Transitous und dem öffentlichen FOSSGIS-Routing |
+| NextStop | optional `oebb-proxy`, `whisper`, `valhalla`, `tts` | ohne alles läuft es mit Transitous und dem öffentlichen FOSSGIS-Routing |
 | OpenGlance Nav | `valhalla` | sonst öffentlicher FOSSGIS-Server (braucht keinen Privat-Build) |
 | Babel Glass | `whisper` (WebSocket) + `babel-llm-proxy` (+ ein LLM-Server) | |
 | FieldLog | `whisper` (HTTP) | Adresse trägst du in der App ein; der Privat-Build erlaubt nur den Ursprung |

@@ -187,7 +187,7 @@ describe("nextstop lifecycle", () => {
     fake.gesture(0); // tap: follow the selected bus
     // The glasses answer the tap at once, before the network has (0.3.7 showed the unchanged board).
     await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
-    expect(fake.state.footer).toBe("Tippen: zurück zur Tafel");
+    expect(fake.state.footer).toBe("Tippen = zurück zur Tafel");
     await vi.waitFor(() => expect(pending).toHaveLength(2));
     const at = (minutes: number): string => new Date(Date.now() + minutes * 60000).toISOString();
     pending[1]?.reply({
@@ -243,11 +243,11 @@ describe("nextstop lifecycle", () => {
     resetGestureDedupe();
     fake.gesture(0); // the ride has not answered: back anyway
     await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
-    expect(fake.state.footer).toContain("Tippen: verfolgen");
+    expect(fake.state.footer).toContain("Tippen = verfolgen");
 
     pending[1]?.reply({ legs: [] }); // the ride's answer, too late
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(fake.state.footer).toContain("Tippen: verfolgen");
+    expect(fake.state.footer).toContain("Tippen = verfolgen");
     fake.gesture(3);
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });
