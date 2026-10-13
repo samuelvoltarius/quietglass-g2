@@ -17,5 +17,5 @@
     }
   ],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/klipper-glance/docs/PRIVACY.md",
-  "screenshot": "release/klipper-glance/screenshot.png"
+  "screenshot": "apps/klipper-glance/store/screenshot.png"
 }

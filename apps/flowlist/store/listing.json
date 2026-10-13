@@ -11,5 +11,5 @@
   ],
   "permissions": [],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/flowlist/docs/PRIVACY.md",
-  "screenshot": "release/flowlist/screenshot.png"
+  "screenshot": "apps/flowlist/store/screenshot.png"
 }
