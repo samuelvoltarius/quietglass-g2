@@ -102,6 +102,10 @@ export interface HubModel {
   readonly origin?: "inbox" | null;
   /** Selected row of a permission card: 0 = allow, 1 = deny, 2.. = vLLM replies. */
   readonly cardIndex?: number;
+  /** Setting "quiet while the agent works" (phone page / glasses menu). */
+  readonly quietWhileWorking?: boolean;
+  /** Until when a gesture or an alert keeps the display awake although the agent works (epoch ms). */
+  readonly wakeUntil?: number;
 }
 
 export interface SessionsState {
@@ -129,7 +133,9 @@ export type Effect =
   /** Mark an event read and open its agent in the session the event came from. */
   | { readonly kind: "openEvent"; readonly id: string; readonly agentId: string; readonly sessionId: string | null }
   | { readonly kind: "toggle"; readonly device: string }
-  | { readonly kind: "printer"; readonly action: "pause" | "resume" | "cancel" };
+  | { readonly kind: "printer"; readonly action: "pause" | "resume" | "cancel" }
+  /** The glasses menu switched "quiet while the agent works": main persists it in the settings. */
+  | { readonly kind: "quietSetting"; readonly on: boolean };
 
 export function createModel(report: HubReport): HubModel {
   return {
@@ -607,7 +613,7 @@ export function pickerEntries(model: HubModel, locale: Locale): PickerEntry[] {
 
 export const MENU = {
   agent: 1, home: 2, printer: 3, inbox: 4, help: 5, refresh: 6, overview: 7,
-  stop: 10, newSession: 11, switchAgent: 12, allow: 13, deny: 14,
+  stop: 10, newSession: 11, switchAgent: 12, allow: 13, deny: 14, quiet: 15,
   toggle: 20, pauseResume: 30, cancelPrint: 31, markAll: 40,
 } as const;
 
@@ -628,7 +634,7 @@ export function menuFor(model: HubModel, locale: Locale): MenuSpec {
   } else if (model.screen === "agent") {
     items = card
       ? [item(MENU.allow, "menu.allow"), item(MENU.deny, "menu.deny"), item(MENU.help, "menu.help")]
-      : [item(MENU.stop, "menu.stop"), item(MENU.newSession, "menu.newSession"), item(MENU.switchAgent, "menu.switchAgent"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
+      : [item(MENU.stop, "menu.stop"), item(MENU.newSession, "menu.newSession"), item(MENU.switchAgent, "menu.switchAgent"), item(MENU.quiet, "menu.quiet"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
   } else if (model.screen === "home") {
     items = [item(MENU.toggle, "menu.toggle"), item(MENU.refresh, "menu.refresh"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
   } else if (model.screen === "printer") {
@@ -669,6 +675,11 @@ export function applyMenu(model: HubModel, itemId: number, now: number, locale: 
       const agent = selectedAgent(base);
       if (agent === undefined) return { model: say(base, t("agent.none"), now) };
       return chooseSession({ ...base, screen: "agent", sessionIndex: 0 }, agent, now, locale);
+    }
+    case MENU.quiet: {
+      // Fixed label (no rebuild when it flips); the footer says the new state.
+      const on = base.quietWhileWorking !== true;
+      return { model: say({ ...base, quietWhileWorking: on }, t(on ? "ack.quietOn" : "ack.quietOff"), now), effect: { kind: "quietSetting", on } };
     }
     case MENU.switchAgent:
       if (report.agents.length < 2) return { model: say(base, t("ack.oneAgent"), now) };

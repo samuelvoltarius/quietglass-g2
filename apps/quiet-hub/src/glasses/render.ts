@@ -3,6 +3,8 @@ import {
   ImageContainerProperty,
   ImageRawDataUpdate,
   ImageRawDataUpdateResult,
+  MAX_TEXT_BRIGHTNESS,
+  MIN_TEXT_BRIGHTNESS,
   MenuContainerProperty,
   MenuItemProperty,
   RebuildPageContainer,
@@ -64,10 +66,10 @@ function pageParts(view: ScreenView, menu: MenuSpec | null) {
     containerTotalNum: 4,
     textObject: [
       // The header leaves the top-right corner to the face; the body runs full width below it.
-      text(CONTAINER.header, view.header, 1, false, ICON_WIDTH),
+      text(CONTAINER.header, view.header, 1, false, ICON_WIDTH, brightnessOf(view, CONTAINER.header)),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join(NL), 2, true),
-      text(CONTAINER.footer, view.footer, 3, false),
+      text(CONTAINER.body, view.body.join(NL), 2, true, 0, brightnessOf(view, CONTAINER.body)),
+      text(CONTAINER.footer, view.footer, 3, false, 0, brightnessOf(view, CONTAINER.footer)),
     ],
     imageObject: [new ImageContainerProperty({
       containerID: 4,
@@ -86,8 +88,28 @@ export function buildPage(view: ScreenView, menu: MenuSpec | null = null): Creat
   return new CreateStartUpPageContainer(pageParts(view, menu));
 }
 
-function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, rightGap = 0): TextContainerProperty {
+/**
+ * Text brightness per container (SDK 0.0.16: `textColor` 0..4, 4 = default).
+ * Normal views use 4; the quiet view keeps header and body at 0 and only the
+ * footer's "·" at 1. Changed in place by `textContainerUpgrade`, never by a rebuild.
+ */
+export function brightnessOf(view: ScreenView, spec: ContainerSpec): number {
+  if (view.dim !== true) return MAX_TEXT_BRIGHTNESS;
+  return spec.id === CONTAINER.footer.id ? MIN_TEXT_BRIGHTNESS + 1 : MIN_TEXT_BRIGHTNESS;
+}
+
+/** Brightness the glasses hold per container; unknown = the default 4 of a fresh page. */
+const sentBrightness = new Map<number, number>();
+
+function rememberPageBrightness(view: ScreenView): void {
+  sentBrightness.clear();
+  for (const spec of Object.values(CONTAINER)) sentBrightness.set(spec.id, brightnessOf(view, spec));
+}
+
+function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, rightGap = 0, brightness = MAX_TEXT_BRIGHTNESS): TextContainerProperty {
   return new TextContainerProperty({
+    // Omitted = device default 4; only a dimmed container carries the field.
+    ...(brightness === MAX_TEXT_BRIGHTNESS ? {} : { textColor: brightness }),
     containerID: spec.id,
     containerName: spec.name,
     xPosition: 0,
@@ -111,7 +133,7 @@ export async function createPage(bridge: EvenAppBridge, view: ScreenView, icon: 
     // revives a page that survived a WebView reload, where a second create fails.
     const rebuilt = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu))).catch(() => false);
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success || rebuilt === true) { renderStats.creates += 1; lastIconKey = ""; return updatePixel(bridge, icon); }
+    if (result === StartUpPageCreateResult.success || rebuilt === true) { renderStats.creates += 1; lastIconKey = ""; rememberPageBrightness(view); return updatePixel(bridge, icon); }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -149,6 +171,7 @@ export async function rebuildPage(bridge: EvenAppBridge, view: ScreenView, icon:
     if (!ok) return { ok: false, reason: "rebuild refused" };
     lastIconKey = "";
     sentLength.clear();
+    rememberPageBrightness(view);
     return updatePixel(bridge, icon);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -171,13 +194,18 @@ export async function updatePage(bridge: EvenAppBridge, view: ScreenView, icon: 
 
   try {
     for (const [spec, content, before] of updates) {
-      if (before !== undefined && before === content) continue;
+      const brightness = brightnessOf(view, spec);
+      // A forced redraw (no previous view: foreground / reconnect) restates the brightness too.
+      const brightnessChanged = previous === null || (sentBrightness.get(spec.id) ?? MAX_TEXT_BRIGHTNESS) !== brightness;
+      if (before !== undefined && before === content && !brightnessChanged) continue;
       renderStats.upgrades += 1;
       await bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
+        ...(brightnessChanged ? { textColor: brightness } : {}),
       }));
+      if (brightnessChanged) sentBrightness.set(spec.id, brightness);
     }
     if (iconKey(icon) === lastIconKey) return { ok: true };
     return updatePixel(bridge, icon);

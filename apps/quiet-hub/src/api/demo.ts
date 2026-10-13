@@ -165,9 +165,11 @@ function baseDemoReport(locale: Locale): HubReport {
 }
 
 /** A demo api whose state moves: asking answers, toggles flip. */
-export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default"): HubApi {
+export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default", finishAfterMs: number | null = null): HubApi {
   const strings = STRINGS[locale];
   let report = demoReport(locale, scene);
+  // `?finish=<s>`: the busy demo agents finish on their own (quiet mode screenshots).
+  const finishAt = finishAfterMs === null ? null : Date.now() + finishAfterMs;
   const answerFor = (agentId: string, answer: string, question: string): void => {
     report = {
       ...report,
@@ -175,7 +177,12 @@ export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default
     };
   };
   return {
-    report: async () => report,
+    report: async () => {
+      if (finishAt !== null && Date.now() >= finishAt) {
+        for (const agent of report.agents.filter((entry) => entry.busy)) answerFor(agent.id, strings.fallback, agent.lastQuestion ?? "");
+      }
+      return report;
+    },
     ask: async (question: string, agentId = "hermes-spark") => {
       answerFor(agentId, strings.answers[question] ?? strings.fallback, question);
     },

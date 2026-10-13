@@ -7,6 +7,8 @@ export interface ScreenView {
   readonly header: string;
   readonly body: readonly string[];
   readonly footer: string;
+  /** Quiet mode: header and body at brightness 0, footer at 1 (see hub/quiet.ts). */
+  readonly dim?: boolean;
 }
 
 /** Rows the body container holds; more are pushed off the display. */

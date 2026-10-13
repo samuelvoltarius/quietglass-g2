@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.6
+
+Quiet while the agent works.
+
+- **"Ruhe während der Agent arbeitet"** (phone page, off by default; also
+  "Ruhe beim Arbeiten an/aus" in the glasses menu of the Agent page). While the
+  agent on display (open session, or any agent on the overview) works, the
+  glasses go nearly dark: all text emptied, header and body at text brightness
+  0, a single "·" at brightness 1 in the footer as a sign of life, and the face
+  replaced by one black (= transparent) frame. The 500 ms face animation sends
+  nothing while quiet. SDK 0.0.16 has no display-off call; everything is done
+  in place with `textContainerUpgrade` (`textColor`) and one image update, no
+  rebuild and no second create.
+- **Back at once** when the agent is done (answer and suggestions), a
+  permission card arrives, an alert comes in, a message or confirm countdown
+  shows, the mic records or a transcript waits, help or the picker is open, or
+  the link breaks.
+- **Tap or swipe while quiet** wakes the display for 20 s (progress and tool
+  steps) and does nothing else; afterwards it goes quiet again while the agent
+  still works. Every gesture while awake keeps it awake. Double tap (stop /
+  back / exit) and hold (voice note) are unchanged.
+- Simulator helpers: `?quiet=1` switches quiet on for one run, `?finish=<s>`
+  lets the busy demo agent finish after s seconds.
+
 ## 0.6.5
 
 Getting out of alerts, suggestions that fit the alert.

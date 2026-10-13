@@ -20,7 +20,7 @@ export async function decodeQr(base64: string, mimeType: string): Promise<string
   return result.data;
 }
 
-export function parseSetupQr(value: string, autoOpenNotifications: boolean): Omit<AppSettings, "invertScroll" | "voiceAutoSend" | "speakAnswers"> {
+export function parseSetupQr(value: string, autoOpenNotifications: boolean): Omit<AppSettings, "invertScroll" | "voiceAutoSend" | "speakAnswers" | "quietWhileWorking"> {
   let payload: URL;
   try {
     payload = new URL(value);

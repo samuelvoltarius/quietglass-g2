@@ -17,7 +17,7 @@ export interface SettingsBridge {
   setLocalStorage(key: string, value: string): Promise<boolean>;
 }
 
-export const DEFAULT_SETTINGS: AppSettings = { serverUrl: "", token: "", autoOpenNotifications: true, invertScroll: false, voiceAutoSend: false, speakAnswers: false };
+export const DEFAULT_SETTINGS: AppSettings = { serverUrl: "", token: "", autoOpenNotifications: true, invertScroll: false, voiceAutoSend: false, speakAnswers: false, quietWhileWorking: false };
 
 export function normalizeSettings(value: Partial<AppSettings>): AppSettings {
   return {
@@ -27,6 +27,7 @@ export function normalizeSettings(value: Partial<AppSettings>): AppSettings {
     invertScroll: value.invertScroll === true,
     voiceAutoSend: value.voiceAutoSend === true,
     speakAnswers: value.speakAnswers === true,
+    quietWhileWorking: value.quietWhileWorking === true,
   };
 }
 

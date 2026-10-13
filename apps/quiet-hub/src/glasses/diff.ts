@@ -10,6 +10,7 @@ export function sameView(a: ScreenView | null, b: ScreenView): boolean {
   return (
     a.header === b.header &&
     a.footer === b.footer &&
+    (a.dim === true) === (b.dim === true) &&
     a.body.length === b.body.length &&
     a.body.every((line, i) => line === b.body[i])
   );

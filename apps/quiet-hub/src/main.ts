@@ -13,6 +13,7 @@ import { sameView } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { pixelIconFor } from "./glasses/icons";
 import { MASCOT_STEP_MS } from "./glasses/mascot";
+import { BLANK_ICON, isQuiet, QUIET_VIEW, quietGesture, wake } from "./hub/quiet";
 import type { ScreenView } from "./glasses/screen";
 import { buildWav } from "./audio/wav";
 import { MicGuard, type MicStart } from "./audio/mic-guard";
@@ -30,7 +31,7 @@ const POLL_MS = 5000;
 const BUSY_POLL_MS = 1500;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.6.5";
+const BUILD = "0.6.6";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -65,7 +66,8 @@ async function boot(): Promise<void> {
       // Some host WebViews do not permit history mutation; setup still worked.
     }
   }
-  let api: HubApi = DEMO ? createDemoApi(locale, DEMO_SCENE) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
+  const finishParam = Number(params.get("finish") ?? "");
+  let api: HubApi = DEMO ? createDemoApi(locale, DEMO_SCENE, Number.isFinite(finishParam) && finishParam > 0 ? finishParam * 1000 : null) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
 
   // ---- connection state: real data or an honest reason, never demo data ----
   const conn = { lastOkAt: null as number | null, lastProblem: null as LinkProblem | "missing" | null, lastAt: null as number | null, raw: "" as string, fails: 0, hadData: DEMO };
@@ -100,6 +102,8 @@ async function boot(): Promise<void> {
     // after the handlers fetches the report.
     model = createModel(emptyReport("loading"));
   }
+  // `?quiet=1` switches quiet mode on for this run only (simulator screenshots).
+  model = { ...model, quietWhileWorking: settings.quietWhileWorking || params.get("quiet") === "1" };
   const savedUi = await loadUiState(bridge);
   let launchSource: "appMenu" | "glassesMenu" | null = null;
   if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, Math.min(savedUi.rootSelected ?? 0, 3)) };
@@ -188,9 +192,11 @@ async function boot(): Promise<void> {
   let lastIconShown = "";
   const drawOnce = async (): Promise<void> => {
     const now = Date.now();
-    const view = buildView(model, locale, now);
+    // Quiet while the agent works: empty text at brightness 0/1 and a black (= transparent) face, all in place.
+    const quiet = isQuiet(model, now);
+    const view = quiet ? QUIET_VIEW : buildView(model, locale, now);
     const menu = menuFor(model, locale);
-    const icon = pixelIconFor(model, now);
+    const icon = quiet ? BLANK_ICON : pixelIconFor(model, now);
     if (sameView(lastView, view) && menu.key === menuKey && icon.join("/") === lastIconShown) return;
     lastIconShown = icon.join("/");
     let result;
@@ -241,6 +247,8 @@ async function boot(): Promise<void> {
   // second on the pages that show them. Unchanged frames cost nothing (see drawOnce).
   setInterval(() => {
     if (closed || (model.screen !== "agent" && model.screen !== "root")) return;
+    // Quiet and already drawn quiet: the face animation is paused, nothing to compute or send.
+    if (lastView?.dim === true && isQuiet(model, Date.now())) return;
     void draw();
   }, MASCOT_STEP_MS);
 
@@ -274,6 +282,8 @@ async function boot(): Promise<void> {
       } else if (isNew && settings.autoOpenNotifications && !model.recording && model.screen === "root") {
         model = { ...model, screen: "inbox", confirm: null };
       }
+      // An alert arrives while the display is quiet: show it (and the working agent) for a while.
+      if (isNew) model = wake(model, Date.now());
       fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
     } catch (error) {
       if (!(error instanceof ApiError)) console.warn("[quiethub] poll failed:", error);
@@ -316,6 +326,13 @@ async function boot(): Promise<void> {
           model = withSessions(model, effect.agentId, { status: "error", items: [], transport: "" });
         }
         await draw();
+        refreshPhone();
+        return;
+      }
+      if (effect.kind === "quietSetting") {
+        settings = { ...settings, quietWhileWorking: effect.on };
+        const saved = await saveSettings(bridge, settings);
+        if (!saved.persisted) console.warn("[quiethub] quiet setting was not persisted");
         refreshPhone();
         return;
       }
@@ -399,9 +416,13 @@ async function boot(): Promise<void> {
   const onGesture = (gesture: Gesture, source: InputSource = "unknown"): void => {
     const mapped = hubGesture(gesture, source);
     if (mapped === null) return;
-    apply(decide(model, mapped, Date.now(), locale));
+    const now = Date.now();
+    // While quiet, a tap or swipe only wakes the display; every gesture keeps it awake for a while.
+    const quiet = quietGesture(model, mapped, now);
+    if (quiet.consumed) { apply({ model: quiet.model }); return; }
+    apply(decide(quiet.model, mapped, now, locale));
   };
-  const onMenu = (itemId: number): void => apply(applyMenu(model, itemId, Date.now(), locale));
+  const onMenu = (itemId: number): void => { const now = Date.now(); apply(applyMenu(wake(model, now), itemId, now, locale)); };
 
   let unsubscribeEvents: () => void = () => undefined;
   let unsubscribeDevice: () => void = () => undefined;
@@ -486,6 +507,8 @@ async function boot(): Promise<void> {
     /** Applies new settings at once: persist (SDK store), rebuild the client, poll right now. */
     const applySettings = async (next: typeof settings): Promise<SettingsResult> => {
       settings = next;
+      model = { ...model, quietWhileWorking: settings.quietWhileWorking };
+      void draw();
       const saved = await saveSettings(bridge, settings);
       if (!saved.persisted) console.warn("[quiethub] settings were not persisted");
       if (DEMO) return { ok: true, persisted: saved.persisted, problem: null };
@@ -535,7 +558,7 @@ async function boot(): Promise<void> {
         const asset = await bridge.captureImageFromCamera().catch(() => null);
         if (asset === null || asset.base64 === "") throw new Error("Kamera abgebrochen");
         const value = await decodeQr(asset.base64, asset.mimeType || "image/jpeg");
-        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend, speakAnswers: settings.speakAnswers };
+        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend, speakAnswers: settings.speakAnswers, quietWhileWorking: settings.quietWhileWorking };
       },
     });
   }

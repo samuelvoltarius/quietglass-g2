@@ -12,6 +12,8 @@ export interface AppSettings {
   readonly voiceAutoSend: boolean;
   /** Read agent answers aloud on the phone (AirPods / headphones). Off by default. */
   readonly speakAnswers: boolean;
+  /** Near-blank glasses display while the agent on display works. Off by default. */
+  readonly quietWhileWorking: boolean;
 }
 
 export type ConnProblem = "missing" | "unreachable" | "unauthorized" | "timeout" | "error" | "insecure";
@@ -67,6 +69,7 @@ const copy = {
     setup: "Einrichtung", scan: "▦ QR-Code vom Pi scannen", scanHint: "Öffnet die Handykamera. Server und Token werden aus dem QR-Code übernommen.", manual: "oder manuell",
     server: "Server-Adresse", token: "Zugangs-Token", save: "Speichern & Verbindung testen",
     display: "Anzeige", language: "Sprache", auto: "Neue Agenten-Meldung automatisch öffnen (nur auf der Übersicht)", invert: "Wischrichtung umkehren (falls oben/unten vertauscht ist)", voiceAuto: "Sprachnotiz sofort senden (sonst: Tippen bestätigt „Verstanden: …“)", speakAnswers: "Antworten vorlesen (AirPods / Kopfhörer, Code und Passwörter werden übersprungen)", speakOn: "Vorlesen aktivieren", speech_off: "aus", speech_needs_activation: "einmal „Vorlesen aktivieren“ tippen", speech_ready: "bereit", speech_speaking: "spricht", speech_unavailable: "in dieser Handy-Ansicht nicht verfügbar",
+    quiet: "Ruhe während der Agent arbeitet: Brille fast dunkel (Text aus, Helligkeit 0, keine Bilder), bis er fertig ist, eine Freigabe braucht oder eine Meldung kommt. Tippen/Wischen zeigt 20 s den Fortschritt. Auch im Brillen-Menü der Agent-Seite.",
     agents: "Hermes, OpenClaw, Codex und Claude melden Fertig/Wartet/Fehler über denselben Hub.",
     controls: "Brillensteuerung", swipe: "Wischen", select: "Eintrag wählen", tap: "Tippen", open: "Öffnen oder ausführen",
     double: "Doppeltipp", back: "Zurück; läuft ein Agent: Stopp; Übersicht: beenden", hold: "Halten", speak: "In die Sitzung sprechen (max. 18 s), dann Tippen = senden, 2× = verwerfen", menuKey: "Tippen + Halten", menu: "Menü der Seite (Stoppen, Neue Sitzung, Alle gelesen …)", ring: "R1-Ring", ringDo: "2× tippen = Seitenwahl, Wischen = wählen",
@@ -85,6 +88,7 @@ const copy = {
     setup: "Setup", scan: "▦ Scan QR code from Pi", scanHint: "Opens the phone camera and imports the server and access token.", manual: "or enter manually",
     server: "Server address", token: "Access token", save: "Save & test connection",
     display: "Display", language: "Language", auto: "Open new agent notifications automatically (overview only)", invert: "Reverse swipe direction (if up/down feels swapped)", voiceAuto: "Send voice notes immediately (otherwise a tap confirms \"Understood: …\")", speakAnswers: "Read answers aloud (AirPods / headphones; code and secrets are skipped)", speakOn: "Activate spoken output", speech_off: "off", speech_needs_activation: "tap “Activate spoken output” once", speech_ready: "ready", speech_speaking: "speaking", speech_unavailable: "not available in this phone view",
+    quiet: "Quiet while the agent works: glasses nearly dark (text off, brightness 0, no images) until it is done, needs a permission or an alert arrives. Tap/swipe shows progress for 20 s. Also in the glasses menu of the Agent page.",
     agents: "Hermes, OpenClaw, Codex and Claude report Done/Waiting/Error through the same hub.",
     controls: "Glasses controls", swipe: "Swipe", select: "Select item", tap: "Tap", open: "Open or execute",
     double: "Double tap", back: "Back; stops a running agent; exit on overview", hold: "Hold", speak: "Speak into the session (max 18 s), then tap = send, 2x = discard", menuKey: "Tap + hold", menu: "Page menu (Stop, New session, Mark all read …)", ring: "R1 ring", ringDo: "double tap = page picker, swipe = select",
@@ -122,6 +126,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     invertScroll: (root.querySelector("#invert-scroll") as HTMLInputElement | null)?.checked ?? false,
     voiceAutoSend: (root.querySelector("#voice-auto") as HTMLInputElement | null)?.checked ?? false,
     speakAnswers: (root.querySelector("#speak") as HTMLInputElement | null)?.checked ?? false,
+    quietWhileWorking: (root.querySelector("#quiet") as HTMLInputElement | null)?.checked ?? false,
   });
 
   const describe = (ok: boolean, problem: ConnProblem | null, good: string, bad: string): string => {
@@ -164,6 +169,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
         <label class="check"><input id="auto-open" type="checkbox" ${settings.autoOpenNotifications ? "checked" : ""} /> ${c.auto}</label>
         <label class="check"><input id="invert-scroll" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${c.invert}</label>
         <label class="check"><input id="voice-auto" type="checkbox" ${settings.voiceAutoSend ? "checked" : ""} /> ${c.voiceAuto}</label>
+        <label class="check"><input id="quiet" type="checkbox" ${settings.quietWhileWorking ? "checked" : ""} /> ${c.quiet}</label>
         <label class="check"><input id="speak" type="checkbox" ${settings.speakAnswers ? "checked" : ""} /> ${c.speakAnswers}</label>
         ${settings.speakAnswers ? `<button id="speak-on" type="button">${c.speakOn}</button> <span class="hint">${esc((c as Record<string, string>)[`speech_${state().speech.replace("-", "_")}`] ?? state().speech)}</span>` : ""}
         <p class="hint">${c.agents}</p>
@@ -178,6 +184,7 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     root.querySelector("#language")?.addEventListener("change", (event) => handlers.onLocale((event.target as HTMLSelectElement).value as Locale));
     root.querySelector("#auto-open")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#invert-scroll")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
+    root.querySelector("#quiet")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#voice-auto")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#speak")?.addEventListener("change", () => { void handlers.onSettings(readForm()).then(() => render()); });
     root.querySelector("#speak-on")?.addEventListener("click", () => { handlers.onSpeechActivate(); render(); });

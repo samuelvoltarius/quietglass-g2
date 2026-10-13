@@ -198,6 +198,9 @@ export const messages: Messages = {
     "menu.pauseResume": "Pause / Fortsetzen",
     "menu.cancelPrint": "Druck abbrechen",
     "menu.markAll": "Alle gelesen",
+    "menu.quiet": "Ruhe beim Arbeiten an/aus",
+    "ack.quietOn": "Ruhe beim Arbeiten: an · Tippen weckt 20 s",
+    "ack.quietOff": "Ruhe beim Arbeiten: aus",
   },
   en: {
     "app.title": "Quiet Hub",
@@ -395,5 +398,8 @@ export const messages: Messages = {
     "menu.pauseResume": "Pause / Resume",
     "menu.cancelPrint": "Cancel print",
     "menu.markAll": "Mark all read",
+    "menu.quiet": "Quiet while working on/off",
+    "ack.quietOn": "Quiet while working: on · tap wakes 20 s",
+    "ack.quietOff": "Quiet while working: off",
   },
 };
