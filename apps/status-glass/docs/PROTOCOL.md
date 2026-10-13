@@ -40,6 +40,7 @@ A source answers an HTTP `GET` with this JSON:
 | `warn` | number | no | Threshold for `warn`. |
 | `critical` | number | no | Threshold for `critical`. |
 | `lowerIsWorse` | boolean | no | Invert the comparison, for free space and similar. |
+| `detail` | string | no | Short text beside the reading (`"503/916 GB"`, names of failed services). Cut at 160 characters. Older apps ignore it. |
 
 A metric needs **either** `value` **or** `state`. One with neither is dropped
 and reported as a warning.
@@ -145,9 +146,30 @@ Access-Control-Allow-Headers: Authorization
 ## Reference implementation
 
 [`examples/reference-server.mjs`](../examples/reference-server.mjs) — complete,
-dependency-free, about a hundred lines. Replace `collect()` and you are done.
+dependency-free host monitor for Linux. Trim `collect()` to taste.
 
 ```bash
 node examples/reference-server.mjs
 PORT=9000 TOKEN=secret NAME=nas node examples/reference-server.mjs
+STATUS_SERVICES=nginx,user:my-bot STATUS_IGNORE_UNITS=certbot node examples/reference-server.mjs
 ```
+
+It reports, each only where the machine can tell:
+
+| id | what |
+|---|---|
+| `cpu`, `load` | CPU usage (from `/proc/stat`), load per core (`detail`: 1/5/15 min) |
+| `memory`, `freemem`, `swap` | RAM in use (from `MemAvailable`), available GB, swap (`detail`: used/total) |
+| `disk:<mount>` | usage of `/` and every local disk over 8 GB (warn 90 %, critical 95 %); `STATUS_DISKS` picks them by hand |
+| `temp`, `temp_nvme` | CPU/SoC temperature (coretemp, k10temp, cpu_thermal, ACPI) and NVMe |
+| `gpu`, `gpu_mem`, `gpu_temp`, `gpu_power` | first NVIDIA GPU via `nvidia-smi` |
+| `net_rx`, `net_tx` | network rate of the physical interfaces, Mbit/s |
+| `docker` | running containers; `warn` with the names when one is unhealthy |
+| `failed` | failed systemd units (warn from 1), names in `detail`; `STATUS_IGNORE_UNITS` leaves some out |
+| `svc:<name>` | each unit in `STATUS_SERVICES` (`user:` prefix = user unit) |
+| `tailscale` | this node online, peers online in `detail` |
+| `uptime` | hours |
+
+Slow sources (nvidia-smi, systemctl, Docker, Tailscale, disks) are sampled in
+the background every 15 s, so `/status` answers from memory in milliseconds.
+No addresses, tokens or environment values are ever reported.

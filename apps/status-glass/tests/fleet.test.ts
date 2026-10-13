@@ -66,22 +66,30 @@ describe("fleet overview rows", () => {
     expect(fleetRows([stale], new MetricHistory(), 0, "de", NOW)[0]!.text).toContain("offline seit 10 min");
   });
 
-  it("shows the load values of a healthy machine and the worst problem of a sick one", () => {
+  it("shows CPU, RAM, fullest disk and temperature of every reachable machine, sick or not", () => {
     const { sources, history } = fleet();
     const rows = fleetRows(sources, history, 0, "de", NOW);
-    expect(rows[0]!.text).toMatch(/CPU \d+ % · RAM \d+ %/);
-    expect(rows[1]!.text).toContain("RAM");
-    expect(rows[2]!.text.startsWith("  ! ")).toBe(true);
+    expect(rows[0]!.text).toMatch(/^> CPU \d+%  RAM \d+%  Disk 71%  \d+°C$/);
+    expect(rows[1]!.text).toMatch(/^ {2}CPU \d+%  RAM \d+%  Disk 34%/);
+    // ns1 is critical: the light pulses and the header says why, the figures stay.
+    expect(rows[2]!.text).toMatch(/Disk 93%/);
+  });
+
+  it("falls back to the worst problem for a source without the well-known figures", () => {
+    const source = applyReport(createSource("ha", "HA"), { name: "HA", metrics: [{ id: "door", label: "Door open", state: "warn" }] }, NOW);
+    expect(fleetRows([source], new MetricHistory(), 0, "de", NOW)[0]!.text).toBe("> · Door open");
   });
 
   it("an acknowledged problem keeps a calm warning and stops pulsing", () => {
     const m = machine(2);
-    const acked = acknowledge(acknowledge(m.source, "load"), "memory");
+    const acked = ["cpu", "load", "memory", "disk:/"].reduce(acknowledge, m.source);
     const before = fleetRows([m.source], m.history, 0, "de", NOW)[0]!;
     const after = fleetRows([acked], m.history, 0, "de", NOW)[0]!;
     expect(before.state).toBe("critical");
     expect(after.state).toBe("warn");
-    expect(after.text).toContain("(gesehen)");
+    expect(after.text).toContain("CPU");
+    // Seen problems leave the warning line in the header.
+    expect(fleetView([acked], [after], "de", NOW).header).toBe("RECHNER · 0 von 1 ok");
     expect(fleetPulses([before])).toBe(true);
     expect(fleetPulses([after])).toBe(false);
   });
@@ -102,9 +110,23 @@ describe("fleet overview rows", () => {
   it("the view counts healthy machines in the header", () => {
     const { sources, history } = fleet();
     const view = fleetView(sources, fleetRows(sources, history, 0, "de", NOW), "de", NOW);
-    expect(view.header).toBe("RECHNER · 1 von 4 ok");
+    // The worst open problem is the header; the offline machine speaks in its own row.
+    expect(view.header).toMatch(/^! ns1: CPU \d+% \+\d+$/);
     expect(view.body).toHaveLength(4);
     expect(view.header.length).toBeLessThanOrEqual(56);
+    const healthy = fleet().sources.slice(0, 1);
+    expect(fleetView(healthy, fleetRows(healthy, history, 0, "de", NOW), "de", NOW).header).toBe("RECHNER · 1 von 1 ok");
+  });
+
+  it("puts failed services and a full disk into the header, in words", () => {
+    const report = { name: "x", metrics: [
+      { id: "failed", label: "Failed units", value: 5, unit: "", warn: 1, detail: "a.mount, b.mount" },
+      { id: "disk:/data", label: "/data", value: 93, unit: "%", warn: 90, critical: 95 },
+    ] };
+    const source = applyReport(createSource("s", "Spark"), report, NOW);
+    expect(fleetView([source], fleetRows([source], new MetricHistory(), 0, "de", NOW), "de", NOW).header).toBe("· Spark: 5 Dienste fehlgeschlagen +1");
+    const diskOnly = acknowledge(source, "failed");
+    expect(fleetView([diskOnly], [], "en", NOW).header).toBe("· Spark: Disk /data 93% full");
   });
 });
 

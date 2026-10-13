@@ -5,17 +5,19 @@ import type { MetricHistory, SparkSeries } from "../monitor/history";
 import { formatMetric } from "../protocol/schema";
 import { DIM, FULL, MID, createBitmap, drawText, fillRect, line, strokeRect, type Bitmap } from "./gfx";
 import { PULSE_MS } from "./charts";
-import { fit, problemText, type StatusView } from "./view";
+import { LINE_WIDTH, fit, problemText, type StatusView } from "./view";
+import { compactLine } from "./host";
 
 /**
  * The overview of several machines, one row each: a light, the name and a
- * sparkline in a 288 x 54 picture, and one line of text beside it.
+ * sparkline in a 208 x 54 picture, and beside it one line with the key
+ * figures (CPU, RAM, fullest disk, temperature).
  */
 export const FLEET_ROWS = 4;
-export const ROW_WIDTH = 288;
+export const ROW_WIDTH = 208;
 export const ROW_HEIGHT = 54;
-/** Characters of the text column (284 px). */
-export const ROW_TEXT_WIDTH = 28;
+/** Characters of the text column (364 px). */
+export const ROW_TEXT_WIDTH = 36;
 
 export type FleetState = "ok" | "warn" | "critical" | "offline";
 
@@ -69,8 +71,13 @@ export function fleetRows(
     const seen = problems([source], now);
     const worst = open[0] ?? seen[0];
     const state: FleetState = open.some((p) => p.state === "critical") ? "critical" : seen.length > 0 ? "warn" : "ok";
+    // The key figures stay visible whatever is wrong: the light says that
+    // something is, the header says what, a tap shows everything.
+    const figures = compactLine(source.report, locale);
     let body: string;
-    if (worst) {
+    if (figures) {
+      body = figures;
+    } else if (worst) {
       const mark = worst.state === "critical" ? "! " : "· ";
       body = mark + problemText(worst.metric, locale) + (worst.acknowledged ? " " + t(locale, "g.ack") : "");
     } else {
@@ -87,7 +94,13 @@ function formatMetricValue(series: SparkSeries): string {
   return series.unit === "%" ? `${text} %` : text;
 }
 
-/** Header, one text per row (in `body`), and the hint in the footer. */
+/**
+ * Header, one text per row (in `body`), and the hint in the footer.
+ *
+ * The header is the warning line: the worst problem nobody has seen yet
+ * ("! Spark: 5 Dienste fehlgeschlagen +2"), or the count of healthy machines
+ * when there is none. Offline machines are left to their own row.
+ */
 export function fleetView(
   sources: readonly SourceStatus[],
   rows: readonly FleetRow[],
@@ -95,8 +108,17 @@ export function fleetView(
   now: number,
 ): StatusView {
   const ok = sources.filter((s) => sourceState(s, now) === "ok").length;
+  const open = unacknowledgedProblems(sources.filter((s) => !isOffline(s, now)), now)
+    .filter((p) => p.state === "warn" || p.state === "critical");
+  let header = t(locale, "g.fleetHeader", { ok, total: sources.length });
+  if (open.length > 0) {
+    const worst = open[0]!;
+    const more = open.length > 1 ? " " + t(locale, "g.fleetMore", { count: open.length - 1 }) : "";
+    const mark = worst.state === "critical" ? "! " : "· ";
+    header = mark + fit(worst.sourceName + ": " + problemText(worst.metric, locale), LINE_WIDTH - mark.length - more.length) + more;
+  }
   return {
-    header: fit(t(locale, "g.fleetHeader", { ok, total: sources.length }), 56),
+    header: fit(header, LINE_WIDTH),
     body: rows.map((row) => row.text),
     footer: t(locale, "g.fleetFooter"),
   };

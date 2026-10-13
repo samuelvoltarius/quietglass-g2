@@ -37,13 +37,39 @@ export const DEMO_FLEET: readonly DemoMachine[] = [
   { id: "samuel", name: "samuel", cpu: 35, ram: 40, offlineMinutes: 12 },
 ];
 
+/** What the reference server reports for each demo machine, beyond CPU and RAM. */
+const DEMO_EXTRAS: Readonly<Record<string, { disk: number; temp: number; gpu?: boolean; docker?: number; failed?: string[] }>> = {
+  spark: { disk: 58, temp: 61, gpu: true, docker: 9 },
+  pi5: { disk: 34, temp: 48, failed: ["systemd-networkd-wait-online"] },
+  ns1: { disk: 93, temp: 46, docker: 31 },
+  samuel: { disk: 33, temp: 53 },
+};
+
 export function demoFleetReport(machine: DemoMachine, step: number): SourceReport {
   const wave = (base: number, amp: number, phase: number): number => Math.min(99, Math.max(1, Math.round(base + amp * Math.sin(step * 0.8 + phase))));
+  const extra = DEMO_EXTRAS[machine.id] ?? { disk: 40, temp: 50 };
+  const failed = extra.failed ?? [];
   return {
     name: machine.name,
     metrics: [
-      { id: "load", label: "Load", value: wave(machine.cpu, 8, 0), unit: "%", warn: 70, critical: 85 },
-      { id: "memory", label: "RAM", value: wave(machine.ram, 3, 1), unit: "%", warn: 85, critical: 95 },
+      { id: "cpu", label: "CPU", value: wave(machine.cpu, 8, 0), unit: "%", warn: 85, critical: 95, detail: "8 cores" },
+      { id: "load", label: "Load", value: wave(machine.cpu - 5, 6, 0.4), unit: "%", warn: 70, critical: 90, detail: "1.20 0.98 0.85" },
+      { id: "memory", label: "RAM", value: wave(machine.ram, 3, 1), unit: "%", warn: 85, critical: 95, detail: "54/119 GB" },
+      { id: "swap", label: "Swap", value: 4, unit: "%", warn: 80, critical: 95, detail: "0.3/8.0 GB" },
+      { id: "disk:/", label: "/", value: extra.disk, unit: "%", warn: 90, critical: 95, detail: "539/916 GB" },
+      ...(machine.id === "spark" ? [{ id: "disk:/data", label: "/data", value: 71, unit: "%", warn: 90, critical: 95, detail: "2.8/4.0 TB" }] : []),
+      { id: "temp", label: "Temp", value: wave(extra.temp, 3, 2), unit: "°C", warn: 80, critical: 90 },
+      ...(extra.gpu ? [
+        { id: "gpu", label: "GPU", value: wave(40, 25, 0.7), unit: "%", warn: 95, detail: "NVIDIA GB10" },
+        { id: "gpu_temp", label: "GPU Temp", value: wave(55, 4, 1), unit: "°C", warn: 83, critical: 90 },
+        { id: "gpu_power", label: "GPU Power", value: 38, unit: "W" },
+      ] : []),
+      { id: "net_rx", label: "RX", value: 2.4, unit: "Mbit/s" },
+      { id: "net_tx", label: "TX", value: 0.8, unit: "Mbit/s" },
+      ...(extra.docker !== undefined ? [{ id: "docker", label: "Docker", value: extra.docker, unit: "", detail: `${extra.docker}/${extra.docker + 3} running` }] : []),
+      { id: "failed", label: "Failed units", value: failed.length, unit: "", warn: 1, ...(failed.length > 0 ? { detail: failed.join(", ") } : {}) },
+      { id: "tailscale", label: "Tailscale", state: "ok", detail: "13/18 peers online" },
+      { id: "uptime", label: "Up", value: 345, unit: "h" },
     ],
   };
 }

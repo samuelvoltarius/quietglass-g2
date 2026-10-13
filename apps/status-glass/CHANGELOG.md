@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0] — 2026-10-13
+
+### Added
+
+- Detail page per machine: in the overview a tap opens the highlighted machine with every value — warnings first (with the names of failed services), then CPU and load, RAM and swap, every disk with used/total, temperatures, GPU, network, Docker, Tailscale, uptime — five rows a page, plus three sparklines (CPU, RAM, GPU or temperature). Swipe or tap turns the page, hold acknowledges the machine's problems, double tap goes back; the footer names the gestures. Status sign top right, text full width.
+- Reference server: CPU usage, load per core, RAM from `MemAvailable` with used/total, swap, disk usage of `/` and every large local disk (`disk:<mount>`, warn 90 %, critical 95 %), CPU/SoC and NVMe temperature, first NVIDIA GPU (usage, VRAM, temperature, power), network rate, running Docker containers (unhealthy ones warn), failed systemd units with names (`STATUS_IGNORE_UNITS`), watched units (`STATUS_SERVICES`), Tailscale online. Everything optional and left out where the machine cannot tell; slow tools are sampled in the background so `/status` answers in milliseconds.
+- Protocol: optional `detail` text per metric (cut at 160 characters). Older apps ignore it, older sources still work.
+
+### Changed
+
+- Overview: each machine row shows CPU, RAM, fullest disk and temperature (the picture is narrower, the text column wider), and the header carries the worst warning nobody has seen yet ("· Spark: 5 Dienste fehlgeschlagen +2"). Failed services, full disks, stopped services and a lost tailnet are said in words.
+- The glasses listen to gestures before the first page is built, so a slow page set-up can never swallow the exit double tap.
+
+### Fixed
+
+- A source reporting both `cpu` and `load` added two points per poll to the CPU sparkline.
+
 ## [0.7.1] — 2026-10-13
 
 ### Changed

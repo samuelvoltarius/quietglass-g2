@@ -7,12 +7,13 @@ import { gestureFromEvent } from "./input/gestures";
 import { buildView, type StatusView } from "./glasses/view";
 import { MetricHistory, type SparkSeries } from "./monitor/history";
 import { DEMO_FLEET, demoFleetReport, demoNasReport } from "./monitor/demo";
-import { PULSE_MS, signFrame, signState, sparklineFrame } from "./glasses/charts";
+import { PULSE_MS, SPARK_WIDTH, signFrame, signState, sparklineFrame } from "./glasses/charts";
+import { detailPage, detailSeries } from "./glasses/detail";
 import { bitmapKey } from "./glasses/gfx";
 import { fleetPulses, fleetRowFrame, fleetRows, fleetView } from "./glasses/fleet";
 import { availableActions, buildActionsView } from "./glasses/actions-view";
 import { sameView } from "./glasses/diff";
-import { BODY_ROWS, createPage, rebuildPage, updatePage, type Frames, type Layout } from "./glasses/render";
+import { BODY_ROWS, DETAIL_SPARK_HEIGHT, createPage, rebuildPage, updatePage, type Frames, type Layout } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
@@ -59,7 +60,10 @@ async function boot(): Promise<void> {
   // The actions screen is a separate mode. Monitoring is something you glance
   // at; triggering something in your house is deliberate, so a stray tap on the
   // dashboard can never run anything.
-  let screen: "status" | "actions" = "status";
+  let screen: "status" | "actions" | "detail" = "status";
+  /** The machine whose detail page is open, and which page of it. */
+  let detailId: string | null = null;
+  let detailIndex = 0;
   let actionCursor = 0;
   let pendingActionId: string | null = null;
   let actionBusy = false;
@@ -105,6 +109,22 @@ async function boot(): Promise<void> {
   /** Everything on the glasses for one moment: text, layout, sign and sparklines. */
   const currentScene = (now: number): Scene => {
     const sources = [...statuses.values()];
+    const detailSource = screen === "detail" && detailId !== null ? statuses.get(detailId) : undefined;
+    if (screen === "detail" && detailSource) {
+      const page = detailPage(detailSource, detailIndex, locale, now);
+      detailIndex = page.page;
+      const sign = signState([detailSource], now);
+      return {
+        view: page.view,
+        layout: "detail",
+        frames: {
+          sign: signFrame(sign, now),
+          sparks: detailSeries(detailSource, history).map((series) => sparklineFrame(series, SPARK_WIDTH, DETAIL_SPARK_HEIGHT)),
+        },
+        pulses: sign === "critical",
+      };
+    }
+    if (screen === "detail") screen = "status";
     if (screen === "actions") {
       const view = buildActionsView(availableActions(sources), {
         cursor: actionCursor,
@@ -255,43 +275,9 @@ async function boot(): Promise<void> {
     if (outcome.ok) void pollSource(sourceId);
   };
 
-  syncSources();
-  if (SCENE === "fleet") {
-    const now = Date.now();
-    for (const machine of DEMO_FLEET) {
-      const status = statuses.get(machine.id);
-      if (!status) continue;
-      const seen = machine.offlineMinutes > 0 ? now - machine.offlineMinutes * 60_000 : now;
-      for (let step = 0; step < 12; step += 1) history.record(machine.id, demoFleetReport(machine, step));
-      const fresh = applyReport(status, demoFleetReport(machine, 11), seen);
-      statuses.set(machine.id, machine.offlineMinutes > 0 ? applyError(fresh, "unreachable", now) : fresh);
-    }
-  } else if (NAS_DEMO) {
-    const now = Date.now();
-    const nas = statuses.get("nas");
-    if (nas) {
-      for (let step = 0; step < 12; step += 1) history.record("nas", demoNasReport(SCENE, step));
-      statuses.set("nas", applyReport(nas, demoNasReport(SCENE, 11), now));
-    }
-  } else if (DEMO) {
-    const now = Date.now();
-    const homeAssistant = statuses.get("ha");
-    if (homeAssistant) statuses.set("ha", applyReport(homeAssistant, {
-      name: "HA",
-      metrics: [
-        { id: "door", label: "Front door unlocked", state: "warn" },
-        { id: "battery", label: "Hall sensor battery", value: 12, unit: "%", warn: 20, critical: 8, lowerIsWorse: true },
-        { id: "heat", label: "Living room heating", state: "ok" },
-      ],
-      actions: [
-        { id: "all-lights-off", label: "All lights off", confirm: true },
-        { id: "lock-front-door", label: "Lock front door", confirm: true },
-      ],
-    }, now));
-  }
-  await draw();
-  if (!DEMO) startPolling();
-
+  // The glasses listen before anything else is awaited: a page that is
+  // still being built, or a source that does not answer, must never make a
+  // tap or the exit double tap go nowhere.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
@@ -339,6 +325,35 @@ async function boot(): Promise<void> {
       return;
     }
 
+    if (screen === "detail") {
+      const source = detailId !== null ? statuses.get(detailId) : undefined;
+      switch (gesture.gesture) {
+        case "click":
+        case "scrollDown":
+          detailIndex += 1;
+          break;
+        case "scrollUp":
+          detailIndex -= 1;
+          break;
+        case "longPress": {
+          // Hold = "I have seen it": every open problem of this machine stops being the headline.
+          if (!source) break;
+          let next = source;
+          for (const problem of problems([source], Date.now())) next = acknowledge(next, problem.metric.id);
+          statuses.set(source.id, next);
+          break;
+        }
+        case "doubleClick":
+          screen = "status";
+          detailId = null;
+          break;
+        default:
+          return;
+      }
+      void draw();
+      return;
+    }
+
     // In the overview the highlighted machine's problems are the list, worst first.
     const fleet = sources.length >= 2;
     const list = fleet
@@ -347,9 +362,18 @@ async function boot(): Promise<void> {
 
     switch (gesture.gesture) {
       case "click": {
+        // With several machines a tap opens the highlighted one in detail.
+        if (fleet) {
+          const target = sources[fleetCursor];
+          if (!target) break;
+          screen = "detail";
+          detailId = target.id;
+          detailIndex = 0;
+          break;
+        }
         // Acknowledging says "I know" — it never hides the problem, it just
         // stops it being the headline.
-        const problem = list[fleet ? 0 : cursor];
+        const problem = list[cursor];
         if (!problem) break;
         const status = statuses.get(problem.sourceId);
         if (status) statuses.set(problem.sourceId, acknowledge(status, problem.metric.id));
@@ -386,6 +410,43 @@ async function boot(): Promise<void> {
     }
     void draw();
   });
+
+  syncSources();
+  if (SCENE === "fleet") {
+    const now = Date.now();
+    for (const machine of DEMO_FLEET) {
+      const status = statuses.get(machine.id);
+      if (!status) continue;
+      const seen = machine.offlineMinutes > 0 ? now - machine.offlineMinutes * 60_000 : now;
+      for (let step = 0; step < 12; step += 1) history.record(machine.id, demoFleetReport(machine, step));
+      const fresh = applyReport(status, demoFleetReport(machine, 11), seen);
+      statuses.set(machine.id, machine.offlineMinutes > 0 ? applyError(fresh, "unreachable", now) : fresh);
+    }
+  } else if (NAS_DEMO) {
+    const now = Date.now();
+    const nas = statuses.get("nas");
+    if (nas) {
+      for (let step = 0; step < 12; step += 1) history.record("nas", demoNasReport(SCENE, step));
+      statuses.set("nas", applyReport(nas, demoNasReport(SCENE, 11), now));
+    }
+  } else if (DEMO) {
+    const now = Date.now();
+    const homeAssistant = statuses.get("ha");
+    if (homeAssistant) statuses.set("ha", applyReport(homeAssistant, {
+      name: "HA",
+      metrics: [
+        { id: "door", label: "Front door unlocked", state: "warn" },
+        { id: "battery", label: "Hall sensor battery", value: 12, unit: "%", warn: 20, critical: 8, lowerIsWorse: true },
+        { id: "heat", label: "Living room heating", state: "ok" },
+      ],
+      actions: [
+        { id: "all-lights-off", label: "All lights off", confirm: true },
+        { id: "lock-front-door", label: "Lock front door", confirm: true },
+      ],
+    }, now));
+  }
+  await draw();
+  if (!DEMO) startPolling();
 
   bridge.onDeviceStatusChanged((status) => {
     if (status?.connectType === "connected" && !closed) {

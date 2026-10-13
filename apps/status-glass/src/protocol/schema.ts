@@ -40,7 +40,15 @@ export interface Metric {
   readonly state?: MetricState;
   /** Higher is worse by default; set for metrics like free space. */
   readonly lowerIsWorse?: boolean;
+  /**
+   * Optional short text beside the reading: "503/916 GB", the names of failed
+   * services. Older sources leave it out; older apps ignore it.
+   */
+  readonly detail?: string;
 }
+
+/** Longest `detail` kept; anything longer is cut, the display has no room for it. */
+export const DETAIL_MAX = 160;
 
 /**
  * Something the user can trigger from the glasses.
@@ -117,6 +125,7 @@ export function reportFromValue(value: unknown, fallbackName = "source"): ParseR
       ...(isNumber(m["critical"]) ? { critical: m["critical"] } : {}),
       ...(isState(m["state"]) ? { state: m["state"] } : {}),
       ...(typeof m["lowerIsWorse"] === "boolean" ? { lowerIsWorse: m["lowerIsWorse"] } : {}),
+      ...(typeof m["detail"] === "string" && m["detail"].trim() ? { detail: m["detail"].trim().slice(0, DETAIL_MAX) } : {}),
     };
 
     if (metric.value === undefined && metric.state === undefined) {

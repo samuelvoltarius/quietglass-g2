@@ -14,6 +14,11 @@ eine Zeile. Gibt es ein Problem, steht das Wichtigste ganz oben.
 2. Brille aufsetzen: **Tippen** markiert ein Problem als gesehen, **Wischen**
    blättert, **Halten** öffnet die Aktionen (z. B. Licht aus), **Doppeltippen**
    beendet die App.
+3. Mit mehreren Rechnern zeigt die Übersicht je Rechner CPU, RAM, die vollste
+   Platte und die Temperatur; die schlimmste Warnung (z. B. fehlgeschlagene
+   Dienste, Platte über 90 %) steht oben. **Tippen** öffnet die Details eines
+   Rechners mit allen Werten und Verlaufskurven, **Wischen** blättert dort,
+   **Halten** markiert seine Probleme als gesehen, **Doppeltippen** führt zurück.
 
 Die App gibt es auf Deutsch und Englisch. Sie folgt der Sprache deines Handys;
 umstellen kannst du das auf der Handy-Seite unter „Sprache“ – die Brille
@@ -162,6 +167,13 @@ against a stand-in Home Assistant, including both refusal paths.
 | **Swipe** | Move through the problem list | Move through the actions |
 | **Hold** | Open the actions screen (or refresh, if none) | Back to status |
 | **Double tap** | Leave Status Glass | Leave Status Glass |
+
+With two or more sources the status screen is an overview of machines: one row
+each with light, name, CPU line and the key figures (CPU, RAM, fullest disk,
+temperature), the worst unseen warning in the header. There **tap** opens the
+highlighted machine in detail (every value, warnings first, CPU/RAM/GPU or
+temperature sparklines), **swipe** turns its pages, **hold** acknowledges its
+problems and **double tap** goes back to the overview.
 
 ## Polling and failure
 

@@ -1,6 +1,7 @@
-import { formatMetric, type MetricState } from "../protocol/schema";
+import type { MetricState } from "../protocol/schema";
 import type { Locale } from "../i18n";
 import { describeIssue, t } from "../messages";
+import { describeMetric } from "./host";
 import {
   overallState, problems, sourceState, type Problem, type SourceStatus,
 } from "../monitor/dashboard";
@@ -108,7 +109,7 @@ export const SEPARATOR = "  ·  ";
 export function problemText(metric: Problem["metric"], locale: Locale): string {
   if (metric.id === "__stale") return t(locale, "g.stale");
   if (metric.id === "__source") return describeIssue(metric.label, locale);
-  return formatMetric(metric, locale);
+  return describeMetric(metric, locale);
 }
 
 function headerFor(state: MetricState, count: number, locale: Locale): string {

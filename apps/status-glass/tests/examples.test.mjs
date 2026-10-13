@@ -68,6 +68,29 @@ describe("the example sources", () => {
     expect(preflight.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("content-type");
   }, 10000);
 
+  it("reference server: answers fast with valid metrics, and leaves out what the machine cannot tell", async () => {
+    const { base } = await start("reference-server.mjs", { TOKEN: "", STATUS_TAILSCALE_USERS: "", NAME: "probe" }, cleanup);
+    const started = Date.now();
+    const response = await fetch(base + "/status");
+    expect(Date.now() - started).toBeLessThan(300);
+    const report = await response.json();
+    expect(report.name).toBe("probe");
+    const ids = report.metrics.map((m) => m.id);
+    // Always there, on any OS: load, RAM and uptime (from Node itself).
+    for (const id of ["load", "memory", "freemem", "uptime"]) expect(ids).toContain(id);
+    expect(report.metrics.find((m) => m.id === "memory").detail).toMatch(/^[\d.]+\/[\d.]+ GB$/);
+    for (const metric of report.metrics) {
+      expect(typeof metric.id).toBe("string");
+      expect(typeof metric.label).toBe("string");
+      const hasValue = typeof metric.value === "number" && Number.isFinite(metric.value);
+      expect(hasValue || ["ok", "warn", "critical", "unknown"].includes(metric.state), metric.id).toBe(true);
+      if ("detail" in metric) expect(typeof metric.detail).toBe("string");
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+    // Nothing that looks like a secret or an address leaves the machine.
+    expect(JSON.stringify(report)).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|token|password/i);
+  }, 10000);
+
   it("Home Assistant adapter: a hung Home Assistant gives a 502, and the token stays out of the logs", async () => {
     // Regression: the call to Home Assistant had no timeout, so one hung
     // request held /status open until the glasses gave up.

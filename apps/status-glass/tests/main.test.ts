@@ -55,7 +55,7 @@ class FakeRoot {
 
 // Plain functions rather than vi.fn: spies attach handlers to returned
 // promises, which would hide exactly the rejections these tests look for.
-function fakeBridge() {
+function fakeBridge(sources: { id: string; name: string; url: string }[] = [{ id: "s1", name: "nas", url: "https://nas.test/status" }], options: { createHangs?: boolean } = {}) {
   let onEvent: ((event: unknown) => void) | undefined;
   const state = { shutdowns: 0, shutdownFails: false, confirm: true, modes: [] as (number | undefined)[], body: "", footer: "", draws: 0 };
   const record = (id: number | undefined, content: string | undefined): void => {
@@ -63,15 +63,14 @@ function fakeBridge() {
     if (id === 3) state.footer = content ?? "";
   };
   const bridge = {
-    getLocalStorage: async () => JSON.stringify({
-      sources: [{ id: "s1", name: "nas", url: "https://nas.test/status" }], pollSeconds: 30, invertScroll: false,
-    }),
+    getLocalStorage: async () => JSON.stringify({ sources, pollSeconds: 30, invertScroll: false }),
     setLocalStorage: async () => true,
     rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return true;
     },
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+      if (options.createHangs) return new Promise<number>(() => undefined);
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return 0;
     },
@@ -243,5 +242,46 @@ describe("status-glass lifecycle", () => {
     expect(savedLocale).toBe("de");
     expect(root.innerHTML).toContain('<option value="de" selected>');
     expect(root.innerHTML).toContain("Quelle hinzufügen");
+  });
+
+  it("listens before the first page is up: a hung page set-up still lets a double tap leave", async () => {
+    const fake = fakeBridge(undefined, { createHangs: true });
+    await boot(fake);
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
+  });
+
+  it("opens a machine in detail on tap, turns pages, acknowledges on hold and goes back on double tap", async () => {
+    const fake = fakeBridge([
+      { id: "a", name: "Spark", url: "https://a.test/status" },
+      { id: "b", name: "Pi5", url: "https://b.test/status" },
+    ]);
+    await boot(fake);
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    const host = (name: string) => ({ name, metrics: [
+      { id: "cpu", label: "CPU", value: 12, unit: "%", warn: 85, critical: 95 },
+      { id: "memory", label: "RAM", value: 45, unit: "%", warn: 85, critical: 95, detail: "54/119 GB" },
+      { id: "disk:/", label: "/", value: 58, unit: "%", warn: 90, critical: 95, detail: "539/916 GB" },
+      { id: "failed", label: "Failed units", value: 2, unit: "", warn: 1, detail: "a.mount, b.service" },
+      { id: "uptime", label: "Up", value: 50, unit: "h" },
+    ] });
+    replies[0]?.(host("Spark"));
+    replies[1]?.(host("Pi5"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("tap = details · swipe = machine · hold = refresh"));
+
+    fake.gesture(0);
+    await vi.waitFor(() => expect(fake.state.footer).toBe("double tap = back · hold = ack · swipe = more"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("· 2 failed units"));
+    expect(fake.state.body).toContain("a.mount, b.service");
+    expect(fake.state.body).toContain("RAM 45% 54/119 GB");
+
+    resetGestureDedupe();
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.body).toContain("2 failed units (ack)"));
+
+    resetGestureDedupe();
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.footer).toBe("tap = details · swipe = machine · hold = refresh"));
+    expect(fake.state.shutdowns).toBe(0);
   });
 });

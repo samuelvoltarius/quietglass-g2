@@ -33,7 +33,7 @@ const NL = String.fromCharCode(10);
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
 
-export type Layout = "graph" | "list" | "fleet";
+export type Layout = "graph" | "list" | "fleet" | "detail";
 
 interface ContainerSpec {
   readonly id: number;
@@ -44,13 +44,14 @@ interface ContainerSpec {
 
 const HEADER: ContainerSpec = { id: 1, name: "header", y: 0, height: 32 };
 const FOOTER: ContainerSpec = { id: 3, name: "footer", y: 252, height: 34 };
-const BODY: Readonly<Record<"graph" | "list", ContainerSpec>> = {
+const BODY: Readonly<Record<"graph" | "list" | "detail", ContainerSpec>> = {
   list: { id: 2, name: "body", y: 36, height: 214 },
   graph: { id: 2, name: "body", y: 36, height: 122 },
+  detail: { id: 2, name: "body", y: 34, height: 162 },
 };
 
 /** Rows the body holds in each layout (the fleet layout has one text per machine instead). */
-export const BODY_ROWS: Readonly<Record<Layout, number>> = { list: 7, graph: 4, fleet: FLEET_ROWS };
+export const BODY_ROWS: Readonly<Record<Layout, number>> = { list: 7, graph: 4, fleet: FLEET_ROWS, detail: 5 };
 
 /**
  * The fleet layout: one row per machine, a 288 x 54 picture (light, name,
@@ -75,6 +76,14 @@ export const SIGN: ImageSlot = {
 export const SPARKS: readonly ImageSlot[] = [0, 1, 2].map((i) => ({
   id: 5 + i, name: `spark${i + 1}`, x: i * (SPARK_WIDTH + 6), y: 164, width: SPARK_WIDTH, height: SPARK_HEIGHT, z: 5 + i,
 }));
+
+/** The detail page of one machine: lower sparklines, so the values get five rows. */
+export const DETAIL_SPARK_HEIGHT = 50;
+export const DETAIL_SPARKS: readonly ImageSlot[] = [0, 1, 2].map((i) => ({
+  id: 5 + i, name: `spark${i + 1}`, x: i * (SPARK_WIDTH + 6), y: 200, width: SPARK_WIDTH, height: DETAIL_SPARK_HEIGHT, z: 5 + i,
+}));
+
+const sparkSlots = (layout: Layout): readonly ImageSlot[] => (layout === "detail" ? DETAIL_SPARKS : layout === "graph" ? SPARKS : []);
 
 export interface Frames {
   readonly sign: Bitmap;
@@ -105,7 +114,7 @@ function pageParts(view: StatusView, layout: Layout) {
       ],
     };
   }
-  const images = layout === "graph" ? [SIGN, ...SPARKS] : [SIGN];
+  const images = [SIGN, ...sparkSlots(layout)];
   return {
     containerTotalNum: 3 + images.length,
     imageObject: images.map(imageContainer),
@@ -208,8 +217,7 @@ async function pushImages(bridge: EvenAppBridge, layout: Layout, frames: Frames)
   }
   const sign = await link.push(bridge, SIGN, frames.sign);
   if (!sign.ok) return { ok: false, reason: sign.reason ?? "image failed" };
-  if (layout !== "graph") return { ok: true };
-  for (const [index, slot] of SPARKS.entries()) {
+  for (const [index, slot] of sparkSlots(layout).entries()) {
     const frame = frames.sparks[index] ?? null;
     if (frame === null && !link.has(slot.id)) continue;
     const sent = await link.push(bridge, slot, frame ?? createBitmap(slot.width, slot.height));
