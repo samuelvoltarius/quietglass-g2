@@ -38,7 +38,8 @@ export interface TurnCard {
 export function approachSteps(distance: number, legLength = 0, steps = BAR_STEPS): number {
   if (!Number.isFinite(distance)) return 0;
   if (distance <= BAR_FULL_M) return steps;
-  const span = legLength > 0 && Number.isFinite(legLength) ? Math.min(legLength, APPROACH_WINDOW_M) : APPROACH_WINDOW_M;
+  // The bar spans the stretch from the previous turn to this one; without it, the default window.
+  const span = legLength > 0 && Number.isFinite(legLength) ? legLength : APPROACH_WINDOW_M;
   if (span <= BAR_FULL_M) return 0;
   const fill = 1 - (distance - BAR_FULL_M) / (span - BAR_FULL_M);
   return Math.max(0, Math.min(steps, Math.floor(fill * steps + 1e-9)));
@@ -74,7 +75,7 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   "6": [".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."],
   "7": ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
   "8": [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
-  "9": [".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."],
+  "9": [".###.", "#...#", "#...#", ".####", "....#", "#...#", ".###."],
   ".": ["..", "..", "..", "..", "..", "##", "##"],
   ",": ["..", "..", "..", "..", "##", ".#", "#."],
   "-": [".....", ".....", ".....", "####.", ".....", ".....", "....."],

@@ -44,7 +44,7 @@ const TURN_TYPES: readonly TurnType[] = [
 function nav(toNext: number, type: TurnType = "left", street: string | null = "Sterneckstraße"): WalkNav {
   return {
     next: { type, ...(street ? { street } : {}), length: 200, shapeIndex: 3 },
-    toNext, remaining: toNext + 300, off: 1, atEnd: false,
+    toNext, stretch: toNext, remaining: toNext + 300, off: 1, atEnd: false,
   };
 }
 
@@ -464,7 +464,7 @@ describe("riding", () => {
   it("draws the three pictures at the size of their containers", async () => {
     const scene = ride(stops - 2, 60, 1);
     const sizes = await Promise.all(scene.images.map(async (image) => size(await image.render())));
-    expect(sizes).toEqual([[144, RIDE_BAND], [144, RIDE_BAND], [288, RIDE_BAND]]);
+    expect(sizes).toEqual([[144, RIDE_BAND], [144, RIDE_BAND], [216, RIDE_BAND]]);
   });
 
   it("stays inside the display and the line width", () => {
@@ -551,11 +551,14 @@ describe("the pages obey the container limits of the glasses", () => {
     expect(page.containerTotalNum).toBe(6);
   });
 
-  it("the ride page spans the display edge to edge with three pictures in a row", () => {
+  it("the ride page puts the stop count in the middle of the display, the words around it", () => {
     const page = buildPage(scenes.ride, menu);
     const images = page.imageObject!;
     expect(images).toHaveLength(3);
-    expect(images[0]!.xPosition).toBe(0);
+    const count = images[1]!;
+    expect(count.xPosition! + count.width! / 2).toBe(288);
+    expect(images[0]!.xPosition! + images[0]!.width!).toBe(count.xPosition);
+    expect(images[2]!.xPosition).toBe(count.xPosition! + count.width!);
     expect(images[2]!.xPosition! + images[2]!.width!).toBe(576);
   });
 });

@@ -175,6 +175,8 @@ export interface WalkNav {
   readonly next: Maneuver;
   /** Metres to it, along the route. */
   readonly toNext: number;
+  /** Length of the stretch that ends at it (from the previous manoeuvre), for the approach bar. */
+  readonly stretch: number;
   /** Metres still to walk to the end. */
   readonly remaining: number;
   /** How far the walker is from the route itself. */
@@ -215,10 +217,14 @@ export function walkNav(route: WalkRoute, at: LatLon): WalkNav {
   // A turn is "next" until the walker has passed it; the start is not a turn once under way.
   const next = route.maneuvers.find((m) => m.type !== "depart" && (route.along[m.shapeIndex] ?? 0) > along + 3) ?? arrive;
   const nextAt = next === arrive ? total : (route.along[next.shapeIndex] ?? total);
+  const index = route.maneuvers.indexOf(next);
+  const previous = index > 0 ? route.maneuvers[index - 1]! : route.maneuvers[0]!;
+  const previousAt = route.along[previous.shapeIndex] ?? 0;
   const end = route.shape[route.shape.length - 1]!;
   return {
     next,
     toNext: Math.max(0, nextAt - along),
+    stretch: Math.max(0, nextAt - previousAt),
     remaining: Math.max(0, total - along),
     off,
     atEnd: metresBetween(at.lat, at.lon, end.lat, end.lon) <= 25,

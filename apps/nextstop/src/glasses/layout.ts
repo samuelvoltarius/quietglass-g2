@@ -59,11 +59,14 @@ export const WALK_BODY: Box = { x: 0, y: 212, width: SCREEN_WIDTH, height: 38 };
 // ---- ride ---------------------------------------------------------------------
 
 export const RIDE_BAND = 120;
-/** "noch" + the digits + "Halte": 144 + 144 + 288 = 576 pixels, edge to edge. */
+/**
+ * "noch" + the digits + "Halte", the digits centred on the display: the word
+ * before hugs them from the left, the word after from the right.
+ */
 export const RIDE_IMAGES: readonly ImageSpec[] = [
-  { id: 4, name: "before", x: 0, y: 4, width: 144, height: RIDE_BAND },
-  { id: 5, name: "count", x: 144, y: 4, width: 144, height: RIDE_BAND },
-  { id: 6, name: "after", x: 288, y: 4, width: 288, height: RIDE_BAND },
+  { id: 4, name: "before", x: 72, y: 4, width: 144, height: RIDE_BAND },
+  { id: 5, name: "count", x: 216, y: 4, width: 144, height: RIDE_BAND },
+  { id: 6, name: "after", x: 360, y: 4, width: 216, height: RIDE_BAND },
 ];
 export const RIDE_BODY: Box = { x: 0, y: 130, width: SCREEN_WIDTH, height: 120 };
 

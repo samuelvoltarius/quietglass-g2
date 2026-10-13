@@ -104,7 +104,7 @@ describe("a walking instruction on the glasses", () => {
   });
 
   it("leads with an arrow, the distance and the turn, then the street and what is left", () => {
-    const turn = { next: { type: "right" as const, street: "Sterneckstraße", length: 300, shapeIndex: 9 }, toNext: 120, remaining: 980, off: 3, atEnd: false };
+    const turn = { next: { type: "right" as const, street: "Sterneckstraße", length: 300, shapeIndex: 9 }, toNext: 120, stretch: 300, remaining: 980, off: 3, atEnd: false };
     expect(walkRows(turn, leg(false), "de")).toEqual([
       "→  120 m  rechts abbiegen", "in Sterneckstraße", "noch 980 m · 12 min zu Fuß",
     ]);
@@ -112,7 +112,7 @@ describe("a walking instruction on the glasses", () => {
   });
 
   it("says how far the stop or the destination is on the last stretch", () => {
-    const end = { next: { type: "arrive" as const, length: 0, shapeIndex: 80 }, toNext: 60, remaining: 60, off: 2, atEnd: false };
+    const end = { next: { type: "arrive" as const, length: 0, shapeIndex: 80 }, toNext: 60, stretch: 200, remaining: 60, off: 2, atEnd: false };
     expect(walkRows(end, leg(false), "de").slice(0, 2)).toEqual(["● 60 m bis zur Haltestelle", "Salzburg Mirabellplatz"]);
     expect(walkRows(end, leg(true), "de").slice(0, 2)).toEqual(["● 60 m bis zum Ziel", "Heim"]);
   });
@@ -257,5 +257,16 @@ describe("the demo's invented walking route", () => {
     const nav = walkNav(east, { lat: 47.80, lon: 13.04 });
     expect(nav.next.type).toBe("right");
     expect(nav.toNext).toBeGreaterThan(300);
+  });
+});
+
+describe("the approach bar knows the stretch", async () => {
+  const { approachSteps } = await import("../src/glasses/turncard");
+  it("fills over the whole stretch from the previous turn, not a fixed 150 m", () => {
+    expect(approachSteps(450, 500)).toBe(0);
+    expect(approachSteps(275, 500)).toBeGreaterThanOrEqual(3);
+    expect(approachSteps(275, 500)).toBeLessThanOrEqual(5);
+    expect(approachSteps(40, 500)).toBe(8);
+    expect(approachSteps(120, 0)).toBeGreaterThan(0);
   });
 });

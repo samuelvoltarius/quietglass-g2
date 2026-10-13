@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Annäherungsbalken beim Gehen füllt sich über das ganze Wegstück seit der letzten Abbiegung statt immer über die letzten 150 m.
+- „noch N Halte“: die Zahl steht genau in der Bildschirmmitte.
+- Pixelziffer 9 mit rundem unteren Bogen.
+
 ## [0.3.1] — 2026-10-13
 
 ### Changed

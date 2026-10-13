@@ -98,7 +98,7 @@ function walkScene(
   const arriving = turn.type === "arrive";
   const leg = step.leg;
 
-  const card = { label: bigDistance(nav.toNext, locale), steps: approachSteps(nav.toNext, turn.length) };
+  const card = { label: bigDistance(nav.toNext, locale), steps: approachSteps(nav.toNext, nav.stretch) };
   const road = arriving
     ? (leg.toDestination ? leg.toName : rideStopName(leg.toName))
     : turn.street ?? t(locale, TURN_KEYS[turn.type]);
