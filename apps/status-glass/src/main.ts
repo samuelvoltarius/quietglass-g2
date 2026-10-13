@@ -4,6 +4,7 @@ import {
   acknowledge, applyError, applyReport, createSource, problems, type SourceStatus,
 } from "./monitor/dashboard";
 import { gestureFromEvent } from "./input/gestures";
+import { lifecycleFromEvent } from "./lifecycle";
 import { buildView, type StatusView } from "./glasses/view";
 import { MetricHistory, type SparkSeries } from "./monitor/history";
 import { DEMO_FLEET, demoFleetReport, demoNasReport } from "./monitor/demo";
@@ -22,6 +23,35 @@ import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 /** `?demo=1&scene=graph|warn|critical` shows a NAS with CPU/GPU/RAM sparklines; without it a Home Assistant demo. */
 const SCENE = new URLSearchParams(location.search).get("scene");
+/** Where the user was on the glasses (machine, detail page); a restart after a locked phone comes back there. */
+const UI_KEY = "quietglass.statusglass.ui.v1";
+
+interface SavedUi {
+  readonly screen?: "status" | "detail";
+  readonly fleetCursor?: number;
+  readonly cursor?: number;
+  readonly sparkIndex?: number;
+  readonly detailId?: string | null;
+  readonly detailIndex?: number;
+}
+
+function parseUi(raw: string): SavedUi {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    const n = (x: unknown): number | undefined => (typeof x === "number" && Number.isInteger(x) && x >= -1000 && x <= 1000 ? x : undefined);
+    const out: { -readonly [K in keyof SavedUi]: SavedUi[K] } = {};
+    if (value.screen === "detail" || value.screen === "status") out.screen = value.screen;
+    for (const key of ["fleetCursor", "cursor", "sparkIndex", "detailIndex"] as const) {
+      const v = n(value[key]);
+      if (v !== undefined) out[key] = Math.max(key === "sparkIndex" ? -1000 : 0, v);
+    }
+    if (typeof value.detailId === "string") out.detailId = value.detailId;
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -68,6 +98,31 @@ async function boot(): Promise<void> {
   let pendingActionId: string | null = null;
   let actionBusy = false;
   let actionResult: { label: string; ok: boolean } | null = null;
+  /** Left through the system: no polling, no drawing until the app is back. */
+  let backgrounded = false;
+
+  // Back where the user was before a restart. The actions screen is never restored: running
+  // something in the house always starts from a deliberate hold.
+  if (!DEMO) {
+    const ui = parseUi(await bridge.getLocalStorage(UI_KEY).catch(() => "") ?? "");
+    fleetCursor = ui.fleetCursor ?? 0;
+    cursor = ui.cursor ?? 0;
+    sparkIndex = ui.sparkIndex ?? 0;
+    if (ui.screen === "detail" && ui.detailId && data.sources.some((source) => source.id === ui.detailId)) {
+      screen = "detail";
+      detailId = ui.detailId;
+      detailIndex = ui.detailIndex ?? 0;
+    }
+  }
+  let savedUi = "";
+  const saveUi = (): void => {
+    if (DEMO) return;
+    const ui: SavedUi = { screen: screen === "detail" ? "detail" : "status", fleetCursor, cursor, sparkIndex, detailId, detailIndex };
+    const json = JSON.stringify(ui);
+    if (json === savedUi) return;
+    savedUi = json;
+    void bridge.setLocalStorage(UI_KEY, json).catch(() => false);
+  };
 
   const syncSources = (): void => {
     const next = new Map<string, SourceStatus>();
@@ -164,7 +219,7 @@ async function boot(): Promise<void> {
   };
 
   const draw = async (): Promise<void> => {
-    if (closed) return;
+    if (closed || backgrounded) return;
     const { view, layout, frames } = currentScene(Date.now());
     const pictures = layout === "fleet" ? frames.rows ?? [] : [frames.sign, ...frames.sparks];
     const key = pictures.map((frame) => (frame ? bitmapKey(frame) : "-")).join("|");
@@ -197,7 +252,7 @@ async function boot(): Promise<void> {
    * slowing the healthy ones — one dead host must not blind the dashboard.
    */
   const pollSource = async (id: string): Promise<void> => {
-    if (closed) return;
+    if (closed || backgrounded) return;
     const config = data.sources.find((s) => s.id === id);
     if (!config || !statuses.has(id)) return;
     const generation = generations.get(id) ?? 0;
@@ -205,8 +260,8 @@ async function boot(): Promise<void> {
     const outcome = await fetchReport(config.url, config.name, {
       ...(config.token ? { token: config.token } : {}),
     });
-    // Restarted, removed or closed meanwhile: this answer belongs to nobody.
-    if (closed || generation !== (generations.get(id) ?? 0)) return;
+    // Restarted, removed, closed or paused meanwhile: this answer belongs to nobody.
+    if (closed || backgrounded || generation !== (generations.get(id) ?? 0)) return;
     const status = statuses.get(id);
     if (!status) return;
     const now = Date.now();
@@ -278,10 +333,44 @@ async function boot(): Promise<void> {
   // The glasses listen before anything else is awaited: a page that is
   // still being built, or a source that does not answer, must never make a
   // tap or the exit double tap go nowhere.
+  const stopPolling = (): void => {
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+    // Answers still in flight are dropped.
+    for (const id of generations.keys()) generations.set(id, (generations.get(id) ?? 0) + 1);
+  };
+  let startTick = (): void => undefined;
+  const stopTick = (): void => {
+    if (tickTimer !== null) clearInterval(tickTimer);
+    tickTimer = null;
+  };
+  /** Left through the system: polling and the pulse stop; the place on the glasses is saved. */
+  const goBackground = (): void => {
+    saveUi();
+    backgrounded = true;
+    stopPolling();
+    stopTick();
+  };
+  const comeBack = (): void => {
+    backgrounded = false;
+    pageReady = false;
+    lastView = null;
+    lastFrames = "";
+    startTick();
+    void draw();
+    if (!DEMO) startPolling();
+  };
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { comeBack(); return; }
+    if (lifecycle === "background") { goBackground(); return; }
+    if (lifecycle === "exit") { goBackground(); closed = true; return; }
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
+    // A gesture means the app is on the glasses again, even if no "foreground" came first.
+    if (backgrounded) { comeBack(); return; }
 
     const sources = [...statuses.values()];
 
@@ -291,8 +380,9 @@ async function boot(): Promise<void> {
         case "click": {
           const entry = actions[actionCursor];
           if (!entry || actionBusy) break;
-          // An action the source marked as consequential needs a second tap.
-          if (entry.action.confirm && pendingActionId !== entry.action.id) {
+          // Every action needs a second tap (a source's "confirm" only adds the "!" mark):
+          // switching something in the house is never one stray tap away.
+          if (pendingActionId !== entry.action.id) {
             pendingActionId = entry.action.id;
             actionResult = null;
             break;
@@ -321,6 +411,7 @@ async function boot(): Promise<void> {
         default:
           return;
       }
+      saveUi();
       void draw();
       return;
     }
@@ -350,6 +441,7 @@ async function boot(): Promise<void> {
         default:
           return;
       }
+      saveUi();
       void draw();
       return;
     }
@@ -408,6 +500,7 @@ async function boot(): Promise<void> {
       default:
         return;
     }
+    saveUi();
     void draw();
   });
 
@@ -459,11 +552,15 @@ async function boot(): Promise<void> {
   // pulses the alarm sign once per second while something is critical on the
   // status page (a redraw every half second; unchanged frames cost nothing).
   let ticks = 0;
-  tickTimer = setInterval(() => {
-    ticks += 1;
-    const pulsing = screen === "status" && currentScene(Date.now()).pulses;
-    if (pulsing || ticks % 10 === 0) void draw();
-  }, PULSE_MS);
+  startTick = (): void => {
+    if (tickTimer !== null || closed) return;
+    tickTimer = setInterval(() => {
+      ticks += 1;
+      const pulsing = screen === "status" && currentScene(Date.now()).pulses;
+      if (pulsing || ticks % 10 === 0) void draw();
+    }, PULSE_MS);
+  };
+  startTick();
 
   mountPhoneUi({
     getLocale: () => locale,

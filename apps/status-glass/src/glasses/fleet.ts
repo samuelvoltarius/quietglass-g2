@@ -120,7 +120,7 @@ export function fleetView(
   return {
     header: fit(header, LINE_WIDTH),
     body: rows.map((row) => row.text),
-    footer: t(locale, "g.fleetFooter"),
+    footer: t(locale, sources.some((s) => (s.report?.actions?.length ?? 0) > 0) ? "g.fleetFooterActions" : "g.fleetFooter"),
   };
 }
 

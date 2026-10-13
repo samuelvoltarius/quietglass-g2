@@ -105,7 +105,8 @@ function footerFor(
   if (options.pendingId && current?.action.id === options.pendingId) {
     return t(locale, "g.tapAgain") + SEPARATOR + t(locale, "g.swipeCancel");
   }
-  return (current?.action.confirm ? t(locale, "g.tapConfirmFirst") : t(locale, "g.tapRun")) + back;
+  // Every action takes two taps on the glasses: one stray tap never switches anything.
+  return t(locale, "g.tapConfirmFirst") + back;
 }
 
 function clamp(value: number, min: number, max: number): number {

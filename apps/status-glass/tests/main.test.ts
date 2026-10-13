@@ -55,7 +55,8 @@ class FakeRoot {
 
 // Plain functions rather than vi.fn: spies attach handlers to returned
 // promises, which would hide exactly the rejections these tests look for.
-function fakeBridge(sources: { id: string; name: string; url: string }[] = [{ id: "s1", name: "nas", url: "https://nas.test/status" }], options: { createHangs?: boolean } = {}) {
+function fakeBridge(sources: { id: string; name: string; url: string }[] = [{ id: "s1", name: "nas", url: "https://nas.test/status" }], options: { createHangs?: boolean; kv?: Map<string, string> } = {}) {
+  const kv = options.kv ?? new Map<string, string>();
   let onEvent: ((event: unknown) => void) | undefined;
   const state = { shutdowns: 0, shutdownFails: false, confirm: true, modes: [] as (number | undefined)[], body: "", footer: "", draws: 0 };
   const record = (id: number | undefined, content: string | undefined): void => {
@@ -63,8 +64,8 @@ function fakeBridge(sources: { id: string; name: string; url: string }[] = [{ id
     if (id === 3) state.footer = content ?? "";
   };
   const bridge = {
-    getLocalStorage: async () => JSON.stringify({ sources, pollSeconds: 30, invertScroll: false }),
-    setLocalStorage: async () => true,
+    getLocalStorage: async (key: string) => key === "quietglass.statusglass.ui.v1" ? kv.get(key) ?? "" : JSON.stringify({ sources, pollSeconds: 30, invertScroll: false }),
+    setLocalStorage: async (key: string, value: string) => { kv.set(key, value); return true; },
     rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return true;
@@ -270,7 +271,7 @@ describe("status-glass lifecycle", () => {
     await vi.waitFor(() => expect(fake.state.footer).toBe("tap = details · swipe = machine · hold = refresh"));
 
     fake.gesture(0);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("double tap = back · hold = ack · swipe = more"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("swipe = more · hold = seen · 2× = back"));
     await vi.waitFor(() => expect(fake.state.body).toContain("· 2 failed units"));
     expect(fake.state.body).toContain("a.mount, b.service");
     expect(fake.state.body).toContain("RAM 45% 54/119 GB");
@@ -283,5 +284,39 @@ describe("status-glass lifecycle", () => {
     fake.gesture(DOUBLE_TAP);
     await vi.waitFor(() => expect(fake.state.footer).toBe("tap = details · swipe = machine · hold = refresh"));
     expect(fake.state.shutdowns).toBe(0);
+  });
+
+  it("stops polling while in the background and starts again on return", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const fake = fakeBridge();
+    await boot(fake);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(REPORT);
+    await vi.advanceTimersByTimeAsync(0);
+    fake.gesture(5);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(replies).toHaveLength(1);
+    const draws = fake.state.draws;
+    fake.gesture(4);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(replies).toHaveLength(2);
+    expect(fake.state.draws).toBeGreaterThan(draws);
+  });
+
+  it("comes back to the open machine after a restart (phone locked, app unloaded)", async () => {
+    const kv = new Map<string, string>();
+    const two = [{ id: "a", name: "spark", url: "https://a.test/status" }, { id: "b", name: "pi5", url: "https://b.test/status" }];
+    const first = fakeBridge(two, { kv });
+    await boot(first);
+    first.gesture(2); // second machine
+    resetGestureDedupe();
+    first.gesture(0); // open it
+    await vi.waitFor(() => expect(first.state.footer).toBe("swipe = more · hold = seen · 2× = back"));
+    first.gesture(7);
+    expect(kv.get("quietglass.statusglass.ui.v1")).toContain('"detailId":"b"');
+
+    const second = fakeBridge(two, { kv });
+    await boot(second);
+    await vi.waitFor(() => expect(second.state.footer).toBe("swipe = more · hold = seen · 2× = back"));
   });
 });

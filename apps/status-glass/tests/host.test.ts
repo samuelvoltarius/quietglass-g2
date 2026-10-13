@@ -35,7 +35,7 @@ describe("machine figures", () => {
 
   it("says failed services, full disks, stopped services and a lost tailnet in words", () => {
     expect(describeMetric({ id: "failed", label: "Failed units", value: 5 }, "de")).toBe("5 Dienste fehlgeschlagen");
-    expect(describeMetric({ id: "disk:/data", label: "/data", value: 93.4, unit: "%" }, "de")).toBe("Platte /data 93% voll");
+    expect(describeMetric({ id: "disk:/data", label: "/data", value: 93.4, unit: "%" }, "de")).toBe("Disk /data 93% voll");
     expect(describeMetric({ id: "svc:nginx", label: "nginx", state: "critical", detail: "failed" }, "en")).toBe("Service nginx: failed");
     expect(describeMetric({ id: "tailscale", label: "Tailscale", state: "critical" }, "de")).toBe("Tailscale offline");
     expect(describeMetric({ id: "t", label: "Attic", value: 41.25, unit: "°C" }, "de")).toBe("Attic 41,3°C");

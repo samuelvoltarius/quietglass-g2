@@ -149,8 +149,8 @@ describe("actions screen", () => {
     expect(view.body[1]).toContain("!");
   });
 
-  it("offers a direct run for a harmless action", () => {
-    expect(buildActionsView(actions, base).footer).toContain("tap = run");
+  it("asks for a second tap even for a harmless action", () => {
+    expect(buildActionsView(actions, base).footer).toContain("confirm first");
   });
 
   it("demands a confirmation first for a consequential one", () => {

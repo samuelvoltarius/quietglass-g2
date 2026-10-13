@@ -44,7 +44,7 @@ describe("translations", () => {
         if (!key.startsWith("g.")) continue;
         expect(text, key).not.toMatch(/[▸◆]/);
         // Plain text plus the glyphs the G2 renders.
-        expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○]*$/);
+        expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○×–]*$/);
         expect(text.length, key).toBeLessThanOrEqual(LINE_WIDTH);
       }
     }
@@ -214,9 +214,9 @@ describe("glasses text budget", () => {
     expect(never!.body[0]).toBe("> ? never-answered nicht erreichbar");
 
     const [none, list, confirmFirst, confirm, , , busy, done, , failed] = actionScreens("de");
-    expect(none!.body).toEqual(["Keine Quelle bietet Aktionen an.", "Quellen sind von sich aus nur zum Ansehen."]);
+    expect(none!.body).toEqual(["Keine Quelle bietet Aktionen an.", "Nur Anzeige – Aktionen schaltet der Server frei."]);
     expect(list!.header).toBe("Aktionen");
-    expect(list!.footer).toBe("Tippen = ausführen  ·  Halten = zurück");
+    expect(list!.footer).toBe("Tippen = erst bestätigen  ·  Halten = zurück");
     expect(confirmFirst!.footer).toBe("Tippen = erst bestätigen  ·  Halten = zurück");
     expect(confirm!.body[1]).toBe("> ! SICHER? home Front door");
     expect(confirm!.footer).toBe("Nochmal tippen = los  ·  Wischen = abbrechen");

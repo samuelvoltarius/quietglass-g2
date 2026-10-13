@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.1] — 2026-10-13
+
+### Fixed
+
+- Every action takes two taps on the glasses; a source's `confirm` now only adds the "!" mark.
+- The overview footer says "Halten = Aktionen" when a source offers actions (it said "Halten = neu" although hold opened the actions).
+- The open machine and detail page survive a restart of the app (the actions screen never does).
+- Leaving through the system stops polling and the pulse; coming back rebuilds the page and polls at once.
+
+### Changed
+
+- Detail footer `Wischen = mehr · Halten = gesehen · 2× = zurück`; "Disk" throughout; clearer read-only hint.
+
 ## [0.8.0] — 2026-10-13
 
 ### Added
