@@ -51,7 +51,7 @@ describe("driving display is deliberately bare", () => {
 
   it("names the road being joined", async () => {
     const view = buildView(progressOf(await navigating()), options);
-    expect(view.body.join(" ")).toContain("Example Road");
+    expect(view.body.join(" ")).toContain("Linzer Gasse");
   });
 
   it("shows the remaining distance and arrival time while driving, and drops them close to the turn", async () => {
@@ -64,7 +64,7 @@ describe("driving display is deliberately bare", () => {
     const view = buildView(near, { ...options, bigDistance: true });
     expect(view.footer).toBe("");
     expect(view.big).toBe("120 m");
-    expect(view.body).toEqual(["Example Road"]);
+    expect(view.body).toEqual(["Linzer Gasse"]);
   });
 
   it("adds distance and arrival time when walking", async () => {

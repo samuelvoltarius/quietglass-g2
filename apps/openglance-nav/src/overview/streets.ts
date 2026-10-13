@@ -48,7 +48,12 @@ export const MAX_RESPONSE_BYTES = 3_000_000;
 /** Most street segments drawn; a picture this small holds no more. */
 export const MAX_SEGMENTS = 1_500;
 
-export interface Street { readonly cls: RoadClass; readonly points: readonly LatLng[]; }
+export interface Street {
+  readonly cls: RoadClass;
+  readonly points: readonly LatLng[];
+  /** `name` of the way, else the first `ref` ("B1"); absent when the way has neither. Never asked for footpaths. */
+  readonly name?: string;
+}
 export interface StreetSegment { readonly cls: RoadClass; readonly from: PixelPoint; readonly to: PixelPoint; }
 
 const M_PER_DEG = 111_320;
@@ -93,13 +98,24 @@ export function containsBox(outer: BBox, inner: BBox): boolean {
 
 /**
  * One query, one answer: a set per class, each followed by a count element
- * that marks where it ends. Only ids and geometry are returned (no tags), and
- * the geometry is cut to the box server-side — both keep the answer small.
+ * that marks where it ends. Ids and geometry are returned, plus the tags for
+ * roads (the street names for the map labels; footpaths are never labelled, so
+ * they go without), and the geometry is cut to the box server-side — both keep
+ * the answer small.
  */
 export function buildOverpassQuery(box: BBox, classes: readonly RoadClass[], serverTimeoutS = 10): string {
   const b = [box.south, box.west, box.north, box.east].map((value) => value.toFixed(4)).join(",");
-  const parts = classes.map((cls, index) => `way${FILTERS[cls]}(${b})->.s${index};.s${index} out ids geom(${b}) qt;.s${index} out count;`);
+  const parts = classes.map((cls, index) => `way${FILTERS[cls]}(${b})->.s${index};.s${index} out ids ${cls === "path" ? "" : "tags "}geom(${b}) qt;.s${index} out count;`);
   return `[out:json][timeout:${serverTimeoutS}];` + parts.join("");
+}
+
+/** The name a way is known by: its `name`, else the first of its `ref` ("B1;E55" gives "B1"). */
+export function nameOf(tags: unknown): string | undefined {
+  const t = tags as { name?: unknown; ref?: unknown } | null | undefined;
+  const name = typeof t?.name === "string" ? t.name.trim() : "";
+  if (name) return name;
+  const ref = typeof t?.ref === "string" ? (t.ref.split(";")[0] ?? "").trim() : "";
+  return ref || undefined;
 }
 
 /**
@@ -118,21 +134,22 @@ export function parseOverpass(value: unknown, classes: readonly RoadClass[]): St
   const streets: Street[] = [];
   let section = 0;
   for (const element of elements) {
-    const e = element as { type?: unknown; geometry?: unknown } | null;
+    const e = element as { type?: unknown; geometry?: unknown; tags?: unknown } | null;
     if (e?.type === "count") { section++; continue; }
     const cls = classes[section];
     if (e?.type !== "way" || !cls || !Array.isArray(e.geometry)) continue;
+    const name = nameOf(e.tags);
     const points: LatLng[] = [];
     for (const node of e.geometry) {
       const n = node as { lat?: unknown; lon?: unknown } | null;
       // Geometry cut to a box marks dropped nodes as null; that breaks the line.
       if (typeof n?.lat !== "number" || typeof n?.lon !== "number" || !Number.isFinite(n.lat) || !Number.isFinite(n.lon)) {
-        if (points.length >= 2) streets.push({ cls, points: points.splice(0) }); else points.length = 0;
+        if (points.length >= 2) streets.push({ cls, points: points.splice(0), ...(name ? { name } : {}) }); else points.length = 0;
         continue;
       }
       points.push({ lat: n.lat, lon: n.lon });
     }
-    if (points.length >= 2) streets.push({ cls, points });
+    if (points.length >= 2) streets.push({ cls, points, ...(name ? { name } : {}) });
   }
   return streets;
 }

@@ -1,6 +1,7 @@
 import type { LatLng } from "../geo/geometry";
 import type { PixelPoint } from "./project";
 import type { RoadClass, Street } from "./streets";
+import { drawLabels, placeLabels } from "./labels";
 import { mapProjector, MARKER_AT, MAP_HEIGHT, MAP_TILES, MAP_WIDTH, PLATE, TILE_HEIGHT, TILE_WIDTH, type MapView } from "./camera";
 
 /**
@@ -39,6 +40,11 @@ export interface MapScene {
   readonly next: LatLng | null;
   readonly streets: readonly Street[];
   readonly view: MapView;
+  /** Index into `route` of the next manoeuvre; with the two names below it decides which streets get a label. */
+  readonly nextIndex?: number | null;
+  /** The street the next manoeuvre leads onto, and the one the car is on now. */
+  readonly nextStreet?: string | undefined;
+  readonly currentStreet?: string | undefined;
 }
 
 /** Beyond this the canvas has nothing to draw; keeps absurd coordinates (zoomed far in on a far-off point) out of the strokes. */
@@ -139,6 +145,14 @@ export function drawMap(ctx: MapContext, scene: MapScene, width = MAP_WIDTH, hei
   if (end) {
     ctx.strokeStyle = "#000"; ctx.lineWidth = 9; ctx.strokeRect(end.x - 13, end.y - 13, 26, 26);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.strokeRect(end.x - 13, end.y - 13, 26, 26);
+  }
+
+  // Street names, over streets and route but under the car, compass and plate.
+  if (pixels.length) {
+    drawLabels(ctx, placeLabels({
+      width, height, toPixel, route: scene.route, nextIndex: scene.next ? scene.nextIndex ?? null : null,
+      nextStreet: scene.nextStreet, currentStreet: scene.currentStreet, streets: scene.streets,
+    }));
   }
 
   // The map is centred on the car, so the car is always at the marker place.

@@ -177,11 +177,13 @@ const started = new WeakSet<object>();
  */
 async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
-  // Same order as Quiet Hub, which takes input on real glasses: create exactly
-  // once, then only rebuild. A rebuild before the first creation, or a second
-  // creation, can leave the page without its input route ("tap does nothing,
-  // exit does nothing").
+  // One ignored rebuild before the first creation (measured on real glasses),
+  // then create exactly once, afterwards only rebuild. A second creation can
+  // leave the page without its input route ("tap does nothing, exit does nothing").
   if (!started.has(bridge)) {
+    // Measured on real glasses: the very first page needs one rebuild call
+    // before the creation (result ignored), or taps are never delivered.
+    try { await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })); } catch { /* expected before the first page */ }
     try {
       const result = await bridge.createStartUpPageContainer(page);
       if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }

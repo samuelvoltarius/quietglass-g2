@@ -41,7 +41,10 @@ describe("which streets are worth drawing", () => {
     const query = buildOverpassQuery(SMALL, ["major", "minor"]);
     expect(query.startsWith("[out:json][timeout:10];")).toBe(true);
     expect(query).toContain("(47.8000,13.0350,47.8100,13.0450)");
-    expect(query.match(/out ids geom\(/g)).toHaveLength(2);
+    // Roads come with their tags (names for the map labels), footpaths without.
+    expect(query.match(/out ids tags geom\(/g)).toHaveLength(2);
+    expect(buildOverpassQuery(SMALL, ["path"])).toContain("out ids geom(");
+    expect(buildOverpassQuery(SMALL, ["path"])).not.toContain("tags");
     expect(query.match(/out count;/g)).toHaveLength(2);
     expect(query).toContain("motorway|trunk|primary|secondary");
     expect(query).not.toContain("service");

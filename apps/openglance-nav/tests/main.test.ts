@@ -72,6 +72,7 @@ function valhalla(street: string): unknown {
 function fakeBridge() {
   let onEvent: ((event: unknown) => void) | undefined;
   const state = {
+    calls: [] as string[],
     locationStarts: 0, shutdowns: 0, shutdownFails: false, draws: 0, body: "", header: "",
     noFix: false, pages: [] as string[], images: [] as string[], saved: "",
   };
@@ -88,11 +89,13 @@ function fakeBridge() {
     }),
     setLocalStorage: async (_key: string, value: string) => { state.saved = value; return true; },
     rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
+      state.calls.push("rebuild");
       state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return true;
     },
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
+      state.calls.push("create");
       state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return 0;
@@ -239,6 +242,19 @@ describe("openglance lifecycle", () => {
     await vi.advanceTimersByTimeAsync(10000);
     expect(fake.state.draws).toBe(drawsAtClose);
     expect(replies).toHaveLength(1);
+  });
+  it("builds the first page with one rebuild before the single create, then only rebuilds", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(valhalla("Map Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Map Street"));
+    fake.gesture(SWIPE);
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("map-nw"));
+    expect(fake.state.calls.slice(0, 2)).toEqual(["rebuild", "create"]);
+    expect(fake.state.calls.filter((call) => call === "create")).toHaveLength(1);
+    expect(fake.state.calls.filter((call) => call === "rebuild").length).toBeGreaterThanOrEqual(2);
   });
   it("switches to the overview map on a swipe, and back", async () => {
     const fake = fakeBridge();

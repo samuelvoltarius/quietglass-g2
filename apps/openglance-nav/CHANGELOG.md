@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.3] — 2026-10-13
+
+Street names on the map (user feedback from the real glasses: "the overview needs
+street names").
+
+### Added
+
+- **Street labels on the map**: bold capitals, 14 px tall, own pixel font, in a
+  black box with a 1 px border. Shown: the street of the next turn, the street the
+  car is on, and up to three more big streets in view. Horizontal whatever way the
+  map is turned, never overlapping each other, the car, the turn ring, the
+  destination, the compass or the text plate; at most 16 characters
+  ("Straße" becomes "Str.", longer names are cut with a dot).
+- Overpass query now asks for `tags` of roads (footpaths without); `name`, else the
+  first `ref`, is read from the answer.
+- The text line top left adds the street: "→ 300 m · Linzer Gasse" (shortened to
+  fit, or left out).
+- Demo (`?demo=1&scene=map`) draws named example streets.
+
+### Changed
+
+- The very first page per bridge is preceded by one ignored `rebuildPageContainer`
+  (measured on real glasses: otherwise taps may not arrive); then `create` exactly
+  once, afterwards only rebuilds.
+- The mock route uses German street names (Rainerstraße, Linzer Gasse, Hellbrunner Allee).
+
 ## [0.5.0] — 2026-10-13
 
 Readable at a glance while driving (user feedback: "map too small ... impossible

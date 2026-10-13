@@ -329,9 +329,9 @@ export function createMockProvider(): RoutingProvider {
         route: {
           shape,
           maneuvers: [
-            { type: "depart", instruction: "Head north on Mock Street", street: "Mock Street", length: 960, time: 120, shapeIndex: 0 },
-            { type: "right", instruction: "Turn right onto Example Road", street: "Example Road", length: 840, time: 100, shapeIndex: 16 },
-            { type: "roundabout", instruction: "At the roundabout, take the second exit", street: "Sample Avenue", exitNumber: 2, length: 600, time: 90, shapeIndex: 30 },
+            { type: "depart", instruction: "Head north on Rainerstraße", street: "Rainerstraße", length: 960, time: 120, shapeIndex: 0 },
+            { type: "right", instruction: "Turn right onto Linzer Gasse", street: "Linzer Gasse", length: 840, time: 100, shapeIndex: 16 },
+            { type: "roundabout", instruction: "At the roundabout, take the second exit", street: "Hellbrunner Allee", exitNumber: 2, length: 600, time: 90, shapeIndex: 30 },
             { type: "arrive", instruction: "You have arrived", length: 0, time: 0, shapeIndex: 40 },
           ],
           distance: 2400,

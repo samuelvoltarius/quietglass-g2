@@ -21,6 +21,7 @@ import { overviewProjector } from "./overview/layout";
 import { thinPoints } from "./overview/project";
 import { needsMapImage, type MapFrame } from "./overview/refresh";
 import { createStreetSource, loadStreets, type Street } from "./overview/streets";
+import { demoStreets } from "./overview/demo";
 import { createGeocoder, type Geocoder } from "./geocode/photon";
 import { resolveLocale, rememberLocale, setLocale, tr, type Locale } from "./i18n";
 import { messages } from "./messages";
@@ -169,7 +170,12 @@ async function boot(): Promise<void> {
     const next = progress.maneuver && !progress.arrived ? nav.route.shape[progress.maneuver.shapeIndex] ?? null : null;
     const list = data.streets && streets.route === routeVersion ? streets.list : [];
     return {
-      scene: { route: nav.route.shape, next, streets: list, view },
+      scene: {
+        route: nav.route.shape, next, streets: list, view,
+        nextIndex: next && progress.maneuver ? progress.maneuver.shapeIndex : null,
+        nextStreet: next ? progress.maneuver?.street : undefined,
+        currentStreet: nav.route.maneuvers[nav.maneuverIndex]?.street,
+      },
       frame: {
         route: routeVersion,
         // Switching streets off must redraw without them, so the setting is part of the picture.
@@ -330,6 +336,12 @@ async function boot(): Promise<void> {
       errorKey = null;
       routeVersion++;
       nav = startNavigation(outcome.route as Route);
+      // The mock router has no Overpass behind it: the demo brings its own named streets.
+      if (usesMockRouter(data)) {
+        const shape = nav.route.shape;
+        streets = { route: routeVersion, list: demoStreets(shape, nav.route.maneuvers.filter((m) => m.street).map((m) => ({ from: m.shapeIndex, name: m.street as string }))) };
+        streetsVersion++;
+      }
       if (position) nav = update(nav, position);
     }
     await draw();

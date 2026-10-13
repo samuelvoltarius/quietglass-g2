@@ -3,6 +3,7 @@ import type { ManeuverType, TravelMode } from "../routing/provider";
 import type { Progress } from "../nav/navigator";
 import { tr, type Locale } from "../i18n";
 import { messages } from "../messages";
+import { shortenName } from "../overview/labels";
 
 /**
  * What the glasses show.
@@ -145,11 +146,19 @@ function rawView(progress: Progress | null, options: ViewOptions, now: number): 
   // With the turn card the distance is drawn large beside the pixel arrow;
   // otherwise arrow and distance share one line: the line a driver reads.
   const big = options.bigDistance === true && options.layout !== "overview";
-  if (!big) body.push(arrow + "  " + distance);
-
-  const width = options.layout === "overview" ? LINE_WIDTH : ROAD_WIDTH;
+  const overview = options.layout === "overview";
   const road = roadLabel(maneuver?.street, maneuver?.instruction);
-  if (road) body.push(clip(road, width));
+  if (overview) {
+    // The one line over the map: arrow, distance and, when it fits, the street of the turn.
+    const head = arrow + " " + distance;
+    const room = OVERVIEW_WIDTH_CHARS - head.length - 3;
+    // Only a real street name goes on the line, never the router's English instruction.
+    const street = maneuver?.street;
+    body.push(street && room >= 6 ? head + " · " + shortenName(street, room) : arrow + "  " + distance);
+  } else {
+    if (!big) body.push(arrow + "  " + distance);
+    if (road) body.push(clip(road, ROAD_WIDTH));
+  }
 
   if (maneuver?.type === "roundabout" && maneuver.exitNumber) {
     body.push(t(options, "g.exit", { n: maneuver.exitNumber }));
