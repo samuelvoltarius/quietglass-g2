@@ -124,6 +124,9 @@ async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContain
   sentLength.clear();
   shown.clear();
   if (!started.has(bridge)) {
+    // Measured on real glasses: the very first page needs a rebuild call before
+    // the creation, or taps are never delivered (Babel 0.2.5).
+    try { await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })); } catch { /* expected before the first page */ }
     try {
       const result = await bridge.createStartUpPageContainer(page);
       if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }

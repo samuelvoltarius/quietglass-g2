@@ -2,6 +2,7 @@ import {
   CreateStartUpPageContainer,
   TextContainerProperty,
   TextContainerUpgrade,
+  RebuildPageContainer,
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
@@ -70,16 +71,34 @@ function text(
   });
 }
 
+/** Bridges that already have their startup page. */
+const started = new WeakSet<object>();
+
 /**
- * Creates the page - exactly once, without a rebuild first. That order is
- * the one Quiet Hub uses and that takes input on real glasses; a rebuild
- * before the creation left OpenGlance Nav 0.5.1 deaf to taps.
+ * Puts the page on the glasses. Measured on real glasses (13.10.2026):
+ * - the very first page needs a `rebuildPageContainer` call BEFORE the
+ *   creation - without it Babel 0.2.5 no longer saw any tap;
+ * - `createStartUpPageContainer` must run only once - a second creation
+ *   (OpenGlance Nav 0.5.1) left the app deaf too. Later calls rebuild.
  */
 export async function createPage(bridge: EvenAppBridge, view: CaptionView): Promise<RenderResult> {
   const page = buildPage(view);
+  if (started.has(bridge)) {
+    try {
+      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
+  }
+  try {
+    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+  } catch {
+    // Expected to fail before the first page; the call still registers input.
+  }
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return { ok: true };
+    if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };

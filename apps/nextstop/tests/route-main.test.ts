@@ -130,9 +130,9 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\? · \d\d:\d\d$/));
     expect(fake.state.body.split("\n")).toEqual(["> Jetzt: Getreidegasse 10", "  Heim", "  Arbeit", "  Hauptbahnhof"]);
     expect(fake.state.menus.at(-1)).toEqual(["Abfahrten"]);
-    // Created once, then exactly one rebuild for the new menu - never a rebuild before the creation.
+    // One rebuild before the single creation (it registers input on the glasses), one for the new menu.
     expect(fake.state.creates).toBe(1);
-    expect(fake.state.rebuilds).toBe(1);
+    expect(fake.state.rebuilds).toBe(2);
 
     fake.gesture(DOWN);
     await vi.waitFor(() => expect(fake.state.body).toContain("> Heim"));
