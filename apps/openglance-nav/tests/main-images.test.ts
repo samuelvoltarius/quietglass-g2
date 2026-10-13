@@ -72,7 +72,12 @@ function fakeBridge(glassView: "turns" | "overview") {
       places: [{ id: "p1", label: "Office", at: { lat: START.lat + 0.018, lon: START.lon } }], destinationId: "p1",
     }),
     setLocalStorage: async () => true,
-    rebuildPageContainer: async () => false,
+    // Like the real glasses (Quiet Hub relies on it): later pages arrive as rebuilds.
+    rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+      state.pages.push(page);
+      for (const text of page.textObject ?? []) if (text.containerID === 2) state.body = text.content ?? "";
+      return true;
+    },
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
       state.pages.push(page);
       for (const text of page.textObject ?? []) if (text.containerID === 2) state.body = text.content ?? "";

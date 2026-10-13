@@ -167,7 +167,7 @@ function guarded(specId: number, content: string): { content: string; contentLen
 }
 
 /** `createStartUpPageContainer` works once per run; every later page is a rebuild. */
-let startupDone = false;
+const started = new WeakSet<object>();
 
 /**
  * Puts a page on the glasses. The first page is created; every later one
@@ -177,17 +177,22 @@ let startupDone = false;
  */
 async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
-  try {
-    // On the first page the call is made although there is nothing to rebuild
-    // yet: it registers event routing, and skipping it leaves the app deaf to input.
-    if (await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })) && startupDone) return { ok: true };
-  } catch {
-    // Expected on current firmware; creation below is the real path.
+  // Same order as Quiet Hub, which takes input on real glasses: create exactly
+  // once, then only rebuild. A rebuild before the first creation, or a second
+  // creation, can leave the page without its input route ("tap does nothing,
+  // exit does nothing").
+  if (!started.has(bridge)) {
+    try {
+      const result = await bridge.createStartUpPageContainer(page);
+      if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
+      return { ok: false, reason: describeCreateResult(result) };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
   }
   try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) { startupDone = true; return { ok: true }; }
-    return { ok: false, reason: describeCreateResult(result) };
+    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+    return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }

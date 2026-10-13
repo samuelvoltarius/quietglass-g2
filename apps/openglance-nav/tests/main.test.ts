@@ -87,7 +87,11 @@ function fakeBridge() {
       destinationId: "p1",
     }),
     setLocalStorage: async (_key: string, value: string) => { state.saved = value; return true; },
-    rebuildPageContainer: async () => false,
+    rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
+      state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
+      for (const text of page.textObject ?? []) record(text.containerID, text.content);
+      return true;
+    },
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
       state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
