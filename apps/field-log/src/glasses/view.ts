@@ -40,7 +40,14 @@ export interface ViewOptions {
   readonly quickNotes?: readonly string[];
   /** Highlighted row in the `pick` phase, the cancel row included. */
   readonly pickIndex?: number;
+  /** Something the user asked for did not happen: said on the resting screen. */
+  readonly notice?: FieldNotice | null;
+  /** A swipe in review armed "discard": the footer says a second swipe discards. */
+  readonly confirmDiscard?: boolean;
 }
+
+/** Why a tap or a hold did not do what it usually does. */
+export type FieldNotice = "micDenied" | "noPhoto" | "heardNothing";
 
 const DEFAULT_WIDTH = 56;
 
@@ -110,15 +117,19 @@ export function buildView(
           ...clampRows(wrap(options.pending ?? "", width), MAX_BODY_ROWS - 1, width),
           savedAs(options.severity, locale),
         ],
-        footer: L("g.review.footer"),
+        footer: L(options.confirmDiscard ? "g.review.confirm" : "g.review.footer"),
       };
 
     case "idle":
     default: {
       // A failed connection says what to do instead of silently ignoring taps.
-      const error = options.voice && options.status === "error"
-        ? [L("g.serverError.1"), truncate(L("g.serverError.2"), width)]
-        : [];
+      const error = options.notice === "micDenied"
+        ? [L("g.micDenied.1"), truncate(L("g.micDenied.2"), width)]
+        : options.notice === "noPhoto" ? [truncate(L("g.noPhoto"), width)]
+        : options.notice === "heardNothing" ? [truncate(L("g.heardNothing"), width)]
+        : options.voice && options.status === "error"
+          ? [L("g.serverError.1"), truncate(L("g.serverError.2"), width)]
+          : [];
       const time = formatDuration(durationSeconds(inspection, now));
       const next = truncate(L("g.nextSeverity", { severity: severityLabel(options.severity, locale) }), width);
       if (inspection.entries.length === 0) {

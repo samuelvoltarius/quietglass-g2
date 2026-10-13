@@ -33,7 +33,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
   return {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
-    audio: () => handler?.({ audioEvent: { audioPcm: new Uint8Array(32) } }),
+    audio: (bytes = 32) => handler?.({ audioEvent: { audioPcm: new Uint8Array(bytes) } }),
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
@@ -45,6 +45,13 @@ function lastBody(fake: Fake): string {
   const calls = fake.bridge.textContainerUpgrade.mock.calls
     .map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0])
     .filter((upgrade) => upgrade.containerID === 2);
+  return calls[calls.length - 1]?.content ?? "";
+}
+
+function lastFooter(fake: Fake): string {
+  const calls = fake.bridge.textContainerUpgrade.mock.calls
+    .map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0])
+    .filter((upgrade) => upgrade.containerID === 3);
   return calls[calls.length - 1]?.content ?? "";
 }
 
@@ -62,27 +69,20 @@ async function boot(fake: Fake): Promise<FakeRoot> {
   return root;
 }
 
-/** A WebSocket the test drives by hand: it opens on `open()` and replies on `reply()`. */
-class FakeSocket {
-  static instances: FakeSocket[] = [];
-  static autoOpen = true;
-  readyState = 0;
-  sent: unknown[] = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: unknown }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  onclose: (() => void) | null = null;
-  constructor(readonly url: string) {
-    FakeSocket.instances.push(this);
-    if (FakeSocket.autoOpen) setTimeout(() => this.open(), 0);
-  }
-  open(): void { this.readyState = 1; this.onopen?.(); }
-  send(data: unknown): void { this.sent.push(data); }
-  close(): void { if (this.readyState === 3) return; this.readyState = 3; this.onclose?.(); }
-  reply(text: string, final = true): void { if (this.readyState === 1) this.onmessage?.({ data: JSON.stringify({ text, final }) }); }
+/** A Whisper server behind the fetch mock: answers each upload with `text`, or hangs/fails on request. */
+function fakeWhisper() {
+  const state = { text: "Window seal damaged", fail: false, hold: null as null | ((value: Response) => void), uploads: [] as Array<{ url: string; init: RequestInit }> };
+  const fetchMock = vi.fn((url: string, init: RequestInit = {}): Promise<Response> => {
+    state.uploads.push({ url, init });
+    if (state.fail) return Promise.reject(new TypeError("Failed to fetch"));
+    const answer = new Response(JSON.stringify({ text: state.text }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (state.hold === null) return Promise.resolve(answer);
+    return new Promise<Response>((resolve) => { state.hold = resolve; });
+  });
+  return { state, fetchMock };
 }
 
-function data(sttUrl = "wss://asr.test/ws") {
+function data(sttUrl = "https://whisper.test:8457") {
   return {
     inspections: [{ id: "i1", title: "Flat 3", startedAt: Date.now(), finishedAt: null, entries: [], section: "Kitchen" }],
     activeId: "i1",
@@ -93,88 +93,99 @@ function data(sttUrl = "wss://asr.test/ws") {
   };
 }
 
-describe("fieldlog lifecycle", () => {
-  beforeEach(() => {
-  resetGestureDedupe();
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    FakeSocket.instances = [];
-    FakeSocket.autoOpen = true;
-    vi.stubGlobal("WebSocket", FakeSocket);
-  });
-  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+/** About one second of audio, enough to count as speech. */
+const SECOND_OF_AUDIO = 32_000;
 
-  it("regression: a transcript that arrives after tapping stop is still offered for review", async () => {
-    // Stop closed the speech socket at once, so the final transcript the server
-    // sends after the end of speech was lost and the glasses sat on
-    // "Transcribing…" until the app was left.
+describe("fieldlog dictation over HTTP", () => {
+  let whisper: ReturnType<typeof fakeWhisper>;
+  beforeEach(() => {
+    resetGestureDedupe();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    whisper = fakeWhisper();
+    vi.stubGlobal("fetch", whisper.fetchMock);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("tap records, tap stops: one WAV form post without own headers, the text comes back for review", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
-    fake.audio();
+    fake.audio(SECOND_OF_AUDIO);
     fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Transcribing"));
-    FakeSocket.instances[0]!.reply("Window seal damaged");
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
-    // The microphone went off at the tap, not only once the text arrived.
+    expect(whisper.state.uploads).toHaveLength(1);
+    const upload = whisper.state.uploads[0]!;
+    expect(upload.url).toBe("https://whisper.test:8457/v1/audio/transcriptions");
+    // No header of our own: a simple request, no CORS preflight.
+    expect(upload.init.headers).toBeUndefined();
+    const form = upload.init.body as FormData;
+    expect(form.get("file")).toBeInstanceOf(Blob);
+    expect(form.get("language")).toBe("en");
+    // The microphone went off at the tap.
     expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
   });
 
-  it("regression: gives up waiting for a transcript instead of hanging on Transcribing", async () => {
+  it("a mis-tap with almost no audio sends nothing and says so", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.audio(100);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Nothing understood"));
+    expect(whisper.state.uploads).toHaveLength(0);
+  });
+
+  it("regression: a refused microphone is said on the glasses", async () => {
+    const fake = fakeBridge(data());
+    fake.bridge.audioControl.mockResolvedValue(false);
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Microphone not allowed."));
+  });
+
+  it("an unreachable speech server says what to do, and the next tap tries again", async () => {
+    whisper.state.fail = true;
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.audio(SECOND_OF_AUDIO);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Speech server not reachable."));
+    expect(lastBody(fake)).toContain("(Advanced)");
+    whisper.state.fail = false;
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+  });
+
+  it("the recording stops by itself after 30 s and is sent", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     vi.useFakeTimers();
-    try {
-      fake.emit(0);
-      await vi.advanceTimersByTimeAsync(50);
-      fake.emit(0);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(lastBody(fake)).toContain("Transcribing");
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(lastBody(fake)).not.toContain("Transcribing");
-      expect(FakeSocket.instances[0]!.readyState).toBe(3);
-    } finally {
-      vi.useRealTimers();
-    }
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    fake.audio(SECOND_OF_AUDIO);
+    await vi.advanceTimersByTimeAsync(31_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
   });
 
-  it("regression: a second tap while the speech server is still connecting opens no second socket", async () => {
-    FakeSocket.autoOpen = false;
-    const fake = fakeBridge(data());
-    await boot(fake);
-    fake.emit(0);
-    fake.emit(0);
-    await sleep(20);
-    expect(FakeSocket.instances).toHaveLength(1);
-    FakeSocket.instances[0]!.open();
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
-    expect(fake.bridge.audioControl.mock.calls.filter((call) => call[0] === true)).toHaveLength(1);
-  });
-
-  it("regression: a speech server that cannot be reached is not an unhandled rejection", async () => {
-    vi.stubGlobal("WebSocket", class { constructor() { throw new Error("blocked"); } });
-    const fake = fakeBridge(data());
-    await boot(fake);
-    fake.emit(0);
-    await sleep(20);
-    expect(fake.bridge.audioControl).not.toHaveBeenCalled();
-    // Still usable: the next tap tries again.
-    vi.stubGlobal("WebSocket", FakeSocket);
-    fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
-  });
-
-  it("regression: a late transcript does not replace the one under review", async () => {
+  it("one swipe does not discard the text under review; a second swipe does", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
-    const socket = FakeSocket.instances[0]!;
-    socket.reply("First finding");
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("First finding"));
-    socket.reply("Something else");
-    await sleep(20);
-    expect(lastBody(fake)).toContain("First finding");
+    fake.audio(SECOND_OF_AUDIO);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastFooter(fake)).toContain("swipe again"));
+    expect(lastBody(fake)).toContain("Window seal damaged");
+    fake.emit(1);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("No entries yet."));
   });
 
   it("regression: a failed exit call is not an unhandled rejection, asks once, and the app stays", async () => {
@@ -198,13 +209,14 @@ describe("fieldlog lifecycle", () => {
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
     fake.emit(3);
     await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
-    await sleep(10);
+    await sleep(200);
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
-    FakeSocket.instances[0]?.reply("too late");
     fake.emit(0);
     await sleep(30);
-    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false, false]);
+    // Off once, for the dialog; a tap after leaving opens nothing.
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
     expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBe(drawn);
+    expect(whisper.state.uploads).toHaveLength(0);
   });
 
   it("cancelling the exit dialog while recording turns the microphone back on and the dictation continues", async () => {
@@ -214,12 +226,25 @@ describe("fieldlog lifecycle", () => {
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
     fake.emit(3);
-    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
     await vi.waitFor(() => expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false, true]));
-    fake.audio();
-    expect(FakeSocket.instances[0]?.sent.length).toBeGreaterThan(0);
-    FakeSocket.instances[0]?.reply("Finding after staying");
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Finding after staying"));
+    fake.audio(SECOND_OF_AUDIO);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
+  });
+
+  it("regression: gestures work while the first page is still being created", async () => {
+    const fake = fakeBridge(data());
+    fake.bridge.createStartUpPageContainer.mockImplementation(() => new Promise(() => undefined));
+    const root = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("location", { search: "" });
+    vi.stubGlobal("navigator", { language: "en-US" });
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
   });
 
   it("regression: rebuilds the page after a reconnect even when nothing changed", async () => {
@@ -231,6 +256,36 @@ describe("fieldlog lifecycle", () => {
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
   });
 
+  it("leaving through the system drops a dictation and closes the microphone; coming back rebuilds", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.audio(SECOND_OF_AUDIO);
+    fake.emit(5);
+    await sleep(20);
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
+    fake.emit(4);
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer).toHaveBeenCalledTimes(2));
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+    const rebuilt = (fake.bridge.rebuildPageContainer.mock.calls.at(-1) as unknown as [{ textObject?: Array<{ containerID?: number; content?: string }> }])[0];
+    expect(rebuilt.textObject?.find((text) => text.containerID === 2)?.content).toContain("No entries yet.");
+    expect(whisper.state.uploads).toHaveLength(0);
+  });
+
+  it("a system exit closes the microphone for good", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.emit(7);
+    await sleep(20);
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
+    fake.emit(0);
+    await sleep(20);
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
+  });
+
   it("regression: a failed save of the severity is not an unhandled rejection", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
@@ -238,6 +293,14 @@ describe("fieldlog lifecycle", () => {
     fake.emit(2);
     await sleep(20);
     expect(fake.bridge.setLocalStorage).toHaveBeenCalled();
+  });
+
+  it("a stored ws:// address from 0.4 is dropped: no dictation without a server", async () => {
+    const fake = fakeBridge(data("wss://asr.test/ws"));
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> OK"));
+    expect(fake.bridge.audioControl).not.toHaveBeenCalled();
   });
 });
 
@@ -301,12 +364,10 @@ describe("fieldlog without a speech server", () => {
     expect(root.innerHTML).toContain("Rundgang läuft");
   });
 
-  it("an unreachable speech server says what to do", async () => {
-    vi.stubGlobal("WebSocket", class { constructor() { throw new Error("blocked"); } });
-    const fake = fakeBridge(data());
+  it("a cancelled or refused camera is said on the glasses", async () => {
+    const fake = fakeBridge(data(""));
     await boot(fake);
-    fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Speech server not reachable."));
-    expect(lastBody(fake)).toContain("(Advanced)");
+    fake.emit(9);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("No photo"));
   });
 });

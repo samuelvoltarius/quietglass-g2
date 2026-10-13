@@ -64,9 +64,9 @@ describe("phone page", () => {
 
   it("regression: a validation message is actually shown", () => {
     const page = mount(EMPTY_DATA);
-    page.root.get("#stt").value = "http://not-a-socket";
+    page.root.get("#stt").value = "wss://not-http";
     page.root.get("#save-stt").fire("click");
-    expect(page.root.innerHTML).toContain("must start with ws://");
+    expect(page.root.innerHTML).toContain("must start with https://");
   });
 
   it("shows a started inspection straight away", () => {
@@ -79,10 +79,10 @@ describe("phone page", () => {
 
   it("keeps a half-typed server address when another setting is committed", () => {
     const page = mount(open());
-    page.root.get("#stt").value = "wss://half";
+    page.root.get("#stt").value = "https://half";
     page.root.get("#section").value = "Hall";
     page.root.get("#section").fire("change");
-    expect(page.root.get("#stt").value).toBe("wss://half");
+    expect(page.root.get("#stt").value).toBe("https://half");
   });
 
   it("reports a failed save instead of rejecting unhandled", async () => {

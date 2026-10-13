@@ -20,7 +20,9 @@
 > in der letzten Spalte. „Standard-CSV“ nimmt Kommas und ISO-Zeit für andere Programme.
 >
 > **Erweitert (optional):** Notizen *sprechen* statt wählen geht nur mit einem eigenen
-> Whisper-Sprachserver in deinem Netzwerk – einzurichten am Handy unter „Erweitert“.
+> Whisper-Server (OpenAI-kompatibel, `/v1/audio/transcriptions`) in deinem Netzwerk –
+> einzurichten am Handy unter „Erweitert“, oder als Vorgabe im eigenen Build
+> (`VITE_STT_URL=https://… npm run build`).
 > Für alles andere brauchst du ihn nicht.
 
 Use `?demo=1` on the development URL to render a non-persistent sample inspection for screenshots and layout testing.
@@ -48,8 +50,8 @@ Works out of the box, with no server:
 4. On the phone you can also **type** a note, set the area, and export.
 
 With a speech server set up (Advanced, optional), tap dictates instead:
-**tap** to speak, **tap** to stop, **tap** to keep the transcript or **swipe**
-to discard it.
+**tap** to speak, **tap** to stop (at most 30 s), **tap** to keep the transcript or
+**swipe twice** to discard it.
 
 Severity (`note` · `minor` · `major`) is set with a swipe and applies to the
 next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
@@ -61,17 +63,27 @@ Speech recognition is imperfect, and an inspection report is a document someone
 acts on: a wrong entry can become a wrong invoice or a missed fault.
 
 So FieldLog never files a transcript silently. It shows what it heard and waits.
-Keeping is one tap; discarding is one swipe. This is the one place in the app
-that costs an extra gesture, and it is the right place for it.
+Keeping is one tap; discarding takes a second swipe within 4 s, so one stray
+swipe cannot throw away what was just said.
 
 ## Your own recogniser (optional, advanced)
 
-Dictation is optional. Audio is streamed to a speech server **you** configure —
-the same wire format as Babel Glass, so one `faster-whisper` instance serves
-both. Leave it empty (the default) and FieldLog uses quick notes; the microphone
-is never opened. If the server cannot be reached, the glasses say so and point
-to the address under *Advanced* on the phone. The labelled `MOCK` recogniser is
-only used by the `?demo=1` preview.
+Dictation is optional. The note is recorded on the phone while you speak and
+sent, as one WAV file, to an OpenAI-compatible Whisper server **you** configure
+(`POST <server>/v1/audio/transcriptions`, multipart form, field `file`, optional
+`language`). The form post carries no header of its own, so the glasses' WebView
+sends no CORS preflight; the server only has to answer with
+`Access-Control-Allow-Origin`. Same path as NextStop and OpenGlance, so one
+server serves all of them. Leave it empty (the default) and FieldLog uses quick
+notes; the microphone is never opened. A private build can bring a default with
+`VITE_STT_URL`; its origin then belongs in the `network` whitelist of the private
+`app.json` (exact origins — wildcards are blocked on real glasses). If the
+server cannot be reached, the glasses say so and point to the address under
+*Advanced* on the phone. The labelled `MOCK` text is only used by the `?demo=1`
+preview.
+
+Until 0.4 FieldLog streamed audio over its own WebSocket protocol; a stored
+`ws://`/`wss://` address is dropped on update.
 
 ## Photos
 
@@ -148,8 +160,8 @@ npm test           # 104 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
-For a speech server, use the reference implementation from Babel Glass
-(`apps/babel-glass/examples/whisper-server.py`) — the wire format is identical.
+For a speech server, any OpenAI-compatible Whisper endpoint works (for example
+the selfhost whisper service in `selfhost/`).
 
 ## Privacy
 

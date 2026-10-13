@@ -1,49 +1,44 @@
 import {
   AudioInputSource, waitForEvenAppBridge, type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import { createMockStt, createWebSocketStt, type SttProvider, type SttStatus } from "./stt/provider";
+import {
+  MAX_DICTATION_BYTES, MAX_DICTATION_MS, MIN_DICTATION_BYTES, mockTranscript, pcmBytes, transcribe, type SttStatus,
+} from "./stt/provider";
+import { buildWav } from "./audio/wav";
 import { addEntry, attachToLatest, startInspection, type Inspection, type Severity } from "./log/entries";
 import { gestureFromEvent } from "./input/gestures";
-import { buildView, type LogView, type Phase } from "./glasses/view";
+import { buildView, type FieldNotice, type LogView, type Phase } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { createPage, updatePage } from "./glasses/render";
 import {
-  activeInspection, hasSpeechServer, load, nextInspectionId, save, upsertInspection, usesMockStt, type FieldLogData,
+  activeInspection, hasSpeechServer, load, nextInspectionId, save, speechServer, upsertInspection, usesMockStt,
+  type FieldLogData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { autoTitle, quickNotes, t } from "./messages";
+import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
+import { activeConfirm, CONFIRM_WINDOW_MS, confirmStep, type PendingConfirm } from "./input/confirm";
 
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
-/**
- * How long to wait for the final transcript after the user taps stop. Servers
- * finish the utterance once the audio ends; one that never answers must not
- * leave the glasses on "Transcribing…" for good.
- */
-const FINAL_WAIT_MS = 8_000;
+/** A native microphone call that does not answer must not hold anything up. */
+const MIC_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<{ value: T; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ value: fallback, timedOut: true }), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve({ value, timedOut: false }); },
+      () => { clearTimeout(timer); resolve({ value: fallback, timedOut: false }); },
+    );
+  });
+}
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
   const MIC_DRAIN_MS = 150;
-
-  /** audioPcm arrives as Uint8Array, number[] or base64 depending on the host
-   * bridge; normalize it or every chunk is silently dropped (empty recording). */
-  const toBytes = (pcm: unknown): Uint8Array | null => {
-    if (pcm instanceof Uint8Array) return pcm;
-    if (Array.isArray(pcm)) return Uint8Array.from(pcm.filter((n): n is number => typeof n === "number"));
-    if (typeof pcm === "string") {
-      try {
-        const bin = atob(pcm);
-        const out = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
-        return out;
-      } catch { return null; }
-    }
-    return null;
-  };
-
 
   let data: FieldLogData = await load(bridge);
   if (DEMO) {
@@ -57,23 +52,36 @@ async function boot(): Promise<void> {
   /** Highlighted quick note; the row after the last note is "Cancel". */
   let pickIndex = 0;
   let pending: string | null = null;
-  let stt: SttProvider | null = null;
   let status: SttStatus = "idle";
+  let notice: FieldNotice | null = null;
   let lastView: LogView | null = null;
   let pageReady = false;
+  /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
+  let rebuildWanted = false;
+  /** In the background: no microphone, no drawing. */
+  let paused = false;
   /** Set once the user confirms the exit dialog; nothing may be drawn on a closed page. */
   let closed = false;
-  /** True while the speech server and microphone are being opened. */
+  /** True while the microphone is being opened. */
   let starting = false;
-  let finalTimer: ReturnType<typeof setTimeout> | undefined;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
+  /** The dictation being recorded: raw PCM blocks, collected on the phone. */
+  let chunks: Uint8Array[] = [];
+  let recordedBytes = 0;
+  let recordTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Bumped per dictation: an answer for an abandoned one is dropped. */
+  let dictation = 0;
+  let mockCount = 0;
+  /** A swipe in review that would discard the text waits here for its second swipe. */
+  let pendingDiscard: PendingConfirm<"discard"> | null = null;
+  let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
   const inspection = (): Inspection | null => activeInspection(data);
   /**
-   * Dictation needs a speech server. Without one, a tap offers quick notes
-   * instead — the app is fully usable with no server at all. The labelled mock
-   * recogniser is only used by the `?demo=1` preview.
+   * Dictation needs a speech server (the phone setting or the private build's
+   * default). Without one, a tap offers quick notes instead — the app is fully
+   * usable with no server at all. `?demo=1` dictates labelled mock text.
    */
   const voice = (): boolean => hasSpeechServer(data) || DEMO;
   const notes = (): string[] => quickNotes(locale, data.quickNotes);
@@ -89,14 +97,20 @@ async function boot(): Promise<void> {
       voice: voice(),
       quickNotes: notes(),
       pickIndex,
+      notice,
+      confirmDiscard: activeConfirm(pendingDiscard, Date.now()) !== null,
     });
 
   /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
   let refreshPhone: () => void = () => undefined;
 
   const drawOnce = async (): Promise<void> => {
+    if (paused) return;
+    // A page lost with the link (or in the background) is rebuilt even when
+    // nothing changed; read here, so a draw already running cannot undo it.
+    if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; }
     const view = currentView();
-    if (sameView(lastView, view)) return;
+    if (pageReady && sameView(lastView, view)) return;
 
     const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
     if (result.ok) { pageReady = true; lastView = view; return; }
@@ -158,103 +172,108 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  const closeStt = async (): Promise<void> => {
-    clearTimeout(finalTimer);
-    const provider = stt;
-    stt = null;
-    await provider?.stop();
-  };
-
   // Let in-flight PCM blocks land before closing the capture (drain rule).
   const micOff = async (): Promise<void> => {
     await bridge.audioControl(false).catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, MIC_DRAIN_MS));
   };
 
-  const stopMic = async (): Promise<void> => {
-    await micOff();
-    await closeStt();
-  };
-
-  const onTranscript = (transcript: { text: string; final: boolean }): void => {
-    if (!transcript.final || closed) return;
-    // Only while dictating: a transcript arriving during review must not
-    // replace the text the user is about to confirm.
-    if (phase !== "recording" && phase !== "transcribing") return;
-    const text = transcript.text.trim();
-    if (!text) return;
-    // The transcript is shown for confirmation rather than filed straight
-    // away: an inspection report is a document someone acts on.
-    const wasRecording = phase === "recording";
-    pending = text;
-    phase = "review";
-    background(wasRecording ? stopMic() : closeStt(), "stopping dictation");
-    void draw();
+  /** Drops the recording without sending it anywhere. */
+  const abandonRecording = (): void => {
+    clearTimeout(recordTimer);
+    dictation += 1;
+    chunks = [];
+    recordedBytes = 0;
   };
 
   const startMic = async (): Promise<void> => {
     const current = inspection();
-    // `starting` keeps a second tap during a slow connect from opening a
-    // second socket and a second microphone session.
-    if (!current || phase !== "idle" || starting || closed) return;
+    // `starting` keeps a second tap during a slow open from opening a second
+    // microphone session.
+    if (!current || phase !== "idle" || starting || closed || paused) return;
     starting = true;
-
-    const onStatus = (s: SttStatus): void => { status = s; void draw(); };
-    const provider = usesMockStt(data)
-      ? createMockStt({ onTranscript, onStatus })
-      : createWebSocketStt({
-          url: data.sttUrl,
-          ...(data.sttToken ? { token: data.sttToken } : {}),
-          language: data.language,
-          onTranscript,
-          onStatus,
-        });
-    stt = provider;
-
+    notice = null;
+    status = "idle";
     try {
-      await provider.start();
-      const ok = closed ? false : await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
-      if (!ok || closed) {
-        if (!closed) console.warn("[fieldlog] microphone was refused");
-        // Left while the microphone was opening: it must not stay on.
+      const { value: ok, timedOut } = await withTimeout(bridge.audioControl(true, AudioInputSource.Glasses), MIC_TIMEOUT_MS, false);
+      if (timedOut) {
+        // A late "yes" must not leave the microphone on.
+        void bridge.audioControl(false).catch(() => undefined);
+      }
+      if (closed || paused) {
         if (ok) await micOff();
-        if (stt === provider) stt = null;
-        await provider.stop();
         return;
       }
+      if (!ok) {
+        // Said on the glasses: a refused microphone used to look like an ignored tap.
+        console.warn("[fieldlog] microphone was refused");
+        notice = "micDenied";
+        return;
+      }
+      abandonRecording();
       phase = "recording";
-    } catch (error) {
-      console.warn("[fieldlog] speech server unavailable:", error);
-      if (stt === provider) stt = null;
-      await provider.stop().catch(() => undefined);
-      // After stop(): it reports "idle", which would hide the error again.
-      status = "error";
+      const mine = dictation;
+      recordTimer = setTimeout(() => {
+        if (phase === "recording" && dictation === mine) background(endRecording(), "stopping the microphone");
+      }, MAX_DICTATION_MS);
     } finally {
       starting = false;
+      await draw();
     }
-    await draw();
   };
 
   /**
-   * Stop tapped: the microphone goes off at once, but the speech connection
-   * stays open until the final transcript arrives — closing it right away
-   * would throw away exactly the words just spoken.
+   * Stop tapped (or the time limit reached): the microphone goes off, the
+   * recording goes as one WAV to the Whisper server, and the text comes back
+   * for review — an inspection report is a document someone acts on.
    */
   const endRecording = async (): Promise<void> => {
+    if (phase !== "recording") return;
+    clearTimeout(recordTimer);
     phase = "transcribing";
-    clearTimeout(finalTimer);
-    finalTimer = setTimeout(() => {
-      if (phase !== "transcribing") return;
+    status = "connecting";
+    const mine = dictation;
+    void draw();
+    await micOff();
+    const recorded = chunks;
+    const bytes = recordedBytes;
+    chunks = [];
+    recordedBytes = 0;
+
+    let text = "";
+    if (DEMO && usesMockStt(data)) {
+      text = mockTranscript(mockCount++);
+    } else if (bytes >= MIN_DICTATION_BYTES) {
+      try {
+        text = await transcribe(buildWav(recorded), speechServer(data), {
+          language: data.language,
+          ...(data.sttToken ? { token: data.sttToken } : {}),
+        });
+      } catch (error) {
+        if (dictation !== mine || closed) return;
+        console.warn("[fieldlog] speech server unavailable:", error);
+        status = "error";
+        phase = "idle";
+        await draw();
+        return;
+      }
+    }
+    if (dictation !== mine || closed || phase !== "transcribing") return;
+    status = "idle";
+    if (!text) {
+      notice = "heardNothing";
       phase = "idle";
-      background(closeStt(), "closing the speech connection");
-      void draw();
-    }, FINAL_WAIT_MS);
-    await bridge.audioControl(false).catch(() => undefined);
+    } else {
+      pending = text;
+      phase = "review";
+    }
+    await draw();
   };
 
   const keepPending = async (): Promise<void> => {
     const current = inspection();
     if (!current || pending === null) return;
+    pendingDiscard = null;
     await persist(addEntry(current, pending, data.severity, Date.now()));
     pending = null;
     phase = "idle";
@@ -270,7 +289,14 @@ async function boot(): Promise<void> {
     const asset = await bridge.captureImageFromCamera().catch(() => null);
     // Read again: an entry may have been filed while the camera was open.
     let current = inspection();
-    if (!asset?.base64 || !current) return;
+    if (!current) return;
+    if (!asset?.base64) {
+      // Cancelled or refused: said on the glasses instead of nothing at all.
+      notice = "noPhoto";
+      await draw();
+      return;
+    }
+    notice = null;
 
     // With nothing to attach it to, the photo becomes an entry of its own.
     if (current.entries.length === 0) current = addEntry(current, t(locale, "photoOnly"), data.severity, Date.now());
@@ -283,30 +309,36 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  await draw();
-
   let clock: ReturnType<typeof setInterval> | undefined;
 
   /** The microphone was paused for the exit dialog and comes back if the user stays. */
   let micPausedForExit = false;
 
+  /** Everything off for good: after the exit dialog, a system exit or a crash. */
+  const shutDown = (micMayBeOn = true): void => {
+    closed = true;
+    micPausedForExit = false;
+    clearInterval(clock);
+    clearTimeout(confirmTimer);
+    const wasRecording = phase === "recording" || starting;
+    abandonRecording();
+    if (wasRecording && micMayBeOn) void bridge.audioControl(false).catch(() => undefined);
+  };
+
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: async () => {
-      closed = true;
-      micPausedForExit = false;
-      clearInterval(clock);
-      await stopMic().catch((error: unknown) => { console.warn("[fieldlog] stopping the microphone failed:", error); });
+    onConfirmed: () => {
+      // A recording was already paused (microphone off) before the dialog opened.
+      shutDown(false);
     },
     onStayed: async () => {
       if (!micPausedForExit) return;
       micPausedForExit = false;
       if (phase !== "recording") return;
-      // The speech connection stayed open, so the dictation simply continues.
+      // The recording so far is kept, so the dictation simply continues.
       const ok = await bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
       if (!ok) {
         console.warn("[fieldlog] microphone was refused");
         await endRecording();
-        await draw();
       }
     },
   }, "fieldlog");
@@ -325,26 +357,55 @@ async function boot(): Promise<void> {
     await requestExit();
   };
 
+  // Gestures first: the first page and everything native come after this.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const step = lifecycleFromEvent(event);
+    if (step === "foregroundExit") {
+      // Out of sight: a dictation in progress is dropped and the microphone
+      // closes; a text under review stays for when the user comes back.
+      paused = true;
+      if (phase === "recording" || phase === "transcribing") {
+        const wasRecording = phase === "recording";
+        abandonRecording();
+        phase = "idle";
+        status = "idle";
+        if (wasRecording) void bridge.audioControl(false).catch(() => undefined);
+      }
+      return;
+    }
+    if (step === "foregroundEnter") {
+      paused = false;
+      rebuildWanted = true;
+      void draw();
+      return;
+    }
+    if (isFinalExit(step)) { shutDown(); return; }
+
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
-    const pcm = audio?.audioPcm;
-    const bytes = phase === "recording" ? toBytes(pcm) : null;
-    if (bytes && bytes.length > 0) {
-      stt?.send(bytes);
+    if (audio !== undefined) {
+      if (phase !== "recording" || micPausedForExit) return;
+      const bytes = pcmBytes(audio.audioPcm);
+      if (!bytes || bytes.length === 0) return;
+      // Over the cap: stop and send what there is, never buffer more.
+      if (recordedBytes + bytes.length > MAX_DICTATION_BYTES) { background(endRecording(), "stopping the microphone"); return; }
+      chunks.push(bytes);
+      recordedBytes += bytes.length;
       return;
     }
 
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
+    if (gesture.gesture !== "scrollUp" && gesture.gesture !== "scrollDown") pendingDiscard = null;
 
     switch (gesture.gesture) {
       case "click":
+        notice = null;
         if (!inspection()) { background(startNew(), "starting an inspection"); return; }
         if (phase === "pick") { background(pickNote(), "saving the note"); return; }
         if (phase === "idle" && !voice()) { phase = "pick"; pickIndex = 0; break; }
         if (phase === "idle") { background(startMic(), "starting dictation"); return; }
-        if (phase === "recording") { background(endRecording(), "stopping the microphone"); break; }
+        if (phase === "recording") { background(endRecording(), "stopping the microphone"); return; }
         if (phase === "review") { background(keepPending(), "saving the entry"); return; }
         break;
 
@@ -356,12 +417,21 @@ async function boot(): Promise<void> {
           break;
         }
         if (phase === "review") {
-          // Discard rather than file a bad transcript.
-          pending = null;
-          phase = "idle";
+          // Discarding a transcript takes a second swipe within a few seconds:
+          // one stray swipe used to throw the text away for good.
+          const step = confirmStep(pendingDiscard, "discard", Date.now());
+          pendingDiscard = step.pending;
+          clearTimeout(confirmTimer);
+          if (step.confirmed) {
+            pending = null;
+            phase = "idle";
+          } else {
+            confirmTimer = setTimeout(() => { pendingDiscard = null; void draw(); }, CONFIRM_WINDOW_MS + 50);
+          }
           break;
         }
-        // Otherwise cycle the severity applied to the next entry.
+        if (phase !== "idle") break;
+        // Otherwise cycle the severity applied to the next entry (shown on screen).
         {
           const index = SEVERITIES.indexOf(data.severity);
           const delta = gesture.gesture === "scrollDown" ? 1 : -1;
@@ -395,14 +465,14 @@ async function boot(): Promise<void> {
   // The page does not survive a disconnect. The last view is forgotten too,
   // or an unchanged view would skip the rebuild and leave the display blank.
   bridge.onDeviceStatusChanged((deviceStatus) => {
-    if (deviceStatus?.connectType === "connected") {
-      pageReady = false;
-      lastView = null;
+    if (deviceStatus?.connectType === "connected" && !closed) {
+      rebuildWanted = true;
       void draw();
     }
   });
 
   clock = setInterval(() => { void draw(); }, 10_000);
+  void draw();
 
   const phone = mountPhoneUi({
     getData: () => data,
@@ -411,6 +481,7 @@ async function boot(): Promise<void> {
       // Quick notes or the server may have changed under an open list.
       if (phase === "pick" && voice()) phase = "idle";
       pickIndex = Math.min(pickIndex, notes().length);
+      status = "idle";
       await save(bridge, next);
       await draw();
     },

@@ -3,7 +3,7 @@ import { getLocale, languageSelect, locales, setLocale, tr, type Messages } from
 import { autoTitle, messages, quickNotes, t } from "../src/messages";
 import { buildView, FOOTER_WIDTH, HEADER_WIDTH, MAX_BODY_ROWS, type Phase, type ViewOptions } from "../src/glasses/view";
 import { addEntry, attachToLatest, setSection, startInspection, toCsv, toMarkdown, type Inspection } from "../src/log/entries";
-import { maskSecret, parseData, validateWsUrl } from "../src/storage/persist";
+import { maskSecret, parseData, validateSttUrl } from "../src/storage/persist";
 import { safeName } from "../src/ui/phone";
 
 const GLASSES_WIDTH = 56;
@@ -124,11 +124,11 @@ describe("glasses copy fits the display", () => {
     const base = { severity: "major" as const, pending: "Fliese gesprungen", status: "idle" as const, mock: false, locale: "de" as const };
     const empty = buildView(startInspection("i", "Rundgang", 0), { ...base, phase: "idle" }, 60_000);
     expect(empty.body).toContain("Noch keine Einträge.");
-    expect(empty.body).toContain("Nächster Eintrag: WICHTIG · wischen = ändern");
-    expect(empty.footer).toBe("seit 1m · tippen = Notiz · halten = Foto");
+    expect(empty.body).toContain("Nächster Eintrag: WICHTIG · Wischen = ändern");
+    expect(empty.footer).toBe("seit 1m · Tippen = Notiz · Halten = Foto");
     const review = buildView(startInspection("i", "R", 0), { ...base, phase: "review" });
     expect(review.header).toBe("Behalten?");
-    expect(review.footer).toBe("tippen = ja · wischen = nein · halten = Foto");
+    expect(review.footer).toBe("Tippen = behalten · Wischen = verwerfen · Halten = Foto");
     const pick = buildView(startInspection("i", "R", 0), { ...base, phase: "pick", quickNotes: ["Passt", "Fehlt"], pickIndex: 2 });
     expect(pick.header).toBe("Schnellnotiz");
     expect(pick.body).toEqual(["  Passt", "  Fehlt", "> Abbrechen", "Speichern als: WICHTIG"]);
@@ -239,8 +239,8 @@ describe("German exports", () => {
   });
 
   it("explains a bad server address in German", () => {
-    expect(validateWsUrl("http://x", "de").errors[0]).toContain("ws://");
-    expect(validateWsUrl("::::", "de").errors[0]).toBe("Die Server-Adresse ist ungültig.");
+    expect(validateSttUrl("wss://x", "de").errors[0]).toContain("https://");
+    expect(validateSttUrl("::::", "de").errors[0]).toBe("Die Server-Adresse ist ungültig.");
     expect(maskSecret("abc", "de")).toBe("gesetzt (3 Zeichen)");
     expect(maskSecret(undefined, "de")).toBe("keins");
   });

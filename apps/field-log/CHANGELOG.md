@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0] — 2026-10-13
+
+### Changed — dictation over HTTP
+
+- **Dictation now works with a stock Whisper server.** The note is recorded on the phone while you speak and sent as one WAV file to an OpenAI-compatible `/v1/audio/transcriptions` endpoint (multipart form without own headers, so no CORS preflight) — the same path as NextStop and OpenGlance. The old FieldLog-only WebSocket protocol is gone; a stored `ws://`/`wss://` address is dropped on load.
+- Private builds take the server from `VITE_STT_URL` (empty phone setting = build default) and list its exact origin in a private `app.json`; the public `app.json` no longer lists `ws://`/`wss://`.
+- A dictation stops by itself after 30 s and is sent; a mis-tap with almost no audio sends nothing ("Nichts verstanden – nochmal tippen.").
+- Discarding a transcript under review takes a second swipe within 4 s ("Nochmal wischen = Text verwerfen"); one stray swipe used to throw the text away.
+- Footers in the shared style: "Tippen = starten · 2× = Ende", "Tippen = Stopp", "Tippen = behalten · Wischen = verwerfen · Halten = Foto", "Wischen = ändern".
+
+### Fixed
+
+- A refused microphone is said on the glasses ("Mikrofon nicht freigegeben. In der Even-App erlauben, dann tippen.") instead of looking like an ignored tap; a cancelled or refused camera says "Kein Foto – abgebrochen oder nicht erlaubt.".
+- A microphone call that answers late (after 5 s) is switched off again instead of staying open.
+- Gestures are wired before the first page is drawn; a reconnect during a running draw is no longer undone by that draw.
+- Leaving through the system (another app, the system menu) drops a dictation in progress and closes the microphone; coming back rebuilds the page. A system exit or crash closes it for good. After the exit dialog the microphone is no longer switched off twice.
+
 ## [0.4.0] — 2026-10-13
 
 ### Changed

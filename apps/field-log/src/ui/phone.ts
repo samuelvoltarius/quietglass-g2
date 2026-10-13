@@ -1,6 +1,6 @@
 import {
   activeInspection, approximateBytes, hasSpeechServer, maskSecret, nextInspectionId, removeInspection,
-  upsertInspection, validateWsUrl, type FieldLogData,
+  upsertInspection, validateSttUrl, type FieldLogData,
 } from "../storage/persist";
 import {
   addEntry, countBySeverity, finish, removeEntry, setSection, setSeverity, startInspection,
@@ -240,7 +240,7 @@ function template(data: FieldLogData, view: View): string {
     <p class="hint">${L("p.advancedHint")}</p>
     <p class="hint"><strong>${L(voice ? "p.modeVoice" : "p.modeQuick")}</strong></p>
     <label for="stt">${L("p.server")}</label>
-    <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="wss://your-host:9000/asr" />
+    <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="https://your-host:8457" />
     <label for="stt-token">${L("p.token", { state: "<em>" + escapeHtml(maskSecret(data.sttToken, locale)) + "</em>" })}</label>
     <input id="stt-token" type="password" />
     <label for="lang">${L("p.speechLanguage")}</label>
@@ -373,7 +373,7 @@ function wire(
   byId<HTMLButtonElement>("save-stt")?.addEventListener("click", () => {
     keepAdvancedOpen();
     const sttUrl = byId<HTMLInputElement>("stt")?.value.trim() ?? "";
-    const check = validateWsUrl(sttUrl, locale);
+    const check = validateSttUrl(sttUrl, locale);
     if (!check.valid) { notify(check.errors.join(" ")); return; }
     const token = byId<HTMLInputElement>("stt-token")?.value ?? "";
     const data = current();

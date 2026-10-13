@@ -3,6 +3,7 @@ import type { Inspection, Severity } from "../log/entries";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { isCsvFormat, type CsvFormat } from "../csv";
+import { sttBase } from "../stt/provider";
 
 /**
  * Inspections live in the Even app's per-app storage on the phone.
@@ -16,7 +17,10 @@ export interface FieldLogData {
   readonly inspections: readonly Inspection[];
   /** Currently open inspection, or null. */
   readonly activeId: string | null;
-  /** Speech server; empty uses the mock. */
+  /**
+   * Whisper server (base address or full `/v1/audio/transcriptions` endpoint).
+   * Empty = the private build's default (`VITE_STT_URL`), else no dictation.
+   */
   readonly sttUrl: string;
   readonly sttToken?: string;
   readonly language: string;
@@ -41,9 +45,14 @@ export const EMPTY_DATA: FieldLogData = {
   quickNotes: [],
 };
 
+/** The Whisper address in use: the phone setting, else the build's default, else "". */
+export function speechServer(data: FieldLogData, build?: string): string {
+  return build === undefined ? sttBase(data.sttUrl) : sttBase(data.sttUrl, build);
+}
+
 /** No speech server set up: dictation is unavailable and quick notes are used. */
-export function usesMockStt(data: FieldLogData): boolean {
-  return data.sttUrl.trim() === "";
+export function usesMockStt(data: FieldLogData, build?: string): boolean {
+  return speechServer(data, build) === "";
 }
 
 export function hasSpeechServer(data: FieldLogData): boolean {
@@ -98,12 +107,13 @@ export async function load(bridge: EvenAppBridge): Promise<FieldLogData> {
   return parseData(await bridge.getLocalStorage(KEY));
 }
 
-export function validateWsUrl(url: string, locale: Locale = "en"): { valid: boolean; errors: string[] } {
+/** An http(s) address of a Whisper server; empty is valid (= build default or none). */
+export function validateSttUrl(url: string, locale: Locale = "en"): { valid: boolean; errors: string[] } {
   const trimmed = url.trim();
   if (!trimmed) return { valid: true, errors: [] };
   try {
     const parsed = new URL(trimmed);
-    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return { valid: false, errors: [t(locale, "v.scheme")] };
     }
     return { valid: true, errors: [] };
@@ -138,7 +148,9 @@ export function parseData(raw: string): FieldLogData {
       ? value.activeId
       : null;
 
-    const sttUrl = typeof value.sttUrl === "string" && validateWsUrl(value.sttUrl).valid
+    // A ws:// address from 0.4 and older belongs to the retired WebSocket
+    // protocol: dropped, so the build's Whisper default takes over.
+    const sttUrl = typeof value.sttUrl === "string" && validateSttUrl(value.sttUrl).valid
       ? value.sttUrl.trim()
       : "";
 

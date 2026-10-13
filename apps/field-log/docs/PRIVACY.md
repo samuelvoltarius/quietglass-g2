@@ -18,7 +18,7 @@ photos stay on your phone until you export them.
 | Permission (`app.json`) | Why | Used for nothing else |
 |---|---|---|
 | `g2-microphone` (optional) | Dictate one note at a time after you tap | Never on launch, never continuous; always shown as **● MIC** |
-| `network` (`http`, `https`, `ws`, `wss`, optional) | Send dictation to the speech server you enter | No other host is contacted; without a server nothing is sent |
+| `network` (`http`, `https`, optional) | Send dictation to the speech server you enter | No other host is contacted; without a server nothing is sent |
 
 ## The microphone
 
@@ -26,8 +26,10 @@ FieldLog opens the microphone **only when you tap to dictate**. Never on
 launch, never continuously. While it is open the glasses show **● MIC**, and
 that indicator is not configurable.
 
-Recording stops as soon as the transcript arrives — the microphone is open for
-the length of one spoken entry, not for the length of the walk.
+Recording stops on your second tap, after 30 seconds at the latest, or when you
+leave the app — the microphone is open for the length of one spoken entry, not
+for the length of the walk. The recording is held in memory only until it has
+been sent, and dropped right after.
 
 ## The camera
 
