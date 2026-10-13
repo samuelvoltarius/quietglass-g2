@@ -13,10 +13,16 @@ import { createImageLane } from "./glasses/lane";
 import { LEVEL_IMAGE, drawLevel, levelKey, type LevelState } from "./glasses/digits";
 import { updatePeak, type Peak } from "./glasses/peak";
 import { encodePng } from "./glasses/pixel";
-import { effectiveOffset, isCalibrated, load, save, type NoiseData } from "./storage/persist";
+import { effectiveOffset, isCalibrated, load, loadDoseRaw, parseDose, save, saveDose, type NoiseData } from "./storage/persist";
+import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
+
+/** A hold arms "clear today's dose"; a second hold or a tap within this window confirms. */
+const RESET_CONFIRM_MS = 4000;
+/** While measuring, today's dose is written this often (one number, see persist.ts). */
+const DOSE_SAVE_MS = 30_000;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -38,7 +44,16 @@ async function boot(): Promise<void> {
 
 
   let data: NoiseData = await load(bridge);
-  let dose: DoseState = createDose();
+  // Today's dose survives a restart (the phone was locked and the Even app unloaded us).
+  let dose: DoseState = parseDose(await loadDoseRaw(bridge)) ?? createDose();
+  let lastDoseSave = Date.now();
+  /** Until when a second hold (or a tap) clears today's dose; 0 = not asked. */
+  let resetArmedUntil = 0;
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Left through the system while measuring: the microphone reopens when the app comes back. */
+  let resumeAfterBackground = false;
+  let backgrounded = false;
+  let demoTimer: ReturnType<typeof setInterval> | undefined;
   let listening = false;
   let smoothedDbfs: number | null = null;
   let lastBlockAt: number | null = null;
@@ -71,7 +86,19 @@ async function boot(): Promise<void> {
       calibrated: isCalibrated(data),
       locale,
       micError,
+      confirmReset: resetArmedUntil > Date.now(),
     });
+
+  const persistDose = (): void => {
+    lastDoseSave = Date.now();
+    void saveDose(bridge, dose).catch((error: unknown) => { console.warn("[decibelguard] saving the dose failed:", error); });
+  };
+
+  const disarmReset = (): void => {
+    resetArmedUntil = 0;
+    clearTimeout(resetTimer);
+    resetTimer = undefined;
+  };
 
   /**
    * Asks the lane for the meter and the dose bar. Both keys are quantised, so
@@ -92,7 +119,7 @@ async function boot(): Promise<void> {
   };
 
   const drawOnce = async (): Promise<void> => {
-    if (closed) return;
+    if (closed || backgrounded) return;
     const view = currentView();
     if (!pageReady || !sameView(lastView, view)) {
       const created = !pageReady;
@@ -172,9 +199,12 @@ async function boot(): Promise<void> {
 
   const requestExit = createExitRequest(bridge, {
     onConfirmed: () => {
+      persistDose();
       closed = true;
       resumeListening = false;
       clearInterval(tick);
+      clearInterval(demoTimer);
+      disarmReset();
       lane.close();
     },
     onStayed: async () => {
@@ -199,12 +229,56 @@ async function boot(): Promise<void> {
 
   await draw();
 
+  /** Left through the system: microphone off, dose saved, nothing drawn until the app is back. */
+  const goBackground = async (): Promise<void> => {
+    if (backgrounded) return;
+    backgrounded = true;
+    disarmReset();
+    clearInterval(tick);
+    tick = undefined;
+    if (listening || opening) {
+      resumeAfterBackground = true;
+      await stopListening().catch((error: unknown) => { console.warn("[decibelguard] stop failed:", error); });
+    }
+    persistDose();
+  };
+
+  const comeBack = async (): Promise<void> => {
+    backgrounded = false;
+    pageReady = false;
+    lastView = null;
+    if (tick === undefined) tick = setInterval(onTick, 1000);
+    await draw();
+    if (resumeAfterBackground) {
+      resumeAfterBackground = false;
+      await startListening();
+    }
+  };
+
+  const shutDown = async (): Promise<void> => {
+    disarmReset();
+    clearInterval(tick);
+    clearInterval(demoTimer);
+    resumeAfterBackground = false;
+    if (opening) await opening.catch(() => undefined);
+    // closed first: a microphone that is still opening closes itself again.
+    closed = true;
+    if (listening) await bridge.audioControl(false).catch(() => undefined);
+    listening = false;
+    lane.close();
+    persistDose();
+  };
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { void comeBack(); return; }
+    if (lifecycle === "background") { void goBackground(); return; }
+    if (lifecycle === "exit") { void shutDown(); return; }
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
 
-    const bytes = listening ? toBytes(pcm) : null;
+    const bytes = listening && !backgrounded ? toBytes(pcm) : null;
     if (bytes && bytes.length > 0) {
       const reading = levelFromPcm(bytes);
       smoothedDbfs = smoothDb(smoothedDbfs, reading.dbfs, data.smoothing);
@@ -225,13 +299,28 @@ async function boot(): Promise<void> {
 
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
+    // A gesture means the app is visible again, even if no "foreground" came first.
+    if (backgrounded) { void comeBack(); return; }
+
+    // Clearing today's dose takes two steps: hold asks, a second hold or a tap within 4 s confirms.
+    const armed = resetArmedUntil > Date.now();
+    if (armed && (gesture.gesture === "longPress" || gesture.gesture === "click")) {
+      disarmReset();
+      dose = resetDose();
+      persistDose();
+      void draw();
+      return;
+    }
+    if (armed && gesture.gesture !== "longPressRelease") disarmReset();
 
     switch (gesture.gesture) {
       case "click":
         void (listening ? stopListening() : startListening());
         return;
       case "longPress":
-        dose = resetDose();
+        resetArmedUntil = Date.now() + RESET_CONFIRM_MS;
+        clearTimeout(resetTimer);
+        resetTimer = setTimeout(() => { disarmReset(); void draw(); }, RESET_CONFIRM_MS + 20);
         break;
       case "doubleClick":
         void exitWithDialog();
@@ -249,13 +338,17 @@ async function boot(): Promise<void> {
     }
   });
 
-  tick = setInterval(() => { void draw(); }, 1000);
+  function onTick(): void {
+    if (listening && Date.now() - lastDoseSave >= DOSE_SAVE_MS) persistDose();
+    void draw();
+  }
+  tick = setInterval(onTick, 1000);
 
   // ?demo=1 (simulator, screenshots): a made-up level that swells and fades, no microphone.
   if (typeof location !== "undefined" && new URLSearchParams(location.search).get("demo") === "1") {
     listening = true;
     const started = Date.now();
-    setInterval(() => {
+    demoTimer = setInterval(() => {
       if (closed) return;
       const seconds = (Date.now() - started) / 1000;
       smoothedDbfs = -60 + 14 * Math.sin(seconds / 4) + 4 * Math.sin(seconds * 1.7);

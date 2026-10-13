@@ -30,6 +30,8 @@ export interface ViewOptions {
   readonly locale?: Locale;
   /** The last attempt to open the microphone was refused. */
   readonly micError?: boolean;
+  /** A hold asked to clear today's dose; a second hold or a tap within a few seconds confirms. */
+  readonly confirmReset?: boolean;
 }
 
 export function buildView(
@@ -37,7 +39,11 @@ export function buildView(
   settings: DoseSettings,
   options: ViewOptions,
 ): NoiseView {
-  return fitView(composeView(dose, settings, options));
+  const view = composeView(dose, settings, options);
+  if (!options.confirmReset) return fitView(view);
+  // The question replaces the gesture line; the microphone indicator stays in front.
+  const ask = t(options.locale ?? "en", "g.confirmReset");
+  return fitView({ ...view, footer: options.listening ? t(options.locale ?? "en", "g.micOn") + " · " + ask : ask });
 }
 
 /** The view before the safety cut; tests check it never needs one. */

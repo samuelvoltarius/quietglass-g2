@@ -1,12 +1,13 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
-import { DEFAULT_DOSE, type DoseSettings } from "../noise/dose";
+import { DEFAULT_DOSE, type DoseSettings, type DoseState } from "../noise/dose";
 
 /**
  * DecibelGuard stores thresholds and the calibration offset — nothing else.
  *
  * Deliberately **no audio and no level history** are written. A record of how
  * loud it was around someone, minute by minute, is a record of where they were
- * and what they were doing. The dose exists in memory for the session only.
+ * and what they were doing. Only today's running total (one number, see
+ * `saveDose`) is kept until midnight, so a restart does not wipe it.
  */
 
 export interface NoiseData {
@@ -96,4 +97,49 @@ function numberOr(value: unknown, fallback: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Today's dose so far: one running total plus the local date, nothing about
+ * when or where it was loud. The Even app unloads DecibelGuard after the
+ * phone was locked for a while; without this the "x % of today's limit"
+ * would silently start again at 0. A new day starts at 0.
+ */
+export const DOSE_KEY = "quietglass.decibelguard.today.v1";
+
+export function dayKey(now: number): string {
+  const d = new Date(now);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+export async function saveDose(bridge: EvenAppBridge, dose: DoseState, now = Date.now()): Promise<void> {
+  await bridge.setLocalStorage(DOSE_KEY, JSON.stringify({
+    day: dayKey(now),
+    fraction: dose.fraction,
+    measuredSeconds: Math.round(dose.measuredSeconds),
+    peakDb: dose.peakDb,
+  }));
+}
+
+export async function loadDoseRaw(bridge: EvenAppBridge): Promise<string> {
+  return (await bridge.getLocalStorage(DOSE_KEY).catch(() => "")) ?? "";
+}
+
+/** The stored dose if it is from today (local time), else null. */
+export function parseDose(raw: string, now = Date.now()): DoseState | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { day?: unknown; fraction?: unknown; measuredSeconds?: unknown; peakDb?: unknown };
+    if (v.day !== dayKey(now)) return null;
+    const fraction = numberOr(v.fraction, -1);
+    if (fraction < 0) return null;
+    return {
+      fraction,
+      measuredSeconds: Math.max(0, numberOr(v.measuredSeconds, 0)),
+      peakDb: typeof v.peakDb === "number" && Number.isFinite(v.peakDb) ? v.peakDb : null,
+      startedAt: null,
+    };
+  } catch {
+    return null;
+  }
 }

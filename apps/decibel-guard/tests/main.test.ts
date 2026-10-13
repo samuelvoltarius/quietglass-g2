@@ -14,7 +14,8 @@ vi.mock("../src/glasses/pixel", () => ({ encodePng: async () => new Uint8Array([
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
 
-function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRefusals?: number; imageDelayMs?: number } = {}) {
+function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRefusals?: number; imageDelayMs?: number; storage?: Map<string, string> } = {}) {
+  const storage = options.storage ?? new Map<string, string>();
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
@@ -31,8 +32,8 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
     writes.inFlight -= 1;
   };
   const bridge = {
-    getLocalStorage: async () => "",
-    setLocalStorage: async () => true,
+    getLocalStorage: async (key: string) => storage.get(key) ?? "",
+    setLocalStorage: async (key: string, value: string) => { storage.set(key, value); return true; },
     rebuildPageContainer: async () => true,
     createStartUpPageContainer: async (page: { textObject?: { content?: string }[] }) => { texts.push(...(page.textObject ?? []).map((part) => part.content ?? "")); await write(); return 0; },
     textContainerUpgrade: async (update: { content?: string }) => { texts.push(update.content ?? ""); await write(); return true; },
@@ -52,7 +53,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, shutdown, mic, writes, texts, images,
+    bridge, shutdown, mic, writes, texts, images, storage,
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     audio: (amplitude: number) => {
       const pcm = new Uint8Array(320);
@@ -72,7 +73,7 @@ describe("decibelguard loop", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  async function boot(options: { writeDelayMs?: number; micDelayMs?: number; micRefusals?: number; imageDelayMs?: number } = {}) {
+  async function boot(options: { writeDelayMs?: number; micDelayMs?: number; micRefusals?: number; imageDelayMs?: number; storage?: Map<string, string> } = {}) {
     const fake = fakeBridge(options);
     harness.bridge = fake.bridge;
     vi.resetModules();
@@ -219,5 +220,92 @@ describe("decibelguard loop", () => {
       expect(writes, name).toBeGreaterThan(0);
       expect(writes, name).toBeLessThanOrEqual(15);
     }
+  });
+
+  /** Measures loud audio for `seconds`, one block every 100 ms. */
+  async function loud(fake: ReturnType<typeof fakeBridge>, seconds: number): Promise<void> {
+    for (let i = 0; i < seconds * 10; i++) {
+      fake.audio(20000);
+      await vi.advanceTimersByTimeAsync(100);
+    }
+  }
+
+  it("a single hold does not clear today's dose; a second hold within 4 s does", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await loud(fake, 20);
+    const before = JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}").fraction ?? 0;
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.some((text) => /Nochmal halten = Tagesdosis löschen|hold again = clear today's dose/.test(text))).toBe(true);
+    // Left alone, the question goes away and nothing is cleared.
+    await vi.advanceTimersByTimeAsync(4500);
+    fake.emit(1); // swipe: nothing
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(500);
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(50);
+    const after = JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}");
+    expect(after.fraction).toBe(0);
+    expect(before).toBeGreaterThanOrEqual(0);
+  });
+
+  it("a hold followed by a tap within 4 s clears the dose and does not stop measuring", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await loud(fake, 5);
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic).toEqual([true]);
+    expect(JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}").fraction).toBe(0);
+  });
+
+  it("keeps today's dose across a restart (phone locked, app unloaded)", async () => {
+    const storage = new Map<string, string>();
+    const first = await boot({ storage });
+    first.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await loud(first, 40);
+    first.emit(5);
+    await vi.advanceTimersByTimeAsync(50);
+    const saved = JSON.parse(storage.get("quietglass.decibelguard.today.v1") ?? "{}");
+    expect(saved.fraction).toBeGreaterThan(0);
+
+    const second = await boot({ storage });
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(second.texts.some((text) => /Heute \d+% vom Limit|dose \d+%/.test(text))).toBe(true);
+    // The microphone opens only on a tap.
+    expect(second.mic).toEqual([]);
+  });
+
+  it("closes the microphone when left through the system and reopens it on return", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.mic).toEqual([true, false]);
+    const writes = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.writes.count).toBe(writes);
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic).toEqual([true, false, true]);
+  });
+
+  it("closes the microphone for good on a system exit", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(7);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.mic).toEqual([true, false]);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.mic).toEqual([true, false]);
   });
 });

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1] — 2026-10-13
+
+### Fixed
+
+- Clearing today's dose takes two steps: hold asks ("Nochmal halten = Tagesdosis löschen" on the glasses), a second hold or a tap within 4 s confirms; anything else, or waiting, keeps the dose.
+- Today's dose survives a restart of the app (phone locked, Even app unloaded it). Only the day's total is kept (one number, until midnight) — still no audio and no level history.
+- Leaving through the system closes the microphone and reopens it on return when it was measuring; a system exit closes it for good. The demo timer is stopped on exit.
+
+### Changed
+
+- Idle footer names hold and 2×.
+
 ## [0.4.0] — 2026-10-13
 
 ### Added

@@ -111,7 +111,7 @@ describe("first run", () => {
   it("tells the user on the glasses exactly what to do", () => {
     const view = buildView(createDose(), DEFAULT_DOSE, { listening: false, level: null, calibrated: false, locale: "de" });
     expect(view.body).toEqual(["Misst gerade nicht.", "Tippe einmal, um zu messen.", "Werte sind Schätzwerte, siehe Handy."]);
-    expect(view.footer).toBe("Tippen = Start");
+    expect(view.footer).toBe("Tippen = Start · Halten = Dosis auf 0 · 2× = Ende");
   });
 
   it("measures something useful without any calibration", () => {
