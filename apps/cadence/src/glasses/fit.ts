@@ -8,7 +8,7 @@
 export const LINE_COLS = 56;
 export const HEADER_COLS = 48;
 export const BODY_COLS = 56;
-export const BODY_ROWS = 5;
+export const BODY_ROWS = 4;
 
 export function fit(text: string, max: number): string {
   if (text.length <= max) return text;

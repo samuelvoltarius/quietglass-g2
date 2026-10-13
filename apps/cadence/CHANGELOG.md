@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0] — 2026-10-13
+
+### Added
+
+- The tempo as large pixel digits (image, 224 x 72) with a small "BPM" beside it; it is only resent when the tempo changes.
+- A pendulum (image, 200 x 96) that swings from side to side with every beat up to 120 BPM; at 60 BPM and below it also passes through the middle half-way between two beats. Above 120 BPM it is not drawn and the row of beat dots carries the beat, as before. A picture is only sent when the pendulum has moved.
+- The beat dots and info lines sit below the pictures (four rows).
+
+### Fixed
+
+- Page set-up on the glasses: one `rebuildPageContainer`, then exactly one `createStartUpPageContainer`, later pages are rebuilds.
+
 ## [0.3.4] — 2026-10-13
 
 ### Changed

@@ -1,8 +1,5 @@
 import {
   CreateStartUpPageContainer,
-  ImageContainerProperty,
-  ImageRawDataUpdate,
-  ImageRawDataUpdateResult,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -10,17 +7,21 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { CadenceView } from "./view";
-import { ICON_HEIGHT, ICON_WIDTH, renderPixelIcon, type PixelIcon } from "./pixel";
+import type { Bitmap } from "./gfx";
+import { ImageLink, imageContainer, type ImageSlot } from "./images";
+import { BPM_HEIGHT, BPM_WIDTH, PENDULUM_HEIGHT, PENDULUM_WIDTH } from "./charts";
 
 /**
  * Renders the metronome onto the G2.
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
- * changes text without rebuilding the page — on real hardware a rebuild falls
- * back to a full page creation and costs seconds, discarding input meanwhile.
+ * One layout on the 576 x 288 display: header with the sign in its top-right
+ * corner, the big tempo number (image) at the left and the pendulum (image)
+ * beside it, the beat dots and info lines below, the footer at the bottom.
+ * Text goes through `textContainerUpgrade`, pictures through
+ * `updateImageRawData`, both only when something changed.
  */
 
+const NL = String.fromCharCode(10);
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
 
@@ -31,11 +32,24 @@ interface ContainerSpec {
   readonly height: number;
 }
 
+export const ICON_WIDTH = 64;
+export const ICON_HEIGHT = 30;
+
 const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
   header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
+  body: { id: 2, name: "body", y: 138, height: 112 },
   footer: { id: 3, name: "footer", y: 252, height: 34 },
 };
+
+export const ICON: ImageSlot = { id: 4, name: "pixel-icon", x: SCREEN_WIDTH - ICON_WIDTH, y: 1, width: ICON_WIDTH, height: ICON_HEIGHT, z: 4 };
+export const BPM: ImageSlot = { id: 5, name: "bpm", x: 0, y: 40, width: BPM_WIDTH, height: BPM_HEIGHT, z: 5 };
+export const PENDULUM: ImageSlot = { id: 6, name: "pendulum", x: BPM_WIDTH + 24, y: 36, width: PENDULUM_WIDTH, height: PENDULUM_HEIGHT, z: 6 };
+
+export interface Frames {
+  readonly icon: Bitmap;
+  readonly bpm: Bitmap;
+  readonly pendulum: Bitmap;
+}
 
 export interface RenderResult {
   readonly ok: boolean;
@@ -43,17 +57,19 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: CadenceView, icon?: PixelIcon): CreateStartUpPageContainer {
+const link = new ImageLink();
+
+export function buildPage(view: CadenceView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: icon ? 4 : 3,
+    containerTotalNum: 6,
+    imageObject: [ICON, BPM, PENDULUM].map(imageContainer),
     textObject: [
-      // The header leaves the top-right corner to the icon; the body runs full width below it.
-      text(CONTAINER.header, view.header, 1, false, icon ? ICON_WIDTH : 0),
+      // The header leaves the top-right corner to the sign.
+      text(CONTAINER.header, view.header, 1, false, ICON_WIDTH),
       // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true),
+      text(CONTAINER.body, view.body.join(NL), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: icon ? [new ImageContainerProperty({ containerID: 4, containerName: "pixel-icon", xPosition: SCREEN_WIDTH - ICON_WIDTH, yPosition: 1, width: ICON_WIDTH, height: ICON_HEIGHT, zOrderIndex: 4 })] : [],
   });
 }
 
@@ -79,28 +95,37 @@ function text(
 }
 
 /**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
+ * Puts the page on the glasses. The very first time on a bridge, one
+ * `rebuildPageContainer` goes out first (result ignored, failure swallowed: on
+ * real glasses it is what registers the input route) and then
+ * `createStartUpPageContainer` runs exactly once. A page needed again later is
+ * a rebuild; a second creation would be refused as "invalid".
  */
-export async function createPage(bridge: EvenAppBridge, view: CadenceView, icon?: PixelIcon): Promise<RenderResult> {
-  const page = buildPage(view, icon);
-  try {
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-  } catch {
-    // Expected on current firmware; the creation below is the real path.
-  }
+const started = new WeakSet<EvenAppBridge>();
 
+export async function createPage(bridge: EvenAppBridge, view: CadenceView, frames: Frames): Promise<RenderResult> {
+  const page = buildPage(view);
+  sentLength.clear();
+  link.reset();
   try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return updatePixel(bridge, icon);
-    return { ok: false, reason: describeCreateResult(result) };
+    if (!started.has(bridge)) {
+      try {
+        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      } catch {
+        // Expected on current firmware; the creation below is the real path.
+      }
+      const result = await bridge.createStartUpPageContainer(page);
+      if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
+      started.add(bridge);
+    } else {
+      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      if (!ok) return { ok: false, reason: "rebuild refused" };
+    }
+    return pushImages(bridge, frames);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
-
-/** Fast path: change the text of the three containers in place. */
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
@@ -118,34 +143,40 @@ function guarded(specId: number, content: string): { content: string; contentLen
   return { content: text, contentLength: length };
 }
 
-export async function updatePage(bridge: EvenAppBridge, view: CadenceView, icon?: PixelIcon): Promise<RenderResult> {
-  const updates: Array<[ContainerSpec, string]> = [
-    [CONTAINER.header, view.header],
-    [CONTAINER.body, view.body.join("\n")],
-    [CONTAINER.footer, view.footer],
+async function pushImages(bridge: EvenAppBridge, frames: Frames): Promise<RenderResult> {
+  for (const [slot, frame] of [[ICON, frames.icon], [BPM, frames.bpm], [PENDULUM, frames.pendulum]] as const) {
+    const sent = await link.push(bridge, slot, frame);
+    if (!sent.ok) return { ok: false, reason: sent.reason ?? "image failed" };
+  }
+  return { ok: true };
+}
+
+/** Only the containers whose text changed are written; pictures only when they changed. */
+export async function updatePage(
+  bridge: EvenAppBridge,
+  view: CadenceView,
+  frames: Frames,
+  previous: CadenceView | null = null,
+): Promise<RenderResult> {
+  const updates: Array<[ContainerSpec, string, string | undefined]> = [
+    [CONTAINER.header, view.header, previous?.header],
+    [CONTAINER.body, view.body.join(NL), previous?.body.join(NL)],
+    [CONTAINER.footer, view.footer, previous?.footer],
   ];
 
   try {
-    for (const [spec, content] of updates) {
+    for (const [spec, content, before] of updates) {
+      if (before !== undefined && before === content) continue;
       await bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
       }));
     }
-    return updatePixel(bridge, icon);
+    return await pushImages(bridge, frames);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
-}
-
-async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
-  if (!icon) return { ok: true };
-  try {
-    const imageData = await renderPixelIcon(icon);
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: 4, containerName: "pixel-icon", imageData }));
-    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
-  } catch (error) { return { ok: false, reason: errorMessage(error) }; }
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

@@ -1,18 +1,20 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import {
-  clampBpm, createState, msToNextBeat, reset, retime, toggle, type MetronomeState,
+  clampBpm, createState, msPerBeat, msToNextBeat, reset, retime, toggle, type MetronomeState,
 } from "./metronome/engine";
 import { addSession, nextSessionId, type PracticeSession } from "./practice/log";
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type CadenceView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { createPage, updatePage, ICON_HEIGHT, ICON_WIDTH } from "./glasses/render";
+import { PENDULUM_MIDSWING_MAX_BPM, bpmFrame, pendulumFrame, pendulumSwing } from "./glasses/charts";
+import { bitmapKey, iconBitmap } from "./glasses/gfx";
 import { load, save, setSettings, type CadenceData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { createExitRequest } from "./exit";
 
-const PIXEL_ICON = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
+const METRONOME_SIGN = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
 
 /** Tempo step for a swipe on the glasses. */
 const BPM_STEP = 4;
@@ -24,8 +26,10 @@ async function boot(): Promise<void> {
   let state: MetronomeState = createState();
   let sessionStartedAt: number | null = null;
   let lastView: CadenceView | null = null;
+  let lastFrames = "";
   let pageReady = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let midTimer: ReturnType<typeof setTimeout> | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
   let closed = false;
   let drawing: Promise<void> | null = null;
@@ -44,12 +48,20 @@ async function boot(): Promise<void> {
   const drawOnce = async (): Promise<void> => {
     if (closed) return;
     const view = currentView();
-    if (sameView(lastView, view)) return;
+    // Pictures are pure in (tempo) and (state, now); they are only sent when they differ from what is shown.
+    const frames = {
+      icon: iconBitmap(METRONOME_SIGN, ICON_WIDTH, ICON_HEIGHT),
+      bpm: bpmFrame(data.settings.bpm),
+      pendulum: pendulumFrame(pendulumSwing(state, data.settings, Date.now())),
+    };
+    const key = [frames.icon, frames.bpm, frames.pendulum].map(bitmapKey).join("|");
+    if (pageReady && sameView(lastView, view) && key === lastFrames) return;
 
-    const result = pageReady ? await updatePage(bridge, view, PIXEL_ICON) : await createPage(bridge, view, PIXEL_ICON);
+    const result = pageReady ? await updatePage(bridge, view, frames, lastView) : await createPage(bridge, view, frames);
     if (result.ok) {
       pageReady = true;
       lastView = view;
+      lastFrames = key;
       return;
     }
     pageReady = false;
@@ -90,10 +102,15 @@ async function boot(): Promise<void> {
    */
   const scheduleBeat = (): void => {
     clearTimeout(timer);
+    clearTimeout(midTimer);
     if (!state.running || closed) return;
     const delay = Math.max(20, msToNextBeat(state, data.settings, Date.now()));
     timer = setTimeout(() => {
       void draw();
+      // A slow beat leaves room for a second picture: the pendulum passing the middle.
+      if (data.settings.bpm <= PENDULUM_MIDSWING_MAX_BPM) {
+        midTimer = setTimeout(() => { void draw(); }, msPerBeat(data.settings.bpm) / 2);
+      }
       scheduleBeat();
     }, delay);
   };
@@ -121,6 +138,7 @@ async function boot(): Promise<void> {
       endSession();
       closed = true;
       clearTimeout(timer);
+      clearTimeout(midTimer);
       clearInterval(tick);
     },
   }, "cadence");
