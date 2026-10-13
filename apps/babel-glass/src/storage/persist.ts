@@ -78,7 +78,29 @@ export async function save(bridge: EvenAppBridge, data: BabelData): Promise<void
 }
 
 export async function load(bridge: EvenAppBridge): Promise<BabelData> {
-  return parseData(await bridge.getLocalStorage(KEY));
+  return withBuildDefaults(parseData(await bridge.getLocalStorage(KEY)));
+}
+
+/**
+ * Servers a private build ships with (set at build time, never in the repo):
+ * VITE_BABEL_STT (wss://…), VITE_BABEL_LLM (…/v1), VITE_BABEL_MODEL.
+ */
+export interface BuildDefaults { readonly stt?: string; readonly llm?: string; readonly model?: string }
+const ENV = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
+export const BUILD_DEFAULTS: BuildDefaults = {
+  ...(ENV.VITE_BABEL_STT ? { stt: ENV.VITE_BABEL_STT } : {}),
+  ...(ENV.VITE_BABEL_LLM ? { llm: ENV.VITE_BABEL_LLM } : {}),
+  ...(ENV.VITE_BABEL_MODEL ? { model: ENV.VITE_BABEL_MODEL } : {}),
+};
+
+/** Empty server fields fall back to the build's own servers, so a private build works without typing anything. */
+export function withBuildDefaults(data: BabelData, defaults: BuildDefaults = BUILD_DEFAULTS): BabelData {
+  let next = data;
+  if (next.sttUrl.trim() === "" && defaults.stt) next = { ...next, sttUrl: defaults.stt };
+  if (!translationConfigured(next) && defaults.llm) {
+    next = { ...next, translateProvider: "openai", llmUrl: defaults.llm, llmModel: next.llmModel.trim() || defaults.model || "qwen" };
+  }
+  return next;
 }
 
 export interface UrlCheck {
