@@ -5,21 +5,33 @@ import {
 } from "./monitor/dashboard";
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type StatusView } from "./glasses/view";
+import { MetricHistory, type SparkSeries } from "./monitor/history";
+import { demoNasReport } from "./monitor/demo";
+import { PULSE_MS, signFrame, signState, sparklineFrame } from "./glasses/charts";
+import { bitmapKey } from "./glasses/gfx";
 import { availableActions, buildActionsView } from "./glasses/actions-view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage } from "./glasses/render";
+import { BODY_ROWS, createPage, rebuildPage, updatePage, type Frames, type Layout } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
+/** `?demo=1&scene=graph|warn|critical` shows a NAS with CPU/GPU/RAM sparklines; without it a Home Assistant demo. */
+const SCENE = new URLSearchParams(location.search).get("scene");
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
   let data: StatusData = await load(bridge);
-  if (DEMO) data = { ...data, sources: [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] };
+  const NAS_DEMO = DEMO && SCENE !== null;
+  if (DEMO) {
+    data = { ...data, sources: NAS_DEMO ? [{ id: "nas", name: "NAS", url: "http://demo.local/nas" }] : [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] };
+  }
+  const history = new MetricHistory();
+  /** Which source's sparklines to show while nothing is wrong; a swipe changes it. */
+  let sparkIndex = 0;
   let statuses = new Map<string, SourceStatus>();
   const failures = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -34,7 +46,11 @@ async function boot(): Promise<void> {
   let tickTimer: ReturnType<typeof setInterval> | null = null;
   let cursor = 0;
   let lastView: StatusView | null = null;
+  let lastLayout: Layout = "list";
+  let lastFrames = "";
   let pageReady = false;
+  /** createStartUpPageContainer runs once; afterwards a page is only ever rebuilt. */
+  let created = false;
   let locale: Locale = await resolveLocale(bridge);
 
   // The actions screen is a separate mode. Monitoring is something you glance
@@ -55,35 +71,83 @@ async function boot(): Promise<void> {
     for (const [id, timer] of timers) {
       if (!next.has(id)) { clearTimeout(timer); timers.delete(id); failures.delete(id); }
     }
+    for (const id of statuses.keys()) if (!next.has(id)) history.forget(id);
     for (const id of generations.keys()) {
       if (!next.has(id)) generations.set(id, (generations.get(id) ?? 0) + 1);
     }
     statuses = next;
   };
 
-  const currentView = (): StatusView => {
+  interface Scene {
+    readonly view: StatusView;
+    readonly layout: Layout;
+    readonly frames: Frames;
+  }
+
+  /** The source whose sparklines are shown: the one with the highlighted problem, else the one a swipe picked. */
+  const focusSeries = (sources: readonly SourceStatus[], now: number): { name: string; series: SparkSeries[] } | null => {
+    const withSeries = sources
+      .map((source) => ({ source, series: history.series(source.id, source.report) }))
+      .filter((entry) => entry.series.length > 0);
+    if (withSeries.length === 0) return null;
+    const preferred = problems(sources, now)[cursor]?.sourceId;
+    const count = withSeries.length;
+    const pick = withSeries.find((entry) => entry.source.id === preferred)
+      ?? withSeries[((sparkIndex % count) + count) % count]!;
+    return { name: pick.source.name, series: pick.series };
+  };
+
+  /** Everything on the glasses for one moment: text, layout, sign and sparklines. */
+  const currentScene = (now: number): Scene => {
+    const sources = [...statuses.values()];
     if (screen === "actions") {
-      return buildActionsView(availableActions([...statuses.values()]), {
+      const view = buildActionsView(availableActions(sources), {
         cursor: actionCursor,
         pendingId: pendingActionId,
         result: actionResult,
         busy: actionBusy,
         locale,
       });
+      // The sign stands still here: only the status page pulses.
+      return { view, layout: "list", frames: { sign: signFrame(signState(sources, now), 0), sparks: [] } };
     }
-    return buildView([...statuses.values()], { cursor, locale }, Date.now());
+    const focus = focusSeries(sources, now);
+    const layout: Layout = focus ? "graph" : "list";
+    const view = buildView(sources, {
+      cursor, locale, maxRows: BODY_ROWS[layout], ...(focus ? { focusName: focus.name } : {}),
+    }, now);
+    return {
+      view,
+      layout,
+      frames: {
+        sign: signFrame(signState(sources, now), now),
+        sparks: focus ? focus.series.map((series) => sparklineFrame(series)) : [],
+      },
+    };
   };
 
   const draw = async (): Promise<void> => {
     if (closed) return;
-    const view = currentView();
-    if (sameView(lastView, view)) return;
+    const { view, layout, frames } = currentScene(Date.now());
+    const key = [frames.sign, ...frames.sparks].map((frame) => (frame ? bitmapKey(frame) : "-")).join("|");
+    if (pageReady && layout === lastLayout && sameView(lastView, view) && key === lastFrames) return;
 
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    let result;
+    if (!pageReady) {
+      // After the first creation a page is only rebuilt: a second create would be refused as invalid.
+      result = created ? await rebuildPage(bridge, view, layout, frames) : await createPage(bridge, view, layout, frames);
+      if (result.ok) created = true;
+    } else if (layout !== lastLayout) {
+      result = await rebuildPage(bridge, view, layout, frames);
+    } else {
+      result = await updatePage(bridge, view, layout, frames, lastView);
+    }
     if (closed) return;
     if (result.ok) {
       pageReady = true;
       lastView = view;
+      lastLayout = layout;
+      lastFrames = key;
       return;
     }
     pageReady = false;
@@ -110,6 +174,7 @@ async function boot(): Promise<void> {
     const now = Date.now();
 
     if (outcome.report) {
+      history.record(id, outcome.report);
       statuses.set(id, applyReport(status, outcome.report, now));
       failures.set(id, 0);
     } else {
@@ -173,7 +238,14 @@ async function boot(): Promise<void> {
   };
 
   syncSources();
-  if (DEMO) {
+  if (NAS_DEMO) {
+    const now = Date.now();
+    const nas = statuses.get("nas");
+    if (nas) {
+      for (let step = 0; step < 12; step += 1) history.record("nas", demoNasReport(SCENE, step));
+      statuses.set("nas", applyReport(nas, demoNasReport(SCENE, 11), now));
+    }
+  } else if (DEMO) {
     const now = Date.now();
     const homeAssistant = statuses.get("ha");
     if (homeAssistant) statuses.set("ha", applyReport(homeAssistant, {
@@ -252,10 +324,13 @@ async function boot(): Promise<void> {
         break;
       }
       case "scrollUp":
-        cursor = Math.max(0, cursor - 1);
+        // With nothing wrong a swipe switches the source whose sparklines are shown.
+        if (list.length === 0) sparkIndex -= 1;
+        else cursor = Math.max(0, cursor - 1);
         break;
       case "scrollDown":
-        cursor = Math.min(Math.max(0, list.length - 1), cursor + 1);
+        if (list.length === 0) sparkIndex += 1;
+        else cursor = Math.min(Math.max(0, list.length - 1), cursor + 1);
         break;
       case "longPress":
         // Hold opens the actions screen when anything is on offer; otherwise
@@ -285,8 +360,15 @@ async function boot(): Promise<void> {
     }
   });
 
-  // Keeps staleness current even when no source answers at all.
-  tickTimer = setInterval(() => { void draw(); }, 5000);
+  // Keeps staleness current even when no source answers at all (every 5 s), and
+  // pulses the alarm sign once per second while something is critical on the
+  // status page (a redraw every half second; unchanged frames cost nothing).
+  let ticks = 0;
+  tickTimer = setInterval(() => {
+    ticks += 1;
+    const pulsing = screen === "status" && signState([...statuses.values()], Date.now()) === "critical";
+    if (pulsing || ticks % 10 === 0) void draw();
+  }, PULSE_MS);
 
   mountPhoneUi({
     getLocale: () => locale,

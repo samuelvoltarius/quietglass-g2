@@ -25,9 +25,14 @@ export interface ViewOptions {
   readonly maxRows?: number;
   /** Language of everything the app itself says; English when omitted. */
   readonly locale?: Locale;
+  /** Name of the source whose sparklines are shown; it becomes the header while all is well. */
+  readonly focusName?: string;
 }
 
 const DEFAULT_ROWS = 7;
+
+/** Characters one header row holds: the top-right 64 px belong to the status sign. */
+export const HEADER_WIDTH = 46;
 
 /**
  * Roughly the characters that fit across the 576 px display in its
@@ -63,7 +68,7 @@ export function buildView(
   if (list.length === 0) {
     // Everything healthy: one line, no header, no noise.
     return {
-      header: "",
+      header: options.focusName ? fit(options.focusName, HEADER_WIDTH) : "",
       body: [countLabel(sources, now, locale)],
       footer: t(locale, "g.allOk"),
     };

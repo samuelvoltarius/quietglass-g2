@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0] — 2026-10-13
+
+### Added
+
+- Sparklines for CPU, GPU and RAM: for the source in focus (the one with the highlighted problem, otherwise the one a swipe picked) the last 12 readings are drawn as three small charts under the problem list, with the latest value in the picture. Any metric whose id or label starts with cpu, gpu, ram or mem is picked up; sources without such metrics keep the plain seven-row list.
+- A status sign in the top-right corner of the header (64 x 30 image): a check mark when all is well, a calm triangle for a warning, and a pulsing "!" frame (1 Hz) while something critical is unacknowledged. Acknowledging stops the pulse.
+- With nothing wrong, a swipe switches the source whose sparklines are shown, and the source name is the header.
+
+### Changed
+
+- The header text now ends 64 px before the right edge. With sparklines the problem list shows four rows (the footer says how many more there are); a change between the graph and list layout is the only time the page is rebuilt.
+- Pictures are sent only when the data changed; the status page redraws every half second only while the alarm pulses, otherwise every five seconds as before.
+- `?demo=1&scene=graph|warn|critical` shows a NAS with sparklines in the simulator.
+
 ## [0.5.4] — 2026-10-13
 
 ### Changed

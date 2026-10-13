@@ -72,6 +72,7 @@ function fakeBridge() {
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return 0;
     },
+    updateImageRawData: async () => "success",
     textContainerUpgrade: async (upgrade: { containerID?: number; content?: string }) => {
       record(upgrade.containerID, upgrade.content);
       return true;
