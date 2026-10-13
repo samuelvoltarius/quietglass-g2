@@ -10,11 +10,15 @@ nothing to host.
 2. Choose **On foot**, **Bike** or **Car**.
 3. **Tap** the side of your glasses. That's it.
 
+On the glasses OpenGlance opens on a **list of destinations** (saved places and
+the last five you went to): swipe to choose, tap to go. In a private build with
+a speech server, **hold** on the list and say where you want to go.
+
 No account, no key, no server of your own. Routes come from the free public
 OpenStreetMap routing server run by FOSSGIS e.V., place search from the free
 public Photon server by komoot. The phone page and the glasses follow the
 device language — **German and English** — and say what is wrong in plain
-words: *"Kein GPS — geh ins Freie"*, *"Keine Verbindung"*, *"Kein Weg zum Ziel
+words: *"Kein GPS-Standort – Standort für Even am Handy erlauben"*, *"Routing-Server nicht erreichbar"*, *"Kein Weg zum Ziel
 gefunden"*.
 
 Running your own servers is still one field away — see
@@ -234,9 +238,10 @@ real navigation.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start navigating · retry after an error · reroute when off route |
-| **Swipe** (either way) | Switch between the turn view and the map |
-| **Hold** | Stop navigating |
+| **Tap** | List: go to the chosen destination (on the last row: switch car / bike / on foot) · retry after an error · reroute when off route |
+| **Swipe** | List: choose a destination · navigating: switch between the turn view and the map |
+| **Hold** | List: say a destination (private build with a speech server) · navigating: stop and back to the list |
+| **Hold** on spoken results | Save the chosen place as a favourite |
 | **Double tap** | Leave OpenGlance — the glasses ask to confirm; cancelling keeps navigating |
 
 ## Install

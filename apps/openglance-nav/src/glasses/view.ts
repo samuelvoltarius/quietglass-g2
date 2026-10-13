@@ -84,6 +84,8 @@ export interface ViewOptions {
   readonly layout?: GlassLayout;
   /** The turn card shows the distance in large digits (turn layout only). */
   readonly bigDistance?: boolean;
+  /** While a start is under way and nothing is routed yet: what it is doing ("Finding your position…"). */
+  readonly status?: string | null;
 }
 
 export function buildView(
@@ -104,7 +106,16 @@ export function buildView(
 
 function rawView(progress: Progress | null, options: ViewOptions, now: number): NavView {
   if (options.error) {
-    return { header: "OpenGlance", body: [options.error], footer: t(options, "g.tapRetry") };
+    // An error may carry a second line saying what to do about it.
+    return { header: "OpenGlance", body: options.error.split("\n"), footer: t(options, "g.errorFooter") };
+  }
+
+  if (options.status && (!options.navigating || !progress)) {
+    return {
+      header: "OpenGlance",
+      body: [...(options.destination ? [t(options, "g.ready1", { place: options.destination })] : []), options.status],
+      footer: t(options, "g.startFooter"),
+    };
   }
 
   if (!options.navigating || !progress) {

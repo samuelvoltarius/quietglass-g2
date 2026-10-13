@@ -44,10 +44,11 @@ describe("the message catalogue", () => {
     expect(Object.keys(messages.de).sort()).toEqual(Object.keys(messages.en).sort());
   });
 
-  it("keeps every glasses and error text within one 46-character line", () => {
+  it("keeps every line of a glasses and error text within one 46-character line", () => {
     for (const locale of locales) {
       for (const [key, text] of Object.entries(messages[locale])) {
-        if (key.startsWith("g.") || key.startsWith("err.")) expect(text.length, key).toBeLessThanOrEqual(46);
+        if (!/^(g|err|l|v|mode)\./.test(key)) continue;
+        for (const line of text.split("\n")) expect(line.length, key).toBeLessThanOrEqual(46);
       }
     }
   });

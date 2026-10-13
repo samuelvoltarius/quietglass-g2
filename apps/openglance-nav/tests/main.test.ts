@@ -69,12 +69,12 @@ function valhalla(street: string): unknown {
 
 // Plain functions rather than vi.fn: spies attach handlers to returned
 // promises, which would hide exactly the rejections these tests look for.
-function fakeBridge() {
+function fakeBridge(stored: Record<string, unknown> = {}) {
   let onEvent: ((event: unknown) => void) | undefined;
   const state = {
     calls: [] as string[],
     locationStarts: 0, shutdowns: 0, shutdownFails: false, draws: 0, body: "", header: "",
-    noFix: false, pages: [] as string[], images: [] as string[], saved: "",
+    noFix: false, mic: [] as boolean[], pages: [] as string[], images: [] as string[], saved: "",
   };
   const record = (id: number | undefined, content: string | undefined): void => {
     state.draws += 1;
@@ -86,6 +86,7 @@ function fakeBridge() {
       valhallaUrl: "https://valhalla.test", mode: "walking", invertScroll: false,
       places: [{ id: "p1", label: "Office", at: { lat: START.lat + 0.004, lon: START.lon } }],
       destinationId: "p1",
+      ...stored,
     }),
     setLocalStorage: async (_key: string, value: string) => { state.saved = value; return true; },
     rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
@@ -105,6 +106,7 @@ function fakeBridge() {
       return true;
     },
     updateImageRawData: async (update: { containerName?: string }) => { state.images.push(update.containerName ?? ""); return "success"; },
+    audioControl: async (on: boolean) => { state.mic.push(on); return true; },
     startAppLocationUpdates: async () => { state.locationStarts += 1; return true; },
     stopAppLocationUpdates: async () => true,
     getAppLocation: async () => (state.noFix ? null : { latitude: START.lat, longitude: START.lon }),
@@ -119,6 +121,7 @@ function fakeBridge() {
   return {
     bridge, state,
     ready: () => onEvent !== undefined,
+    send: (event: unknown) => onEvent?.(event),
     gesture: (eventType: number) => (resetGestureDedupe(), onEvent?.({ sysEvent: { eventType, eventSource: 1 } })),
   };
 }
@@ -126,7 +129,9 @@ function fakeBridge() {
 const TAP = 0;
 const SWIPE = 1;
 const DOUBLE_TAP = 3;
+const SWIPE_DOWN = 2;
 const HOLD = 9;
+const RELEASE = 10;
 
 describe("openglance lifecycle", () => {
   let unhandled: unknown[];
@@ -176,6 +181,9 @@ describe("openglance lifecycle", () => {
     await boot(fake);
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
+    // Hold goes back to the list, tap starts again while the first answer is still out.
+    fake.gesture(HOLD);
+    await settle();
     fake.gesture(TAP);
     // The second request waits out the one-per-second limit of the public router.
     await vi.waitFor(() => expect(replies).toHaveLength(2), { timeout: 3000 });
@@ -199,8 +207,8 @@ describe("openglance lifecycle", () => {
     await settle();
     replies[0]?.(valhalla("Late Street"));
     await settle();
-    // Idle again, with the destination still chosen and ready to restart.
-    expect(fake.state.body).toContain("Tap to start.");
+    // Back on the destination list, the destination still chosen and ready to restart.
+    expect(fake.state.body).toContain("→ ● Office");
     expect(harness.road).not.toContain("Late Street");
   });
 
@@ -294,9 +302,10 @@ describe("openglance lifecycle", () => {
     const fake = fakeBridge();
     fake.state.noFix = true;
     await boot(fake);
-    expect(fake.state.body).toContain("Ziel: Office");
+    expect(fake.state.body).toContain("→ ● Office");
     fake.gesture(TAP);
-    await vi.waitFor(() => expect(fake.state.body).toContain("Kein GPS — geh ins Freie"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Kein GPS-Standort."));
+    expect(fake.state.body).toContain("Standort für Even am Handy erlauben.");
     expect(replies).toHaveLength(0);
   });
 
@@ -307,5 +316,139 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(fake.state.body).toContain("No connection"));
     expect(replies).toHaveLength(0);
+  });
+
+  const fetchUrl = (index: number): string => String((globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[index]?.[0] ?? "");
+
+  it("starts on the destination list: swipe picks another place, tap navigates there and keeps it", async () => {
+    const fake = fakeBridge({
+      places: [
+        { id: "p1", label: "Office", at: { lat: START.lat + 0.004, lon: START.lon } },
+        { id: "p2", label: "Tamsweg", at: { lat: 47.1278, lon: 13.8095 } },
+      ],
+    });
+    await boot(fake);
+    expect(fake.state.body).toContain("→ ● Office");
+    expect(fake.state.body).toContain("○ Tamsweg");
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ ○ Tamsweg"));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    expect(decodeURIComponent(fetchUrl(0))).toContain("47.1278");
+    expect(JSON.parse(fake.state.saved).destinationId).toBe("p2");
+    replies[0]?.(valhalla("Murtal Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Murtal Street"));
+  });
+
+  it("changes the way of travel from the last row of the list", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ Travel: On foot"));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Travel: Car"));
+    expect(JSON.parse(fake.state.saved).mode).toBe("driving");
+    expect(replies).toHaveLength(0);
+  });
+
+  it("says plainly that the routing server cannot be reached", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Routing server not reachable."));
+    expect(fake.state.body).toContain("Tailscale");
+  });
+
+  it("shows on the glasses that a start is under way while the GPS is still searching", async () => {
+    const fake = fakeBridge();
+    let answer: ((value: unknown) => void) | undefined;
+    (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = () => new Promise((resolve) => { answer = resolve; });
+    await boot(fake);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Finding your position…"));
+    answer?.({ latitude: START.lat, longitude: START.lon });
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    // A hold cancels the start and goes back to the list.
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
+  });
+
+  it("says that speaking needs a speech server when the build has none", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.body).toContain("No speech server in this version."));
+    expect(fake.state.mic).toEqual([]);
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
+  });
+
+  it("hold speaks a destination: microphone on and off, up to three places, hold saves, tap navigates", async () => {
+    vi.stubEnv("VITE_STT_URL", "https://stt.test");
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Say your destination now"));
+    for (let i = 0; i < 5; i++) fake.send({ audioEvent: { audioPcm: new Uint8Array(3200) } });
+    fake.gesture(RELEASE);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    expect(fake.state.mic).toEqual([true, false]);
+    expect(fetchUrl(0)).toBe("https://stt.test/v1/audio/transcriptions");
+    replies[0]?.({ text: " Tamsweg. " });
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    expect(fetchUrl(1)).toContain("q=Tamsweg");
+    const feature = (name: string, lat: number) => ({ geometry: { coordinates: [13.81, lat] }, properties: { name, postcode: "5580", country: "Austria" } });
+    replies[1]?.({ features: [feature("Tamsweg", 47.128), feature("Tamsweg Bahnhof", 47.125)] });
+    await vi.waitFor(() => expect(fake.state.header).toContain("Heard: „Tamsweg“"));
+    expect(fake.state.body).toContain("→ Tamsweg");
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ Tamsweg Bahnhof"));
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(JSON.parse(fake.state.saved).places).toHaveLength(2));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(3));
+    expect(decodeURIComponent(fetchUrl(2))).toContain("47.125");
+    const saved = JSON.parse(fake.state.saved);
+    expect(saved.places[1].label).toBe("Tamsweg Bahnhof");
+    expect(saved.destinationId).toBe(saved.places[1].id);
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps a spoken destination that was not saved as a recent one", async () => {
+    vi.stubEnv("VITE_STT_URL", "https://stt.test");
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+    for (let i = 0; i < 5; i++) fake.send({ audioEvent: { audioPcm: new Uint8Array(3200) } });
+    fake.gesture(RELEASE);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.({ text: "Tamsweg" });
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    replies[1]?.({ features: [{ geometry: { coordinates: [13.81, 47.128] }, properties: { name: "Tamsweg" } }] });
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ Tamsweg"));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(3));
+    const saved = JSON.parse(fake.state.saved);
+    expect(saved.recent[0].label).toBe("Tamsweg");
+    expect(saved.destinationId).toBe(saved.recent[0].id);
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Tamsweg · recent"));
+    vi.unstubAllEnvs();
+  });
+
+  it("switches the microphone off when a recording is abandoned with a double tap", async () => {
+    vi.stubEnv("VITE_STT_URL", "https://stt.test");
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true, false]));
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
+    expect(fake.state.shutdowns).toBe(0);
+    vi.unstubAllEnvs();
   });
 });

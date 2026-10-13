@@ -33,7 +33,12 @@ export interface NavData {
   readonly mode: TravelMode;
   /** Saved places, so a destination can be picked without typing in the field. */
   readonly places: readonly Destination[];
-  /** Selected destination id, or null. */
+  /**
+   * Destinations navigated to recently that were not saved (spoken on the
+   * glasses), newest first, at most MAX_RECENT. Pickable on the glasses list.
+   */
+  readonly recent: readonly Destination[];
+  /** Selected destination id (a saved place or a recent one), or null. */
   readonly destinationId: string | null;
   readonly invertScroll: boolean;
   /**
@@ -55,6 +60,7 @@ export const EMPTY_DATA: NavData = {
   // Walking is the safe default: on foot, glancing at the glasses is fine.
   mode: "walking",
   places: [],
+  recent: [],
   destinationId: null,
   invertScroll: false,
   streets: true,
@@ -76,7 +82,51 @@ export function geocoderUrlOf(data: NavData): string {
 
 export function destinationOf(data: NavData): Destination | null {
   if (!data.destinationId) return null;
-  return data.places.find((p) => p.id === data.destinationId) ?? null;
+  return data.places.find((p) => p.id === data.destinationId)
+    ?? data.recent.find((p) => p.id === data.destinationId)
+    ?? null;
+}
+
+/** How many recent destinations are kept. */
+export const MAX_RECENT = 5;
+
+/** Same place: within about 30 m (names repeat: three hits can all be called "Tamsweg"). */
+function samePlace(a: Destination, b: Destination): boolean {
+  return Math.abs(a.at.lat - b.at.lat) < 0.0003 && Math.abs(a.at.lon - b.at.lon) < 0.0003;
+}
+
+/**
+ * Puts a destination at the front of the recent list and selects it. A saved
+ * place is only selected (it is already in the list); an older entry for the
+ * same place is replaced, and the list is cut to MAX_RECENT.
+ */
+export function chooseDestination(data: NavData, place: Destination): NavData {
+  const saved = data.places.find((p) => p.id === place.id || samePlace(p, place));
+  if (saved) return { ...data, destinationId: saved.id };
+  const others = data.recent.filter((r) => r.id !== place.id && !samePlace(r, place));
+  const id = data.recent.some((r) => r.id === place.id) ? place.id : nextRecentId(data);
+  const entry = { id, label: place.label, at: place.at };
+  return { ...data, recent: [entry, ...others].slice(0, MAX_RECENT), destinationId: id };
+}
+
+function nextRecentId(data: NavData): string {
+  let n = 1;
+  const taken = new Set([...data.places, ...data.recent].map((p) => p.id));
+  while (taken.has("r" + n)) n++;
+  return "r" + n;
+}
+
+/** Saves a place as a favourite (selected), dropping it from the recent list. */
+export function saveFavorite(data: NavData, place: { label: string; at: LatLng }): NavData {
+  const existing = data.places.find((p) => samePlace(p, { id: "", ...place }));
+  if (existing) return { ...data, destinationId: existing.id };
+  const id = nextPlaceId(data);
+  return {
+    ...data,
+    places: [...data.places, { id, label: place.label, at: place.at }],
+    recent: data.recent.filter((r) => !samePlace(r, { id, ...place })),
+    destinationId: id,
+  };
 }
 
 export function nextPlaceId(data: NavData): string {
@@ -141,9 +191,10 @@ export function parseData(raw: string): NavData {
   try {
     const value = JSON.parse(raw) as Partial<NavData>;
 
+    const readPlaces = (list: unknown): Destination[] => {
     const places: Destination[] = [];
-    if (Array.isArray(value.places)) {
-      for (const candidate of value.places) {
+    if (Array.isArray(list)) {
+      for (const candidate of list) {
         const p = candidate as Partial<Destination>;
         const at = p?.at as Partial<LatLng> | undefined;
         if (typeof p?.id !== "string") continue;
@@ -156,13 +207,17 @@ export function parseData(raw: string): NavData {
         });
       }
     }
+    return places;
+    };
+    const places = readPlaces(value.places);
+    const recent = readPlaces(value.recent).filter((r) => !places.some((p) => p.id === r.id)).slice(0, MAX_RECENT);
 
     const url = (candidate: unknown): string =>
       typeof candidate === "string" && validateRouterUrl(candidate).valid ? candidate.trim() : "";
     const valhallaUrl = url(value.valhallaUrl);
 
     const destinationId = typeof value.destinationId === "string"
-      && places.some((p) => p.id === value.destinationId)
+      && [...places, ...recent].some((p) => p.id === value.destinationId)
       ? value.destinationId
       : null;
 
@@ -173,6 +228,7 @@ export function parseData(raw: string): NavData {
       glassView: value.glassView === "overview" ? "overview" : "turns",
       mode: isMode(value.mode) ? value.mode : EMPTY_DATA.mode,
       places,
+      recent,
       destinationId,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
       streets: typeof value.streets === "boolean" ? value.streets : EMPTY_DATA.streets,

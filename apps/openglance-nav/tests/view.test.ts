@@ -33,7 +33,7 @@ describe("idle and error states", () => {
   it("shows an error and offers a retry", () => {
     const view = buildView(null, { ...options, error: "router unreachable" });
     expect(view.body[0]).toBe("router unreachable");
-    expect(view.footer).toContain("retry");
+    expect(view.footer).toContain("try again");
   });
 
   it("says it is waiting rather than showing a stale direction", () => {

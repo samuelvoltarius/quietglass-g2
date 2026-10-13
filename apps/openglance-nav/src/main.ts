@@ -1,5 +1,5 @@
 import {
-  AppLocationAccuracy, waitForEvenAppBridge, type AppLocation, type EvenAppBridge,
+  AppLocationAccuracy, AudioInputSource, waitForEvenAppBridge, type AppLocation, type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { LatLng } from "./geo/geometry";
 import {
@@ -11,6 +11,11 @@ import {
 } from "./nav/navigator";
 import { gestureFromEvent } from "./input/gestures";
 import { buildView, type GlassLayout, type NavView } from "./glasses/view";
+import {
+  clampCursor, cursorFor, listItems, listView, nextMode, voiceView, type VoiceState,
+} from "./glasses/picker";
+import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
+import { buildWav } from "./voice/wav";
 import { sameView } from "./glasses/diff";
 import { showPage, updatePage, type PageKind } from "./glasses/render";
 import { pixelArrowFor } from "./glasses/icons";
@@ -26,7 +31,8 @@ import { createGeocoder, type Geocoder } from "./geocode/photon";
 import { resolveLocale, rememberLocale, setLocale, tr, type Locale } from "./i18n";
 import { messages } from "./messages";
 import {
-  destinationOf, geocoderUrlOf, load, routerUrlOf, save, usesMockRouter, type NavData,
+  chooseDestination, destinationOf, geocoderUrlOf, load, routerUrlOf, save, saveFavorite, usesMockRouter,
+  type Destination, type NavData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
@@ -64,6 +70,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/** "47.80, 13.04" (anything after the second number is ignored) or null. */
+function latLngFromParam(raw: string | null): LatLng | null {
+  if (!raw) return null;
+  const [lat, lon] = raw.split(",").map((part) => Number(part.trim()));
+  if (lat === undefined || lon === undefined || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
@@ -71,8 +86,38 @@ async function boot(): Promise<void> {
   setLocale(locale);
   let data: NavData = await load(bridge);
   if (DEMO) data = { ...data, places: [{ id: "demo", label: "Mirabellplatz", at: { lat: 47.815, lon: 13.048 } }], destinationId: "demo", demo: true, ...(SCENE ? { mode: "driving" as const, glassView: SCENE === "map" ? "overview" as const : "turns" as const } : {}) };
+  // Development only (vite dev server): `?at=lat,lon` stands in for the GPS the
+  // simulator does not have, `?to=lat,lon,Name` puts a destination in the list.
+  const devAt = import.meta.env.DEV ? latLngFromParam(new URLSearchParams(location.search).get("at")) : null;
+  const devTo = import.meta.env.DEV ? new URLSearchParams(location.search).get("to") : null;
+  if (devTo) {
+    const at = latLngFromParam(devTo);
+    const label = devTo.split(",").slice(2).join(",").trim() || "Ziel";
+    if (at && !data.places.some((p) => p.label === label)) {
+      const id = "dev" + data.places.length;
+      data = { ...data, places: [...data.places, { id, label, at }], destinationId: id };
+    }
+  }
+  /** Development only: `?heard=Tamsweg` stands in for what the speech server understood. */
+  const devHeard = import.meta.env.DEV ? new URLSearchParams(location.search).get("heard") : null;
   let nav: NavState | null = null;
-  let position: LatLng | null = DEMO ? { lat: 47.805, lon: 13.042 } : null;
+  let position: LatLng | null = DEMO ? { lat: 47.805, lon: 13.042 } : devAt;
+  /** When the position was last measured; a fresh one lets a start skip waiting for the GPS. */
+  let positionAt = position ? Number.POSITIVE_INFINITY : 0;
+  /**
+   * Which glasses page is up: the destination list (start page), speaking a
+   * destination, or navigation (including starting it and its errors).
+   */
+  let screen: "list" | "voice" | "nav" = DEMO && SCENE !== "list" && SCENE !== "voice" ? "nav" : "list";
+  let cursor = cursorFor(data);
+  let voice: VoiceState | null = null;
+  /** Bumped whenever a recording or its answer is abandoned. */
+  let voiceSeq = 0;
+  let micActive = false;
+  const micChunks: Uint8Array[] = [];
+  let recordTimer: ReturnType<typeof setTimeout> | null = null;
+  /** What a start is doing before the first route arrives ("gps", "route"), shown on the glasses. */
+  let startPhase: "gps" | "route" | null = null;
   let rerouting = false;
   /** Message key of the error shown, translated at draw time. */
   let errorKey: string | null = null;
@@ -148,18 +193,22 @@ async function boot(): Promise<void> {
 
   /** Which of the three glasses pages the state calls for. */
   const kindNow = (): PageKind => {
-    if (data.glassView === "overview") return "overview";
+    if (screen !== "nav") return "text";
+    if (data.glassView === "overview" && nav && !errorKey) return "overview";
     // Without a turn to show (idle, error, arrived) the plain text page does.
     return nav && !errorKey && !progressOf(nav).arrived ? "turns" : "text";
   };
 
   const currentView = (kind: PageKind): NavView => {
+    if (screen === "list") return listView(data, cursor, locale);
+    if (screen === "voice" && voice) return voiceView(voice, locale);
     const layout: GlassLayout = kind === "overview" ? "overview" : "turns";
     return buildView(nav ? progressOf(nav) : null, {
       mode: data.mode,
       navigating: nav !== null,
       rerouting,
       error: errorKey ? tr(messages, locale, errorKey) : null,
+      status: startPhase === "gps" ? tr(messages, locale, "g.findingFix") : startPhase === "route" ? tr(messages, locale, "g.routing") : null,
       mock: usesMockRouter(data),
       waitingForFix: nav !== null && position === null,
       locale,
@@ -334,19 +383,34 @@ async function boot(): Promise<void> {
     return drawing;
   };
 
+  /** Glasses message key for a route that could not be had. */
+  const routeErrorKey = (code: string | undefined): string => {
+    switch (code) {
+      // fetch threw: the server could not be reached at all (no Tailscale, wrong address, CORS).
+      case "offline": return "err.routeUnreachable";
+      case "timeout": return "err.routeTimeout";
+      case "busy": return "err.busy";
+      case "noRoute": return "err.noRoute";
+      case "tooFar": return "err.tooFar";
+      default: return "err.server";
+    }
+  };
+
   const computeRoute = async (from: LatLng): Promise<void> => {
     const seq = ++routeSeq;
     const destination = destinationOf(data);
-    if (!destination) { errorKey = "err.noDestination"; await draw(); return; }
+    if (!destination) { startPhase = null; errorKey = "err.noDestination"; await draw(); return; }
 
     rerouting = nav !== null;
+    if (!nav) startPhase = "route";
     errorKey = null;
     await draw();
 
     if (!usesMockRouter(data) && globalThis.navigator?.onLine === false) {
       if (seq !== routeSeq) return;
       rerouting = false;
-      errorKey = "err.offline";
+      startPhase = null;
+      errorKey = "err.phoneOffline";
       nav = null;
       await draw();
       return;
@@ -358,9 +422,11 @@ async function boot(): Promise<void> {
     const outcome = await router().route({ from, to: destination.at, mode: data.mode });
     if (seq !== routeSeq) return;
     rerouting = false;
+    startPhase = null;
 
     if (!outcome.route) {
-      errorKey = "err." + (outcome.code ?? "server");
+      console.warn("[openglance] route failed:", outcome.code, outcome.error);
+      errorKey = routeErrorKey(outcome.code);
       nav = null;
     } else {
       errorKey = null;
@@ -377,25 +443,50 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  /** A position younger than this starts the route at once; an older one waits for a fresh fix. */
+  const FRESH_FIX_MS = 120_000;
+
+  /**
+   * Starts navigating to the selected destination. The glasses say at every
+   * step what is happening (finding the position, calculating the route) and,
+   * if it fails, why and what to do: nothing may look like "the tap did nothing".
+   */
   const startNavigating = async (): Promise<void> => {
-    // A route needs a starting point; ask for one fix before routing rather
-    // than routing from a stale or invented position.
     const seq = ++routeSeq;
+    screen = "nav";
+    nav = null;
+    errorKey = null;
+    rerouting = false;
     // A hold stops location updates to save battery; navigating again needs
     // them back, or the arrow froze on the first fix for the whole trip.
     void bridge.startAppLocationUpdates({
       accuracy: AppLocationAccuracy.High,
       distanceFilter: 5,
     }).catch(() => false);
-    // Bounded twice: the native timeout is only a hint, and a permission
-    // prompt can hold the answer back for as long as it stays open.
-    const fix = await withTimeout(
-      bridge.getAppLocation({ accuracy: AppLocationAccuracy.High, timeoutMs: FIRST_FIX_MS }), FIRST_FIX_MS + 2000,
-    ).catch(() => null);
-    if (seq !== routeSeq) return;
-    if (fix) position = { lat: fix.latitude, lon: fix.longitude };
-    if (!position) { errorKey = "err.noGps"; await draw(); return; }
+    if (!position || Date.now() - positionAt > FRESH_FIX_MS) {
+      startPhase = "gps";
+      void draw();
+      // Bounded twice: the native timeout is only a hint, and a permission
+      // prompt can hold the answer back for as long as it stays open.
+      const fix = await withTimeout(
+        bridge.getAppLocation({ accuracy: AppLocationAccuracy.High, timeoutMs: FIRST_FIX_MS }), FIRST_FIX_MS + 2000,
+      ).catch(() => null);
+      if (seq !== routeSeq) return;
+      if (fix && typeof fix.latitude === "number" && typeof fix.longitude === "number") {
+        position = { lat: fix.latitude, lon: fix.longitude };
+        positionAt = Date.now();
+      }
+    }
+    if (!position) { startPhase = null; errorKey = "err.noGps"; await draw(); return; }
     await computeRoute(position);
+  };
+
+  /** Back to the destination list, with the cursor on the active destination. */
+  const openList = (): void => {
+    abortVoice();
+    screen = "list";
+    cursor = cursorFor(data);
+    void draw();
   };
 
   const stopNavigating = async (): Promise<void> => {
@@ -403,8 +494,10 @@ async function boot(): Promise<void> {
     nav = null;
     errorKey = null;
     rerouting = false;
+    startPhase = null;
     tts.stop();
     announcer.reset();
+    openList();
     await bridge.stopAppLocationUpdates().catch(() => undefined);
     await draw();
   };
@@ -414,7 +507,106 @@ async function boot(): Promise<void> {
     void save(bridge, next).catch((thrown: unknown) => { console.warn("[openglance] save failed:", thrown); });
   };
 
-  if (DEMO && position) {
+  /** Navigates to a destination from the list or from speech; it becomes the active one. */
+  const navigateTo = (place: Destination): void => {
+    saveData(chooseDestination(data, place));
+    void startNavigating();
+  };
+
+  // ---- Speaking a destination (hold on the list) ----
+
+  /** Drops a recording or an answer in flight; the microphone is always switched off. */
+  function abortVoice(): void {
+    voiceSeq++;
+    if (recordTimer !== null) clearTimeout(recordTimer);
+    recordTimer = null;
+    if (micActive) void bridge.audioControl(false).catch(() => undefined);
+    micActive = false;
+    micChunks.length = 0;
+    voice = null;
+  }
+
+  const voiceError = (key: string, vars?: Record<string, string>): void => {
+    voice = { phase: "error", key, ...(vars ? { vars } : {}) };
+    screen = "voice";
+    void draw();
+  };
+
+  /** Hold: record from the glasses microphone until the release (or MAX_VOICE_MS). */
+  const startVoice = async (): Promise<void> => {
+    abortVoice();
+    const seq = voiceSeq;
+    screen = "voice";
+    if (!DEMO && !sttBase("")) { voiceError("v.noServer"); return; }
+    voice = { phase: "recording" };
+    void draw();
+    if (DEMO) return;
+    // Blocks may arrive before the answer to the request does; they must not be dropped.
+    micActive = true;
+    const granted = await withTimeout(bridge.audioControl(true, AudioInputSource.Glasses), 5000).catch(() => false);
+    if (seq !== voiceSeq) {
+      // Cancelled while the microphone was starting: do not leave it on.
+      if (granted) void bridge.audioControl(false).catch(() => undefined);
+      return;
+    }
+    micActive = granted;
+    if (!granted) { voiceError("v.noMic"); return; }
+    // A recording must end even when the release event never arrives.
+    recordTimer = setTimeout(() => { recordTimer = null; void finishVoice(); }, MAX_VOICE_MS);
+  };
+
+  /** Release: send what was said to the speech server, look the words up, show up to three places. */
+  async function finishVoice(): Promise<void> {
+    if (!voice || voice.phase !== "recording") return;
+    const seq = ++voiceSeq;
+    if (recordTimer !== null) clearTimeout(recordTimer);
+    recordTimer = null;
+    voice = { phase: "working" };
+    void draw();
+    if (!DEMO) {
+      micActive = false;
+      await bridge.audioControl(false).catch(() => undefined);
+      // Blocks still in flight arrive after the off-switch; without the pause the tail is lost.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    let heard = "Mirabellplatz Salzburg";
+    if (!DEMO) {
+      const bytes = micChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      if (bytes < MIN_VOICE_BYTES && !devHeard) {
+        micChunks.length = 0;
+        if (seq === voiceSeq) voiceError("v.short");
+        return;
+      }
+      const wav = buildWav(micChunks);
+      micChunks.length = 0;
+      try {
+        heard = await transcribe(wav, sttBase(""), locale);
+      } catch (thrown) {
+        if (seq !== voiceSeq) return;
+        console.warn("[openglance] speech failed:", thrown instanceof Error ? thrown.message : thrown);
+        if (!devHeard) { voiceError("v.sttFailed"); return; }
+      }
+      if (devHeard) heard = devHeard;
+    }
+    if (seq !== voiceSeq) return;
+    heard = heard.replace(/[.!?。…]+$/u, "").trim();
+    if (!heard) { voiceError("v.nothing"); return; }
+    voice = { phase: "working", heard };
+    void draw();
+    const outcome = await searchPlaces(heard, { lang: locale, near: position, limit: 3 });
+    if (seq !== voiceSeq) return;
+    const results = outcome.places.slice(0, 3);
+    if (results.length === 0) {
+      if (outcome.error === "empty" || outcome.error === "short" || outcome.error === null) voiceError("v.noPlace", { text: heard });
+      else voiceError("v.searchFailed");
+      return;
+    }
+    voice = { phase: "results", heard, results, selected: 0, saved: false };
+    void draw();
+  }
+
+  // Demo scenes start on a given page.
+  if (DEMO && position && screen === "nav") {
     await computeRoute(position);
     // Demo scenes put the car part-way along the made-up route.
     const stop = SCENE === "near" ? 14 : SCENE === "map" ? 11 : 0;
@@ -436,6 +628,7 @@ async function boot(): Promise<void> {
     if (closed) return;
     if (typeof location?.latitude !== "number" || typeof location?.longitude !== "number") return;
     position = { lat: location.latitude, lon: location.longitude };
+    positionAt = Date.now();
     // The GPS heading means something only while moving; standing still it is noise.
     if (typeof location.heading === "number" && location.heading >= 0 && (location.speed ?? 0) >= 2.5) gpsHeading = location.heading;
 
@@ -449,19 +642,101 @@ async function boot(): Promise<void> {
         void computeRoute(position);
       }
     }
-    void draw();
+    if (screen === "nav") void draw();
   });
 
-  bridge.onEvenHubEvent((event) => {
-    if (closed) return;
-    const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
-    if (!gesture) return;
+  const requestExit = (): void => {
+    // Exit mode 1: the glasses ask the user to confirm (Even Hub requires
+    // it on the root page; mode 0 exits without asking). Nothing stops
+    // until the answer is yes — a cancelled exit keeps navigating as if
+    // nothing happened. A failing call means the page is already gone,
+    // so that also shuts down, and never as an unhandled rejection.
+    if (exiting) return;
+    exiting = true;
+    void bridge.shutDownPageContainer(EXIT_WITH_CONFIRMATION)
+      .then((confirmed) => confirmed !== false, (thrown: unknown) => {
+        console.warn("[openglance] shutdown failed:", thrown);
+        return true;
+      })
+      .then((leaving) => {
+        exiting = false;
+        if (!leaving || closed) return;
+        // Stop everything that could draw or listen again.
+        closed = true;
+        routeSeq++;
+        nav = null;
+        abortVoice();
+        tts.stop();
+        if (tickTimer !== null) clearInterval(tickTimer);
+        if (streetsTimer !== null) clearTimeout(streetsTimer);
+        if (typeof stopListening === "function") stopListening();
+        return bridge.stopAppLocationUpdates().then(() => undefined, () => undefined);
+      });
+  };
 
-    switch (gesture.gesture) {
+  /** Start page: swipe moves the cursor, tap starts (or switches the travel mode), hold speaks. */
+  const onListGesture = (gesture: string): void => {
+    const items = listItems(data);
+    switch (gesture) {
+      case "scrollUp": cursor = clampCursor(data, cursor - 1); void draw(); return;
+      case "scrollDown": cursor = clampCursor(data, cursor + 1); void draw(); return;
+      case "click": {
+        if (cursor >= items.length) {
+          saveData({ ...data, mode: nextMode(data.mode) });
+          void draw();
+          return;
+        }
+        const item = items[cursor];
+        if (item) navigateTo(item.place);
+        return;
+      }
+      case "longPress": void startVoice(); return;
+      default: return;
+    }
+  };
+
+  const onVoiceGesture = (gesture: string): void => {
+    const state = voice;
+    if (!state) { openList(); return; }
+    switch (state.phase) {
+      case "recording":
+        if (gesture === "longPressRelease" || gesture === "click") void finishVoice();
+        return;
+      case "working":
+        return;
+      case "error":
+        if (gesture === "click") openList();
+        else if (gesture === "longPress") void startVoice();
+        return;
+      case "results": {
+        const last = state.results.length - 1;
+        if (gesture === "scrollUp") { voice = { ...state, selected: Math.max(0, state.selected - 1) }; void draw(); return; }
+        if (gesture === "scrollDown") { voice = { ...state, selected: Math.min(last, state.selected + 1) }; void draw(); return; }
+        const hit = state.results[state.selected];
+        if (!hit) return;
+        if (gesture === "longPress") {
+          // Save as a favourite: it stays on the list for next time.
+          if (!state.saved) saveData(saveFavorite(data, { label: hit.label, at: hit.at }));
+          voice = { ...state, saved: true };
+          void draw();
+          return;
+        }
+        if (gesture === "click") {
+          // A place saved a moment ago is found again by its position and simply selected.
+          abortVoice();
+          navigateTo({ id: "", label: hit.label, at: hit.at });
+        }
+        return;
+      }
+    }
+  };
+
+  /** Navigating (also while starting and after a failure). */
+  const onNavGesture = (gesture: string): void => {
+    switch (gesture) {
       case "click":
         if (errorKey) { void startNavigating(); return; }
-        if (!nav) { void startNavigating(); return; }
-        if (progressOf(nav).offRoute && position) { void computeRoute(position); return; }
+        if (nav && progressOf(nav).offRoute && position) { void computeRoute(position); return; }
         return;
       case "scrollUp":
       case "scrollDown":
@@ -470,38 +745,38 @@ async function boot(): Promise<void> {
         saveData({ ...data, glassView: data.glassView === "overview" ? "turns" : "overview" });
         void draw();
         return;
-      case "doubleClick":
-        // Exit mode 1: the glasses ask the user to confirm (Even Hub requires
-        // it on the root page; mode 0 exits without asking). Nothing stops
-        // until the answer is yes — a cancelled exit keeps navigating as if
-        // nothing happened. A failing call means the page is already gone,
-        // so that also shuts down, and never as an unhandled rejection.
-        if (exiting) return;
-        exiting = true;
-        void bridge.shutDownPageContainer(EXIT_WITH_CONFIRMATION)
-          .then((confirmed) => confirmed !== false, (thrown: unknown) => {
-            console.warn("[openglance] shutdown failed:", thrown);
-            return true;
-          })
-          .then((leaving) => {
-            exiting = false;
-            if (!leaving || closed) return;
-            // Stop everything that could draw or listen again.
-            closed = true;
-            routeSeq++;
-            nav = null;
-            tts.stop();
-            if (tickTimer !== null) clearInterval(tickTimer);
-            if (streetsTimer !== null) clearTimeout(streetsTimer);
-            if (typeof stopListening === "function") stopListening();
-            return bridge.stopAppLocationUpdates().then(() => undefined, () => undefined);
-          });
-        return;
       case "longPress":
+        // Stop (or cancel a start) and go back to the destination list.
         void stopNavigating();
         return;
       default:
         return;
+    }
+  };
+
+  bridge.onEvenHubEvent((event) => {
+    if (closed) return;
+    // PCM blocks of a recording arrive on the same channel as gestures.
+    const audio = (event as { audioEvent?: { audioPcm?: unknown } } | null)?.audioEvent;
+    if (audio !== undefined) {
+      if (micActive) {
+        const bytes = pcmBytes(audio.audioPcm);
+        if (bytes !== null && bytes.length > 0) micChunks.push(bytes);
+      }
+      return;
+    }
+    const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
+    if (!gesture) return;
+    if (gesture.gesture === "doubleClick") {
+      // Speaking is a page on top of the list: double tap goes back. Elsewhere it closes the app.
+      if (screen === "voice") { openList(); return; }
+      requestExit();
+      return;
+    }
+    switch (screen) {
+      case "list": onListGesture(gesture.gesture); return;
+      case "voice": onVoiceGesture(gesture.gesture); return;
+      default: onNavGesture(gesture.gesture);
     }
   });
 
@@ -522,6 +797,9 @@ async function boot(): Promise<void> {
         || next.demo !== data.demo
         || next.valhallaUrl !== data.valhallaUrl;
       data = next;
+      // A destination picked on the phone moves the cursor of the glasses list onto it.
+      if (screen === "list") cursor = cursorFor(data);
+      else cursor = clampCursor(data, cursor);
       if (!next.announce) tts.stop();
       await save(bridge, next);
       if (routeChanged && nav && position) await computeRoute(position);

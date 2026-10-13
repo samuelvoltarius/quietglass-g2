@@ -45,7 +45,7 @@ describe("German on the glasses", () => {
     const p = await progress();
     expect(buildView(p, { ...options, rerouting: true, locale: "de" }).body).toEqual(["Abseits der Route", "Neue Route…"]);
     expect(buildView(p, { ...options, mock: true, mode: "driving", locale: "de" }).footer).toContain("DEMO");
-    expect(buildView(null, { ...options, error: "Kein GPS — geh ins Freie", locale: "de" }).footer).toBe("tippen = nochmal");
+    expect(buildView(null, { ...options, error: "Kein GPS — geh ins Freie", locale: "de" }).footer).toBe("Tippen = nochmal · Halten = Zielliste");
   });
 
   it("writes distances the German way", () => {

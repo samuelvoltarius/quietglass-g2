@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.6.0] — 2026-10-13
+
+Destinations are chosen on the glasses, and can be spoken (user feedback from the
+real glasses, beta 0.5.5: "only shows the route to Tamsweg, does not let me pick
+another one or start it, no voice input").
+
+### Added
+
+- **Destination list as the start page**: saved places, then the last five
+  destinations ("zuletzt"), at most five visible around the cursor; the active
+  destination is marked `●`, the cursor `→`. Swipe chooses, tap starts navigation
+  and makes it the active destination. The footer names the gestures.
+- **Travel mode on the glasses**: the last row of the list ("Unterwegs: Auto"),
+  tap switches car → bike → on foot.
+- **Speaking a destination**: hold on the list records from the glasses
+  microphone until release (hard stop after 8 s), the recording goes as WAV to the
+  own Whisper server (`VITE_STT_URL`, form post without extra headers, so no CORS
+  preflight), the words are looked up with Photon; up to three places, swipe
+  chooses, tap navigates, hold saves as a favourite. Without a speech server, too
+  short, nothing understood, server or place search unreachable: each says so on
+  the glasses with what to do. The microphone is always switched off again
+  (release, double tap back, exit, timeout).
+- Spoken destinations that were not saved are kept as recent ones (`recent` in the
+  stored data, at most five, same place within ~30 m replaced).
+- Development only (vite dev server): `?at=lat,lon` position, `?to=lat,lon,Name`
+  destination, `?heard=Text` instead of the transcription, for the simulator.
+
+### Changed
+
+- **A start always shows what it is doing**: "Suche Standort…" while waiting for
+  the GPS (only when no fix younger than 2 min is known; before, every start
+  waited up to 12 s for a new fix with nothing changing on the glasses),
+  "Route wird berechnet…" while routing. Hold cancels.
+- **Errors in plain words with the way out**, two lines: "Kein GPS-Standort. /
+  Standort für Even am Handy erlauben.", "Routing-Server nicht erreichbar. /
+  Tailscale / Internet am Handy an?", "Routing-Server antwortet nicht.", "Keine
+  Verbindung. / Das Handy ist offline."; footer "Tippen = nochmal · Halten =
+  Zielliste".
+- Hold while navigating stops and goes back to the destination list; on arrival
+  the footer says so.
+- Private build: the speech server origin is whitelisted and the `g2-microphone`
+  permission declared.
+
+### Findings (start problem)
+
+- The own Valhalla answered every route the glasses asked for on 13.10. (log on
+  the server: four requests from the phone's GPS position to Tamsweg - car, on
+  foot, bike, car - all HTTP 200 in 0.05–0.5 s), and in the simulator with the real
+  servers tapping started navigation. The start itself worked; what was missing
+  was a way to choose another destination on the glasses (a tap while navigating
+  did nothing, hold only went back to "Ziel: Tamsweg") and any sign of progress
+  while the GPS was being asked.
+
+
 ## [0.5.3] — 2026-10-13
 
 Street names on the map (user feedback from the real glasses: "the overview needs
