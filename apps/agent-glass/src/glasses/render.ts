@@ -86,30 +86,42 @@ function text(
 }
 
 /**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
+ * Puts a page on the glasses. The very first time on a bridge, one
+ * `rebuildPageContainer` goes out first (result ignored, failure swallowed: on
+ * real glasses it is what registers the input route) and then
+ * `createStartUpPageContainer` runs exactly once. Every later page - also
+ * another layout - replaces it with `rebuildPageContainer`; a second creation
+ * would be refused as "invalid".
  */
-export async function createPage(bridge: EvenAppBridge, view: AgentView, face: Bitmap): Promise<RenderResult> {
+const started = new WeakSet<EvenAppBridge>();
+
+async function installPage(bridge: EvenAppBridge, view: AgentView, face: Bitmap): Promise<RenderResult> {
   const page = buildPage(view);
   sentLength.clear();
   link.reset();
   try {
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-  } catch {
-    // Expected on current firmware; the creation below is the real path.
-  }
-
-  try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return pushFace(bridge, face);
-    return { ok: false, reason: describeCreateResult(result) };
+    if (!started.has(bridge)) {
+      try {
+        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      } catch {
+        // Expected on current firmware; the creation below is the real path.
+      }
+      const result = await bridge.createStartUpPageContainer(page);
+      if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
+      started.add(bridge);
+    } else {
+      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      // A refused rebuild leaves the old page in place.
+      if (!ok) return { ok: false, reason: "rebuild refused" };
+    }
+    return pushFace(bridge, face);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
 
-/** Fast path: change the text of the three containers in place. */
+export const createPage = installPage;
+export const rebuildPage = installPage;
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly

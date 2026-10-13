@@ -314,6 +314,7 @@ describe("switching language on the phone", () => {
         drawn.push((page.textObject ?? []).map((item) => item.content ?? "").join("\n")); return 0;
       },
       textContainerUpgrade: async (update: { content?: string }) => { drawn.push(update.content ?? ""); return true; },
+      updateImageRawData: async () => "success",
       shutDownPageContainer: async () => false,
       onEvenHubEvent: () => { ready = true; return () => undefined; },
       onDeviceStatusChanged: () => () => undefined,

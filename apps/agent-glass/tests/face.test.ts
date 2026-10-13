@@ -109,3 +109,21 @@ describe("page limits", () => {
     expect(calls).toEqual(["text:footer"]);
   });
 });
+
+describe("page installation", () => {
+  it("creates the page exactly once per bridge: one first rebuild, one create, then only rebuilds", async () => {
+    const { createPage } = await import("../src/glasses/render");
+    const calls: string[] = [];
+    const bridge = {
+      createStartUpPageContainer: async () => { calls.push("create"); return 0; },
+      rebuildPageContainer: async () => { calls.push("rebuild"); return true; },
+      textContainerUpgrade: async () => true,
+      updateImageRawData: async () => "success",
+    } as unknown as EvenAppBridge;
+    const view = buildView(state(), NOW);
+    const face = headerIcon("agent", state(), false, 0);
+    await createPage(bridge, view, face);
+    await createPage(bridge, view, face);
+    expect(calls).toEqual(["rebuild", "create", "rebuild"]);
+  });
+});

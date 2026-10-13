@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1] — 2026-10-13
+
+### Fixed
+
+- Page set-up on the glasses: the first page of a session goes out as one `rebuildPageContainer` followed by exactly one `createStartUpPageContainer`; every later page is a rebuild, never a second create. (Taps and exit work on real glasses only with this order.)
+
 ## [0.6.0] — 2026-10-13
 
 ### Added
