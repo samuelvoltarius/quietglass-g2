@@ -74,6 +74,7 @@ Namen deines Servers im Tailscale-Netz ein.
 | [Quiet Hub](#quiet-hub) | **ja**: Hub-Daemon (+ Relay je Rechner mit Agenten) |
 | [Shoot Day](#shoot-day) | **ja**: eigener Server |
 | [Klipper Glance](#klipper-glance) | **ja**: Bridge für den Drucker |
+| [Star Glass](#star-glass) | **ja**: Bridge neben N.I.N.A. |
 | [Xaventra HUD](#xaventra-hud) | **ja**: dein Xaventra-Rechner (Even-G2-Dienst) |
 | [Status Glass](#status-glass) | **ja**: eine Statusquelle |
 | [Lumen Glass](#lumen-glass) | **ja**: dein LUMEN |
@@ -466,6 +467,44 @@ Dann **Speichern und verbinden**.
 **So prüfst du, dass es läuft:** Unter „Drucker“ steht Zustand, Prozent und
 Dateiname; darunter, ob Steuern erlaubt ist. „Bridge erreichbar, Drucker
 offline“ heißt: Die Bridge läuft, der Drucker ist aus.
+
+### Star Glass
+
+Deine Astrofotografie-Nacht mit N.I.N.A. auf der Brille: Belichtung, Bild n/m,
+Guiding, HFR, Kühlung, Meridian-Flip und eine Vorschau des neuesten Bildes.
+
+**Was du brauchst:** N.I.N.A. mit dem Plugin **Advanced API** (Standard-Port
+1888) und Node.js auf demselben Rechner.
+
+**Server starten** (im Ordner `apps/star-glass`):
+
+```bash
+node examples/star-bridge.mjs                                      # fragt http://127.0.0.1:1888
+STAR_TAILSCALE_USERS=dein-login@example.com node examples/star-bridge.mjs
+```
+
+| Variable | Bedeutung |
+|---|---|
+| `PORT` / `HOST` | Port (Standard 8893) / Bind-Adresse (Standard `127.0.0.1`) |
+| `STAR_TAILSCALE_USERS` | Tailscale-Logins, die ohne Token dürfen |
+| `TOKEN` | Passwort als Alternative zu Tailscale |
+| `STAR_ALLOW_CONTROL=1` | erlaubt Sequenz anhalten/fortsetzen – **nur mit Login oder `TOKEN`** |
+
+Ohne Teleskop zum Üben: `node examples/mock-nina.mjs` und
+`STAR_NINA=http://127.0.0.1:1889`. Autostart unter Windows:
+[`selfhost/services/star-bridge`](../selfhost/services/star-bridge).
+
+Per https erreichbar machen (vorher `tailscale serve status` lesen):
+
+```bash
+tailscale serve --bg --https=8460 http://127.0.0.1:8893
+```
+
+**Am Handy eintragen:** Bridge-Adresse `https://<dein-rechner>.<dein-tailnet>.ts.net:8460`
+(ein Privat-Build mit `VITE_STAR_URL` bringt sie schon mit), dann **Speichern und verbinden**.
+
+**So prüfst du, dass es läuft:** Unter „Aufnahme“ steht Zustand, Ziel und Bild n/m.
+„Bridge erreichbar, N.I.N.A. nicht“ heißt: N.I.N.A. oder das Plugin läuft nicht.
 
 ### Xaventra HUD
 

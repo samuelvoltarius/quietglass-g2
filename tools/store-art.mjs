@@ -227,6 +227,25 @@ const APPS = {
       "....####....",
     ],
   },
+  "star-glass": {
+    name: "Star Glass",
+    tagline: ["Your N.I.N.A. imaging night at a glance.", "Deine N.I.N.A.-Aufnahmenacht auf einen Blick."],
+    // A small refractor on a tripod under a star.
+    icon: [
+      "..........#.",
+      ".........###",
+      "..........#.",
+      "......##....",
+      "....####....",
+      "..####......",
+      "####........",
+      "....#.......",
+      "...#.#......",
+      "..#...#.....",
+      ".#.....#....",
+      "............",
+    ],
+  },
   "status-glass": {
     name: "Status Glass",
     tagline: ["Your servers' health and alerts on your glasses.", "Zustand und Warnungen deiner Server auf der Brille."],

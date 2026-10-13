@@ -14,6 +14,7 @@ Every image below is captured from the Even Hub simulator at the native 576 × 2
 | [Klipper Glance](../apps/klipper-glance) | ![Klipper Glance](../apps/klipper-glance/docs/screenshot.png) |
 | [Lumen Glass](../apps/lumen-glass) | ![Lumen Glass](../apps/lumen-glass/docs/screenshot.png) |
 | [Market Glance](../apps/market-glance) | ![Market Glance](../apps/market-glance/docs/screenshot.png) |
+| [Star Glass](../apps/star-glass) | ![Star Glass](../apps/star-glass/docs/screenshot.png) |
 | [NextStop](../apps/nextstop) | ![NextStop](../apps/nextstop/docs/screenshot.png) |
 | [OpenGlance](../apps/openglance-nav) | ![OpenGlance Navigation](../apps/openglance-nav/docs/screenshot.png) |
 | [PodCaption](../apps/podcaption) | ![PodCaption](../apps/podcaption/docs/screenshot.png) |

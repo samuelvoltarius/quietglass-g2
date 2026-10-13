@@ -1,0 +1,22 @@
+# Star Glass bridge (N.I.N.A. Advanced API -> Even G2), for a Linux machine that can reach N.I.N.A.
+# (N.I.N.A. itself runs on Windows; see README.md for the Windows autostart.) User service:
+#   mkdir -p ~/.config/quietglass ~/.config/systemd/user
+#   printf 'STAR_NINA=http://imaging-pc:1888\nSTAR_TAILSCALE_USERS=you@example.com\n' > ~/.config/quietglass/star-bridge.env
+#   chmod 600 ~/.config/quietglass/star-bridge.env
+#   cp star-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now star-bridge
+#   loginctl enable-linger "$USER"
+# Code lives in the repo (not copied here): apps/star-glass/examples/star-bridge.mjs
+[Unit]
+Description=Star Glass bridge (N.I.N.A. -> Even G2)
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/quietglass/star-bridge.env
+ExecStart=/usr/bin/env node %h/quietglass-g2/apps/star-glass/examples/star-bridge.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

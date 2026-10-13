@@ -1,0 +1,23 @@
+{
+  "package_id": "glass.quiet.starglass",
+  "edition": "202601",
+  "name": "Star Glass",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Read your astrophotography session from the Star Glass bridge you run next to N.I.N.A. and enter in the phone app, and stop or resume the sequence only after you confirm. No other server is contacted.",
+      "whitelist": [
+        "http://*",
+        "https://*"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en"
+  ]
+}
