@@ -161,6 +161,52 @@ describe("nextstop lifecycle", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("follows a bus after a tap on the board and stays responsive", async () => {
+    // Alfred on the glasses: tapped a bus, then the app hung.
+    const fake = fakeBridge();
+    // Like the real glasses: a rebuild is accepted and replaces the page.
+    (fake.bridge as unknown as { rebuildPageContainer: (page: { textObject?: { containerID?: number; content?: string }[] }) => Promise<boolean> })
+      .rebuildPageContainer = async (page) => {
+        for (const text of page.textObject ?? []) {
+          fake.state.draws += 1;
+          if (text.containerID === 1) fake.state.header = text.content ?? "";
+          if (text.containerID === 2) fake.state.body = text.content ?? "";
+        }
+        return true;
+      };
+    await boot(fake);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.reply(stopTimes("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+
+    fake.gesture(0); // tap: follow the selected bus
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    const at = (minutes: number): string => new Date(Date.now() + minutes * 60000).toISOString();
+    pending[1]?.reply({
+      legs: [{
+        routeShortName: "6", headsign: "Alpha-Ziel", realTime: false,
+        from: { name: "Alpha Platz", lat: 47.8058, lon: 13.0430, scheduledDeparture: at(5) },
+        intermediateStops: [
+          { name: "Mitte", lat: 47.81, lon: 13.05, scheduledArrival: at(8) },
+          { name: "Nord", lat: 47.82, lon: 13.06, scheduledArrival: at(11) },
+        ],
+        to: { name: "Endstation", lat: 47.83, lon: 13.07, scheduledArrival: at(14) },
+      }],
+    });
+    await vi.waitFor(() => expect(fake.state.body).toMatch(/Mitte|Nord|Endstation/), { timeout: 3000 });
+    const drawsBefore = fake.state.draws;
+    console.info("[test] ride header:", fake.state.header, "| body:", fake.state.body);
+
+    resetGestureDedupe(); // a person's second tap comes seconds later
+    fake.gesture(0); // tap again: back to the board
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    pending[2]?.reply(stopTimes("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.draws).toBeGreaterThan(drawsBefore));
+    expect(fake.state.body).toContain("Alpha-Ziel");
+    fake.gesture(3); // double tap
+    await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
+  });
+
   it("listens to the glasses while the location is still pending", async () => {
     // Regression: the handlers were installed only after the first location
     // answer. A permission prompt on the phone or a slow GPS fix left the
