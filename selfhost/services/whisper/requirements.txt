@@ -9,5 +9,7 @@ fastapi
 uvicorn
 python-multipart
 soundfile
-librosa          # optional: speaker labels in the Babel streaming mode (SPEAKERS=0 switches them off)
+onnxruntime      # speaker labels (ECAPA, CPU) in the Babel streaming mode; model: see export_ecapa_onnx.py
+librosa          # optional: light fallback speaker labels if the ECAPA model is missing (SPEAKERS=0 = no labels)
+# One-time model export only (any Python, not needed at runtime): torch speechbrain huggingface_hub onnx
 # ffmpeg must also be installed on the system (apt install ffmpeg) - used to decode uploads.

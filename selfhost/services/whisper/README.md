@@ -56,9 +56,35 @@ In den Apps: `https://<server>.<tailnet>.ts.net:8457/v1/audio/transcriptions` bz
   (`partial` mit stabilem Präfix) und feste Zeilen (`final`) nach einer Pause von 0,7 s bzw. spätestens nach 12 s.
   Alte Clients ohne das Feld bekommen weiter die 3-s-Fenster. Einstellbar: `STREAM_STEP`, `STREAM_SILENCE`,
   `STREAM_MAX`.
-- **Sprecher-Buchstaben** (`"speaker":"A"`) im Streaming: grobe Erkennung über Tonhöhe + Klangfarbe (MFCC) auf
-  der CPU, braucht `librosa`. Deutlich verschiedene Stimmen klappen, ähnliche können denselben Buchstaben
-  bekommen. `SPEAKERS=0` schaltet ab, `SPK_THRESH` (Standard 5.0) stellt die Empfindlichkeit ein.
+- **Sprecher-Buchstaben** (`"speaker":"A"`, `"B"` …) im Streaming: pro fester Zeile ein ECAPA-Sprecher-Embedding
+  (`speechbrain/spkrec-ecapa-voxceleb`, 192 Werte, als ONNX auf der **CPU** – der GPU-Speicher bleibt frei,
+  ~15–110 ms pro Zeile, höchstens 6 s Audio werden ausgewertet). Online-Clustering per Kosinus-Ähnlichkeit mit
+  laufendem Mittelwert pro Sprecher, bis zu 6 Sprecher. Die Schwelle startet bei `SPK_COS` (0.60) und passt sich
+  nach ein paar Zeilen an den Raum an (Median der Gleicher-Sprecher-Werte minus `SPK_MARGIN` 0.20, begrenzt auf
+  `SPK_COS_MIN` 0.42 … `SPK_COS_MAX` 0.65; `SPK_ADAPT=0` = feste Schwelle). Zeilen mit weniger als `SPK_MIN_SEC`
+  (1 s) Stimme legen nie einen neuen Sprecher an, sie gehen zum ähnlichsten bzw. bleiben beim vorigen. Werden zwei
+  Sprecher-Mittelwerte sehr ähnlich, werden sie zusammengelegt (ältester Buchstabe bleibt).
+  Fehlt das Modell, übernimmt automatisch die alte grobe Erkennung (Tonhöhe + Klangfarbe, `librosa`,
+  `SPK_THRESH`). `SPK_MODEL=light` erzwingt die alte, `SPEAKERS=0` schaltet Buchstaben ab.
+
+### Sprechermodell einrichten (einmalig, ~80 MB Download, ~160 MB auf der Platte)
+
+```bash
+# in irgendeinem Python mit torch (muss NICHT das Python des Dienstes sein):
+pip install torch speechbrain huggingface_hub onnx onnxruntime
+python export_ecapa_onnx.py models/spkrec-ecapa-voxceleb   # lädt das Modell, schreibt models/.../ecapa.onnx
+systemctl --user restart whisper-unified
+journalctl --user -u whisper-unified | grep ECAPA          # "ECAPA speaker model loaded (onnx, cpu ...)"
+```
+
+Der Dienst selbst braucht nur `onnxruntime` + numpy (kein torchaudio – das vermeidet Versionskonflikte mit dem
+torch, das Whisper auf der GPU nutzt). Anderer Ort: `SPK_ECAPA_DIR=/pfad/zum/ordner`. Lizenz des Modells:
+Apache-2.0 (siehe README im Modellordner).
+
+Gemessen mit Piper-Stimmen (Thorsten, Kerstin) im Streaming über den WebSocket: Mann/Frau, Mann/tieferer Mann
+(−2 Halbtöne) und drei Personen wurden fehlerfrei getrennt; Thorsten „emotional“ (dieselbe Person) blieb
+korrekt „A“. Grenze: eine nur um +1…+2 Halbtöne verschobene Kopie derselben Stimme in sauberem Ton landet
+im selben Buchstaben. Echte Räume/Mikrofone weichen ab – bei Bedarf `SPK_COS`/`SPK_MARGIN` nachstellen.
 
 ## English
 
@@ -69,4 +95,8 @@ download the model once with `HF_HUB_OFFLINE=0`, then publish both loopback port
 (never `serve reset`). The HTTP side has no login of its own (tailnet only); the WebSocket checks `TOKEN` /
 `TAILSCALE_USERS` when set. Without an NVIDIA GPU use `apps/babel-glass/examples/whisper-server.py`
 (faster-whisper) instead. Streaming for Babel Glass ≥ 0.3.0 lives in `babel_stream.py` (opt-in per start frame
-`"stream": true`; partial + final lines, rough CPU speaker labels via `librosa`, `SPEAKERS=0` to disable).
+`"stream": true`; partial + final lines). Speaker labels use an ECAPA-TDNN embedding per final line
+(speechbrain/spkrec-ecapa-voxceleb exported once to ONNX with `export_ecapa_onnx.py`, run by onnxruntime on the
+CPU, ~15-110 ms per line) with online cosine clustering (adaptive threshold, up to 6 speakers, lines under 1 s
+never open a new speaker). Without the model the old light MFCC/pitch detector (`librosa`) takes over;
+`SPK_MODEL=light` forces it, `SPEAKERS=0` disables labels.

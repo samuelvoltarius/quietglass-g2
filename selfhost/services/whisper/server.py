@@ -184,6 +184,7 @@ async def main():
         await asyncio.to_thread(_http_run, tmp.name, "de"); os.unlink(tmp.name)
     except Exception as e:
         print("[whisper-unified] warmup: %s" % e, flush=True)
+    babel_stream.preload()  # speaker model (ECAPA, CPU) loads in the background
     cfg = uvicorn.Config(app, host=HTTP_HOST, port=HTTP_PORT, log_level="warning")
     srv = uvicorn.Server(cfg); srv.install_signal_handlers = lambda: None
     print(f"whisper-unified ready: {MID} http://{HTTP_HOST}:{HTTP_PORT} ws://{WS_HOST}:{WS_PORT}", flush=True)

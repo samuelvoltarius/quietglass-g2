@@ -11,10 +11,14 @@ current utterance in a growing buffer and re-transcribes it every STEP seconds:
       sent when the speaker pauses (SIL_END) or the utterance gets too long
       (MAX_SEC, cut at the quietest moment). `text` may be "" (clears the partial).
 
-Speaker labels come from a deliberately light, CPU-only change detector
-(MFCC statistics + median pitch, online clustering). It tells clearly different
-voices apart (e.g. a low and a high voice); two similar voices may share a label.
-Set SPEAKERS=0 to switch it off.
+Speaker labels ("A", "B", ...) come from ECAPA-TDNN speaker embeddings
+(speechbrain/spkrec-ecapa-voxceleb exported to ONNX by export_ecapa_onnx.py, 192 dims,
+onnxruntime on the CPU so the GPU stays free; no torch/torchaudio needed at runtime):
+one embedding per final line, online clustering by cosine similarity against a
+running mean per speaker (threshold adapts per session, see tracker). Lines with less than SPK_MIN_SEC of voice never
+open a new speaker; they go to the most similar known speaker or stay with the
+previous one. If the model is missing or fails to load, the old light detector
+(MFCC + pitch, librosa) takes over automatically. SPEAKERS=0 switches labels off.
 """
 import os, json, asyncio, re
 import numpy as np
@@ -24,8 +28,19 @@ STEP = float(os.environ.get("STREAM_STEP", "0.8"))          # seconds of new aud
 SIL_END = float(os.environ.get("STREAM_SILENCE", "0.7"))    # pause that ends an utterance
 MAX_SEC = float(os.environ.get("STREAM_MAX", "12.0"))       # longest utterance before a forced cut
 SPEAKERS = os.environ.get("SPEAKERS", "1") != "0"
-SPK_THRESH = float(os.environ.get("SPK_THRESH", "5.0"))
-MAX_SPEAKERS = int(os.environ.get("MAX_SPEAKERS", "4"))
+SPK_THRESH = float(os.environ.get("SPK_THRESH", "5.0"))           # light fallback: L2 distance
+MAX_SPEAKERS = int(os.environ.get("MAX_SPEAKERS", "6"))
+SPK_MODEL = os.environ.get("SPK_MODEL", "ecapa").strip().lower()  # "ecapa" (default) or "light"
+SPK_ECAPA_DIR = os.environ.get("SPK_ECAPA_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "models", "spkrec-ecapa-voxceleb")
+SPK_COS = float(os.environ.get("SPK_COS", "0.60"))         # start: same speaker if cosine to centroid >= this
+SPK_ADAPT = os.environ.get("SPK_ADAPT", "1") != "0"         # adapt the threshold to the room (see tracker)
+SPK_MARGIN = float(os.environ.get("SPK_MARGIN", "0.20"))
+SPK_COS_MIN = float(os.environ.get("SPK_COS_MIN", "0.42"))
+SPK_COS_MAX = float(os.environ.get("SPK_COS_MAX", "0.65"))
+SPK_MIN_SEC = float(os.environ.get("SPK_MIN_SEC", "1.0"))  # less voice than this never opens a speaker
+SPK_MAX_SEC = float(os.environ.get("SPK_MAX_SEC", "6.0"))  # embed at most this much (keeps CPU time low)
+SPK_THREADS = int(os.environ.get("SPK_THREADS", "4"))      # CPU threads for the embedding
 FRAME = 480                                                  # 30 ms energy frames
 LABELS = "ABCDEFGH"
 
@@ -59,8 +74,8 @@ def first_pause(voiced, need):
     return None
 
 
-class SpeakerTracker:
-    """Online clustering of short voice fingerprints. Never raises: returns None on any problem."""
+class LightSpeakerTracker:
+    """Fallback: online clustering of MFCC/pitch fingerprints. Never raises: returns None on any problem."""
 
     def __init__(self, threshold=SPK_THRESH, max_speakers=MAX_SPEAKERS):
         self.threshold = threshold
@@ -96,9 +111,9 @@ class SpeakerTracker:
             vec = self.fingerprint(audio)
         except Exception as e:  # librosa missing or odd audio
             print("[babel-stream] speaker off: %s" % e, flush=True)
-            return self.last
+            return LABELS[self.last] if self.last is not None else None
         if vec is None:
-            return self.last
+            return LABELS[self.last] if self.last is not None else None
         if not self.centroids:
             self.centroids.append([vec, 1]); self.last = 0
             return LABELS[0]
@@ -119,6 +134,234 @@ class SpeakerTracker:
         return None if vec is None else [round(float(np.linalg.norm(vec - c[0])), 3) for c in self.centroids]
 
 
+# ---------------------------------------------------------------- ECAPA speaker embeddings
+import threading, time
+
+_ECAPA = None            # onnxruntime session once loaded, False after a failed load
+_ECAPA_LOCK = threading.Lock()
+_STATS = {"n": 0, "ms": 0.0}
+_MEL = None
+
+
+def _mel_matrix(n_fft=400, n_mels=80, sr=SR):
+    """Triangular mel filters exactly as speechbrain's Filterbank builds them (HTK mel scale)."""
+    to_mel = lambda hz: 2595.0 * np.log10(1.0 + hz / 700.0)
+    mel = np.linspace(to_mel(0.0), to_mel(sr / 2), n_mels + 2)
+    hz = 700.0 * (10 ** (mel / 2595.0) - 1.0)
+    band = (hz[1:] - hz[:-1])[:-1]
+    fc = hz[1:-1]
+    freqs = np.linspace(0, sr // 2, n_fft // 2 + 1)
+    slope = (freqs[None, :] - fc[:, None]) / band[:, None]
+    return np.maximum(0.0, np.minimum(slope + 1.0, 1.0 - slope)).T.astype(np.float32)   # (201, 80)
+
+
+def fbank(audio):
+    """80-dim log-mel features like speechbrain Fbank(n_mels=80): 25 ms Hamming, 10 ms hop, centred."""
+    global _MEL
+    if _MEL is None:
+        _MEL = _mel_matrix()
+    n_fft, hop = 400, 160
+    x = np.pad(np.asarray(audio, dtype=np.float32), (n_fft // 2, n_fft // 2))
+    nfr = 1 + (len(x) - n_fft) // hop
+    idx = np.arange(n_fft)[None, :] + hop * np.arange(nfr)[:, None]
+    win = (0.54 - 0.46 * np.cos(2 * np.pi * np.arange(n_fft) / n_fft)).astype(np.float32)
+    spec = np.abs(np.fft.rfft(x[idx] * win, n=n_fft)) ** 2
+    db = 10.0 * np.log10(np.maximum(spec.astype(np.float32) @ _MEL, 1e-10))
+    return np.maximum(db, db.max() - 80.0).astype(np.float32)          # (frames, 80)
+
+
+def load_ecapa():
+    """Loads the ECAPA encoder (ONNX, CPU) once. Returns None if unavailable. Never raises."""
+    global _ECAPA
+    if _ECAPA is not None:
+        return _ECAPA or None
+    with _ECAPA_LOCK:
+        if _ECAPA is not None:
+            return _ECAPA or None
+        try:
+            import onnxruntime as ort
+            t = time.time()
+            so = ort.SessionOptions()
+            if SPK_THREADS > 0:
+                so.intra_op_num_threads = SPK_THREADS
+                so.inter_op_num_threads = 1
+            sess = ort.InferenceSession(os.path.join(SPK_ECAPA_DIR, "ecapa.onnx"), so,
+                                        providers=["CPUExecutionProvider"])
+            sess.run(None, {"feats": fbank(np.zeros(SR, dtype=np.float32))[None]})   # warm-up
+            _ECAPA = sess
+            print("[babel-stream] ECAPA speaker model loaded (onnx, cpu, %.1f s): %s"
+                  % (time.time() - t, os.path.basename(SPK_ECAPA_DIR)), flush=True)
+        except Exception as e:
+            _ECAPA = False
+            print("[babel-stream] ECAPA unavailable, using light speaker labels: %s" % e, flush=True)
+    return _ECAPA or None
+
+
+def voiced_span(audio, min_rms=0.006):
+    """Audio without leading/trailing silence, cut to the middle SPK_MAX_SEC; plus voiced seconds."""
+    a = np.asarray(audio, dtype=np.float32)
+    nf = len(a) // FRAME
+    if nf == 0:
+        return a, 0.0
+    rms = np.sqrt(np.mean(a[: nf * FRAME].reshape(nf, FRAME) ** 2, axis=1))
+    # Above the fixed floor AND clearly above this line's own noise floor (noisy rooms
+    # otherwise count every frame as voice and a short "ja" looks long enough to open a speaker).
+    gate = max(min_rms, 2.5 * float(np.percentile(rms, 15)))
+    voiced = float((rms > gate).sum() * FRAME / SR)
+    on = np.nonzero(rms > gate)[0]
+    if len(on) == 0:
+        return a[:0], 0.0
+    a = a[on[0] * FRAME: (on[-1] + 1) * FRAME]
+    cap = int(SPK_MAX_SEC * SR)
+    if len(a) > cap:
+        off = (len(a) - cap) // 2
+        a = a[off: off + cap]
+    return a, voiced
+
+
+def ecapa_embed(audio):
+    """Unit-length 192-dim embedding of 16 kHz float audio, or None."""
+    sess = load_ecapa()
+    if sess is None or len(audio) < SR // 4:
+        return None
+    t = time.time()
+    feats = fbank(audio)[None]
+    e = sess.run(None, {"feats": feats})[0].reshape(-1).astype(np.float32)
+    ms = (time.time() - t) * 1000.0
+    _STATS["n"] += 1
+    _STATS["ms"] += ms
+    if _STATS["n"] <= 3 or _STATS["n"] % 25 == 0:
+        print("[babel-stream] ECAPA embedding %.0f ms (%.1f s audio, avg %.0f ms over %d)"
+              % (ms, len(audio) / SR, _STATS["ms"] / _STATS["n"], _STATS["n"]), flush=True)
+    n = float(np.linalg.norm(e))
+    return e / n if n > 0 else None
+
+
+class EcapaSpeakerTracker:
+    """Online clustering of ECAPA embeddings (cosine to a running mean per speaker).
+
+    - the first line opens A; a line opens a new speaker only if it has at least SPK_MIN_SEC
+      of voice, its best cosine is below the threshold and fewer than MAX_SPEAKERS exist;
+    - the threshold adapts to the session: it starts at SPK_COS and, once a few lines were matched,
+      becomes (median same-speaker cosine - SPK_MARGIN), kept within [SPK_COS_MIN, SPK_COS_MAX].
+      Noisy rooms lower every cosine; a fixed value would then split one person into several letters;
+    - two speakers whose running means grow alike are merged (later lines get the older letter);
+    - short lines go to the most similar speaker, or stay with the previous one if nothing is close,
+      and never change a centroid;
+    - falls back to the light tracker whenever the model is unavailable. Never raises.
+    """
+
+    def __init__(self, threshold=None, max_speakers=None, min_sec=None, adapt=None):
+        self.start = SPK_COS if threshold is None else threshold
+        self.adapt = SPK_ADAPT if adapt is None else adapt
+        self.max_speakers = min(MAX_SPEAKERS if max_speakers is None else max_speakers, len(LABELS))
+        self.min_sec = SPK_MIN_SEC if min_sec is None else min_sec
+        self.centroids = []   # [mean unit vector, count, alias index or None]
+        self.matched = []     # cosine of recent lines to the speaker they were given (same-speaker scores)
+        self.last = None
+        self.light = None
+        self.last_scores = []
+
+    @property
+    def threshold(self):
+        if not self.adapt or len(self.matched) < 3:
+            return self.start
+        return float(min(SPK_COS_MAX, max(SPK_COS_MIN, float(np.median(self.matched)) - SPK_MARGIN)))
+
+    def _fallback(self, audio):
+        if self.light is None:
+            self.light = LightSpeakerTracker(max_speakers=self.max_speakers)
+        return self.light.assign(audio)
+
+    def _keep(self):
+        return LABELS[self.last] if self.last is not None else None
+
+    def assign(self, audio):
+        try:
+            if load_ecapa() is None:
+                return self._fallback(audio)
+            seg, voiced = voiced_span(audio)
+            if voiced < 0.3 or len(seg) < SR // 3:
+                return self._keep()
+            vec = ecapa_embed(seg)
+            if vec is None:
+                return self._keep()
+            return LABELS[self.place(vec, voiced)]
+        except Exception as e:
+            print("[babel-stream] ECAPA speaker failed: %s" % e, flush=True)
+            return self._keep()
+
+    @staticmethod
+    def _unit(v):
+        return v / (np.linalg.norm(v) or 1.0)
+
+    def _active(self):
+        return [i for i, c in enumerate(self.centroids) if c[2] is None]
+
+    def _merge(self, thr):
+        """Folds speakers whose means became alike into the older one."""
+        act = self._active()
+        for x in range(len(act)):
+            for y in range(x + 1, len(act)):
+                i, j = act[x], act[y]
+                ci, cj = self.centroids[i], self.centroids[j]
+                if float(self._unit(ci[0]) @ self._unit(cj[0])) >= thr + 0.1:
+                    w = ci[1] + cj[1]
+                    ci[0] = self._unit(self._unit(ci[0]) * ci[1] + self._unit(cj[0]) * cj[1])
+                    ci[1] = w
+                    cj[2] = i
+                    if self.last == j:
+                        self.last = i
+                    return True
+        return False
+
+    def place(self, vec, voiced):
+        """Speaker index for a unit embedding with `voiced` seconds of voice; updates the clusters."""
+        if not self.centroids:
+            self.centroids.append([vec.copy(), 1, None])
+            self.last, self.last_scores = 0, [1.0]
+            return 0
+        thr = self.threshold
+        act = self._active()
+        scores = [float(vec @ self._unit(self.centroids[i][0])) for i in act]
+        self.last_scores = scores
+        k = int(np.argmax(scores))
+        best, score = act[k], scores[k]
+        if voiced < self.min_sec:
+            if score < thr - 0.15 and self.last is not None:
+                best = self.last
+            self.last = best
+            return best
+        if score < thr and len(act) < self.max_speakers and len(self.centroids) < len(LABELS):
+            self.centroids.append([vec.copy(), 1, None])
+            best = len(self.centroids) - 1
+        elif score >= thr - 0.1:
+            c = self.centroids[best]
+            n = min(c[1], 30)
+            c[0] = self._unit(self._unit(c[0]) * n + vec)
+            c[1] += 1
+            if score >= thr:
+                self.matched = (self.matched + [score])[-40:]
+            if self._merge(thr):
+                while self.centroids[best][2] is not None:
+                    best = self.centroids[best][2]
+        self.last = best
+        return best
+
+
+def SpeakerTracker():
+    """Tracker for one session: ECAPA (falls back by itself) unless SPK_MODEL=light."""
+    if SPK_MODEL == "light":
+        return LightSpeakerTracker()
+    return EcapaSpeakerTracker()
+
+
+def preload():
+    """Optional: load the speaker model in a background thread at server start."""
+    if SPEAKERS and SPK_MODEL != "light":
+        threading.Thread(target=load_ecapa, daemon=True).start()
+
+
 class StreamSession:
     """One streaming connection. `transcribe(audio) -> (text, detected_lang)` runs in a thread."""
 
@@ -136,6 +379,7 @@ class StreamSession:
         self.partial_open = False
         self.speakers = SpeakerTracker() if SPEAKERS else None
         self.wake = asyncio.Event()
+        self.lock = asyncio.Lock()   # a decode step and a client "stop" flush must not cut the same audio twice
         self.closed = False
         self.task = None
 
@@ -198,7 +442,8 @@ class StreamSession:
             while not self.closed and self.fresh >= int(STEP * SR):
                 self.fresh = 0
                 try:
-                    await self._step()
+                    async with self.lock:
+                        await self._step()
                 except Exception as e:
                     print("[babel-stream] step failed: %s" % e, flush=True)
 
@@ -269,6 +514,10 @@ class StreamSession:
                           "final": False, "language": lang})
 
     async def _flush_all(self):
+        async with self.lock:
+            await self._flush_locked()
+
+    async def _flush_locked(self):
         a = self.audio
         self.audio = np.zeros(0, dtype=np.float32)
         self.fresh = 0
