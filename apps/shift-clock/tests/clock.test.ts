@@ -193,7 +193,7 @@ describe("display", () => {
   it("shows the picker while choosing", () => {
     const view = buildView(STOPPED, [], { projects, selecting: "Client B" }, 0);
     expect(view.body).toContain("> Client B");
-    expect(view.footer).toContain("tap = start");
+    expect(view.footer).toContain("Tap = start");
   });
 
   it("shows the running clock and the project", () => {
@@ -201,7 +201,7 @@ describe("display", () => {
     const view = buildView(started, [], { projects }, 65_000);
     expect(view.header).toBe("Client A");
     expect(view.body[0]).toBe("1:05");
-    expect(view.footer).toContain("tap = stop");
+    expect(view.footer).toContain("Tap = stop");
   });
 
   it("includes the running entry in today's total", () => {
@@ -217,7 +217,7 @@ describe("display", () => {
   it("states plainly when nothing is being tracked", () => {
     const view = buildView(STOPPED, [], { projects }, 0);
     expect(view.body).toContain("stopped");
-    expect(view.footer).toContain("tap = choose project");
+    expect(view.footer).toContain("Tap = choose project");
   });
 });
 

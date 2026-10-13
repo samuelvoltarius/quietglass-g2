@@ -10,16 +10,16 @@ export const messages: Messages = {
   de: {
     // Glasses: header and footer
     "g.h.picker": "Welches Projekt starten?",
-    "g.f.picker": "wischen = wählen · tippen = starten",
-    "g.f.none": "tippen = anlegen · doppeltippen = beenden",
-    "g.f.stoppedOne": "heute {total} · tippen = starten",
-    "g.f.stoppedMany": "heute {total} · tippen = Projekt wählen",
-    "g.f.running": "heute {total} · tippen = stopp",
+    "g.f.picker": "Wischen = wählen · Tippen = starten",
+    "g.f.none": "Tippen = anlegen · 2× = Ende",
+    "g.f.stoppedOne": "heute {total} · Tippen = starten · 2× = Ende",
+    "g.f.stoppedMany": "heute {total} · Tippen = Projekt wählen",
+    "g.f.running": "heute {total} · Tippen = stopp · 2× = Ende",
     // Glasses: body
     "g.none.1": "Noch kein Projekt.",
-    "g.none.2": "Tippen legt „{name}“ an –",
-    "g.none.3": "oder leg am Handy eines an.",
-    "g.stopped": "Keine Zeit läuft.",
+    "g.none.2": "Tippen = Projekt „{name}“ anlegen,",
+    "g.none.3": "oder am Handy eines anlegen.",
+    "g.stopped": "Zeiterfassung gestoppt.",
     "g.project": "Projekt: {project}",
     "g.cancel": "Abbrechen",
     "g.target": "Tagesziel {target} h · noch {left}",
@@ -78,11 +78,11 @@ export const messages: Messages = {
   en: {
     // Glasses: header and footer
     "g.h.picker": "Start which project?",
-    "g.f.picker": "swipe = choose  ·  tap = start",
-    "g.f.none": "tap = create  ·  double tap = exit",
-    "g.f.stoppedOne": "today {total}  ·  tap = start",
-    "g.f.stoppedMany": "today {total}  ·  tap = choose project",
-    "g.f.running": "today {total}  ·  tap = stop",
+    "g.f.picker": "Swipe = choose · Tap = start",
+    "g.f.none": "Tap = create · 2× = exit",
+    "g.f.stoppedOne": "today {total} · Tap = start · 2× = exit",
+    "g.f.stoppedMany": "today {total} · Tap = choose project",
+    "g.f.running": "today {total} · Tap = stop · 2× = exit",
     // Glasses: body
     "g.none.1": "No projects yet.",
     "g.none.2": "Tap to create “{name}”,",

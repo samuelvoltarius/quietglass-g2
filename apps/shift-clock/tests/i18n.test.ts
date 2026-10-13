@@ -98,24 +98,24 @@ describe("glasses copy fits the display", () => {
 
   it("speaks German on the glasses", () => {
     const none = buildView(STOPPED, [], { projects: [], locale: "de" }, 0);
-    expect(none.body).toEqual(["Noch kein Projekt.", "Tippen legt „Arbeit“ an –", "oder leg am Handy eines an."]);
-    expect(none.footer).toBe("tippen = anlegen · doppeltippen = beenden");
+    expect(none.body).toEqual(["Noch kein Projekt.", "Tippen = Projekt „Arbeit“ anlegen,", "oder am Handy eines anlegen."]);
+    expect(none.footer).toBe("Tippen = anlegen · 2× = Ende");
     const one = buildView(STOPPED, [], { projects: ["Arbeit"], locale: "de" }, 0);
-    expect(one.body).toEqual(["Keine Zeit läuft.", "Projekt: Arbeit"]);
-    expect(one.footer).toBe("heute 0:00 · tippen = starten");
+    expect(one.body).toEqual(["Zeiterfassung gestoppt.", "Projekt: Arbeit"]);
+    expect(one.footer).toBe("heute 0:00 · Tippen = starten · 2× = Ende");
     const many = buildView(STOPPED, [], { projects: ["A", "B"], locale: "de" }, 0);
-    expect(many.footer).toBe("heute 0:00 · tippen = Projekt wählen");
+    expect(many.footer).toBe("heute 0:00 · Tippen = Projekt wählen");
     const picker = buildView(STOPPED, [], { projects: ["A", "B"], selecting: CANCEL, locale: "de" }, 0);
     expect(picker.header).toBe("Welches Projekt starten?");
     expect(picker.body).toEqual(["  A", "  B", "> Abbrechen"]);
     const running = buildView(startProject(STOPPED, "Arbeit", 0, ids()).state, [], { projects: ["Arbeit"], locale: "de" }, 65_000);
-    expect(running.footer).toContain("tippen = stopp");
+    expect(running.footer).toContain("Tippen = stopp");
   });
 
   it("a running clock is shown even after its project was removed", () => {
     const running = buildView(startProject(STOPPED, "Gone", 0, ids()).state, [], { projects: [] }, 65_000);
     expect(running.header).toBe("Gone");
-    expect(running.footer).toContain("tap = stop");
+    expect(running.footer).toContain("Tap = stop");
   });
 });
 

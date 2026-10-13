@@ -184,23 +184,89 @@ describe("shiftclock lifecycle", () => {
     expect(page.imageObject?.[0]).toMatchObject({ width: 96, height: 144 });
   });
 
-  it("regression: rebuilds the page after a reconnect even when nothing changed", async () => {
+  it("regression: a reconnect rebuilds the page and never creates it a second time", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
     fake.reconnect();
-    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 1));
+    fake.reconnect();
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 2));
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
   });
 
-  it("regression: does not create the page twice while a creation is in flight", async () => {
+  it("regression: after a failed draw the page is rebuilt, not created again", async () => {
     const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
     await boot(fake);
-    const creating = deferred<number>();
-    fake.bridge.createStartUpPageContainer.mockImplementationOnce(() => creating.promise);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    fake.bridge.textContainerUpgrade.mockRejectedValueOnce(new Error("link lost"));
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBeGreaterThan(rebuilds), { timeout: 3000 });
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+  });
+
+  it("regression: does not rebuild the page twice while a rebuild is in flight", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    const rebuilding = deferred<boolean>();
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    fake.bridge.rebuildPageContainer.mockImplementationOnce(() => rebuilding.promise);
     fake.reconnect();
-    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 1));
     await sleep(1200); // a clock tick lands while the page is still being built
-    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2);
-    creating.resolve(0);
+    expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 1);
+    rebuilding.resolve(true);
+  });
+
+  it("regression: gestures work while the first page is still being created", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    fake.bridge.createStartUpPageContainer.mockImplementation(() => new Promise(() => undefined));
+    const root = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => root, createElement: () => fakeCanvas() });
+    vi.stubGlobal("location", { search: "" });
+    vi.stubGlobal("navigator", { language: "en-US" });
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+  });
+
+  it("leaving through the system pauses the clock display and saves; coming back rebuilds", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    const saves = fake.bridge.setLocalStorage.mock.calls.length;
+    fake.emit(5);
+    await vi.waitFor(() => expect(fake.bridge.setLocalStorage.mock.calls.length).toBeGreaterThan(saves));
+    expect(stored(fake).open.project).toBe("Client A");
+    await sleep(20);
+    const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBe(drawn);
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    fake.emit(4);
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 1));
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn);
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+  });
+
+  it("a system exit saves the running entry and stops drawing", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    await boot(fake);
+    fake.emit(7);
+    await vi.waitFor(() => expect(stored(fake).open.project).toBe("Client A"));
+    await sleep(20);
+    const drawn = fake.bridge.textContainerUpgrade.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length;
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length).toBe(drawn);
+    fake.emit(0);
+    await sleep(20);
+    expect(stored(fake).open.project).toBe("Client A");
   });
 });
 

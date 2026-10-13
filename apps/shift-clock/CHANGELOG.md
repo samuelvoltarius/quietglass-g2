@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.4] — 2026-10-13
+
+### Fixed
+
+- Page set-up: the start-up page is created exactly once per run; after a failed draw, a reconnect or a return to the foreground it is only rebuilt (a second `createStartUpPageContainer` leaves real glasses deaf to taps and exit).
+- Gestures are wired before the first page goes up, so a slow page creation can no longer swallow the double tap.
+- Leaving through the system (another app, the system menu, a crash) saves the running entry and stops the per-second redraw; coming back rebuilds the page. The clock itself keeps running, as after a double tap.
+
+### Changed
+
+- Footers use one style across the apps: `Tippen = …`, `2× = Ende`; the stopped and running states name the exit gesture.
+- German wording on the glasses: "Zeiterfassung gestoppt.", "Tippen = Projekt „Arbeit“ anlegen,".
+
 ## [0.3.3] — 2026-10-13
 
 ### Changed

@@ -13,6 +13,7 @@ import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { defaultProject } from "./messages";
+import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
@@ -30,6 +31,8 @@ async function boot(): Promise<void> {
   let selecting: string | null = null;
   let lastView: ClockView | null = null;
   let pageReady = false;
+  /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
+  let rebuildWanted = false;
   /** Set once the user leaves; nothing may be drawn on a closed page. */
   let closed = false;
   let drawing: Promise<void> | null = null;
@@ -56,11 +59,12 @@ async function boot(): Promise<void> {
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
     // Checked on every redraw, but only sent when a five-minute step changed.
-    if (pageReady) dayBar.request(dayBarFor(clock, data.entries, data.dailyTargetHours));
-    if (sameView(lastView, view)) return;
+    const created = !pageReady || rebuildWanted;
+    rebuildWanted = false;
+    if (!created) dayBar.request(dayBarFor(clock, data.entries, data.dailyTargetHours));
+    if (!created && sameView(lastView, view)) return;
 
-    const created = !pageReady;
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    const result = created ? await createPage(bridge, view) : await updatePage(bridge, view);
     if (result.ok) {
       pageReady = true;
       lastView = view;
@@ -105,12 +109,18 @@ async function boot(): Promise<void> {
     persist().catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); });
   };
 
-  await draw();
-
   let ticker: ReturnType<typeof setInterval> | undefined;
+  const startTicker = (): void => {
+    if (ticker !== undefined || closed) return;
+    ticker = setInterval(() => { void draw(); }, 1000);
+  };
+  const stopTicker = (): void => {
+    if (ticker !== undefined) clearInterval(ticker);
+    ticker = undefined;
+  };
 
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; clearInterval(ticker); },
+    onConfirmed: () => { closed = true; stopTicker(); },
   }, "shiftclock");
   let leaving: Promise<void> | null = null;
 
@@ -128,8 +138,26 @@ async function boot(): Promise<void> {
       .finally(() => { leaving = null; });
   };
 
+  /** Rebuilds the page from scratch: after a reconnect or a return to the foreground. */
+  const redrawFully = (): void => {
+    rebuildWanted = true;
+    lastView = null;
+    void draw();
+  };
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // Left or back through the system instead of a double tap: the open entry
+    // is saved either way (the clock itself keeps running, as on a double tap).
+    const step = lifecycleFromEvent(event);
+    if (step === "foregroundEnter") { startTicker(); redrawFully(); return; }
+    if (step === "foregroundExit") { stopTicker(); persistInBackground(); return; }
+    if (isFinalExit(step)) {
+      closed = true;
+      stopTicker();
+      persist().catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); });
+      return;
+    }
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
@@ -187,14 +215,13 @@ async function boot(): Promise<void> {
   // The page does not survive a disconnect. The last view is forgotten too,
   // or an unchanged view would skip the rebuild and leave the display blank.
   bridge.onDeviceStatusChanged((status) => {
-    if (status?.connectType === "connected") {
-      pageReady = false;
-      lastView = null;
-      void draw();
-    }
+    if (status?.connectType === "connected" && !closed) redrawFully();
   });
 
-  ticker = setInterval(() => { void draw(); }, 1000);
+  // Only now, with the gestures wired, the first page goes up: a slow native
+  // call can never leave the glasses deaf, not even to the double tap.
+  void draw();
+  startTicker();
 
   const phone = mountPhoneUi({
     getData: () => data,

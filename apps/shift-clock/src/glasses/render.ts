@@ -85,22 +85,38 @@ function text(
   });
 }
 
+/** Bridges that already have their one start-up page. */
+const started = new WeakSet<object>();
+
 /**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
+ * Puts the page on the glasses: created once per bridge, every later call
+ * (after a failure, a reconnect or a return to the foreground) rebuilds it.
+ * A second `createStartUpPageContainer` leaves the glasses deaf to input
+ * (measured on real glasses with OpenGlance 0.5.1). The caller resends the
+ * day bar afterwards.
  */
 export async function createPage(bridge: EvenAppBridge, view: ClockView): Promise<RenderResult> {
   const page = buildPage(view);
+  sentLength.clear();
+  if (started.has(bridge)) {
+    try {
+      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
+  }
   try {
+    // The first page needs one rebuild call before the creation (it registers
+    // input on real glasses); its result is ignored.
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
-    // Expected on current firmware; the creation below is the real path.
+    // Expected to fail before the first page.
   }
 
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return { ok: true };
+    if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
