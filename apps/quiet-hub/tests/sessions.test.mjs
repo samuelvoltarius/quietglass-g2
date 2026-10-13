@@ -135,7 +135,8 @@ describe("Hermes controller", () => {
     const out = await c.run({ prompt: "Antworte nur mit OK", sessionId: "s-2", fresh: false, signal: new AbortController().signal }, (u) => updates.push(u));
     expect(out).toMatchObject({ status: "done", text: "OK", sessionId: "s-2", transport: "bridge" });
     const types = b.instances[0].sent.map((m) => m.t);
-    expect(types).toEqual(["hello", "sessions.switch", "text"]);
+    // The busy-session guard looks at the session list first.
+    expect(types).toEqual(["hello", "sessions.list", "sessions.switch", "text"]);
     expect(updates.some((u) => u.activity.includes("web"))).toBe(true);
     expect(c.transport()).toBe("bridge");
   });
@@ -398,6 +399,7 @@ describe("Codex sessions", () => {
       ...base,
       "thread/start": () => ({ thread: { id: "th-new" } }),
       "thread/resume": () => ({ thread: { id: "th-old" } }),
+      "thread/list": () => ({ data: [] }),
       "turn/start": (_m, child) => { setImmediate(() => { child.emitLines({ method: "item/agentMessage/delta", params: { delta: "fertig" } }, { method: "turn/completed", params: { turn: { status: "completed" } } }); }); return { turn: { id: "t1" } }; },
     });
     const c = createController({ id: "x", kind: "codex", mode: "auto", cwd: "/w" }, { spawn: s.spawn, fetch: fetch, hub: "", token: "", killOptions: { platform: "linux", kill: () => undefined } });
@@ -572,5 +574,44 @@ describe("reopening a Hermes CLI session", () => {
     const out = await c.select("S");
     expect(out).toMatchObject({ lastUser: "Und morgen?", lastAssistant: "18 Grad." });
     expect(out.history[0]).toEqual({ role: "user", text: "Wie warm?" });
+  });
+});
+
+describe("sessions in use elsewhere", () => {
+  it("starts a new session instead of writing into one that changed elsewhere minutes ago", async () => {
+    const { guardBusySessions } = await import("../examples/quiet-hub-agents.mjs");
+    let clock = 1_000_000_000_000;
+    const runs = [];
+    const inner = {
+      kind: "claude",
+      transport: () => "cli",
+      sessions: async () => ({ items: [{ id: "S1", title: "PC-Arbeit", updated: Math.round((clock - 60_000) / 1000) }], supported: true }),
+      newSession: async () => ({ id: null }), select: async () => ({}),
+      run: async (job) => { runs.push(job); return { status: "done", text: "Antwort", sessionId: job.fresh ? "S2" : job.sessionId }; },
+    };
+    const c = guardBusySessions(inner, { now: () => clock });
+    const out = await c.run({ prompt: "Hi", sessionId: "S1", fresh: false }, () => undefined);
+    expect(runs[0]).toMatchObject({ fresh: true, sessionId: null });
+    expect(out.text).toContain("gerade woanders aktiv");
+    expect(out.sessionId).toBe("S2");
+  });
+
+  it("keeps continuing a session the glasses themselves just wrote to", async () => {
+    const { guardBusySessions } = await import("../examples/quiet-hub-agents.mjs");
+    let clock = 1_000_000_000_000;
+    let updated = Math.round((clock - 3_600_000) / 1000);
+    const runs = [];
+    const inner = {
+      kind: "hermes", transport: () => "cli",
+      sessions: async () => ({ items: [{ id: "S1", title: "x", updated }], supported: true }),
+      newSession: async () => ({ id: null }), select: async () => ({}),
+      run: async (job) => { runs.push(job); updated = Math.round(clock / 1000); return { status: "done", text: "ok", sessionId: "S1" }; },
+    };
+    const c = guardBusySessions(inner, { now: () => clock });
+    await c.run({ prompt: "1", sessionId: "S1", fresh: false }, () => undefined);
+    clock += 30_000;
+    const second = await c.run({ prompt: "2", sessionId: "S1", fresh: false }, () => undefined);
+    expect(runs.map((j) => j.fresh)).toEqual([false, false]);
+    expect(second.text).toBe("ok");
   });
 });

@@ -1089,12 +1089,61 @@ function createOpenClawController(agent, ctx) {
 }
 
 export function createController(agent, ctx) {
-  switch (agent.kind) {
-    case "claude": return createClaudeController(agent, ctx);
-    case "codex": return createCodexController(agent, ctx);
-    case "hermes": return createHermesController(agent, ctx);
-    default: return createOpenClawController(agent, ctx);
-  }
+  const inner = (() => {
+    switch (agent.kind) {
+      case "claude": return createClaudeController(agent, ctx);
+      case "codex": return createCodexController(agent, ctx);
+      case "hermes": return createHermesController(agent, ctx);
+      default: return createOpenClawController(agent, ctx);
+    }
+  })();
+  return guardBusySessions(inner, ctx);
+}
+
+/** A session changed by someone else within this window is treated as in use elsewhere. */
+export const ACTIVE_ELSEWHERE_MS = 5 * 60_000;
+
+/**
+ * Never continue a session that is being worked in somewhere else right now
+ * (e.g. the Claude Code window on the PC): two writers to one session can
+ * garble its history. Such a question starts a new session instead, and the
+ * answer says so. The glasses' own writes do not count.
+ */
+export function guardBusySessions(controller, ctx = {}) {
+  const now = ctx.now ?? (() => Date.now());
+  const ownWrite = new Map();
+  return {
+    ...controller,
+    transport: (...args) => controller.transport(...args),
+    sessions: (...args) => controller.sessions(...args),
+    newSession: (...args) => controller.newSession(...args),
+    select: (...args) => controller.select(...args),
+    close: (...args) => controller.close?.(...args),
+    async run(job, emit) {
+      let note = "";
+      if (!job.fresh && job.sessionId) {
+        // Bounded: a slow session list must not hold up the question.
+        const list = await Promise.race([
+          Promise.resolve(controller.sessions()).catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+        ]);
+        const item = list?.items?.find((i) => i.id === job.sessionId);
+        const changedAt = typeof item?.updated === "number" && item.updated > 0 ? item.updated * 1000 : 0;
+        const ours = ownWrite.get(job.sessionId) ?? 0;
+        if (changedAt > 0 && now() - changedAt < ACTIVE_ELSEWHERE_MS && changedAt > ours + 15_000) {
+          note = `(Die Sitzung „${oneLine(item.title ?? "", 40)}“ ist gerade woanders aktiv – ich habe eine neue Sitzung begonnen.)`;
+          emit({ text: "", activity: "Sitzung woanders aktiv – neue Sitzung" });
+          job = { ...job, fresh: true, sessionId: null };
+        }
+      }
+      const result = await controller.run(job, emit);
+      const id = result?.sessionId ?? job.sessionId;
+      if (id) ownWrite.set(id, now());
+      return note && result && typeof result.text === "string" ? { ...result, text: `${note}
+
+${result.text}` } : result;
+    },
+  };
 }
 
 export { nodeSpawn };
