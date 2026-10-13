@@ -104,7 +104,7 @@ export function duration(minutes: number | null): string {
 }
 
 /** A progress bar from glyphs the G2 is known to draw. */
-export function progressBar(percent: number, width = 20): string {
+export function progressBar(percent: number, width = 22): string {
   const filled = Math.round((Math.max(0, Math.min(100, percent)) / 100) * width);
   return "●".repeat(filled) + "○".repeat(width - filled);
 }

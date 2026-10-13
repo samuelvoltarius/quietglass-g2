@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4] — 2026-10-13
+
+### Changed
+
+- Glasses rows use the full display width (56 instead of 46 characters).
+- Progress bar is 22 glyphs wide (was 20) so it fills the row next to the percentage.
+
 ## [0.1.3] — 2026-10-13
 
 ### Fixed

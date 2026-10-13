@@ -27,7 +27,7 @@ function expectFits(view: ScreenView, label: string): void {
   expect(view.footer, label).not.toBe("");
 }
 
-describe("every glasses view fits 7 rows × 46 characters", () => {
+describe("every glasses view fits 7 rows × 56 characters", () => {
   const statuses: Array<PrinterStatus | null> = [
     null, online(), online({ state: "paused" }), online({ state: "complete", layers: null }), online({ state: "error", controllable: false }),
     parseStatus({ online: false, reason: "no-printer", nextScanSeconds: 86400 }), parseStatus({ online: false, reason: "searching" }),
@@ -63,7 +63,7 @@ describe("what the glasses say", () => {
     }));
     expect(view.header).toBe("KLIPPER · druckt");
     expect(view.body).toEqual([
-      "halterung", "", "●●●●●●●●●●○○○○○○○○○○  50 %", "Schicht 90/180 · noch 1 h 15 min",
+      "halterung", "", "●●●●●●●●●●●○○○○○○○○○○○  50 %", "Schicht 90/180 · noch 1 h 15 min",
       "Düse 219/220 °C · Bett 60/60 °C", "Tempo 100 %", "",
     ]);
     expect(view.footer).toBe("tippen = steuern · 2× = Ende");

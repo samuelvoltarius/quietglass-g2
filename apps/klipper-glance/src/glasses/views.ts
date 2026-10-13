@@ -5,7 +5,7 @@ import { fit, marked, MAX_BODY_ROWS, type ScreenView } from "./screen";
 
 /**
  * Everything the glasses show, as pure functions of a state snapshot, so every
- * screen can be checked against the 7 × 46 display limit in both languages.
+ * screen can be checked against the 7 × 56 display limit in both languages.
  */
 
 export type Connection =
