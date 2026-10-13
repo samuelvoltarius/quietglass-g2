@@ -1,11 +1,11 @@
 /**
  * Text budget on the G2 (576 x 288): one header row, up to five body rows and
- * one footer row. Header and footer span the full width (~46 characters); the
- * body sits beside the 144 px head gauge, so it gets ~34. German runs longer
+ * one footer row. Header and footer span the full width (~56 characters); the
+ * body sits beside the 144 px head gauge, so it gets ~42. German runs longer
  * than English, so every line is cut safely rather than allowed to wrap.
  */
-export const LINE_COLS = 46;
-export const BODY_COLS = 34;
+export const LINE_COLS = 56;
+export const BODY_COLS = 42;
 export const BODY_ROWS = 5;
 
 export function fit(text: string, max: number): string {

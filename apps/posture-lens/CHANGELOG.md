@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] — 2026-10-13
+
+### Changed
+
+- Text beside the head gauge gets 42 characters per row (was 34); header and footer use the full 56 characters, so German messages are cut later.
+
 ## [0.3.2] — 2026-10-13
 
 ### Fixed
