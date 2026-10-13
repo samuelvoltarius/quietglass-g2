@@ -111,30 +111,30 @@ function guarded(specId: number, content: string): { content: string; contentLen
 /** What each image container shows on the glasses, by container id: pictures are sent only when this changes. */
 const shown = new Map<number, string>();
 
-/** `createStartUpPageContainer` works once per run; every later page is a rebuild. */
-let startupDone = false;
+/** Bridges that already have their startup page: every later page is a rebuild. */
+const started = new WeakSet<object>();
 
 /**
- * Puts a page on the glasses. The first page is created; every later one
- * replaces it with `rebuildPageContainer` (a second creation is refused as
- * "invalid" - which once left the map of OpenGlance Nav blank for good). The
- * rebuild call is also made before the very first page although there is
- * nothing to rebuild yet: it registers event routing, and skipping it leaves
- * the app deaf to input. If a later rebuild is refused, creating is tried as
- * the last resort.
+ * Puts a page on the glasses: created exactly once per bridge, every later
+ * page a `rebuildPageContainer` - the order Quiet Hub uses and that takes
+ * input on real glasses. A rebuild before the first creation, or a second
+ * creation, left OpenGlance Nav 0.5.1 deaf to taps and unable to exit.
  */
 async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
   shown.clear();
-  try {
-    if (await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })) && startupDone) return { ok: true };
-  } catch {
-    // Expected on current firmware for the first page; creation below is the real path.
+  if (!started.has(bridge)) {
+    try {
+      const result = await bridge.createStartUpPageContainer(page);
+      if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
+      return { ok: false, reason: describeCreateResult(result) };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
   }
   try {
-    const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) { startupDone = true; return { ok: true }; }
-    return { ok: false, reason: describeCreateResult(result) };
+    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+    return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }

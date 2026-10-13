@@ -2,7 +2,6 @@ import {
   CreateStartUpPageContainer,
   TextContainerProperty,
   TextContainerUpgrade,
-  RebuildPageContainer,
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
@@ -72,18 +71,12 @@ function text(
 }
 
 /**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
+ * Creates the page - exactly once, without a rebuild first. That order is
+ * the one Quiet Hub uses and that takes input on real glasses; a rebuild
+ * before the creation left OpenGlance Nav 0.5.1 deaf to taps.
  */
 export async function createPage(bridge: EvenAppBridge, view: CaptionView): Promise<RenderResult> {
   const page = buildPage(view);
-  try {
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-  } catch {
-    // Expected on current firmware; the creation below is the real path.
-  }
-
   try {
     const result = await bridge.createStartUpPageContainer(page);
     if (result === StartUpPageCreateResult.success) return { ok: true };
