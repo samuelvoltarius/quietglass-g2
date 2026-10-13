@@ -29,6 +29,8 @@ import {
   destinationOf, geocoderUrlOf, load, routerUrlOf, save, usesMockRouter, type NavData,
 } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
+import { TurnAnnouncer } from "./speech/announcer";
 
 /** While the distance only counts down, the turn card is resent at most this often. */
 const CARD_MIN_INTERVAL_MS = 2_000;
@@ -97,6 +99,20 @@ async function boot(): Promise<void> {
   /** The public router allows one request per second; this keeps to it. */
   const routeGate = createRequestGate();
   let lastRouteAt: number | null = null;
+
+  // Spoken turn instructions: Piper server voice (private build: VITE_TTS_URL), phone voice as fallback.
+  const tts = new ServerTts({ url: buildTtsUrl(), voices: DEFAULT_VOICES });
+  const announcer = new TurnAnnouncer();
+  const announce = (): void => {
+    if (!nav || !data.announce || DEMO) return;
+    const a = announcer.next(progressOf(nav), { routeId: routeVersion, mode: data.mode, locale, hasFix: nav.position !== null });
+    if (a) tts.speak(a.text, { lang: locale, priority: a.priority, key: a.key, maxAgeMs: a.maxAgeMs });
+  };
+  const voiceState = (): "needs-tap" | "server" | "browser" | "off" => {
+    if (!data.announce || !tts.available) return "off";
+    if (!tts.unlocked) return "needs-tap";
+    return tts.lastSource === "browser" || !tts.configured ? "browser" : "server";
+  };
 
   const router = (): RoutingProvider => {
     if (usesMockRouter(data)) return createMockProvider();
@@ -369,6 +385,8 @@ async function boot(): Promise<void> {
     nav = null;
     errorKey = null;
     rerouting = false;
+    tts.stop();
+    announcer.reset();
     await bridge.stopAppLocationUpdates().catch(() => undefined);
     await draw();
   };
@@ -403,6 +421,7 @@ async function boot(): Promise<void> {
 
     if (nav) {
       nav = update(nav, position);
+      announce();
       // Rerouting is automatic: a driver cannot be expected to ask for it. It
       // is spaced out, though, so someone lingering beside the route does not
       // hammer a free public server; a tap still reroutes at once.
@@ -451,6 +470,7 @@ async function boot(): Promise<void> {
             closed = true;
             routeSeq++;
             nav = null;
+            tts.stop();
             if (tickTimer !== null) clearInterval(tickTimer);
             if (streetsTimer !== null) clearTimeout(streetsTimer);
             if (typeof stopListening === "function") stopListening();
@@ -482,11 +502,14 @@ async function boot(): Promise<void> {
         || next.demo !== data.demo
         || next.valhallaUrl !== data.valhallaUrl;
       data = next;
+      if (!next.announce) tts.stop();
       await save(bridge, next);
       if (routeChanged && nav && position) await computeRoute(position);
       await draw();
     },
     getPosition: () => position,
+    onVoiceActivate: () => { tts.unlock(); if (tts.available) tts.speak(locale === "de" ? "Sprachausgabe ist bereit." : "Voice is ready."); },
+    getVoiceState: voiceState,
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;

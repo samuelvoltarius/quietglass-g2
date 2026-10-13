@@ -21,6 +21,10 @@ export interface PhoneUiPorts {
   readonly getPosition: () => LatLng | null;
   readonly getLocale?: () => Locale;
   readonly setLocale?: (locale: Locale) => void;
+  /** Called from the tap on "Activate voice": browsers only play audio after a gesture. */
+  readonly onVoiceActivate?: () => void;
+  /** "needs-tap" | "server" | "browser" | "off" - which voice spoke last or is waiting. */
+  readonly getVoiceState?: () => "needs-tap" | "server" | "browser" | "off";
   /** Place search; absent means the search box is not offered. */
   readonly search?: (query: string) => Promise<SearchOutcome>;
 }
@@ -57,7 +61,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const data = ports.getData();
     // Whatever is half typed survives a redraw caused by another control.
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
-    root.innerHTML = template(data, notice, ports.getPosition(), locale(), search, Boolean(ports.search));
+    root.innerHTML = template(data, notice, ports.getPosition(), locale(), search, Boolean(ports.search), ports.getVoiceState?.() ?? null);
     DRAFT_FIELDS.forEach((id, index) => {
       const field = root.querySelector<HTMLInputElement>("#" + id);
       const value = typed[index];
@@ -81,6 +85,7 @@ function template(
   locale: Locale,
   search: SearchState,
   canSearch: boolean,
+  voice: "needs-tap" | "server" | "browser" | "off" | null,
 ): string {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const destination = destinationOf(data);
@@ -176,6 +181,14 @@ function template(
     <p class="hint">${escapeHtml(t("p.viewHint"))}</p>
   </section>
 
+  ${voice === null ? "" : `<section class="card">
+    <h2>${t("p.announce")}</h2>
+    <label class="check"><input id="announce" type="checkbox"${data.announce ? " checked" : ""} /> ${t("p.announce")}</label>
+    ${data.announce ? `<button id="voice-on" type="button">${t("p.announceOn")}</button>
+    <p class="hint">${escapeHtml(t("p.announceState", { state: t(voice === "server" ? "p.voiceServer" : voice === "browser" ? "p.voiceBrowser" : voice === "needs-tap" ? "p.voiceNeedsTap" : "p.voiceOff") }))}</p>` : ""}
+    <p class="hint">${escapeHtml(t("p.announceHint"))}</p>
+  </section>`}
+
   <section class="card">
     <h2>${t("p.controls")}</h2>
     <table class="keys">
@@ -244,6 +257,15 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
 
   byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
     commit({ ...data, invertScroll: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
+  byId<HTMLInputElement>("announce")?.addEventListener("change", (event) => {
+    commit({ ...data, announce: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
+  byId<HTMLButtonElement>("voice-on")?.addEventListener("click", () => {
+    ports.onVoiceActivate?.();
+    hooks.rerender();
   });
 
   byId<HTMLInputElement>("streets")?.addEventListener("change", (event) => {

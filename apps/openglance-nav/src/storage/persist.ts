@@ -3,6 +3,7 @@ import type { LatLng } from "../geo/geometry";
 import { DEFAULT_ROUTER_URL, type TravelMode } from "../routing/provider";
 import { DEFAULT_GEOCODER_URL } from "../geocode/photon";
 import type { GlassLayout } from "../glasses/view";
+import { buildTtsUrl } from "../speech/server-tts";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -40,6 +41,8 @@ export interface NavData {
    * (Overpass) once per route. Off: the route alone, nothing extra sent.
    */
   readonly streets: boolean;
+  /** Spoken turn instructions ("In 200 metres turn left"). On by default when the build has a voice server. */
+  readonly announce: boolean;
 }
 
 const KEY = "quietglass.openglance.v1";
@@ -55,6 +58,7 @@ export const EMPTY_DATA: NavData = {
   destinationId: null,
   invertScroll: false,
   streets: true,
+  announce: buildTtsUrl() !== "",
 };
 
 export function usesMockRouter(data: NavData): boolean {
@@ -172,6 +176,7 @@ export function parseData(raw: string): NavData {
       destinationId,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
       streets: typeof value.streets === "boolean" ? value.streets : EMPTY_DATA.streets,
+      announce: typeof value.announce === "boolean" ? value.announce : EMPTY_DATA.announce,
     };
   } catch {
     return EMPTY_DATA;
