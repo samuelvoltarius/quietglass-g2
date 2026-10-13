@@ -18,7 +18,8 @@ import { buildWav } from "./audio/wav";
 import { mountPhoneUi, type ConnView, type SettingsResult } from "./ui/phone";
 import { loadSettings, saveSettings } from "./setup/settings";
 import { decodeQr, parseSetupQr } from "./setup/qr";
-import { createBrowserSpeechEngine, HubNarrator } from "./speech/narrator";
+import { createBrowserSpeechEngine, createServerSpeechEngine, HubNarrator } from "./speech/narrator";
+import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
@@ -28,7 +29,7 @@ const POLL_MS = 5000;
 const BUSY_POLL_MS = 1500;
 /** Faster while an agent works or a permission card waits, so answers stream. */
 const POLL_FAST_MS = 1500;
-const BUILD = "0.6.3";
+const BUILD = "0.6.4";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent; also guards against a lost "release" event. */
@@ -115,7 +116,9 @@ async function boot(): Promise<void> {
   let fast = false;
   let newestEventId: string | null = model.report.inbox.events[0]?.id ?? null;
   // Spoken answers on the phone (AirPods / headphones), opt-in on the phone page.
-  const narrator = new HubNarrator(createBrowserSpeechEngine(), () => settings.speakAnswers, () => locale);
+  // Piper server voice (private build: VITE_TTS_URL), browser voice as fallback.
+  const serverTts = new ServerTts({ url: buildTtsUrl(), voices: DEFAULT_VOICES });
+  const narrator = new HubNarrator(createServerSpeechEngine(createBrowserSpeechEngine(), serverTts), () => settings.speakAnswers, () => locale);
   const applyReport = (report: Awaited<ReturnType<HubApi["report"]>>): void => {
     markOk();
     const wasBusy = new Set(model.report.agents.filter((agent) => agent.busy).map((agent) => agent.id));
@@ -505,7 +508,7 @@ async function boot(): Promise<void> {
       }
     };
     refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings, conn: connView(), speech: narrator.status() }), {
-      onSpeechActivate: () => { narrator.activate(); },
+      onSpeechActivate: () => { serverTts.unlock(); narrator.activate(); },
       onLocale: (next) => {
         locale = next;
         rememberLocale(bridge, next);

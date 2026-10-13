@@ -5,6 +5,7 @@
  */
 import type { Locale } from "../i18n";
 import type { AgentInfo, Approval } from "../api/types";
+import type { ServerTts } from "./server-tts";
 
 const PHRASES: Readonly<Record<Locale, Readonly<Record<string, string>>>> = {
   de: {
@@ -89,6 +90,25 @@ export function createBrowserSpeechEngine(): SpeechEngine {
     cancel: () => synthesis.cancel(),
     pause: () => synthesis.pause(),
     resume: () => synthesis.resume(),
+  };
+}
+
+/**
+ * Speaks through the server voice (Piper) and falls back to the browser voice
+ * when the server is slow, down or not set up; see server-tts.ts.
+ */
+export function createServerSpeechEngine(browser: SpeechEngine, tts: ServerTts): SpeechEngine {
+  return {
+    get available(): boolean { return tts.available || browser.available; },
+    voices: () => browser.voices(),
+    speak: (request) => tts.speak(request.text, {
+      lang: request.language.toLowerCase().startsWith("en") ? "en" : "de",
+      onStart: request.onStart,
+      onEnd: request.onEnd,
+    }),
+    cancel: () => tts.stop(),
+    pause: () => browser.pause(),
+    resume: () => browser.resume(),
   };
 }
 

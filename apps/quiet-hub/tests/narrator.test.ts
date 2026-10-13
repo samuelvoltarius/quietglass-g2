@@ -49,3 +49,20 @@ describe("spoken answers", () => {
     expect(e.said.filter((s) => s.includes("Freigabe"))).toEqual(["Freigabe nötig für Bash. Schau auf die Brille."]);
   });
 });
+
+describe("server speech engine", () => {
+  it("routes the narrator through the server voice queue", async () => {
+    const { ServerTts } = await import("../src/speech/server-tts");
+    const { createServerSpeechEngine } = await import("../src/speech/narrator");
+    const said: string[] = [];
+    const browser = { available: true, voices: () => [], speak: () => undefined, cancel: () => undefined, pause: () => undefined, resume: () => undefined };
+    const tts = new ServerTts({ url: "", voices: { de: "de-DE-thorsten", en: "" } }, {
+      browser: { available: true, speak: (text, _lang, done) => { said.push(text); done(); }, cancel: () => undefined },
+    });
+    const n = new HubNarrator(createServerSpeechEngine(browser, tts), () => true, () => "de");
+    n.activate();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(said).toEqual(["Vorlesen ist bereit."]);
+    expect(n.status()).toBe("ready");
+  });
+});
