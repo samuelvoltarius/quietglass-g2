@@ -2,7 +2,7 @@ import { isLoopback, isPlainHttp, validateBridgeUrl } from "../printer/client";
 import type { PrinterStatus } from "../printer/status";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { t } from "../messages";
-import { maskToken, type Settings } from "../storage/persist";
+import { BUILD_URL, maskToken, type Settings } from "../storage/persist";
 import { escapeHtml } from "./html";
 
 /**
@@ -74,7 +74,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
 
     byId<HTMLButtonElement>("save")?.addEventListener("click", () => {
       const url = byId<HTMLInputElement>("url")?.value.trim() ?? "";
-      const check = validateBridgeUrl(url);
+      // Empty is fine when the build carries its own address.
+      const check = url === "" && BUILD_URL ? { valid: true, errors: [] } : validateBridgeUrl(url);
       if (!check.valid) { notify(check.errors.map((key) => t(locale, key)).join(" ")); return; }
       const tokenField = byId<HTMLInputElement>("token");
       const current = ports.getSettings();
@@ -101,6 +102,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
 function template(settings: Settings, connection: PhoneConnection, status: PrinterStatus | null, locale: Locale, notice: string): string {
   const L = (key: string, vars: Record<string, string | number> = {}): string => escapeHtml(t(locale, key, vars));
   const url = settings.bridgeUrl;
+  const shown = url || BUILD_URL;
   const line = (() => {
     if (connection.kind === "none") return L("p.status.none");
     if (connection.kind === "error") return L("p.status.error", { reason: connection.reason });
@@ -109,7 +111,7 @@ function template(settings: Settings, connection: PhoneConnection, status: Print
     return L("p.status.online", { state: t(locale, "g.state." + status.state), progress: status.progress, file: status.file || "–" });
   })();
   const control = status ? `<p class="hint">${L(status.controllable ? "p.control.on" : "p.control.off")}</p>` : "";
-  const warnHttp = url && isPlainHttp(url) && !isLoopback(url);
+  const warnHttp = shown && isPlainHttp(shown) && !isLoopback(shown);
 
   return `
   <header class="brand">
@@ -133,9 +135,10 @@ function template(settings: Settings, connection: PhoneConnection, status: Print
 
   <section class="card">
     <h2>${L("p.bridge")}</h2>
-    ${url ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
+    ${shown ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
     <label for="url">${L("p.url")}</label>
-    <input id="url" type="text" inputmode="url" autocomplete="off" value="${escapeHtml(url)}" placeholder="${L("p.urlPlaceholder")}" />
+    <input id="url" type="text" inputmode="url" autocomplete="off" value="${escapeHtml(url)}" placeholder="${BUILD_URL ? escapeHtml(BUILD_URL) : L("p.urlPlaceholder")}" />
+    ${BUILD_URL ? `<p class="hint">${L("p.urlBuild")}</p>` : ""}
     ${warnHttp ? `<p class="hint"><small class="warn">${L("p.httpWarn")}</small></p>` : ""}
     <label for="token">${L("p.token")}</label>
     <input id="token" type="password" autocomplete="off" placeholder="${L("p.tokenPlaceholder")}" />

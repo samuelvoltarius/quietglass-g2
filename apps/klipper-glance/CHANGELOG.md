@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.1] — 2026-10-13
+
+### Added
+
+- Private builds carry the bridge address (`VITE_KLIPPER_URL`): nothing to type on the phone. A stored placeholder (loopback, example host) gives way to it once.
+
+### Fixed
+
+- The glasses listen before the first page is built.
+- A command without an answer says "Ergebnis unklar – Status wird geprüft" (it may have run) and checks the printer at once.
+- Leaving through the system stops polling; coming back rebuilds the page and polls at once.
+
+### Changed
+
+- Footers in one style (`Tippen = …`, `2× = Ende`); "Fortsetzen gesendet".
+
 ## [0.2.0] — 2026-10-13
 
 ### Added

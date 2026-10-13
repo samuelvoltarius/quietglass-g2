@@ -109,7 +109,7 @@ describe("Klipper Glance lifecycle", () => {
     const fake = fakeGlasses();
     const root = await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Noch keine Bridge eingerichtet."));
-    expect(root.innerHTML).toContain("Erster Start");
+    await vi.waitFor(() => expect(root.innerHTML).toContain("Erster Start"));
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
 
@@ -153,7 +153,7 @@ describe("Klipper Glance lifecycle", () => {
   it("every command needs two taps; a swipe in between drops the first", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.footer()).toBe("tippen = steuern · 2× = Ende"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = steuern · 2× = Ende"));
     fake.emit(CLICK);                                        // control screen
     await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
     fake.emit(CLICK);                                        // arm pause
@@ -203,11 +203,11 @@ describe("Klipper Glance lifecycle", () => {
     server.state.printer = { ...server.state.printer, controllable: false };
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.footer()).toBe("tippen = aktualisieren · 2× = Ende"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = aktualisieren · 2× = Ende"));
     const before = server.state.statusCalls;
     fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.statusCalls).toBe(before + 1));
-    expect(fake.header()).toBe("KLIPPER · druckt");
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
   });
 
   it("never stacks polls against a stalled bridge, and says so after the timeout", async () => {
@@ -228,5 +228,37 @@ describe("Klipper Glance lifecycle", () => {
     await vi.waitFor(() => expect(root.innerHTML).toContain("printing · 42 %"));
     expect(root.innerHTML).not.toContain("<img");
     expect(root.innerHTML).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("stops asking the printer while in the background and starts again on return", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(server.state.statusCalls).toBeGreaterThan(0));
+    fake.emit(5);
+    const calls = server.state.statusCalls;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(server.state.statusCalls).toBe(calls);
+    fake.emit(4);
+    await vi.waitFor(() => expect(server.state.statusCalls).toBeGreaterThan(calls));
+  });
+});
+
+describe("build address", () => {
+  it("reads the build's address and drops a stored placeholder once in its favour", async () => {
+    const persist = await import("../src/storage/persist");
+    const build = persist.buildUrl("https://printer.test:8447/");
+    expect(build).toBe("https://printer.test:8447");
+    expect(persist.buildUrl("not a url")).toBe("");
+    expect(persist.parseSettings(JSON.stringify({ bridgeUrl: "http://127.0.0.1:8898" }), build).bridgeUrl).toBe("");
+    expect(persist.parseSettings(JSON.stringify({ bridgeUrl: "https://your-machine.home.example" }), build).bridgeUrl).toBe("");
+    expect(persist.parseSettings(JSON.stringify({ bridgeUrl: "https://other.test" }), build).bridgeUrl).toBe("https://other.test");
+    expect(persist.effectiveUrl(persist.parseSettings("", build), build)).toBe("https://printer.test:8447");
+  });
+
+  it("keeps whatever was typed in a public build", async () => {
+    const persist = await import("../src/storage/persist");
+    expect(persist.parseSettings(JSON.stringify({ bridgeUrl: "http://127.0.0.1:8898" }), "").bridgeUrl).toBe("http://127.0.0.1:8898");
+    expect(persist.effectiveUrl(persist.parseSettings("", ""), "")).toBe("");
   });
 });

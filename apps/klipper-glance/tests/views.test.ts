@@ -66,7 +66,7 @@ describe("what the glasses say", () => {
       "halterung", "", "●●●●●●●●●●●○○○○○○○○○○○  50 %", "Schicht 90/180 · noch 1 h 15 min",
       "Düse 219/220 °C · Bett 60/60 °C", "Tempo 100 %", "",
     ]);
-    expect(view.footer).toBe("tippen = steuern · 2× = Ende");
+    expect(view.footer).toBe("Tippen = steuern · 2× = Ende");
   });
 
   it("without control permission, tap only refreshes", () => {

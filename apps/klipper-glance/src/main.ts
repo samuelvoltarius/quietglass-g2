@@ -13,7 +13,8 @@ import {
 import { curveFrame, ringFrame } from "./glasses/charts";
 import { bitmapKey } from "./glasses/gfx";
 import { TempHistory, demoTempSamples } from "./printer/history";
-import { loadSettings, saveSettings, type Settings } from "./storage/persist";
+import { effectiveUrl, loadSettings, saveSettings, type Settings } from "./storage/persist";
+import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
@@ -34,8 +35,9 @@ async function boot(): Promise<void> {
 
   const makeApi = (): PrinterApi | null => {
     if (DEMO) return createDemoPrinter(Date.now, Number.isFinite(DEMO_PERCENT) && DEMO_PERCENT > 0 ? DEMO_PERCENT : 42);
-    if (!settings.bridgeUrl) return null;
-    return createClient({ baseUrl: settings.bridgeUrl, ...(settings.token ? { token: settings.token } : {}) });
+    const url = effectiveUrl(settings);
+    if (!url) return null;
+    return createClient({ baseUrl: url, ...(settings.token ? { token: settings.token } : {}) });
   };
   let api = makeApi();
 
@@ -52,6 +54,8 @@ async function boot(): Promise<void> {
   let messageTimer: ReturnType<typeof setTimeout> | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let polling = false;
+  /** Left through the system: no polling and no drawing until the app is back. */
+  let backgrounded = false;
   /** Bumped when the bridge changes: replies for the old one are dropped. */
   let generation = 0;
 
@@ -116,7 +120,7 @@ async function boot(): Promise<void> {
 
   /** One draw at a time; requests made meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
-    if (closed) return Promise.resolve();
+    if (closed || backgrounded) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
       try {
@@ -165,7 +169,7 @@ async function boot(): Promise<void> {
   /** One poll at a time; a reply for a bridge that was replaced meanwhile is dropped. */
   const poll = async (): Promise<void> => {
     const client = api;
-    if (polling || closed || !client) return;
+    if (polling || closed || backgrounded || !client) return;
     polling = true;
     const startedIn = generation;
     try {
@@ -201,7 +205,10 @@ async function boot(): Promise<void> {
     } catch (error) {
       if (closed) return;
       const problem = toApiError(error);
-      say(t(locale, "g.notSent", { reason: errorReason(locale, problem.code, problem.status) }));
+      // Without an answer the command may well have run: say so, and look at the printer at once.
+      say(problem.code === "timeout"
+        ? t(locale, "g.unknownResult")
+        : t(locale, "g.notSent", { reason: errorReason(locale, problem.code, problem.status) }));
     } finally {
       sending = false;
     }
@@ -283,16 +290,38 @@ async function boot(): Promise<void> {
     void draw();
   };
 
-  await draw();
-  startPolling();
+  const goBackground = (): void => {
+    backgrounded = true;
+    clearInterval(pollTimer);
+    pollTimer = undefined;
+    disarm();
+    screen = "hud";
+  };
+  const comeBack = (): void => {
+    backgrounded = false;
+    pageReady = false;
+    lastView = null;
+    void draw();
+    startPolling();
+  };
 
+  // The glasses listen before the first page is built: a slow page must never make a tap or the exit go nowhere.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { comeBack(); return; }
+    if (lifecycle === "background") { goBackground(); return; }
+    if (lifecycle === "exit") { goBackground(); shutDown(); return; }
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
+    // A gesture means the app is on the glasses again, even if no "foreground" came first.
+    if (backgrounded) { comeBack(); return; }
     if (screen === "control") onControl(parsed.gesture);
     else onHud(parsed.gesture);
   });
+
+  await draw();
+  startPolling();
 
   bridge.onDeviceStatusChanged((device) => {
     if (device?.connectType === "connected" && !closed) {
