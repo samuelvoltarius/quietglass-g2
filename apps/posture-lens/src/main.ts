@@ -11,6 +11,9 @@ import { sameView } from "./glasses/diff";
 import { createPage, sendImage, updatePage } from "./glasses/render";
 import { GAUGE, drawGauge, gaugeAngle, gaugeKey, type GaugeState } from "./glasses/gauge";
 import { createImageLane } from "./glasses/lane";
+import { angleKey, drawAngle, ANGLE_IMAGE, type AngleState } from "./glasses/digits";
+import { FIGURE_IMAGE, drawFigure, figureKey, nextStage, type FigureStage, type FigureState } from "./glasses/figure";
+import { quantize } from "./glasses/bitmap";
 import { encodePng } from "./glasses/pixel";
 import { load, save, type PostureData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
@@ -49,7 +52,11 @@ async function boot(): Promise<void> {
   let calibratedAt: number | null = null;
   /** Angle as last drawn on the gauge, in 2° steps; the hysteresis works against it. */
   let gaugeDeg: number | null = null;
-  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData));
+  /** Angle as last drawn in the big digits, in whole degrees. */
+  let digitsDeg: number | null = null;
+  let figure: FigureStage | null = null;
+  /** Images are written at most every 700 ms and only when their picture changes. */
+  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
 
   // A stored calibration makes the app usable immediately after a restart.
   if (data.reference) {
@@ -86,6 +93,16 @@ async function boot(): Promise<void> {
     gaugeDeg = calibrated ? gaugeAngle(gaugeDeg, monitor.angle) : null;
     const state: GaugeState = { calibrated, angle: gaugeDeg, warnAngle: data.settings.warnAngle, alert: monitor.state === "leaning" || monitor.state === "warned" };
     lane.request(GAUGE, gaugeKey(state), () => encodePng(drawGauge(state)));
+    const alert = state.alert;
+    // The figure straightens or slumps in four steps; it is sent only when the step changes.
+    figure = nextStage(figure, calibrated ? monitor.angle : null, data.settings.warnAngle);
+    const fig: FigureState = { stage: figure, alert };
+    lane.request(FIGURE_IMAGE, figureKey(fig), () => encodePng(drawFigure(fig)));
+    // The lean as big digits: only while it matters (leaning, warned, or if the user asked to see it).
+    const show = calibrated && (alert || (data.showAngleWhenGood && monitor.angle !== null));
+    digitsDeg = show ? quantize(digitsDeg, monitor.angle, 1) : null;
+    const angle: AngleState = { show, deg: digitsDeg, alert };
+    lane.request(ANGLE_IMAGE, angleKey(angle), () => encodePng(drawAngle(angle)));
   };
 
   const drawOnce = async (): Promise<void> => {
@@ -192,6 +209,22 @@ async function boot(): Promise<void> {
   });
 
   tick = setInterval(() => { void draw(); }, TICK_MS);
+
+  // ?demo=1 (simulator, screenshots): a head that nods forward and back, no sensor needed.
+  if (typeof location !== "undefined" && new URLSearchParams(location.search).get("demo") === "1") {
+    monitor = calibrate(monitor, { x: 0, y: 0, z: 1 }, Date.now());
+    const started = Date.now();
+    setInterval(() => {
+      if (closed) return;
+      const seconds = (Date.now() - started) / 1000;
+      const radians = (Math.max(0, 24 + 24 * Math.sin(seconds / 4)) * Math.PI) / 180;
+      const sample = { x: Math.sin(radians), y: 0, z: Math.cos(radians) };
+      lastSample = sample;
+      sensorOff = false;
+      monitor = addSample(monitor, sample, { ...data.settings, smoothing: 0.5 }, Date.now());
+      void draw();
+    }, 500);
+  }
 
   mountPhoneUi({
     getLocale: () => locale,

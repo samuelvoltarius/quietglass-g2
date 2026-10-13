@@ -11,6 +11,8 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import type { PostureView } from "./view";
 import { GAUGE } from "./gauge";
+import { ANGLE_IMAGE } from "./digits";
+import { FIGURE_IMAGE } from "./figure";
 import type { ImageTarget } from "./lane";
 
 /**
@@ -38,7 +40,8 @@ interface ContainerSpec {
 
 const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
   header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
+  // Three rows; the big angle digits sit below them.
+  body: { id: 2, name: "body", y: 36, height: 92 },
   footer: { id: 3, name: "footer", y: 252, height: 34 },
 };
 
@@ -50,14 +53,17 @@ export interface RenderResult {
 
 export function buildPage(view: PostureView): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
-    containerTotalNum: 4,
+    containerTotalNum: 6,
     textObject: [
-      text(CONTAINER.header, view.header, 1, false),
+      // The header leaves its top-right 64 px to the figure.
+      text(CONTAINER.header, view.header, 1, false, false, FIGURE_IMAGE.width),
       // Exactly one container may capture input; the body owns it.
       text(CONTAINER.body, view.body.join("\n"), 2, true, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
-    imageObject: [new ImageContainerProperty({ containerID: GAUGE.id, containerName: GAUGE.name, xPosition: GAUGE.x, yPosition: GAUGE.y, width: GAUGE.width, height: GAUGE.height, zOrderIndex: 4 })],
+    imageObject: [GAUGE, FIGURE_IMAGE, ANGLE_IMAGE].map((image, index) => new ImageContainerProperty({
+      containerID: image.id, containerName: image.name, xPosition: image.x, yPosition: image.y, width: image.width, height: image.height, zOrderIndex: 4 + index,
+    })),
   });
 }
 
@@ -67,6 +73,7 @@ function text(
   zOrderIndex: number,
   captureEvents: boolean,
   compact = false,
+  rightGap = 0,
 ): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
@@ -74,7 +81,7 @@ function text(
     // The body starts right of the head gauge.
     xPosition: compact ? GAUGE.width + 8 : 0,
     yPosition: spec.y,
-    width: compact ? SCREEN_WIDTH - GAUGE.width - 8 : SCREEN_WIDTH,
+    width: (compact ? SCREEN_WIDTH - GAUGE.width - 8 : SCREEN_WIDTH) - rightGap,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
@@ -84,21 +91,34 @@ function text(
 }
 
 /**
- * Creates the page. `rebuildPageContainer` is deliberately called first even
- * though it is reported to always fail on hardware: the call itself registers
- * event routing, and skipping it leaves the app deaf to input.
+ * Puts the page on the glasses: created once per bridge, every later call
+ * (reconnect) rebuilds it. The caller resends all images afterwards.
  */
+const started = new WeakSet<object>();
+
 export async function createPage(bridge: EvenAppBridge, view: PostureView): Promise<RenderResult> {
   const page = buildPage(view);
+  sentLength.clear();
+  // One creation per bridge, then only rebuilds: a rebuild before the first
+  // creation or a second creation leaves the page without its input route.
+  if (started.has(bridge)) {
+    try {
+      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
+  }
   try {
+    // Measured on real glasses: the first page needs one rebuild call before the creation
+    // (it registers input); the result is ignored.
     await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
   } catch {
-    // Expected on current firmware; the creation below is the real path.
+    // Expected to fail before the first page.
   }
-
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) return { ok: true };
+    if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };

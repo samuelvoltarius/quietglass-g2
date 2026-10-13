@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0] — 2026-10-13
+
+### Added
+
+- The forward lean as big pixel digits ("18°") while leaning (or if the angle is switched on).
+- A little figure in the header corner (64 x 30) that straightens or slumps in four steps with the lean; sent only when the step changes.
+- ?demo=1 nods a made-up head without sensor.
+
+### Changed
+
+- Images are written at most every 700 ms; the page is created once per run and later only rebuilt (images are resent after every rebuild).
+
 ## [0.3.3] — 2026-10-13
 
 ### Changed

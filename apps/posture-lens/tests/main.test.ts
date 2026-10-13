@@ -149,10 +149,11 @@ describe("posturelens loop", () => {
   it("does not resend the head gauge while the head holds still", async () => {
     const fake = await boot();
     for (let i = 0; i < 10; i++) { fake.sample(0); await vi.advanceTimersByTimeAsync(500); }
-    // Before the first sample the gauge has no head yet; with it, the head appears.
-    expect(fake.images).toEqual(["pixel-icon", "pixel-icon"]);
+    // Before the first sample the gauge has no head yet; with it, the head appears. The figure
+    // and the angle digits (blank at first, "0°" once the head is seen) are sent.
+    expect([...fake.images].sort()).toEqual(["angle-digits", "angle-digits", "figure", "pixel-icon", "pixel-icon"]);
     for (let i = 0; i < 60; i++) { fake.sample(0.001 * (i % 3)); await vi.advanceTimersByTimeAsync(500); }
-    expect(fake.images).toHaveLength(2);
+    expect(fake.images).toHaveLength(5);
   });
 
   it("redraws the gauge when the head tilts, at most every few seconds", async () => {
@@ -162,8 +163,12 @@ describe("posturelens loop", () => {
     const start = fake.images.length;
     // The head nods back and forth for 10 s.
     for (let i = 0; i < 20; i++) { fake.sample(i % 2 === 0 ? 0.6 : 0); await vi.advanceTimersByTimeAsync(500); }
+    // 10 s of nodding: each picture at most every 700 ms (gauge, figure and angle digits).
     const sent = fake.images.length - start;
     expect(sent).toBeGreaterThan(0);
-    expect(sent).toBeLessThanOrEqual(4);
+    expect(sent).toBeLessThanOrEqual(3 * 15);
+    for (const name of ["pixel-icon", "figure", "angle-digits"]) {
+      expect(fake.images.slice(start).filter((n) => n === name).length, name).toBeLessThanOrEqual(15);
+    }
   });
 });
