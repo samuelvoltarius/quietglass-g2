@@ -12,6 +12,7 @@ import { MASCOT_STEP_MS, headerIcon } from "./glasses/face";
 import type { ScreenView } from "./glasses/screen";
 import { CONFIRM_MS, EMPTY_MODEL, buildView, currentCard, decide, type HudAction, type HudGesture, type HudModel } from "./hud/model";
 import { loadSettings, saveSettings, type Settings } from "./storage/persist";
+import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type ConnectionState } from "./ui/phone";
 import { concat, pcmToWav, toPcm } from "./voice/wav";
 
@@ -64,11 +65,20 @@ async function boot(): Promise<void> {
   let lastView: ScreenView | null = null;
   let lastFace = "";
   let pageReady = false;
+  /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
+  let rebuildWanted = false;
+  /** In the background: no feed poll, no drawing. */
+  let paused = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
   let refreshPhone: () => void = () => undefined;
 
   const drawOnce = async (): Promise<void> => {
+    if (paused) return;
+    // A page lost with the link (or while in the background) is rebuilt even
+    // when nothing changed; the flag is read here so a reconnect during a
+    // running draw is not undone by that draw's success.
+    if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; }
     const now = new Date();
     const view = buildView(model, locale, now);
     const face = headerIcon(model, now.getTime());
@@ -151,10 +161,13 @@ async function boot(): Promise<void> {
           if (generation !== pollGeneration || closed) return;
           const cards = feed.cards;
           const confirmGone = model.confirm !== null && !cards.some((card) => card.id === model.confirm);
+          // A "Nein" choice belongs to its card: gone with the card, it never moves to another.
+          const neinGone = model.nein !== null && !cards.some((card) => card.id === model.nein);
           patch({
             feed, online: true, problem: "", fault: false,
             index: Math.min(model.index, Math.max(0, cards.length - 1)),
             ...(confirmGone ? { confirm: null } : {}),
+            ...(neinGone ? { nein: null } : {}),
           });
           await draw();
         } catch (error) {
@@ -183,12 +196,12 @@ async function boot(): Promise<void> {
     try {
       const result = await client.answer(card.id, answer);
       if (closed) return;
-      patch({ feed: withoutCard(model.feed, card.id), index: 0 });
+      patch({ feed: withoutCard(model.feed, card.id), index: 0, nein: null });
       say(result.message || t(locale, "g.msg.done"));
     } catch (error) {
       if (closed) return;
       // The card is gone on the server (answered, expired, unknown): drop it here too.
-      if (error instanceof ApiError && [404, 409, 410].includes(error.status)) patch({ feed: withoutCard(model.feed, card.id), index: 0 });
+      if (error instanceof ApiError && [404, 409, 410].includes(error.status)) patch({ feed: withoutCard(model.feed, card.id), index: 0, nein: null });
       say(t(locale, "g.msg.answerFail", { reason: errorText(locale, error) }));
     } finally {
       answering = false;
@@ -239,13 +252,13 @@ async function boot(): Promise<void> {
     switch (result.action) {
       case "answered_ja":
       case "answered_nein":
-        patch({ feed: withoutCard(model.feed, result.cardId), index: 0 });
+        patch({ feed: withoutCard(model.feed, result.cardId), index: 0, nein: null });
         say(result.reply || t(locale, "g.msg.done"));
         return;
       case "needs_confirm":
         // Speech never confirms an action that acts outside: the explicit tap does.
         if (!card || !model.feed) { say(t(locale, "g.msg.unclear")); return; }
-        patch({ index: model.feed.cards.indexOf(card) });
+        patch({ index: model.feed.cards.indexOf(card), nein: null });
         arm(card.id);
         say(t(locale, "g.msg.heardYes"));
         return;
@@ -341,7 +354,7 @@ async function boot(): Promise<void> {
         return;
       case "move":
         disarm();
-        patch({ index: action.index });
+        patch({ index: action.index, nein: action.nein });
         void draw();
         return;
       case "dismiss":
@@ -359,11 +372,27 @@ async function boot(): Promise<void> {
   const hudGesture = (gesture: Gesture): HudGesture | null =>
     gesture === "click" || gesture === "doubleClick" || gesture === "scrollUp" || gesture === "scrollDown" ? gesture : null;
 
-  await draw();
-  startPoll();
-
+  // Gestures first; the page and the feed follow in the background, so a
+  // slow page creation can never swallow the double tap.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const step = lifecycleFromEvent(event);
+    if (step === "foregroundExit") {
+      // Out of sight: no microphone, no long poll; the cards stay as they are.
+      paused = true;
+      cancelRec(false);
+      disarm();
+      stopPoll();
+      return;
+    }
+    if (step === "foregroundEnter") {
+      paused = false;
+      rebuildWanted = true;
+      void draw();
+      startPoll();
+      return;
+    }
+    if (isFinalExit(step)) { shutDown(); return; }
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     if (audio) {
       const current = rec;
@@ -395,11 +424,13 @@ async function boot(): Promise<void> {
   // or an unchanged view would skip the rebuild and leave the display blank.
   bridge.onDeviceStatusChanged((status) => {
     if (status?.connectType === "connected" && !closed) {
-      pageReady = false;
-      lastView = null;
+      rebuildWanted = true;
       void draw();
     }
   });
+
+  void draw();
+  startPoll();
 
   // The clock in the header and the face (blinks, writes, listens): redraw twice a
   // second. An unchanged view and an unchanged face cost nothing (see drawOnce).

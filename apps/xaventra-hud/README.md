@@ -4,14 +4,15 @@
 
 > **Auf Deutsch, kurz:** Xaventra HUD zeigt auf der Brille, woran dein
 > Xaventra-Agent gerade arbeitet, und offene Rückfragen als Karten.
-> **Tippen = Ja**, **Doppeltippen = Nein**, **Wischen = nächste Karte**. Karten, die
+> **Tippen = Ja**, **Wischen = Nein wählen** (dann Tippen = Nein; weiter wischen = nächste
+> Karte), **Doppeltippen = beenden** (mit Rückfrage). Karten, die
 > etwas **nach außen** bewirken (drucken, schalten, senden …), brauchen einen
 > **zweiten Tap** innerhalb von 4 Sekunden. **Halten = sprechen** (höchstens 15 s):
 > beim Loslassen geht die Aufnahme an *deinen* Xaventra-Rechner, der sie mit
 > seiner eigenen Spracherkennung versteht. Ein „Ja“/„Nein“ beantwortet die offene
 > Karte, alles andere geht als Nachricht an den Agenten, die Antwort steht auf der
 > Brille. Ein gesprochenes „Ja“ bestätigt **nie** eine Aktion nach außen – dafür
-> bleibt der Tap. Ohne offene Karte beendet Doppeltippen die App (mit Rückfrage).
+> bleibt der Tap.
 > Die App folgt der Handy-Sprache (Deutsch/Englisch).
 >
 > **In 3 Schritten loslegen** (Details: [Xaventra `docs/EVEN_G2.md`](https://github.com/samuelvoltarius/xaventra/blob/main/docs/EVEN_G2.md))
@@ -32,9 +33,9 @@ Use `?demo=1` on the development URL to run against built-in sample data
 
 | Gesture | Meaning |
 |---|---|
-| **Tap** | Yes. A card that acts outside (`physisch`, `nach außen`) needs a **second tap within 4 s**. |
-| **Double tap** | No. With no open question: asks the system to quit the app (you can cancel). |
-| **Swipe** | Next / previous question |
+| **Tap** | Sends the chosen answer. Yes is chosen by default; a yes on a card that acts outside (`physisch`, `nach außen`) needs a **second tap within 4 s**. |
+| **Swipe** | Moves through yes → no of each card, then on to the next card. "No" is sent by swiping to it and tapping. |
+| **Double tap** | Asks the system to quit the app (you can cancel). It never answers a card. |
 | **Hold** | Speak (at most 15 s, shown as **● MIC**). Release sends. Double tap cancels. |
 
 The screen: the header (`Xaventra · 14:32`, or `(offline)`), what Xaventra is

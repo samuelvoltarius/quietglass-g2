@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] — 2026-10-13
+
+### Changed — answering "no"
+
+- **A double tap no longer answers "Nein".** It is the exit again, on every screen with cards too (Even rule: the double tap on the root leaves the app), and a stray double tap can no longer refuse a request. While speaking it still cancels the recording, and it closes a voice reply.
+- "Nein" now takes two deliberate gestures: **swipe to "Nein", then tap**. Swiping walks Ja → Nein of each card and then on to the next card; the card shows `● Ja   ○ Nein   (Halten = sprechen)`, the footer says what a tap sends ("Tippen = Nein · Wischen = weiter · 2× = Ende"). A "Nein" choice belongs to its card and is dropped when that card goes away, so it can never land on another card. "Ja" on a card that acts outside still needs the second tap within 4 s.
+
+### Fixed
+
+- Gestures are wired before the first page and the feed poll, so a slow page creation can no longer swallow the double tap.
+- A reconnect during a running draw could be undone by that draw; the rebuild request now survives it.
+- Leaving through the system (another app, the system menu) cancels a recording, stops the long poll and drawing; coming back rebuilds the page and polls again. A system exit or crash stops everything.
+
 ## [0.2.1] — 2026-10-13
 
 ### Fixed

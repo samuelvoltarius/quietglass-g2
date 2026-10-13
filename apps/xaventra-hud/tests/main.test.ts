@@ -16,6 +16,7 @@ const TOKEN = "tok-very-secret-1234567890";
 
 function fakeBridge(stored: Record<string, string> = {}) {
   let handler: ((event: unknown) => void) | undefined;
+  let deviceHandler: ((status: unknown) => void) | undefined;
   const storage = new Map(Object.entries(stored));
   const screen = new Map<number, string>();
   const exit = { calls: [] as unknown[], answer: true as boolean | "reject" };
@@ -40,10 +41,11 @@ function fakeBridge(stored: Record<string, string> = {}) {
     },
     audioControl: vi.fn(async (on: boolean, _source?: unknown): Promise<boolean> => { mic.push(on); return true; }),
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
-    onDeviceStatusChanged: () => () => undefined,
+    onDeviceStatusChanged: (callback: (status: unknown) => void) => { deviceHandler = callback; return () => undefined; },
   };
   return {
     bridge, storage, exit, mic,
+    reconnect: () => deviceHandler?.({ connectType: "connected" }),
     header: () => screen.get(1) ?? "",
     body: () => screen.get(2) ?? "",
     footer: () => screen.get(3) ?? "",
@@ -182,12 +184,25 @@ describe("Xaventra HUD lifecycle", () => {
     await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
   });
 
-  it("double tap answers no", async () => {
+  it("regression: a double tap on a card leaves (asks the system) and never answers no", async () => {
     server.change([inner], "v2");
     const fake = fakeBridge(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
     fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
+  });
+
+  it("swipe to Nein and tap answers no", async () => {
+    server.change([inner], "v2");
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.footer()).toContain("Tippen = Nein"));
+    expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
+    fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(true));
     expect(JSON.parse(String(server.state.calls.find((c) => c.key === "POST /hud/answer")?.init.body))).toEqual({ cardId: "c1", answer: "nein" });
   });
@@ -209,8 +224,10 @@ describe("Xaventra HUD lifecycle", () => {
     const fake = fakeBridge(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Frage 1/2"));
-    fake.emit(DOWN);
+    fake.emit(DOWN); // Nein of card 1
+    fake.emit(DOWN); // card 2
     await vi.waitFor(() => expect(fake.body()).toContain("Frage 2/2"));
+    fake.emit(UP);
     fake.emit(UP);
     await vi.waitFor(() => expect(fake.body()).toContain("Frage 1/2"));
   });
@@ -431,5 +448,63 @@ describe("Xaventra HUD lifecycle", () => {
     await vi.waitFor(() => expect(fake.body()).toContain("Drucker starten?"));
     expect(root.innerHTML).toContain("Demo-Modus");
     expect(server.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("regression: the double tap works while the first page is still being created", async () => {
+    const fake = fakeBridge(configured());
+    fake.bridge.createStartUpPageContainer.mockImplementation(() => new Promise(() => undefined));
+    const root = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("navigator", { language: "de-AT" });
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+  });
+
+  it("a reconnect rebuilds the page and never creates it twice", async () => {
+    server.change([inner], "v2");
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    fake.reconnect();
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds + 1));
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaving through the system stops the poll and the microphone; coming back rebuilds and polls", async () => {
+    server.change([inner], "v2");
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
+    fake.emit(HOLD);
+    await vi.waitFor(() => expect(fake.mic).toContain(true));
+    fake.emit(5);
+    await vi.waitFor(() => expect(fake.mic.at(-1)).toBe(false));
+    const polls = server.state.calls.filter((c) => c.key === "GET /hud").length;
+    server.change([inner, outer], "v3");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.state.calls.filter((c) => c.key === "GET /hud").length).toBe(polls);
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    fake.emit(4);
+    await vi.waitFor(() => expect(fake.body()).toContain("Frage 1/2"));
+    expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBeGreaterThan(rebuilds);
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+  });
+
+  it("a system exit stops everything", async () => {
+    server.change([inner], "v2");
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
+    fake.emit(7);
+    const polls = server.state.calls.length;
+    server.change([inner, outer], "v3");
+    fake.emit(CLICK);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.state.calls.length).toBe(polls);
   });
 });

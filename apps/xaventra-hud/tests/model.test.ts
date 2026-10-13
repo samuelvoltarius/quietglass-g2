@@ -14,9 +14,21 @@ const withCards = (cards: HudCard[], extra: Partial<HudModel> = {}): HudModel =>
 });
 
 describe("what a gesture means", () => {
-  it("tap answers an internal card with yes, double tap with no", () => {
+  it("tap answers an internal card with yes; a double tap never answers, it leaves", () => {
     expect(decide(withCards([inner]), "click")).toEqual({ kind: "answer", cardId: "a", answer: "ja" });
-    expect(decide(withCards([inner]), "doubleClick")).toEqual({ kind: "answer", cardId: "a", answer: "nein" });
+    expect(decide(withCards([inner]), "doubleClick")).toEqual({ kind: "exit" });
+    expect(decide(withCards([outer], { nein: "b" }), "doubleClick")).toEqual({ kind: "exit" });
+  });
+
+  it("no is two gestures: swipe to Nein, then tap", () => {
+    expect(decide(withCards([inner]), "scrollDown")).toEqual({ kind: "move", index: 0, nein: "a" });
+    expect(decide(withCards([inner], { nein: "a" }), "click")).toEqual({ kind: "answer", cardId: "a", answer: "nein" });
+    // Swiping on from Nein goes back to Ja (single card).
+    expect(decide(withCards([inner], { nein: "a" }), "scrollDown")).toEqual({ kind: "move", index: 0, nein: null });
+  });
+
+  it("a Nein chosen for another card does not carry over", () => {
+    expect(decide(withCards([inner, outer], { index: 1, nein: "a" }), "click")).toEqual({ kind: "confirm", cardId: "b" });
   });
 
   it("an outward card needs a confirming second tap, and only for that card", () => {
@@ -27,8 +39,8 @@ describe("what a gesture means", () => {
     expect(decide(withCards([outer], { confirm: "zzz" }), "click")).toEqual({ kind: "confirm", cardId: "b" });
   });
 
-  it("no needs no confirmation, even for an outward card", () => {
-    expect(decide(withCards([outer]), "doubleClick")).toEqual({ kind: "answer", cardId: "b", answer: "nein" });
+  it("no needs no second tap, even for an outward card", () => {
+    expect(decide(withCards([outer], { nein: "b" }), "click")).toEqual({ kind: "answer", cardId: "b", answer: "nein" });
   });
 
   it("with no card: tap does nothing, double tap leaves", () => {
@@ -37,11 +49,12 @@ describe("what a gesture means", () => {
     expect(decide(EMPTY_MODEL, "doubleClick")).toEqual({ kind: "exit" });
   });
 
-  it("swiping wraps around and does nothing for a single card", () => {
-    expect(decide(withCards([inner, outer]), "scrollDown")).toEqual({ kind: "move", index: 1 });
-    expect(decide(withCards([inner, outer], { index: 1 }), "scrollDown")).toEqual({ kind: "move", index: 0 });
-    expect(decide(withCards([inner, outer]), "scrollUp")).toEqual({ kind: "move", index: 1 });
-    expect(decide(withCards([inner]), "scrollDown")).toEqual({ kind: "none" });
+  it("swiping walks Ja and Nein of each card and wraps around", () => {
+    expect(decide(withCards([inner, outer]), "scrollDown")).toEqual({ kind: "move", index: 0, nein: "a" });
+    expect(decide(withCards([inner, outer], { nein: "a" }), "scrollDown")).toEqual({ kind: "move", index: 1, nein: null });
+    expect(decide(withCards([inner, outer], { index: 1, nein: "b" }), "scrollDown")).toEqual({ kind: "move", index: 0, nein: null });
+    expect(decide(withCards([inner, outer]), "scrollUp")).toEqual({ kind: "move", index: 1, nein: "b" });
+    expect(decide(withCards([]), "scrollDown")).toEqual({ kind: "none" });
   });
 
   it("while a voice reply is shown, every gesture only closes it", () => {
@@ -59,7 +72,14 @@ describe("what the glasses show", () => {
     expect(view.body.join("\n")).toContain("> Prüft Drucker — Schritt 1/2");
     expect(view.body.join("\n")).toContain("Frage 2/2 (physisch)");
     expect(view.body.join("\n")).toContain("Drucker starten?");
-    expect(view.footer).toBe("Tippen = Ja · 2× = Nein · Wischen · Halten = sprechen");
+    expect(view.footer).toBe("Tippen = Ja · Wischen = Nein/weiter · 2× = Ende");
+    expect(view.body[view.body.length - 1]).toBe("● Ja   ○ Nein   (Halten = sprechen)");
+  });
+
+  it("with Nein chosen the glasses say so on the card and in the footer", () => {
+    const view = buildView(withCards([inner], { nein: "a" }), "de", NOW);
+    expect(view.body[view.body.length - 1]).toBe("○ Ja   ● Nein   (Halten = sprechen)");
+    expect(view.footer).toBe("Tippen = Nein · Wischen = weiter · 2× = Ende");
   });
 
   it("asks for the second tap on the footer, and names the effect in English", () => {
@@ -94,6 +114,7 @@ describe("what the glasses show", () => {
     const models: HudModel[] = [
       withCards([wide, wide, wide, wide, wide], { index: 4, message: long }),
       withCards([wide], { confirm: "w" }),
+      withCards([wide, wide], { nein: "w" }),
       withCards([], { message: long, problem: long }),
       withCards([wide], { voice: { transcript: long, reply: long } }),
       withCards([wide], { rec: "sending" }),

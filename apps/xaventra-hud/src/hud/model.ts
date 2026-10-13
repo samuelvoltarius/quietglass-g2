@@ -13,6 +13,9 @@ import { MAX_BODY_ROWS, fit, wrap, type ScreenView } from "../glasses/screen";
  *  - While a voice reply is on screen, a tap only closes it — it never answers
  *    the card behind it.
  *  - "Always allow" does not exist on the glasses.
+ *  - A double tap never answers a card: it is the exit, as on every app root.
+ *    "No" takes two deliberate gestures: swipe to "Nein", then tap. The
+ *    choice belongs to one card id and never carries over to another card.
  */
 
 export type RecPhase = "off" | "opening" | "listening" | "sending";
@@ -33,6 +36,8 @@ export interface HudModel {
   readonly index: number;
   /** Card id waiting for the confirming second tap. */
   readonly confirm: string | null;
+  /** Card id on which "Nein" is selected (swiped to); null = "Ja" is selected. */
+  readonly nein: string | null;
   /** One transient line for the footer, already localised. */
   readonly message: string;
   readonly voice: VoiceReply | null;
@@ -41,7 +46,7 @@ export interface HudModel {
 
 export const EMPTY_MODEL: HudModel = {
   configured: false, online: false, problem: "", fault: false, feed: null, index: 0,
-  confirm: null, message: "", voice: null, rec: "off",
+  confirm: null, nein: null, message: "", voice: null, rec: "off",
 };
 
 /** The second tap must come within this time. */
@@ -52,7 +57,7 @@ export type HudGesture = "click" | "doubleClick" | "scrollUp" | "scrollDown";
 export type HudAction =
   | { readonly kind: "answer"; readonly cardId: string; readonly answer: "ja" | "nein" }
   | { readonly kind: "confirm"; readonly cardId: string }
-  | { readonly kind: "move"; readonly index: number }
+  | { readonly kind: "move"; readonly index: number; readonly nein: string | null }
   | { readonly kind: "dismiss" }
   | { readonly kind: "exit" }
   | { readonly kind: "none" };
@@ -66,18 +71,33 @@ export function needsConfirm(card: HudCard): boolean {
   return card.effect.trim().toLowerCase() !== "intern";
 }
 
-/** Tap = yes, double tap = no (no card: leave), swipe = next card. */
+/** Whether "Nein" is the selected answer on the card shown now. */
+export function neinSelected(model: HudModel): boolean {
+  const card = currentCard(model);
+  return card !== null && model.nein === card.id;
+}
+
+/**
+ * Tap = the selected answer (Ja by default; Ja on an outward card needs a
+ * second tap), swipe = through "Ja"/"Nein" of each card and on to the next
+ * card, double tap = leave (always).
+ */
 export function decide(model: HudModel, gesture: HudGesture): HudAction {
   if (model.voice) return { kind: "dismiss" };
+  if (gesture === "doubleClick") return { kind: "exit" };
   const card = currentCard(model);
-  const total = model.feed?.cards.length ?? 0;
+  const cards = model.feed?.cards ?? [];
   if (gesture === "scrollUp" || gesture === "scrollDown") {
-    if (total < 2) return { kind: "none" };
-    const step = gesture === "scrollDown" ? 1 : -1;
-    return { kind: "move", index: (model.index + step + total) % total };
+    if (!card) return { kind: "none" };
+    // Two stops per card: Ja, then Nein, then the next card's Ja.
+    const stops = cards.length * 2;
+    const at = Math.min(model.index, cards.length - 1) * 2 + (neinSelected(model) ? 1 : 0);
+    const next = (at + (gesture === "scrollDown" ? 1 : -1) + stops) % stops;
+    const index = Math.floor(next / 2);
+    return { kind: "move", index, nein: next % 2 === 1 ? cards[index]?.id ?? null : null };
   }
-  if (gesture === "doubleClick") return card ? { kind: "answer", cardId: card.id, answer: "nein" } : { kind: "exit" };
   if (!card) return { kind: "none" };
+  if (neinSelected(model)) return { kind: "answer", cardId: card.id, answer: "nein" };
   if (needsConfirm(card) && model.confirm !== card.id) return { kind: "confirm", cardId: card.id };
   return { kind: "answer", cardId: card.id, answer: "ja" };
 }
@@ -140,12 +160,15 @@ export function buildView(model: HudModel, locale: Locale, now: Date): ScreenVie
   const total = model.feed.cards.length;
   const effect = effectLabel(card.effect, locale);
   const label = x("g.card", { n: Math.min(model.index, total - 1) + 1, total }) + (effect ? ` (${effect})` : "");
-  const room = MAX_BODY_ROWS - status.length - 2;
+  const nein = neinSelected(model);
+  // The last row always shows the two answers and which one a tap sends.
+  const room = MAX_BODY_ROWS - status.length - 3;
   const titleRows = cut(wrap(card.title), Math.min(2, room - 1));
   const textRows = cut(wrap(card.text), Math.max(0, room - titleRows.length));
-  const body = [...status, "", fit(label), ...titleRows, ...textRows].slice(0, MAX_BODY_ROWS);
+  const choice = fit(x(nein ? "g.choiceNo" : "g.choiceYes"));
+  const body = [...status, "", fit(label), ...titleRows, ...textRows].slice(0, MAX_BODY_ROWS - 1).concat(choice);
   const footer = model.confirm === card.id
     ? x("g.confirm")
-    : model.message ? fit(model.message) : total > 1 ? x("g.hint.cards") : x("g.hint.card");
+    : model.message ? fit(model.message) : x(nein ? "g.hint.no" : total > 1 ? "g.hint.cards" : "g.hint.card");
   return { header: head, body, footer };
 }
