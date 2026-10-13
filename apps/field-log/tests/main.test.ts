@@ -226,7 +226,9 @@ describe("fieldlog lifecycle", () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.reconnect();
-    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2));
+    // One creation per run (after one first rebuild call); the page comes back by rebuild.
+    await vi.waitFor(() => expect(fake.bridge.rebuildPageContainer).toHaveBeenCalledTimes(2));
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
   });
 
   it("regression: a failed save of the severity is not an unhandled rejection", async () => {

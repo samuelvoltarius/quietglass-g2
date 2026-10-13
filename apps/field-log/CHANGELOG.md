@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0] — 2026-10-13
+
+### Changed
+
+- The resting screen lists the last three entries (newest at the bottom) instead of only the last one.
+- The page is created once per run and later only rebuilt.
+
 ## [0.3.3] — 2026-10-13
 
 ### Changed

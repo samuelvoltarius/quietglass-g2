@@ -117,15 +117,24 @@ export function buildView(
     default: {
       // A failed connection says what to do instead of silently ignoring taps.
       const error = options.voice && options.status === "error"
-        ? [L("g.serverError.1"), truncate(L("g.serverError.2"), width), ""]
+        ? [L("g.serverError.1"), truncate(L("g.serverError.2"), width)]
         : [];
       const time = formatDuration(durationSeconds(inspection, now));
-      const body = inspection.entries.length === 0
-        ? [L("g.noEntries"), truncate(L("g.firstNote"), width)]
-        : [lastEntryLine(inspection, width, locale), tally];
+      const next = truncate(L("g.nextSeverity", { severity: severityLabel(options.severity, locale) }), width);
+      if (inspection.entries.length === 0) {
+        return {
+          header: sectionLabel(inspection),
+          body: [...error, ...(error.length > 0 ? [""] : []), L("g.noEntries"), truncate(L("g.firstNote"), width), "", next],
+          footer: truncate(L(options.voice ? "g.idle.voice" : "g.idle.quick", { time }), FOOTER_WIDTH),
+        };
+      }
+      // The last three entries, newest at the bottom, then the tally and the next type.
+      // A server error takes its rows from the older entries first.
+      const room = MAX_BODY_ROWS - error.length - 2;
+      const body = [...error, ...recentEntryLines(inspection, Math.min(RECENT_ENTRIES, room), width, locale), tally, next];
       return {
         header: sectionLabel(inspection),
-        body: [...error, ...body, "", truncate(L("g.nextSeverity", { severity: severityLabel(options.severity, locale) }), width)],
+        body,
         footer: truncate(L(options.voice ? "g.idle.voice" : "g.idle.quick", { time }), FOOTER_WIDTH),
       };
     }
@@ -136,12 +145,17 @@ function sectionLabel(inspection: Inspection): string {
   return truncate(inspection.section || inspection.title, HEADER_WIDTH);
 }
 
-function lastEntryLine(inspection: Inspection, width: number, locale: Locale): string {
-  const last = inspection.entries[inspection.entries.length - 1];
-  if (!last) return t(locale, "g.noEntries");
-  const mark = last.severity === "major" ? "! " : last.severity === "minor" ? "· " : "  ";
-  const photo = last.attachment ? " " + t(locale, "g.photo") : "";
-  return truncate(mark + last.text + photo, width);
+/** How many entries the resting screen lists. */
+export const RECENT_ENTRIES = 3;
+
+/** The last `count` entries, oldest first so the newest sits at the bottom. */
+export function recentEntryLines(inspection: Inspection, count: number, width: number, locale: Locale): string[] {
+  if (count <= 0) return [];
+  return inspection.entries.slice(-count).map((entry) => {
+    const mark = entry.severity === "major" ? "! " : entry.severity === "minor" ? "· " : "  ";
+    const photo = entry.attachment ? " " + t(locale, "g.photo") : "";
+    return truncate(mark + entry.text + photo, width);
+  });
 }
 
 export function severityLabel(severity: Severity, locale: Locale = "en"): string {
