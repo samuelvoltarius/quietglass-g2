@@ -1,6 +1,7 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { buildTtsUrl } from "../speech/server-tts";
 
 /**
  * Which backend to ask, and where it lives. Nothing else is kept.
@@ -28,6 +29,8 @@ export interface Settings {
   readonly sttUrl: string;
   /** Seconds between refreshes while a board is on screen. */
   readonly refreshSeconds: number;
+  /** Spoken guidance on a journey ("In 60 metres turn left", "Bus 3 in 2 minutes"). */
+  readonly announce: boolean;
 }
 
 const KEY = "quietglass.nextstop.v1";
@@ -56,6 +59,8 @@ export function defaultsFor(buildOebbUrl: string | undefined): Settings {
     motisUrl: "https://api.transitous.org",
     sttUrl: "",
     refreshSeconds: 30,
+    // On by default when the build brings a voice server (private build).
+    announce: buildTtsUrl() !== "",
   };
 }
 
@@ -120,6 +125,7 @@ export function parseSettings(raw: string, defaults: Settings = DEFAULT_SETTINGS
         && value.refreshSeconds >= 10 && value.refreshSeconds <= 300
         ? Math.round(value.refreshSeconds)
         : defaults.refreshSeconds,
+      announce: typeof value.announce === "boolean" ? value.announce : defaults.announce,
     };
   } catch {
     return defaults;

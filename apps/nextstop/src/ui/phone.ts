@@ -34,6 +34,10 @@ export interface PhoneUiPorts {
   setPlaces?(next: Places): Promise<void>;
   /** Looks a place up by name; rejects when the service cannot be reached. */
   searchPlaces?(text: string): Promise<readonly GeoResult[]>;
+  /** From the tap on "Activate voice": browsers only play audio after a gesture. */
+  onVoiceActivate?(): void;
+  /** Which voice is in use; the voice card is left out when absent. */
+  getVoiceState?(): "needs-tap" | "server" | "browser" | "off";
   /** True in demo mode: the destinations are examples and nothing is saved. */
   isDemo?(): boolean;
 }
@@ -72,6 +76,11 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     if (status) status.textContent = statusText();
     const next = root.querySelector<HTMLElement>("#next");
     if (next) next.textContent = nextStep(ports.getPosition() !== null, ports.getStops().length, locale());
+    const voiceState = root.querySelector<HTMLElement>("#voice-state");
+    const voice = ports.getVoiceState?.();
+    if (voiceState && voice) {
+      voiceState.textContent = t(locale(), voice === "server" ? "p.voiceServer" : voice === "browser" ? "p.voiceBrowser" : voice === "needs-tap" ? "p.voiceNeedsTap" : "p.voiceOff");
+    }
   };
 
   const placesCard = (lang: Locale): string => `
@@ -206,6 +215,13 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         <button id="refresh-now" type="button">${x("p.refreshNow")}</button>
       </div>
 
+      ${ports.getVoiceState ? `<div class="card">
+        <label class="check"><input id="announce" type="checkbox" /> ${x("p.announce")}</label>
+        <button id="voice-on" type="button">${x("p.announceOn")}</button>
+        <p class="hint" id="voice-state"></p>
+        <p class="hint">${x("p.announceHint")}</p>
+      </div>` : ""}
+
       <div class="card keys">
         <label>${x("p.controls")}</label>
         <p class="hint">
@@ -288,6 +304,16 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
     updateStatus();
     bindPlaces(lang);
+
+    const announce = root.querySelector<HTMLInputElement>("#announce");
+    if (announce) {
+      announce.checked = settings.announce;
+      announce.addEventListener("change", () => { void ports.setSettings({ ...ports.getSettings(), announce: announce.checked }); });
+    }
+    root.querySelector<HTMLButtonElement>("#voice-on")?.addEventListener("click", () => {
+      ports.onVoiceActivate?.();
+      updateStatus();
+    });
 
     // Each edit starts from the settings as they are now, not as they were when
     // the page was built: otherwise saving the refresh interval after changing

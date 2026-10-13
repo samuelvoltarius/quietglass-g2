@@ -14,6 +14,8 @@ import { sameScene } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
+import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
+import { Companion } from "./speech/companion";
 import { createExitRequest } from "./exit";
 import { explainFailure, glassesText, noStopsHint, type Explanation } from "./text";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
@@ -77,6 +79,11 @@ async function boot(): Promise<void> {
   const recorded: unknown = demo.enabled ? (await import("./demo/plan-salzburg.json")).default : null;
 
   let settings: Settings = await load(bridge);
+
+  // Spoken guidance: Piper server voice (private build: VITE_TTS_URL), phone voice as fallback.
+  const tts = new ServerTts({ url: buildTtsUrl(), voices: DEFAULT_VOICES });
+  const companion = new Companion();
+  let journeyId = 0;
   const seeded = positionFromUrl(search) ?? (demo.enabled ? { ...DEMO_POSITION } : null);
   let position: Position | null = seeded;
 
@@ -387,6 +394,24 @@ async function boot(): Promise<void> {
   const stopGuideTimer = (): void => {
     if (guideTimer !== null) clearInterval(guideTimer);
     guideTimer = null;
+    // Whatever was being said belongs to the journey that just ended.
+    tts.stop();
+    companion.reset();
+  };
+
+  /** The companion's next spoken line for the guide on screen, if there is one. */
+  const announce = (): void => {
+    if (closed || screen !== "guide" || !guide || !settings.announce || demo.enabled) return;
+    const now = clock();
+    const at = guidePosition();
+    const state = guideState(guide.steps, now, at, guide.override);
+    const a = companion.next({ journeyId, state, now, walk: walkDisplay(state, at), locale, hasFix: at !== null });
+    if (a) tts.speak(a.text, { lang: locale, priority: a.priority, key: a.key, maxAgeMs: a.maxAgeMs });
+  };
+  const voiceState = (): "needs-tap" | "server" | "browser" | "off" => {
+    if (!settings.announce || !tts.available) return "off";
+    if (!tts.unlocked) return "needs-tap";
+    return tts.lastSource === "browser" || !tts.configured ? "browser" : "server";
   };
 
   /** Drops a recording or an answer in flight; the microphone is always switched off. */
@@ -603,6 +628,7 @@ async function boot(): Promise<void> {
   const startGuide = (journey: Journey, target: Destination): void => {
     walkState = null;
     stopGuideTimer();
+    journeyId += 1;
     guide = { journey, steps: buildSteps(journey), override: null, target };
     confirmStopUntil = 0;
     screen = "guide";
@@ -676,6 +702,7 @@ async function boot(): Promise<void> {
     // The first fix after starting cold is what finally makes a stop findable.
     if (!previous && !ride) { void findStops(); return; }
     void ensureWalk();
+    announce();
     void draw();
   });
 
@@ -883,7 +910,7 @@ async function boot(): Promise<void> {
   });
 
   // A second beat so the countdown stays honest between data refreshes.
-  tickTimer = setInterval(() => { void ensureWalk(); void draw(); }, 2000);
+  tickTimer = setInterval(() => { void ensureWalk(); announce(); void draw(); }, 2000);
 
   // The half-second beat of the animated guide pages (the bus, the pulse of
   // "get off"): it redraws only while such a page is on screen, so the quiet
@@ -900,7 +927,10 @@ async function boot(): Promise<void> {
       void draw();
     },
     getSettings: () => settings,
+    onVoiceActivate: () => { tts.unlock(); if (tts.available) tts.speak(locale === "de" ? "Sprachausgabe ist bereit." : "Voice is ready.", { lang: locale }); },
+    getVoiceState: voiceState,
     setSettings: async (next) => {
+      if (!next.announce) tts.stop();
       const backendChanged = next.backend !== settings.backend
         || next.oebbUrl !== settings.oebbUrl
         || next.motisUrl !== settings.motisUrl;
