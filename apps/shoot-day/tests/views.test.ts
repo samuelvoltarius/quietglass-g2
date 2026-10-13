@@ -103,7 +103,7 @@ describe("what the glasses say", () => {
     expect(view.body.slice(0, 4)).toEqual(["> Takes", "  Teleprompter", "  Tagesplan", "  Packliste"]);
     expect(view.body).toContain("Noch kein Server eingerichtet.");
     expect(view.header).toBe("SHOOT DAY");
-    expect(view.footer).toBe("wischen · tippen = öffnen · 2× = Ende");
+    expect(view.footer).toBe("Wischen = wählen · Tippen = öffnen · 2× = Ende");
   });
 
   it("demo data is labelled DEMO", () => {
@@ -121,7 +121,7 @@ describe("what the glasses say", () => {
     }));
     expect(view.header).toBe("TAKES · 1 of 1");
     expect(view.body).toEqual(["Scene 2 · shot B · MCU", "Over the shoulder", "", "OK 2 · NG 1", "Last: T3 OK 14:05 great", "", ""]);
-    expect(view.footer).toBe("swipe = shot · tap = take · 2× = menu");
+    expect(view.footer).toBe("tap = take · hold = speak · 2× = menu");
   });
 
   it("the actions list marks the selection", () => {

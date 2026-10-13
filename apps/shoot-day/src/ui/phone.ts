@@ -1,7 +1,7 @@
 import { isLoopback, isPlainHttp, validateServerUrl } from "../api/client";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { t } from "../messages";
-import { maskToken, type Settings } from "../storage/persist";
+import { BUILD_URL, maskToken, type Settings } from "../storage/persist";
 import { escapeHtml } from "./html";
 
 /**
@@ -80,7 +80,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
       const urlField = byId<HTMLInputElement>("url");
       const tokenField = byId<HTMLInputElement>("token");
       const url = urlField?.value.trim() ?? "";
-      const check = validateServerUrl(url);
+      // Empty is fine when the build carries its own address.
+      const check = url === "" && BUILD_URL ? { valid: true, errors: [] } : validateServerUrl(url);
       if (!check.valid) { notify(check.errors.map((key) => t(locale, key)).join(" ")); return; }
       const typedToken = tokenField?.value ?? "";
       // The token field is write-only: left empty, the stored token is kept.
@@ -110,6 +111,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
 function template(settings: Settings, connection: ConnectionState, pending: number, locale: Locale, notice: string): string {
   const L = (key: string, vars: Record<string, string | number> = {}): string => escapeHtml(t(locale, key, vars));
   const url = settings.serverUrl;
+  const shown = url || BUILD_URL;
   const status = (() => {
     switch (connection.kind) {
       case "none": return L("p.status.none");
@@ -119,7 +121,7 @@ function template(settings: Settings, connection: ConnectionState, pending: numb
       case "error": return L("p.status.error", { reason: connection.reason });
     }
   })();
-  const warnHttp = url && isPlainHttp(url) && !isLoopback(url);
+  const warnHttp = shown && isPlainHttp(shown) && !isLoopback(shown);
 
   return `
   <header class="brand">
@@ -138,14 +140,15 @@ function template(settings: Settings, connection: ConnectionState, pending: numb
     <h2>${L("p.status")}</h2>
     <p id="status">${status}</p>
     ${pending > 0 ? `<p class="hint">${L("p.status.pending", { count: pending })}</p>` : ""}
-    ${url ? `<p class="hint">${L("p.terminal", { url: url + "/" })}</p>` : ""}
+    ${shown ? `<p class="hint">${L("p.terminal", { url: shown + "/" })}</p>` : ""}
   </section>
 
   <section class="card">
     <h2>${L("p.server")}</h2>
-    ${url ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
+    ${shown ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
     <label for="url">${L("p.url")}</label>
-    <input id="url" type="text" inputmode="url" autocomplete="off" value="${escapeHtml(url)}" placeholder="${L("p.urlPlaceholder")}" />
+    <input id="url" type="text" inputmode="url" autocomplete="off" value="${escapeHtml(url)}" placeholder="${BUILD_URL ? escapeHtml(BUILD_URL) : L("p.urlPlaceholder")}" />
+    ${BUILD_URL ? `<p class="hint">${L("p.urlBuild")}</p>` : ""}
     ${warnHttp ? `<p class="hint"><small class="warn">${L("p.httpWarn")}</small></p>` : ""}
     <label for="token">${L("p.token")}</label>
     <input id="token" type="password" autocomplete="off" placeholder="${L("p.tokenPlaceholder")}" />

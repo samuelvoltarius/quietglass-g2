@@ -82,6 +82,8 @@ export interface ViewState {
     readonly cursor: number;
     readonly missing: boolean;
   };
+  /** A voice "tick everything" waiting for its tap; replaces the gesture line. */
+  readonly packQuestion?: string;
 }
 
 /** Rows of the schedule shown below the now/next lines. */
@@ -245,7 +247,7 @@ function packView(state: ViewState): ScreenView {
     marked(`${item.packed ? "●" : "○"} ${item.name}`, first + offset === cursor));
   while (body.length < PACK_ROWS) body.push("");
   body.push(state.message);
-  return screen(header, body, L("g.pack.footer"));
+  return screen(header, body, state.packQuestion ?? L("g.pack.footer"));
 }
 
 function recView(state: ViewState, rec: RecView): ScreenView {

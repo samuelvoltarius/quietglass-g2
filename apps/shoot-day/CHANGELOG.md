@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.1] — 2026-10-13
+
+### Added
+
+- Private builds carry the server address (`VITE_SHOOTDAY_URL`): nothing to type on the phone. A stored placeholder (loopback, example host) gives way to it once.
+- Takes logged offline are sent again every minute while any are waiting, not only on the next visit to the menu.
+
+### Fixed
+
+- Module, shot, running take timer, prompter line and packing-list position survive a restart of the app (phone locked, Even app unloaded it).
+- "Alles eingepackt" / "alles wieder raus" by voice asks first: a tap confirms, a swipe cancels.
+- Leaving through the system switches the microphone off and stops the prompter and timers; coming back rebuilds the page and reloads.
+- The glasses listen before the first page is built.
+
+### Changed
+
+- Footers in one style; the takes card names hold (`Tippen = Take · Halten = sprechen · 2× = Menü`).
+
 ## [0.2.0] — 2026-10-13
 
 ### Added

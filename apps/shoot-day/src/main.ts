@@ -14,8 +14,9 @@ import {
   buildView, errorText, MENU, SCHEDULE_BODY_ROWS, TAKE_ACTIONS, type LastTake, type LoadStatus, type Mode, type TakeScreen, type ViewState,
 } from "./glasses/views";
 import {
-  loadOutbox, loadSettings, saveOutbox, saveSettings, type PendingTake, type Settings,
+  UI_KEY, effectiveUrl, loadOutbox, loadSettings, parseUi, saveOutbox, saveSettings, type PendingTake, type SavedUi, type Settings,
 } from "./storage/persist";
+import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type ConnectionState } from "./ui/phone";
 import { parsePackCommand } from "./voice/pack-voice";
 import { parseTakeCommand } from "./voice/take-voice";
@@ -35,6 +36,10 @@ const MAX_RECORD_MS = 15_000;
 const MAX_PCM_BYTES = 16_000 * 2 * 16;
 /** Shorter than this is a slip of the finger, not a sentence. */
 const MIN_PCM_BYTES = 16_000 * 2 / 5;
+/** Takes logged offline are tried again this often while any are waiting. */
+const OUTBOX_RETRY_MS = 60_000;
+/** "Alles eingepackt" by voice waits this long for the confirming tap. */
+const CONFIRM_ALL_MS = 8_000;
 
 type Module = Exclude<Mode, "menu">;
 type LoadKind = Mode;
@@ -59,8 +64,9 @@ async function boot(): Promise<void> {
 
   const makeApi = (): ShootDayApi | null => {
     if (DEMO) return createDemoApi(locale);
-    if (!settings.serverUrl) return null;
-    return createClient({ baseUrl: settings.serverUrl, ...(settings.token ? { token: settings.token } : {}) });
+    const url = effectiveUrl(settings);
+    if (!url) return null;
+    return createClient({ baseUrl: url, ...(settings.token ? { token: settings.token } : {}) });
   };
   let api = makeApi();
 
@@ -102,6 +108,48 @@ async function boot(): Promise<void> {
 
   let rec: Recording | null = null;
   let recIds = 0;
+  /** A voice "everything packed / unpacked" waiting for its confirming tap. */
+  let confirmAll: { packed: boolean; until: number } | null = null;
+  /** Left through the system: no microphone, no timers, no drawing until the app is back. */
+  let backgrounded = false;
+  /** The shot to return to once the shot list has loaded (after a restart). */
+  let wantedShot: { scene: string; shot: string } | null = null;
+
+  // Back where the user was before a restart (phone locked, app unloaded).
+  const savedUi: SavedUi | null = DEMO ? null : parseUi(await bridge.getLocalStorage(UI_KEY).catch(() => "") ?? "");
+  if (savedUi) {
+    menuCursor = savedUi.menuCursor;
+    prompterSpeed = savedUi.prompterSpeed;
+    packCursor = savedUi.packCursor;
+    scheduleScroll = savedUi.scheduleScroll;
+    wantedShot = savedUi.shot;
+  }
+  let lastSavedUi = "";
+  const saveUi = (): void => {
+    if (DEMO) return;
+    const shot = shots[shotCursor];
+    const ui: SavedUi = {
+      mode,
+      menuCursor,
+      shot: shot ? { scene: shot.scene, shot: shot.shot } : wantedShot,
+      rollingSince,
+      prompterPos,
+      prompterSpeed,
+      packCursor,
+      scheduleScroll,
+    };
+    const json = JSON.stringify(ui);
+    if (json === lastSavedUi) return;
+    lastSavedUi = json;
+    void bridge.setLocalStorage(UI_KEY, json).catch(() => false);
+  };
+  /** After a load: the remembered shot wins over the cursor. */
+  const placeWantedShot = (): void => {
+    if (!wantedShot) return;
+    const index = shots.findIndex((shot) => shot.scene === wantedShot?.scene && shot.shot === wantedShot?.shot);
+    if (index >= 0) shotCursor = index;
+    wantedShot = null;
+  };
 
   const needed = (): EquipmentItem[] => equipment.filter((item) => item.need);
   const notes = (): string[] => takeNotes(locale);
@@ -173,7 +221,10 @@ async function boot(): Promise<void> {
       },
       prompter: { lines: prompterLines, pos: prompterPos, speed: prompterSpeed, playing },
       schedule: { sheet, scroll: scheduleScroll },
-      pack: { items: needed(), cursor: packCursor, missing: showMissing },
+      pack: {
+        items: needed(), cursor: packCursor, missing: showMissing,
+      },
+      ...(confirmAll && confirmAll.until > Date.now() ? { packQuestion: t(locale, confirmAll.packed ? "g.pack.confirmAll" : "g.pack.confirmReset") } : {}),
     };
   };
 
@@ -210,7 +261,7 @@ async function boot(): Promise<void> {
 
   /** One draw at a time; requests made meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
-    if (closed) return Promise.resolve();
+    if (closed || backgrounded) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
       try {
@@ -228,6 +279,10 @@ async function boot(): Promise<void> {
   };
 
   let refreshPhone: () => void = () => undefined;
+
+  /** Positions to come back to after a restart, used once by the first load. */
+  let resumePrompterAt: number | null = savedUi?.mode === "prompter" ? savedUi.prompterPos : null;
+  let resumeScheduleAt: number | null = savedUi?.mode === "schedule" ? savedUi.scheduleScroll : null;
 
   // ---- loading: one request per kind, stale replies dropped --------------
   const inflight = new Map<LoadKind, Promise<void>>();
@@ -248,6 +303,7 @@ async function boot(): Promise<void> {
       if (!stillCurrent()) return;
       project = list.project;
       shots = [...list.shots];
+      placeWantedShot();
       shotCursor = Math.min(shotCursor, Math.max(0, shots.length - 1));
     },
     takes: async (client, stillCurrent) => {
@@ -258,20 +314,24 @@ async function boot(): Promise<void> {
       project = list.project;
       shots = [...list.shots];
       serverTakes = taken;
+      placeWantedShot();
       shotCursor = Math.min(shotCursor, Math.max(0, shots.length - 1));
     },
     prompter: async (client, stillCurrent) => {
       const text = await client.prompter();
       if (!stillCurrent()) return;
       prompterLines = text.trim() ? wrap(text) : [];
-      prompterPos = 0;
+      // Back after a restart: the same line, paused.
+      prompterPos = resumePrompterAt !== null ? Math.min(resumePrompterAt, Math.max(0, prompterLines.length - 1)) : 0;
+      resumePrompterAt = null;
       playing = false;
     },
     schedule: async (client, stillCurrent) => {
       const next = await client.callSheet();
       if (!stillCurrent()) return;
       sheet = next;
-      scheduleScroll = 0;
+      scheduleScroll = resumeScheduleAt ?? 0;
+      resumeScheduleAt = null;
     },
     pack: async (client, stillCurrent) => {
       const next = await client.equipment();
@@ -424,8 +484,10 @@ async function boot(): Promise<void> {
         say("");
         break;
       case "all":
-        for (const item of items) if (item.packed !== command.packed) void setPacked(item.name, command.packed, false);
-        say(t(locale, command.packed ? "g.pack.all" : "g.pack.reset"));
+        // One misheard sentence must not tick (or clear) the whole list: a tap confirms.
+        confirmAll = { packed: command.packed, until: Date.now() + CONFIRM_ALL_MS };
+        say("");
+        setTimeout(() => { if (confirmAll && confirmAll.until <= Date.now()) { confirmAll = null; void draw(); } }, CONFIRM_ALL_MS + 50);
         break;
       case "item": {
         const item = items[command.index];
@@ -540,11 +602,11 @@ async function boot(): Promise<void> {
     void draw();
   };
 
-  const enter = (next: Module): void => {
+  const enter = (next: Module, resume = false): void => {
     generation++;
     mode = next;
     say("");
-    if (next === "takes") { takeScreen = "card"; actionCursor = TAKE_ACTIONS.indexOf("ok"); rollingSince = null; }
+    if (next === "takes") { takeScreen = "card"; actionCursor = TAKE_ACTIONS.indexOf("ok"); if (!resume) rollingSince = null; }
     if (next === "pack") showMissing = false;
     load.delete(next);
     requestLoad(next);
@@ -573,12 +635,15 @@ async function boot(): Promise<void> {
   };
 
   let clock: ReturnType<typeof setInterval> | undefined;
+  let outboxTimer: ReturnType<typeof setInterval> | undefined;
   const shutDown = (): void => {
     if (closed) return;
     cancelRec(false);
+    saveUi();
     closed = true;
     stopPrompter();
     clearInterval(clock);
+    clearInterval(outboxTimer);
     clearTimeout(messageTimer);
   };
 
@@ -727,9 +792,19 @@ async function boot(): Promise<void> {
     switch (gesture) {
       case "scrollUp":
       case "scrollDown":
+        // A swipe says "no" to a pending "tick everything".
+        if (confirmAll) { confirmAll = null; break; }
         packCursor = Math.max(0, Math.min(items.length - 1, packCursor + step(gesture)));
         break;
       case "click": {
+        const pending = confirmAll && confirmAll.until > Date.now() ? confirmAll : null;
+        confirmAll = null;
+        if (pending) {
+          for (const entry of items) if (entry.packed !== pending.packed) void setPacked(entry.name, pending.packed, false);
+          say(t(locale, pending.packed ? "g.pack.all" : "g.pack.reset"));
+          void draw();
+          return;
+        }
         const item = items[packCursor];
         if (!item) { requestLoad("pack"); return; }
         void setPacked(item.name, !item.packed, false);
@@ -747,11 +822,34 @@ async function boot(): Promise<void> {
     void draw();
   };
 
-  await draw();
-  if (api) requestLoad("menu");
+  /** Left through the system: microphone off, prompter stopped, place saved; nothing runs until the app is back. */
+  const goBackground = (): void => {
+    if (backgrounded) return;
+    cancelRec(false);
+    stopPrompter();
+    saveUi();
+    backgrounded = true;
+    clearInterval(clock);
+    clock = undefined;
+    clearInterval(outboxTimer);
+    outboxTimer = undefined;
+  };
+  const comeBack = (): void => {
+    backgrounded = false;
+    pageReady = false;
+    lastView = null;
+    startTimers();
+    void draw();
+    if (api) requestLoad(mode);
+  };
 
+  // The glasses listen before the first page is built: a slow page must never make a tap or the exit go nowhere.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground") { comeBack(); return; }
+    if (lifecycle === "background") { goBackground(); return; }
+    if (lifecycle === "exit") { goBackground(); shutDown(); return; }
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     if (audio) {
       const current = rec;
@@ -766,16 +864,29 @@ async function boot(): Promise<void> {
 
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
+    // A gesture means the app is on the glasses again, even if no "foreground" came first.
+    if (backgrounded) { comeBack(); return; }
     const gesture = parsed.gesture;
     if (rec) { onRecGesture(gesture); void draw(); return; }
     switch (mode) {
-      case "menu": onMenu(gesture); return;
-      case "takes": onTakes(gesture); return;
-      case "prompter": onPrompter(gesture); return;
-      case "schedule": onSchedule(gesture); return;
-      case "pack": onPack(gesture); return;
+      case "menu": onMenu(gesture); break;
+      case "takes": onTakes(gesture); break;
+      case "prompter": onPrompter(gesture); break;
+      case "schedule": onSchedule(gesture); break;
+      case "pack": onPack(gesture); break;
     }
+    saveUi();
   });
+
+  await draw();
+  if (api) {
+    // Back in the module that was open before a restart; a running take keeps its clock.
+    if (savedUi && savedUi.mode !== "menu") {
+      enter(savedUi.mode, true);
+      if (savedUi.mode === "takes") rollingSince = savedUi.rollingSince;
+      requestLoad("menu");
+    } else requestLoad("menu");
+  }
 
   // The page does not survive a disconnect; the last view is forgotten too,
   // or an unchanged view would skip the rebuild and leave the display blank.
@@ -790,11 +901,24 @@ async function boot(): Promise<void> {
   // The recording dot pulses twice a second while a take runs on the takes page,
   // the schedule follows the clock every 30 s. Unchanged frames cost nothing.
   let ticks = 0;
-  clock = setInterval(() => {
-    ticks += 1;
-    if (mode === "takes" && rollingSince !== null && !rec) void draw();
-    else if (mode === "schedule" && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
-  }, PULSE_MS);
+  function startTimers(): void {
+    clearInterval(clock);
+    clearInterval(outboxTimer);
+    clock = setInterval(() => {
+      ticks += 1;
+      if (mode === "takes" && rollingSince !== null && !rec) void draw();
+      else if (mode === "schedule" && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
+      // The "tick everything?" question goes away on its own.
+      else if (confirmAll && confirmAll.until <= Date.now()) { confirmAll = null; void draw(); }
+    }, PULSE_MS);
+    // Takes logged offline go out as soon as the server answers again, not only on the next visit.
+    outboxTimer = setInterval(() => {
+      if (closed || backgrounded || outbox.length === 0 || !api) return;
+      if (project) flushOutbox();
+      else requestLoad("menu");
+    }, OUTBOX_RETRY_MS);
+  }
+  startTimers();
 
   const phone = mountPhoneUi({
     getSettings: () => settings,

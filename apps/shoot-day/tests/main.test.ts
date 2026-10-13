@@ -25,7 +25,10 @@ function fakeBridge(stored: Record<string, string> = {}) {
   const bridge = {
     getLocalStorage: vi.fn(async (key: string) => storage.get(key) ?? ""),
     setLocalStorage: vi.fn(async (key: string, value: string) => { storage.set(key, value); return true; }),
-    rebuildPageContainer: vi.fn(async () => true),
+    rebuildPageContainer: vi.fn(async (page?: { textObject?: Array<{ containerID?: number; content?: string }> }) => {
+      for (const text of page?.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
+      return true;
+    }),
     createStartUpPageContainer: vi.fn(async (page: { textObject?: Array<{ containerID?: number; content?: string }> }) => {
       for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
       return 0;
@@ -319,5 +322,89 @@ describe("Shoot Day lifecycle", () => {
     await vi.waitFor(() => expect(root.innerHTML).toContain("Connected – project: Testdreh"));
     expect(root.innerHTML).not.toContain("<img");
     expect(root.innerHTML).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("\"alles eingepackt\" by voice asks first; a tap ticks everything, a swipe does not", async () => {
+    server.state.heard = "Alles eingepackt";
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    fake.emit(UP);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt"));
+    const speak = async (): Promise<void> => {
+      fake.emit(HOLD);
+      await vi.waitFor(() => expect(fake.header()).toBe("● MIC · sprich jetzt"));
+      await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let i = 0; i < 10; i++) fake.audio(3200);
+      fake.emit(RELEASE);
+      await vi.waitFor(() => expect(fake.footer()).toBe("Alles abhaken? Tippen = ja · Wischen = nein"));
+    };
+    await speak();
+    expect(server.state.items.filter((i) => i.packed)).toHaveLength(0);
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = Haken · Halten = sprechen · 2× = Menü"));
+    expect(server.state.items.filter((i) => i.packed)).toHaveLength(0);
+    await speak();
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 2/2 eingepackt"));
+  });
+
+  it("comes back to the same module and shot after a restart (phone locked, app unloaded)", async () => {
+    const first = fakeBridge(configured());
+    await boot(first);
+    first.emit(CLICK);                                      // Takes
+    await vi.waitFor(() => expect(first.body()).toContain("Noch kein Take."));
+    first.emit(DOWN);                                       // shot 1B
+    await vi.waitFor(() => expect(first.header()).toContain("TAKES · 2 von 2"));
+    first.emit(7);
+    expect(first.storage.get("quietglass.shootday.ui.v1")).toContain('"mode":"takes"');
+
+    const second = fakeBridge(Object.fromEntries(first.storage));
+    await boot(second);
+    await vi.waitFor(() => expect(second.header()).toContain("TAKES · 2 von 2"));
+  });
+
+  it("switches the microphone off when the app is left through the system", async () => {
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    fake.emit(UP);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt"));
+    fake.emit(HOLD);
+    await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
+    fake.emit(5);
+    await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(false));
+    fake.emit(4);
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt"));
+  });
+
+  it("sends takes logged offline on its own once the server is back", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("Noch kein Take."));
+    server.state.down = true;
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("> Take OK"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("offline gemerkt"));
+    server.state.down = false;
+    await vi.advanceTimersByTimeAsync(61_000);
+    await vi.waitFor(() => expect(server.state.takes).toHaveLength(1));
+  });
+});
+
+describe("build address", () => {
+  it("reads the build's address and drops a stored placeholder once in its favour", async () => {
+    const persist = await import("../src/storage/persist");
+    const build = persist.buildUrl("https://shoot.test:8445/");
+    expect(build).toBe("https://shoot.test:8445");
+    expect(persist.parseSettings(JSON.stringify({ serverUrl: "http://127.0.0.1:8896" }), build).serverUrl).toBe("");
+    expect(persist.parseSettings(JSON.stringify({ serverUrl: "https://dein-rechner.home.example" }), build).serverUrl).toBe("");
+    expect(persist.parseSettings(JSON.stringify({ serverUrl: "https://other.test" }), build).serverUrl).toBe("https://other.test");
+    expect(persist.effectiveUrl(persist.parseSettings("", build), build)).toBe("https://shoot.test:8445");
+    expect(persist.parseSettings(JSON.stringify({ serverUrl: "http://127.0.0.1:8896" }), "").serverUrl).toBe("http://127.0.0.1:8896");
   });
 });
