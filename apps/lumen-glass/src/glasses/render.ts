@@ -92,7 +92,7 @@ export async function createPage(bridge: EvenAppBridge, view: LumenView, icon?: 
   if (started.has(bridge)) {
     try {
       const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
-      return ok ? updatePixel(bridge, icon) : { ok: false, reason: "rebuild refused" };
+      return ok ? pageWithIcon(bridge, icon) : { ok: false, reason: "rebuild refused" };
     } catch (error) {
       return { ok: false, reason: errorMessage(error) };
     }
@@ -106,7 +106,7 @@ export async function createPage(bridge: EvenAppBridge, view: LumenView, icon?: 
   }
   try {
     const result = await bridge.createStartUpPageContainer(page);
-    if (result === StartUpPageCreateResult.success) { started.add(bridge); return updatePixel(bridge, icon); }
+    if (result === StartUpPageCreateResult.success) { started.add(bridge); return pageWithIcon(bridge, icon); }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -146,15 +146,26 @@ export async function updatePage(bridge: EvenAppBridge, view: LumenView, icon?: 
         ...guarded(spec.id, content),
       }));
     }
-    return updatePixel(bridge, icon);
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+  return pageWithIcon(bridge, icon);
 }
 
 /** Sends only the corner sprite; used by the animation clock. */
 export function updateIcon(bridge: EvenAppBridge, icon: PixelIcon): Promise<RenderResult> {
   return updatePixel(bridge, icon);
+}
+
+/**
+ * The page stands once it was created or rebuilt; a moth image that did not
+ * arrive is retried with the next wing beat, it is no reason to build the
+ * whole page again (which costs seconds and swallows taps).
+ */
+async function pageWithIcon(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {
+  const pixel = await updatePixel(bridge, icon);
+  if (!pixel.ok) console.warn("[lumen] moth image failed:", pixel.reason);
+  return { ok: true };
 }
 
 async function updatePixel(bridge: EvenAppBridge, icon?: PixelIcon): Promise<RenderResult> {

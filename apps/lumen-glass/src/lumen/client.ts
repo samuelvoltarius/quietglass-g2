@@ -50,13 +50,30 @@ export interface LumenOutcome<T> {
 
 export interface ClientOptions {
   readonly baseUrl: string;
-  /** Optional session cookie value, for a LUMEN running in closed mode. */
+  /**
+   * Optional access token, sent as `Authorization: Bearer`. LUMEN in open mode
+   * needs none. A cookie cannot be sent from the glasses: `Cookie` is a
+   * forbidden header in the WebView's fetch, and credentialed requests fail
+   * because LUMEN's CORS answer allows no credentials (measured 13.10.2026).
+   */
   readonly token?: string;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
 }
 
 const DEFAULT_TIMEOUT = 8000;
+/**
+ * A submission is judged while the request is open (NSFW check, two vision
+ * passes): tens of seconds are normal, 8 s cut every upload off.
+ */
+export const UPLOAD_TIMEOUT = 90_000;
+
+/**
+ * How a submission ended. `confirmed`: LUMEN answered readably. `sent`: the
+ * photo went out and the server took it, but its answer (a redirect to an
+ * HTML page without CORS) cannot be read — the caller checks the status.
+ */
+export type Submission = "confirmed" | "sent";
 
 export async function fetchStatus(options: ClientOptions): Promise<LumenOutcome<LumenStatus>> {
   const outcome = await request(options, "/api/status", { method: "GET" });
@@ -84,20 +101,37 @@ export async function submitPhoto(
   questId: number,
   photo: Blob,
   filename = "photo.jpg",
-): Promise<LumenOutcome<true>> {
+): Promise<LumenOutcome<Submission>> {
   const form = new FormData();
   form.append("datei", photo, filename);
 
-  const outcome = await request(options, "/quest/" + questId + "/abgeben", {
-    method: "POST",
-    body: form,
-    // Content-Type is deliberately unset: the browser adds the multipart
-    // boundary, and setting it by hand produces a body the server cannot parse.
-  });
-
-  return outcome.error !== null
-    ? { value: null, error: outcome.error }
-    : { value: true, error: null };
+  // LUMEN's upload route is its web form's route: it answers with a 303 to an
+  // HTML page and sends no CORS headers (only /api/* has them). A normal
+  // cross-origin fetch therefore fails although the photo arrived. A
+  // "no-cors" form post is a simple request that goes out all the same; its
+  // answer is opaque, so the caller asks /api/status what became of the quest.
+  // No header of our own (none would survive no-cors), no Content-Type: the
+  // browser adds the multipart boundary.
+  const doFetch = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? UPLOAD_TIMEOUT);
+  try {
+    const response = await doFetch(joinUrl(options.baseUrl, "/quest/" + questId + "/abgeben"), {
+      method: "POST",
+      body: form,
+      mode: "no-cors",
+      credentials: "omit",
+      signal: controller.signal,
+    });
+    if (response.type === "opaque" || response.status === 0) return { value: "sent", error: null };
+    if (response.status === 401 || response.status === 403) return { value: null, error: "not signed in to LUMEN" };
+    const accepted = response.ok || (response.status >= 300 && response.status < 400);
+    return accepted ? { value: "confirmed", error: null } : { value: null, error: "HTTP " + response.status };
+  } catch (error) {
+    return { value: null, error: describeError(error) };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Turns a base64 payload from the phone camera into a Blob for upload. */
@@ -120,15 +154,16 @@ async function request(
 
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
-    // LUMEN authenticates with a cookie; sending it as a header keeps it out
-    // of the URL and out of any server log line.
-    if (options.token) headers["Cookie"] = "lumen=" + options.token;
+    // Never a Cookie header (forbidden in fetch, silently dropped) and never
+    // credentials: "include" (LUMEN's CORS answer has no Allow-Credentials,
+    // so the WebView throws every answer away). A token travels as Bearer.
+    if (options.token) headers["Authorization"] = "Bearer " + options.token;
 
     const response = await doFetch(joinUrl(options.baseUrl, path), {
       ...init,
       headers: { ...headers, ...(init.headers ?? {}) },
       signal: controller.signal,
-      credentials: "include",
+      credentials: "omit",
     });
 
     if (response.status === 401 || response.status === 403) {

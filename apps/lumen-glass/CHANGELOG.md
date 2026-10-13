@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0] — 2026-10-13
+
+### Fixed
+
+- **LUMEN was unreachable from the WebView:** every request went out with `credentials: "include"`, and LUMEN's CORS answer allows no credentials, so the browser discarded each answer (measured in Chromium against the real server: `include` fails, `omit` gets 200). Requests now go without credentials; the `Cookie` header (forbidden in fetch, never sent) is gone, a token travels as `Authorization: Bearer`.
+- **Photo upload:** LUMEN's upload route answers with a redirect to an HTML page and has no CORS, so a readable upload always failed although the photo arrived. It is now sent as a "no-cors" form post with 90 s instead of 8 s (LUMEN judges the photo while the request is open), and `/api/status` tells whether the quest was ticked off ("Quest erledigt" or "Gesendet, aber nicht abgehakt").
+- Gestures are wired before the first page and the first status request: an unreachable LUMEN no longer leaves the glasses deaf for up to 8 s, not even to the double tap.
+- A reconnect or a return to the foreground rebuilds the page even when nothing changed (it stayed blank before). A moth image that does not arrive no longer rebuilds the whole page in a loop.
+- Leaving through the system stops polling and the wing beat; coming back rebuilds and refreshes. A system exit or crash stops everything.
+
+### Changed
+
+- Holding with a quest open only arms "new quest" (the footer says "Nochmal halten = neue Quest (ersetzt diese)"); a second hold within 4 s replaces it. Without a quest one hold is enough.
+- Private builds take their server from `VITE_LUMEN_URL`; an empty or old default address (`http://127.0.0.1:8077`) is replaced by it.
+- Wording: "Tippen = nochmal · 2× = Ende", "Keine Quest. Halten = neue Quest.", "{n} Tage" instead of "{n} T.", "Zugangsschlüssel (Token)" instead of "Sitzungs-Cookie".
+
 ## [0.4.0] — 2026-10-13
 
 ### Changed

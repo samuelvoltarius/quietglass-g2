@@ -53,6 +53,24 @@ rather than opening it to everything.
 
 ---
 
+### The upload route
+
+CORS above is often added for `/api/*` only. The photo upload, however, posts
+to LUMEN's web-form route `/quest/<id>/abgeben` and answers with a redirect to
+an HTML page. Lumen Glass therefore sends the photo as a "no-cors" form post
+(it arrives; the answer cannot be read) and checks `/api/status` afterwards.
+If you add CORS to that route too, the app reads the answer directly.
+
+### Credentials
+
+Lumen Glass sends no cookies (`credentials: "omit"`): `Cookie` is a forbidden
+header in a browser, and a credentialed request also needs
+`Access-Control-Allow-Credentials: true`. A token, if set, goes as
+`Authorization: Bearer <token>`; a closed LUMEN has to accept that header to
+let the glasses in.
+
+---
+
 ## 2. Run the proxy instead
 
 If you would rather not touch LUMEN:

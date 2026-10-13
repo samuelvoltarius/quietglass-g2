@@ -5,7 +5,7 @@
 Lumen Glass spricht nur mit deinem eigenen LUMEN-Server unter der Adresse, die
 du einträgst. Fotos nimmst du bewusst mit der Handykamera auf; sie gehen an
 LUMEN und werden von der App nicht gespeichert. Gespeichert sind nur die
-LUMEN-Adresse und ggf. ein Sitzungs-Cookie. Kein Konto, kein Tracking.
+LUMEN-Adresse und ggf. ein Zugangsschlüssel (Token). Kein Konto, kein Tracking.
 Deinstallieren löscht alles.
 
 ## Short version
@@ -26,7 +26,7 @@ entry; the glasses have no camera.
 | Data | Where | Leaves the device |
 |---|---|---|
 | LUMEN's address | Even app per-app storage, on the phone | No |
-| Session cookie, if you use one | same | Only to your LUMEN |
+| Access token, if you use one | same | Only to your LUMEN |
 
 Written through `setLocalStorage()` under `quietglass.lumenglass.v1`.
 
@@ -41,10 +41,11 @@ SDK's user-initiated picker. The picture is handed to LUMEN and then dropped —
 it is not written to the phone by this app, not cached, and not sent anywhere
 else.
 
-## The session cookie
+## The access token
 
-Only needed if you run LUMEN in closed mode. It is sent in a request header,
-never in a URL, and the phone app shows only that it is set and how long it is.
+Only needed if your LUMEN asks for one. It is sent as an `Authorization`
+header, never in a URL, and the phone app shows only that it is set and how
+long it is.
 
 ## Where your data goes
 
@@ -63,7 +64,7 @@ explain why.
 
 ## Removing your data
 
-Clear the address and session cookie in the phone app to forget your LUMEN.
+Clear the address and access token in the phone app to forget your LUMEN.
 Uninstalling removes everything.
 
 ## Third-party code

@@ -23,6 +23,8 @@ export interface ViewOptions {
   /** Outcome of the last submission. */
   readonly result: { readonly ok: boolean; readonly text: string } | null;
   readonly error: string | null;
+  /** A hold is armed and waits for its confirmation: the footer says what a second hold does. */
+  readonly confirmQuest?: boolean;
   /** Language of everything the app itself writes; LUMEN's own words pass through. */
   readonly locale: Locale;
   readonly lineWidth?: number;
@@ -74,7 +76,9 @@ export function buildView(
   }
 
   if (options.phase === "result" && options.result) {
-    const text = options.result.ok ? x("g.sent") : errorText(options.result.text, locale);
+    const text = options.result.ok
+      ? x(options.result.text === "done" ? "g.done" : "g.sent")
+      : errorText(options.result.text, locale);
     return {
       header: x(options.result.ok ? "g.accepted" : "g.rejected"),
       body: fitBody([], wrap(text, width), [], width),
@@ -93,7 +97,7 @@ export function buildView(
   return {
     header: "",
     body,
-    footer: footerText(status, Boolean(status.quest), locale),
+    footer: options.confirmQuest && status.quest ? x("g.confirmQuest") : footerText(status, Boolean(status.quest), locale),
   };
 }
 

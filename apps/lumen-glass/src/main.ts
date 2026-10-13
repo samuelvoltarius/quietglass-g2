@@ -12,6 +12,8 @@ import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
+import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
+import { activeConfirm, CONFIRM_WINDOW_MS, confirmStep, type PendingConfirm } from "./input/confirm";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
@@ -32,6 +34,13 @@ async function boot(): Promise<void> {
   let lastIcon: string | null = null;
   let flapTimer: ReturnType<typeof setInterval> | undefined;
   let pageReady = false;
+  /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
+  let rebuildWanted = false;
+  /** In the background (system menu, another app): no polling, no wing beats. */
+  let paused = false;
+  /** A hold that would replace the open quest waits here for its second hold. */
+  let pendingQuest: PendingConfirm<"newQuest"> | null = null;
+  let confirmTimer: ReturnType<typeof setTimeout> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let drawing: Promise<void> | null = null;
@@ -46,7 +55,9 @@ async function boot(): Promise<void> {
     ...(data.token ? { token: data.token } : {}),
   });
 
-  const currentView = (): LumenView => buildView(status, { phase, result, error, locale });
+  const currentView = (): LumenView => buildView(status, {
+    phase, result, error, locale, confirmQuest: activeConfirm(pendingQuest, Date.now()) !== null,
+  });
 
   const currentIcon = () => mothSprite(status?.moth.state ?? "eingerollt", Date.now());
 
@@ -55,15 +66,18 @@ async function boot(): Promise<void> {
     const view = currentView();
     const icon = currentIcon();
     const iconKey = spriteKey(icon);
-    const sameText = sameView(lastView, view);
+    // A page lost with the link or left in the background is rebuilt even
+    // when nothing changed; an unchanged view would otherwise leave it blank.
+    if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
+    const sameText = pageReady && sameView(lastView, view);
     if (sameText && iconKey === lastIcon) return;
 
     // Only the wings moved: send the small image, not the text.
     if (sameText && pageReady) {
       const quick = await updateIcon(bridge, icon);
-      if (quick.ok) { lastIcon = iconKey; return; }
-      pageReady = false;
-      console.warn("[lumen] icon failed:", quick.reason);
+      // A lost image is retried with the next wing beat; the page itself stands.
+      if (quick.ok) lastIcon = iconKey;
+      else console.warn("[lumen] icon failed:", quick.reason);
       return;
     }
 
@@ -119,7 +133,7 @@ async function boot(): Promise<void> {
 
   const schedule = (): void => {
     clearTimeout(timer);
-    if (closed) return;
+    if (closed || paused) return;
     timer = setTimeout(() => { void refresh().then(schedule, schedule); }, POLL_MS);
   };
 
@@ -151,20 +165,37 @@ async function boot(): Promise<void> {
 
     const photo = blobFromBase64(asset.base64, asset.mimeType || "image/jpeg");
     const outcome = await submitPhoto(options(), quest.id, photo, asset.name || "photo.jpg");
+    if (closed) return;
 
+    if (outcome.error !== null) {
+      phase = "result";
+      result = { ok: false, text: outcome.error };
+      await draw();
+      return;
+    }
+
+    // LUMEN's answer to an upload cannot be read (no CORS on its form route),
+    // so its status tells what happened: a quest that is no longer the open
+    // one was ticked off. The view words the outcome in the current language.
+    const check = await fetchStatus(options());
+    if (closed) return;
+    if (check.error === null && check.value !== null) {
+      status = check.value;
+      error = null;
+      const ticked = check.value.quest?.id !== quest.id;
+      result = ticked || outcome.value === "confirmed"
+        ? { ok: true, text: ticked ? "done" : "" }
+        : { ok: false, text: t("en", "g.err.notTicked") };
+    } else {
+      result = { ok: true, text: "" };
+    }
     phase = "result";
-    result = outcome.error !== null
-      ? { ok: false, text: outcome.error }
-      // The view words a success itself, in the current language.
-      : { ok: true, text: "" };
     await draw();
-
-    // Refresh so the moth reflects what just happened.
-    if (outcome.error === null) await refresh(true);
   };
 
   const askForQuest = async (): Promise<void> => {
     if (phase !== "idle") return;
+    pendingQuest = null;
     const outcome = await newQuest(options());
     if (outcome.error !== null) { error = outcome.error; await draw(); return; }
     await refresh(true);
@@ -172,34 +203,69 @@ async function boot(): Promise<void> {
 
   /** The wings only beat while the moth is awake and nothing else is on screen. */
   const flapTick = (): void => {
-    if (closed || !pageReady || !status || phase !== "idle" || error) return;
+    if (closed || paused || !pageReady || !status || phase !== "idle" || error) return;
     if (isFlapping(status.moth.state)) void draw();
   };
   flapTimer = setInterval(flapTick, FLAP_STEP_MS);
 
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; clearTimeout(timer); clearInterval(flapTimer); },
+    onConfirmed: () => { closed = true; clearTimeout(timer); clearTimeout(confirmTimer); clearInterval(flapTimer); },
   }, "lumen");
 
-  await draw();
-  if (!DEMO) { await refresh(); schedule(); }
+  /**
+   * Holding asks LUMEN for a new quest, which replaces the open one. With a
+   * quest on screen the first hold only arms that (the footer says so); a
+   * second hold within a few seconds carries it out.
+   */
+  const onHold = (): void => {
+    if (phase !== "idle") return;
+    if (!status?.quest) { void askForQuest(); return; }
+    const step = confirmStep(pendingQuest, "newQuest", Date.now());
+    pendingQuest = step.pending;
+    clearTimeout(confirmTimer);
+    if (step.confirmed) { void askForQuest(); return; }
+    // Disarms by itself; the footer goes back to normal.
+    confirmTimer = setTimeout(() => { pendingQuest = null; void draw(); }, CONFIRM_WINDOW_MS + 50);
+    void draw();
+  };
 
+  const stopAll = (): void => {
+    closed = true;
+    clearTimeout(timer);
+    clearTimeout(confirmTimer);
+    clearInterval(flapTimer);
+  };
+
+  // Gestures first: nothing native or on the network may be awaited before
+  // this, or an unreachable LUMEN leaves the glasses deaf, even to the exit.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const step = lifecycleFromEvent(event);
+    if (step === "foregroundExit") { paused = true; clearTimeout(timer); return; }
+    if (step === "foregroundEnter") {
+      paused = false;
+      rebuildWanted = true;
+      void draw();
+      if (!DEMO) { void refresh().then(schedule, schedule); }
+      return;
+    }
+    if (isFinalExit(step)) { stopAll(); return; }
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
     switch (gesture.gesture) {
       case "click":
+        pendingQuest = null;
         if (phase === "result") { phase = "idle"; result = null; break; }
         if (error) { void refresh(); return; }
         void shootAndSubmit();
         return;
       case "longPress":
-        void askForQuest();
+        onHold();
         return;
       case "scrollUp":
       case "scrollDown":
+        pendingQuest = null;
         void refresh();
         return;
       case "doubleClick":
@@ -214,10 +280,13 @@ async function boot(): Promise<void> {
 
   bridge.onDeviceStatusChanged((deviceStatus) => {
     if (deviceStatus?.connectType === "connected" && !closed) {
-      pageReady = false;
+      rebuildWanted = true;
       void draw();
     }
   });
+
+  void draw();
+  if (!DEMO) { void refresh().then(schedule, schedule); }
 
   mountPhoneUi({
     getLocale: () => locale,

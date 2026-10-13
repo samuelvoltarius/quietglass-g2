@@ -97,8 +97,11 @@ than letting you shoot and have it rejected.
 1. Run LUMEN as you normally do (its default is `127.0.0.1:8077`).
 2. **Let the browser talk to it** — see [examples/PATCH.md](examples/PATCH.md).
    Three lines of CORS in LUMEN, or run the included proxy.
-3. Enter the address in the phone app. The default is already LUMEN's own.
-   The session cookie for a closed LUMEN sits under **Advanced**.
+3. Enter the address in the phone app. The default is already LUMEN's own;
+   a private build can bring its own (`VITE_LUMEN_URL=https://… npm run build`),
+   and an old stored default is then replaced by it.
+   An access token for a LUMEN that asks for one sits under **Advanced** and is
+   sent as `Authorization: Bearer` (a cookie cannot be sent from the glasses).
 
 The app speaks German and English. It follows the phone's language, and you
 can switch it at the top of the phone page; the glasses change along at once.
@@ -114,9 +117,12 @@ npm run sim        # Even Hub simulator pointed at the dev server
 ### The CORS trap, in one line
 
 Without CORS headers the glasses say **"LUMEN unreachable"** while `curl`
-reaches the same URL fine — the server answered, the browser discarded it. And
-`allow_origins=["*"]` does **not** fix it, because the app sends credentials
-and the specification forbids that combination. Details in
+reaches the same URL fine — the server answered, the browser discarded it. The
+app sends no credentials (`credentials: "omit"`): a credentialed request fails
+unless the server also sends `Access-Control-Allow-Credentials`. Photo uploads
+go to LUMEN's form route `/quest/<id>/abgeben`, which usually has no CORS; the
+app posts them as a "no-cors" form (the photo arrives, the answer is opaque) and
+then reads `/api/status` to see whether the quest was ticked off. Details in
 [examples/PATCH.md](examples/PATCH.md).
 
 ## Privacy
@@ -125,8 +131,8 @@ Lumen Glass talks to **your** LUMEN and to nothing else. There is no vendor
 service and no account.
 
 - Photos go straight to LUMEN; nothing is stored on the glasses side.
-- Only the address and, if you run LUMEN in closed mode, a session cookie are
-  saved on the phone. The cookie is sent as a header, never in a URL, and is
+- Only the address and, if your LUMEN asks for one, an access token are
+  saved on the phone. The token is sent as a header, never in a URL, and is
   never shown in full.
 - No quests, no photos and no history are duplicated here — LUMEN already has
   all of it, and a second copy would only be a second thing to leak.

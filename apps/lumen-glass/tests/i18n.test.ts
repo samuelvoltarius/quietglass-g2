@@ -141,7 +141,7 @@ describe("glasses text budget", () => {
     expect(failed.header).toBe("Lumen Glass");
     expect(failed.body[0]).toBe("LUMEN nicht erreichbar");
     expect(failed.body).toContain("Prüf die Adresse in der Handy-App.");
-    expect(failed.footer).toBe("Tippen = nochmal");
+    expect(failed.footer).toBe("Tippen = nochmal · 2× = Ende");
     expect(buildView(null, de).header).toBe("Lumen Glass");
     expect(buildView(null, { ...de, error: "HTTP 500" }).body[0]).toBe("HTTP 500");
     expect(windowLabel("golden", 135, "de")).toBe("Gold in 2 h 15 min");
@@ -167,7 +167,7 @@ describe("phone page", () => {
     expect(html).toContain("gesetzt (6 Zeichen)");
     expect(html).not.toContain("abcdef");
     // The cookie sits under "Erweitert", not on the main page.
-    expect(html.indexOf("<summary>Erweitert</summary>")).toBeLessThan(html.indexOf("Sitzungs-Cookie"));
+    expect(html.indexOf("<summary>Erweitert</summary>")).toBeLessThan(html.indexOf("Zugangsschlüssel (Token)"));
   });
 });
 
@@ -234,7 +234,7 @@ describe("switching language on the phone", () => {
     expect(glasses.header).toBe("Lumen Glass");
     expect(glasses.body).toContain("LUMEN nicht erreichbar");
     expect(glasses.body).toContain("Prüf die Adresse in der Handy-App.");
-    expect(glasses.footer).toBe("Tippen = nochmal");
+    expect(glasses.footer).toBe("Tippen = nochmal · 2× = Ende");
     expect(html).toContain("Nicht verbunden");
     expect(stored.get("quietglass.locale")).toBe("de");
   });

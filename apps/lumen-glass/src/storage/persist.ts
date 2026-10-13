@@ -13,20 +13,37 @@ import { t } from "../messages";
 export interface LumenData {
   /** Base URL of the LUMEN instance, e.g. http://127.0.0.1:8077 */
   readonly baseUrl: string;
-  /** Session cookie value, only needed when LUMEN runs in closed mode. */
+  /** Access token (sent as Bearer), only for a LUMEN that asks for one. */
   readonly token?: string;
   readonly invertScroll: boolean;
 }
 
 const KEY = "quietglass.lumenglass.v1";
 
+/** LUMEN's own documented address; inside the Even app it points at the phone itself. */
+export const LUMEN_DOC_DEFAULT = "http://127.0.0.1:8077";
+
+/** Set at build time in a private build: `VITE_LUMEN_URL=https://… npm run build`. */
+const BUILD_LUMEN_URL: string = ((import.meta as { env?: Record<string, string | undefined> }).env?.VITE_LUMEN_URL ?? "").trim();
+
+/** The address a fresh install starts with: the private build's server, else LUMEN's documented default. */
+export function defaultBaseUrl(build: string = BUILD_LUMEN_URL): string {
+  return build || LUMEN_DOC_DEFAULT;
+}
+
 /**
- * LUMEN's own documented default is 127.0.0.1:8077, so that is the starting
- * point rather than an empty field. Anyone running it elsewhere changes it
- * once; anyone running it as documented never has to.
+ * A stored address that was never really chosen (empty, or the documented
+ * placeholder) gives way to the build's server, so a private build works
+ * without any typing even after an older version saved the placeholder.
  */
+export function migrateBaseUrl(stored: string, build: string = BUILD_LUMEN_URL): string {
+  const trimmed = stored.trim().replace(/\/+$/, "");
+  if (build && (trimmed === "" || trimmed === LUMEN_DOC_DEFAULT)) return build;
+  return stored.trim();
+}
+
 export const EMPTY_DATA: LumenData = {
-  baseUrl: "http://127.0.0.1:8077",
+  baseUrl: defaultBaseUrl(),
   invertScroll: false,
 };
 
@@ -76,20 +93,20 @@ export function isLocal(url: string): boolean {
   }
 }
 
-export function parseData(raw: string): LumenData {
-  if (!raw) return EMPTY_DATA;
+export function parseData(raw: string, build: string = BUILD_LUMEN_URL): LumenData {
+  if (!raw) return { ...EMPTY_DATA, baseUrl: defaultBaseUrl(build) };
   try {
     const value = JSON.parse(raw) as Partial<LumenData>;
     const baseUrl = typeof value.baseUrl === "string" && validateUrl(value.baseUrl).valid
       ? value.baseUrl.trim()
       : "";
     return {
-      baseUrl,
+      baseUrl: migrateBaseUrl(baseUrl, build),
       ...(typeof value.token === "string" && value.token ? { token: value.token } : {}),
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
     };
   } catch {
-    return EMPTY_DATA;
+    return { ...EMPTY_DATA, baseUrl: defaultBaseUrl(build) };
   }
 }
 

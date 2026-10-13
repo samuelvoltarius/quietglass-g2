@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { clampLight, drawMoth, lightBar, mothLine, stateForLight } from "../src/lumen/moth";
 import {
-  blobFromBase64, describeError, fetchStatus, newQuest, parseStatus, submitPhoto,
+  blobFromBase64, describeError, fetchStatus, newQuest, parseStatus, submitPhoto, UPLOAD_TIMEOUT,
 } from "../src/lumen/client";
 import { buildView, questMeta, windowLabel, wrap } from "../src/glasses/view";
 import { EMPTY_DATA, isLocal, maskToken, parseData, validateUrl } from "../src/storage/persist";
@@ -162,24 +162,59 @@ describe("talking to LUMEN", () => {
       const body = init?.body as FormData;
       expect(body.get("datei")).toBeInstanceOf(Blob);
       // The boundary must come from the platform; setting it by hand breaks parsing.
-      expect((init?.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+      expect(init?.headers).toBeUndefined();
       return new Response("", { status: 303 });
     });
     const outcome = await submitPhoto(
       { ...options, fetchImpl: fetchImpl as never },
       42, new Blob(["x"], { type: "image/jpeg" }),
     );
-    // A redirect back to the page still means it was accepted.
-    expect(outcome.error).toBeNull();
+    // A readable redirect back to the page still means it was accepted.
+    expect(outcome).toEqual({ value: "confirmed", error: null });
   });
 
-  it("sends the session cookie as a header, not in the URL", async () => {
+  it("regression: uploads as a no-cors form post, because LUMEN's upload route has no CORS", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.mode).toBe("no-cors");
+      expect(init?.credentials).toBe("omit");
+      // What a browser hands back for a no-cors answer: opaque, status 0.
+      return { type: "opaque", status: 0, ok: false } as unknown as Response;
+    });
+    const outcome = await submitPhoto({ ...options, fetchImpl: fetchImpl as never }, 7, new Blob(["x"]));
+    expect(outcome).toEqual({ value: "sent", error: null });
+  });
+
+  it("regression: the upload gets far more time than a status request", async () => {
+    expect(UPLOAD_TIMEOUT).toBeGreaterThanOrEqual(60_000);
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      let answer!: (value: Response) => void;
+      const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise<Response>((done) => { answer = done; });
+      });
+      const pending = submitPhoto({ ...options, fetchImpl: fetchImpl as never }, 7, new Blob(["x"]));
+      await vi.advanceTimersByTimeAsync(30_000); // a judged photo, well past the old 8 s
+      expect(signal?.aborted).toBe(false);
+      answer({ type: "opaque", status: 0, ok: false } as unknown as Response);
+      expect((await pending).value).toBe("sent");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: never sends a Cookie header or credentials; a token goes as Bearer", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).not.toContain("secret");
-      expect((init?.headers as Record<string, string>)["Cookie"]).toBe("lumen=secret");
+      const headers = init?.headers as Record<string, string>;
+      expect(headers["Cookie"]).toBeUndefined();
+      expect(headers["Authorization"]).toBe("Bearer secret");
+      expect(init?.credentials).toBe("omit");
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
     await fetchStatus({ ...options, token: "secret", fetchImpl: fetchImpl as never });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("describes failures without leaking internals", () => {
@@ -234,7 +269,7 @@ describe("the display", () => {
   it("offers a quest when there is none", () => {
     const without = parseStatus({ kreatur: { licht: 40 } });
     const view = buildView(without, idle);
-    expect(view.body.join(" ")).toContain("Hold for a new one");
+    expect(view.body.join(" ")).toContain("Hold = new quest");
     expect(view.footer).toContain("hold = quest");
   });
 
@@ -318,5 +353,20 @@ describe("configuration", () => {
   it("falls back cleanly on corrupt storage", () => {
     expect(parseData("{nope")).toEqual(EMPTY_DATA);
     expect(parseData(JSON.stringify({ baseUrl: "ws://bad" })).baseUrl).toBe("");
+  });
+});
+
+describe("private build address", () => {
+  it("a private build's server replaces an empty or documented default address", async () => {
+    const { migrateBaseUrl, defaultBaseUrl, LUMEN_DOC_DEFAULT } = await import("../src/storage/persist");
+    const build = "https://lumen.example.net:8454";
+    expect(defaultBaseUrl(build)).toBe(build);
+    expect(defaultBaseUrl("")).toBe(LUMEN_DOC_DEFAULT);
+    expect(migrateBaseUrl("", build)).toBe(build);
+    expect(migrateBaseUrl("http://127.0.0.1:8077/", build)).toBe(build);
+    expect(migrateBaseUrl("http://lumen.lan:8077", build)).toBe("http://lumen.lan:8077");
+    expect(migrateBaseUrl("http://127.0.0.1:8077", "")).toBe("http://127.0.0.1:8077");
+    expect(parseData(JSON.stringify({ baseUrl: "http://127.0.0.1:8077" }), build).baseUrl).toBe(build);
+    expect(parseData("", build).baseUrl).toBe(build);
   });
 });
