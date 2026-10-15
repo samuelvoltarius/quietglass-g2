@@ -1,6 +1,6 @@
 import { createBitmap, fillRect, line, MAX_LEVEL, plot, type Bitmap } from "../glasses/bitmap";
 import { baseMapFor, CUT_LEVEL, TRANSPARENT, type BaseMap } from "./basemap";
-import { ANCHOR, MAP, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_HEIGHT, TILE_WIDTH } from "./layout";
+import { RADAR_AREA, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_HEIGHT, TILE_WIDTH, type MapArea } from "./layout";
 import { RADAR_ZOOM, TILE_SIZE, windowTiles, type Placement, type Position } from "./tiles";
 
 /**
@@ -14,7 +14,7 @@ import { RADAR_ZOOM, TILE_SIZE, windowTiles, type Placement, type Position } fro
  * it in the bright levels 6…15, place names on top and the place as a cross.
  */
 
-export { ANCHOR, MAP, RADAR_TILES, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_HEIGHT, TILE_WIDTH } from "./layout";
+export { ANCHOR, MAP, RADAR_AREA, RADAR_TILES, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_HEIGHT, TILE_WIDTH } from "./layout";
 export { RING_KM } from "./basemap";
 
 /** Radar grey levels of a 256 x 256 tile, one byte per pixel, or null for a tile without data. */
@@ -23,8 +23,8 @@ export type TileLevels = Uint8Array | null;
 export type TileLookup = (tx: number, ty: number) => TileLevels;
 
 /** Placements of the tiles the map area needs for this place; the loader fetches exactly these. */
-export function neededTiles(position: Position, zoom = RADAR_ZOOM): Placement[] {
-  return windowTiles(position, { width: MAP.width, height: MAP.height, anchorX: ANCHOR.x, anchorY: ANCHOR.y }, zoom);
+export function neededTiles(position: Position, zoom = RADAR_ZOOM, area: MapArea = RADAR_AREA): Placement[] {
+  return windowTiles(position, { width: area.width, height: area.height, anchorX: area.anchorX, anchorY: area.anchorY }, zoom);
 }
 
 /** Radar level 1…15 on the screen: 6…15, so rain is always brighter than the base map (2…3). */
@@ -36,13 +36,13 @@ export function rainLevel(level: number): number {
  * Copies one tile into the map area, clipped; later tiles never overwrite a lit
  * pixel with a dark one. A base-map line under rain is cut dark into it.
  */
-function blit(target: Bitmap, levels: Uint8Array, placement: Placement, lines: Uint8Array | null): void {
+function blit(target: Bitmap, levels: Uint8Array, placement: Placement, lines: Uint8Array | null, area: MapArea): void {
   for (let row = 0; row < TILE_SIZE; row += 1) {
-    const y = MAP.y + placement.y + row;
-    if (y < MAP.y || y >= MAP.y + MAP.height) continue;
+    const y = area.y + placement.y + row;
+    if (y < area.y || y >= area.y + area.height) continue;
     for (let column = 0; column < TILE_SIZE; column += 1) {
-      const x = MAP.x + placement.x + column;
-      if (x < MAP.x || x >= MAP.x + MAP.width) continue;
+      const x = area.x + placement.x + column;
+      if (x < area.x || x >= area.x + area.width) continue;
       const level = levels[row * TILE_SIZE + column] ?? 0;
       if (level > 0) { const at = y * target.width + x; target.pixels[at] = lines && lines[at]! > 0 ? CUT_LEVEL : rainLevel(level); }
     }
@@ -65,15 +65,15 @@ export function drawCross(target: Bitmap, cx: number, cy: number): void {
  * for this place (drawn once per place, see basemap.ts); null draws the radar
  * on black, `lookup` returning null everywhere draws the map alone.
  */
-export function composeFrame(position: Position, lookup: TileLookup, zoom = RADAR_ZOOM, base: BaseMap | null = baseMapFor(position, zoom)): Bitmap {
+export function composeFrame(position: Position, lookup: TileLookup, zoom = RADAR_ZOOM, base: BaseMap | null = baseMapFor(position, zoom), area: MapArea = RADAR_AREA, cross = true): Bitmap {
   const bitmap = createBitmap(SCREEN_WIDTH, SCREEN_HEIGHT);
   if (base) bitmap.pixels.set(base.lines);
-  for (const placement of neededTiles(position, zoom)) {
+  for (const placement of neededTiles(position, zoom, area)) {
     const levels = lookup(placement.tx, placement.ty);
-    if (levels) blit(bitmap, levels, placement, base?.lines ?? null);
+    if (levels) blit(bitmap, levels, placement, base?.lines ?? null, area);
   }
   if (base) for (let at = 0; at < base.overlay.length; at += 1) { const level = base.overlay[at]!; if (level !== TRANSPARENT) bitmap.pixels[at] = level; }
-  drawCross(bitmap, MAP.x + ANCHOR.x, MAP.y + ANCHOR.y);
+  if (cross) drawCross(bitmap, area.x + area.anchorX, area.y + area.anchorY);
   return bitmap;
 }
 

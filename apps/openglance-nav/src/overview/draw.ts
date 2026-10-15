@@ -2,7 +2,7 @@ import type { LatLng } from "../geo/geometry";
 import type { PixelPoint } from "./project";
 import type { RoadClass, Street } from "./streets";
 import { drawLabels, placeLabels } from "./labels";
-import { mapProjector, MARKER_AT, MAP_HEIGHT, MAP_TILES, MAP_WIDTH, PLATE, TILE_HEIGHT, TILE_WIDTH, type MapView } from "./camera";
+import { mapProjector, MARKER_AT, MAP_HEIGHT, MAP_TILES, MAP_WIDTH, PLATE, SPEED_PLATE, TILE_HEIGHT, TILE_WIDTH, type MapView } from "./camera";
 
 /**
  * Map drawing for the whole display: black background, the real streets
@@ -47,6 +47,8 @@ export interface MapScene {
   readonly currentStreet?: string | undefined;
   /** Charging stations to mark (driving, when the setting is on). */
   readonly chargers?: readonly LatLng[];
+  /** Draw the black plate for the speed line on the bottom left (driving, cycling). */
+  readonly speedPlate?: boolean;
 }
 
 /** A charging station: a white plate with a black lightning bolt, black-edged so it reads on the route too. */
@@ -167,6 +169,7 @@ export function drawMap(ctx: MapContext, scene: MapScene, width = MAP_WIDTH, hei
     const p = toPixel(charger);
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 16 || p.x > width - 16 || p.y < 16 || p.y > height - 16) continue;
     if (p.x < PLATE.width + 16 && p.y < PLATE.height + 16) continue;
+    if (scene.speedPlate && p.x < SPEED_PLATE.width + 16 && p.y > height - SPEED_PLATE.height - 16) continue;
     drawCharger(ctx, p);
   }
 
@@ -175,6 +178,7 @@ export function drawMap(ctx: MapContext, scene: MapScene, width = MAP_WIDTH, hei
     drawLabels(ctx, placeLabels({
       width, height, toPixel, route: scene.route, nextIndex: scene.next ? scene.nextIndex ?? null : null,
       nextStreet: scene.nextStreet, currentStreet: scene.currentStreet, streets: scene.streets,
+      ...(scene.speedPlate ? { speedPlate: true } : {}),
     }));
   }
 
@@ -186,6 +190,11 @@ export function drawMap(ctx: MapContext, scene: MapScene, width = MAP_WIDTH, hei
   // The plate goes last, over everything, so the text on it always reads.
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, PLATE.width, PLATE.height);
   ctx.strokeStyle = "#606060"; ctx.lineWidth = 2; ctx.strokeRect(0, 0, PLATE.width, PLATE.height);
+  if (scene.speedPlate) {
+    const top = height - SPEED_PLATE.height;
+    ctx.fillStyle = "#000"; ctx.fillRect(0, top, SPEED_PLATE.width, SPEED_PLATE.height);
+    ctx.strokeStyle = "#606060"; ctx.lineWidth = 2; ctx.strokeRect(0, top, SPEED_PLATE.width, SPEED_PLATE.height);
+  }
 }
 
 /** The map as four PNG tiles in {@link MAP_TILES} order. */

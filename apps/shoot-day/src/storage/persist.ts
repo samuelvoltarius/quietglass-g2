@@ -138,7 +138,7 @@ export const UI_KEY = "quietglass.shootday.ui.v1";
 /** A take that has been "running" longer than this was forgotten, not filmed. */
 export const ROLLING_MAX_MS = 2 * 60 * 60 * 1000;
 
-export type SavedModule = "menu" | "takes" | "prompter" | "schedule" | "pack";
+export type SavedModule = "menu" | "board" | "takes" | "prompter" | "schedule" | "pack" | "light";
 
 export interface SavedUi {
   readonly mode: SavedModule;
@@ -156,7 +156,7 @@ export function parseUi(raw: string, now = Date.now()): SavedUi | null {
   if (!raw) return null;
   try {
     const v = JSON.parse(raw) as Record<string, unknown>;
-    const modes: readonly SavedModule[] = ["menu", "takes", "prompter", "schedule", "pack"];
+    const modes: readonly SavedModule[] = ["menu", "board", "takes", "prompter", "schedule", "pack", "light"];
     const mode = modes.includes(v.mode as SavedModule) ? (v.mode as SavedModule) : "menu";
     const int = (x: unknown, max: number): number => (typeof x === "number" && Number.isFinite(x) ? Math.max(0, Math.min(max, Math.floor(x))) : 0);
     const shotValue = v.shot as { scene?: unknown; shot?: unknown } | null | undefined;

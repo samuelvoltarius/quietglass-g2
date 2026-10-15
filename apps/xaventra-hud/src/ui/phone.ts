@@ -33,17 +33,50 @@ export interface PhoneUi {
 /** Text inputs whose unsaved contents survive a redraw. */
 const DRAFT_FIELDS = ["url", "token"] as const;
 
+/** The page is split into tabs instead of one long column. */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "xaventra", icon: "🤖", key: "p.tabXaventra" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "server", icon: "🔌", key: "p.tabServer" },
+  { id: "more", icon: "⋯", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.xaventra-hud.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "xaventra"; } catch { return "xaventra"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   const root = document.getElementById("app");
   if (!root) return { refresh: () => undefined };
 
   let notice = "";
   let locale: Locale = ports.locale?.() ?? getLocale();
+  let tab = readTab();
 
   const render = (): void => {
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
     root.innerHTML = template(ports.getSettings(), ports.connection(), locale, notice);
     notice = "";
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "xaventra";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
     DRAFT_FIELDS.forEach((id, index) => {
       // The token field is write-only and is never refilled after a redraw.
       if (id === "token") return;
@@ -120,23 +153,38 @@ function template(settings: Settings, connection: ConnectionState, locale: Local
   const warnHttp = url && isPlainHttp(url) && !isLoopback(url);
 
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>Xaventra HUD</h1>
-    <p class="hint">${L("p.lede")}</p>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>Xaventra HUD</h1>
+    </div>
+    <span class="chip${connection.kind === "ok" ? " on" : ""}">${L("p.chip." + connection.kind)}</span>
   </header>
 
   ${notice ? `<p class="notice">${escapeHtml(notice)}</p>` : ""}
 
-  <section class="card">
-    ${languageSelect(locale)}
-  </section>
-
+  <div class="tab" data-tab="xaventra">
   <section class="card">
     <h2>${L("p.status")}</h2>
+    <p class="hint">${L("p.lede")}</p>
     <p id="status">${status}</p>
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
+  <section class="card">
+    <h2>${L("p.controls")}</h2>
+    <table class="keys">
+      <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
+      <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
+      <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
+      <tr><td>${L("p.c.hold")}</td><td>${L("p.c.hold.d")}</td></tr>
+    </table>
+    <label class="check"><input id="invert" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+  </section>
+  </div>
+
+  <div class="tab" data-tab="server">
   <section class="card">
     <h2>${L("p.server")}</h2>
     ${url ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
@@ -148,19 +196,20 @@ function template(settings: Settings, connection: ConnectionState, locale: Local
     <p class="hint">${L("p.tokenNow", { state: maskToken(settings.token, locale) })}</p>
     <button id="save" type="button">${L("p.save")}</button>
     ${settings.token ? `<button id="clear-token" type="button" class="secondary">${L("p.tokenClear")}</button>` : ""}
-    <label class="check"><input id="invert" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
     <p class="hint">${L("p.https")}</p>
   </section>
 
+  </div>
+
+  <div class="tab" data-tab="more">
   <section class="card">
-    <h2>${L("p.controls")}</h2>
-    <table class="keys">
-      <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
-      <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
-      <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
-      <tr><td>${L("p.c.hold")}</td><td>${L("p.c.hold.d")}</td></tr>
-    </table>
+    ${languageSelect(locale)}
   </section>
 
-  <footer class="hint">${L("p.privacy")}</footer>`;
+  <footer class="hint">${L("p.privacy")}</footer>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${L(key)}</button>`).join("")}
+  </nav>`;
 }

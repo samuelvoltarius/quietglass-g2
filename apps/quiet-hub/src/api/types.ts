@@ -141,6 +141,57 @@ export interface HomeSnapshot {
   readonly demo?: boolean;
 }
 
+/** Kinds of the "Zuhause" view; lock, alarm and garage only appear when the daemon enables them. */
+export type HomeKind = "light" | "switch" | "cover" | "garage" | "lock" | "alarm" | "scene" | "sensor" | "motion";
+
+/** One entity of the daemon's curated Home Assistant view (or a per-area group). */
+export interface HomeEntity {
+  readonly id: string;
+  /** Friendly name; groups carry "*lights" / "*covers" and are named by the glasses. */
+  readonly name: string;
+  readonly kind: HomeKind;
+  /** Raw HA state ("on", "open", "locked", "21.5" …). */
+  readonly state: string;
+  readonly on: boolean;
+  readonly available: boolean;
+  /** Lights: 0-100 (null = on, unknown level). */
+  readonly brightness?: number | null;
+  /** Covers: 0-100 when HA knows the position. */
+  readonly position?: number;
+  /** Sensors: formatted value with unit ("21,5 °C"). */
+  readonly value?: string;
+  readonly sensorClass?: string;
+  /** Actions need a second request with the daemon's confirm token. */
+  readonly sensitive?: boolean;
+  /** Per-area group ("Alle Lichter" / "Alle Rollos"). */
+  readonly group?: boolean;
+  readonly members?: readonly string[];
+}
+
+export interface HomeArea {
+  readonly id: string;
+  readonly name: string;
+  /** Groups first, then lights, switches, covers, scenes, sensors. */
+  readonly entities: readonly string[];
+}
+
+/** Daemon 0.7.0+: favourites, areas and their entities; the HA token stays on the daemon. */
+export interface HomeView {
+  readonly favorites: readonly string[];
+  readonly areas: readonly HomeArea[];
+  readonly entities: Readonly<Record<string, HomeEntity>>;
+  readonly sensitive?: boolean;
+  readonly error?: string | null;
+}
+
+export type HomeAction = "toggle" | "turn_on" | "turn_off" | "brightness" | "open" | "close" | "stop" | "run";
+
+export interface HomeActionResult {
+  readonly ok: boolean;
+  /** Sensitive entity: nothing happened yet; send the token with `homeConfirm`. */
+  readonly confirm?: { readonly token: string; readonly label: string; readonly expiresInMs: number };
+}
+
 export interface PrinterSnapshot {
   readonly job: string | null;
   readonly state: "printing" | "paused" | "ready" | "error";
@@ -158,6 +209,122 @@ export interface PrinterSnapshot {
   readonly demo?: boolean;
 }
 
+// ---- Tagesstart (morning briefing, daemon 0.8.0+) ---------------------------
+
+/** "off" = not configured on the daemon; "error" = no answer (and no recent one to fall back to). */
+export type BriefStatus = "ok" | "off" | "error";
+
+export interface BriefBlockBase {
+  readonly status: BriefStatus;
+  readonly error?: string;
+  /** The source failed; these are the last good values (fetched at `since`). */
+  readonly stale?: boolean;
+  readonly since?: number;
+}
+
+export interface BriefEvent {
+  readonly title: string;
+  readonly allDay: boolean;
+  readonly startMs: number;
+  readonly endMs: number;
+  /** "08:30" in the daemon's zone; "" = began before today (or all-day). */
+  readonly start: string;
+  /** "" = no end today / no duration. */
+  readonly end: string;
+  /** Where it takes place (ICS LOCATION or Shoot Day project place); empty or absent = unknown. */
+  readonly place?: string;
+}
+
+export interface BriefCalendar extends BriefBlockBase {
+  readonly events?: readonly BriefEvent[];
+  /** Events today, also those cut from `events`. */
+  readonly total?: number;
+  readonly failed?: number;
+}
+
+export interface BriefRain {
+  /** now = raining in this 15-min slot; later = first rain ahead; none = dry until midnight (6 h at least). */
+  readonly kind: "now" | "later" | "none" | "unknown";
+  readonly from: string;
+  /** "" = until beyond the look-ahead. */
+  readonly until: string;
+  readonly mm: number;
+}
+
+export interface BriefWeather extends BriefBlockBase {
+  readonly tempC?: number | null;
+  /** WMO weather code. */
+  readonly code?: number | null;
+  readonly maxC?: number | null;
+  readonly minC?: number | null;
+  readonly rain?: BriefRain;
+  /** Which place the weather is for (daemon 0.8.2+): the wearer's ("here") or the daemon's default. */
+  readonly place?: "here" | "default";
+  /** The current-place forecast failed while appointment places worked. */
+  readonly hereFailed?: boolean;
+  /** Forecast at the hour of today's appointments that have a place (max 3, daemon 0.8.2+). */
+  readonly appts?: readonly BriefApptWeather[];
+}
+
+export interface BriefApptWeather {
+  /** "10:30"; empty = all-day appointment. */
+  readonly time: string;
+  /** Town the place text resolved to. */
+  readonly label: string;
+  readonly title?: string;
+  readonly tempC: number;
+  readonly code?: number | null;
+  /** Rain probability in % at that hour (null = unknown). */
+  readonly pop: number | null;
+  readonly mm: number;
+  readonly windKmh: number | null;
+}
+
+export interface BriefCar extends BriefBlockBase {
+  readonly soc?: number | null;
+  readonly rangeKm?: number | null;
+  readonly charging?: boolean;
+  readonly chargeDone?: boolean;
+  readonly etaMin?: number | null;
+  /** null = the car does not report it. */
+  readonly locked?: boolean | null;
+}
+
+export interface BriefSugar extends BriefBlockBase {
+  readonly current?: { readonly mgdl: number; readonly direction: string; readonly ageMin: number } | null;
+  /** 22:00–07:00; null = no readings in that window. */
+  readonly night?: { readonly min: number; readonly max: number; readonly belowMin: number; readonly aboveMin: number; readonly count: number } | null;
+  readonly low?: number;
+  readonly high?: number;
+}
+
+export interface BriefPrinter extends BriefBlockBase {
+  readonly state?: string;
+  readonly file?: string;
+  readonly progress?: number | null;
+  readonly minutesLeft?: number | null;
+}
+
+export interface BriefServers extends BriefBlockBase {
+  readonly machines?: readonly { readonly name: string; readonly ok: boolean; readonly newDevices: number | null; readonly warn?: number }[];
+  readonly down?: number;
+  readonly newDevices?: number;
+}
+
+export interface Brief {
+  /** When the daemon collected it (epoch ms). */
+  readonly at: number;
+  /** "2026-10-14" in the daemon's zone. */
+  readonly date: string;
+  readonly zone?: string;
+  readonly calendar: BriefCalendar;
+  readonly weather: BriefWeather;
+  readonly car: BriefCar;
+  readonly sugar: BriefSugar;
+  readonly printer: BriefPrinter;
+  readonly servers: BriefServers;
+}
+
 export interface HubReport {
   readonly connection: ConnectionState;
   /** Legacy single-agent view (the default agent) plus the saved questions. */
@@ -165,13 +332,35 @@ export interface HubReport {
   readonly agents: readonly AgentInfo[];
   readonly approvals: readonly Approval[];
   readonly home: HomeSnapshot;
+  /** The "Zuhause" view (daemons with Home Assistant, 0.7.0+); older daemons only send `home`. */
+  readonly homeView?: HomeView;
   readonly printer: PrinterSnapshot;
   readonly inbox: InboxSnapshot;
+  /** Revision of this report (0.6.8+ daemons): only moves when the content changed. */
+  readonly rev?: number;
+  /** Id of the daemon process; another value = the daemon restarted and `rev` started over. */
+  readonly boot?: string;
+  /** What the daemon supports for live updates; absent on older daemons (they are polled). */
+  readonly live?: { readonly longPoll?: boolean; readonly maxWaitS?: number };
+  /** Tagesstart as last collected by the daemon (0.8.0+; null until someone asked for it). */
+  readonly brief?: Brief | null;
+}
+
+/** Where the glasses' copy of the report stands, for the long-poll. */
+export interface ReportCursor {
+  readonly rev: number;
+  readonly boot: string;
 }
 
 /** One daemon endpoint per side effect — the bridge fans out from here. */
 export interface HubApi {
   report(): Promise<HubReport>;
+  /**
+   * Long-poll: the daemon answers as soon as the report differs from `cursor`
+   * (or after `waitS` seconds with the unchanged report). Only when the daemon
+   * advertises `live.longPoll`; the demo has none.
+   */
+  reportAfter?(cursor: ReportCursor, waitS: number): Promise<HubReport>;
   /** Starts a question; the answer streams into the next reports. */
   ask(question: string, agentId?: string): Promise<void>;
   /** WAV bytes from the glasses → transcript (self-hosted Whisper) → asked. */
@@ -185,6 +374,12 @@ export interface HubApi {
   selectSession(agentId: string, sessionId: string, title: string): Promise<void>;
   toggle(deviceId: string): Promise<void>;
   printer(action: "pause" | "resume" | "cancel"): Promise<void>;
+  /** One action on an entity or group of the home view; absent on the demo-less legacy path. */
+  homeAction?(target: string, action: HomeAction, value?: number): Promise<HomeActionResult>;
+  /** Second step for locks / alarm / garage. */
+  homeConfirm?(token: string): Promise<void>;
   /** `open`: the wearer opened the alert's conversation; the daemon makes suggestions for it if it has none. */
   readEvent(id: string, open?: boolean): Promise<void>;
+  /** Tagesstart (daemon 0.8.0+): cached up to ~2 min on the daemon; refresh = fetch every source now. */
+  brief?(refresh?: boolean, place?: { readonly lat: number; readonly lon: number } | null): Promise<Brief>;
 }

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Made-up example in the shape of a DATEX II v2.3 SituationPublication (no real ASFINAG data). -->
+<d2LogicalModel xmlns="http://datex2.eu/schema/2/2_0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" modelBaseVersion="2">
+  <payloadPublication xsi:type="SituationPublication" lang="de">
+    <publicationTime>2026-10-14T08:00:00+02:00</publicationTime>
+    <situation id="S1" version="1">
+      <situationRecord xsi:type="AbnormalTraffic" id="R-JAM" version="1">
+        <validity><validityStatus>active</validityStatus>
+          <validityTimeSpecification><overallStartTime>2026-10-14T07:30:00+02:00</overallStartTime></validityTimeSpecification></validity>
+        <impact><delays><delayTimeValue>600</delayTimeValue></delays></impact>
+        <generalPublicComment><comment><values><value lang="en">Queue</value><value lang="de">Stau zwischen Beispielknoten West und Ost</value></values></comment></generalPublicComment>
+        <groupOfLocations xsi:type="Linear">
+          <tpegLinearLocation>
+            <to xsi:type="TpegNonJunctionPoint"><pointCoordinates><latitude>47.8000</latitude><longitude>13.0700</longitude></pointCoordinates></to>
+            <from xsi:type="TpegNonJunctionPoint"><pointCoordinates><latitude>47.8000</latitude><longitude>13.0505</longitude></pointCoordinates></from>
+          </tpegLinearLocation>
+        </groupOfLocations>
+        <abnormalTrafficType>stationaryTraffic</abnormalTrafficType>
+        <queueLength>1800</queueLength>
+      </situationRecord>
+    </situation>
+    <situation id="S2" version="1">
+      <situationRecord xsi:type="MaintenanceWorks" id="R-WORKS" version="1">
+        <validity><validityStatus>active</validityStatus></validity>
+        <generalPublicComment><comment><values><value lang="de">Baustelle, eine Spur frei</value></values></comment></generalPublicComment>
+        <groupOfLocations xsi:type="Point"><pointByCoordinates><pointCoordinates><latitude>47.8001</latitude><longitude>13.1800</longitude></pointCoordinates></pointByCoordinates></groupOfLocations>
+      </situationRecord>
+    </situation>
+    <situation id="S3" version="1">
+      <situationRecord xsi:type="RoadOrCarriagewayOrLaneManagement" id="R-SUSPENDED" version="1">
+        <validity><validityStatus>suspended</validityStatus></validity>
+        <groupOfLocations xsi:type="Point"><pointByCoordinates><pointCoordinates><latitude>47.8000</latitude><longitude>13.0300</longitude></pointCoordinates></pointByCoordinates></groupOfLocations>
+        <roadOrCarriagewayOrLaneManagementType>roadClosed</roadOrCarriagewayOrLaneManagementType>
+      </situationRecord>
+    </situation>
+    <situation id="S4" version="1">
+      <situationRecord xsi:type="RoadOrCarriagewayOrLaneManagement" id="R-OLD" version="1">
+        <validity><validityStatus>definedByValidityTimeSpec</validityStatus>
+          <validityTimeSpecification><overallStartTime>2020-01-01T00:00:00Z</overallStartTime><overallEndTime>2020-01-02T00:00:00Z</overallEndTime></validityTimeSpecification></validity>
+        <groupOfLocations xsi:type="Point"><pointByCoordinates><pointCoordinates><latitude>47.8000</latitude><longitude>13.0200</longitude></pointCoordinates></pointByCoordinates></groupOfLocations>
+        <roadOrCarriagewayOrLaneManagementType>roadClosed</roadOrCarriagewayOrLaneManagementType>
+      </situationRecord>
+    </situation>
+  </payloadPublication>
+</d2LogicalModel>

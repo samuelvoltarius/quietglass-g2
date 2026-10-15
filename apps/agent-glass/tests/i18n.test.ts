@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr, type Locale } from "../src/i18n";
 import { localizeError, messages } from "../src/messages";
-import { BODY_ROWS, LINE_WIDTH, buildView, sessionList, type AgentView } from "../src/glasses/view";
+import { BODY_ROWS, LINE_WIDTH, buildView, helpView, sessionList, type AgentView } from "../src/glasses/view";
 import { EMPTY_STATE, type AgentState, type Session } from "../src/terminal/types";
 import { STREAM_CLOSED, STREAM_INTERRUPTED } from "../src/terminal/client";
 import { DEFAULT_SETTINGS, maskToken, normalizeAddress, parseSettings } from "../src/storage/persist";
@@ -45,8 +45,8 @@ describe("translations", () => {
       for (const [key, text] of Object.entries(messages[locale])) {
         if (key.startsWith("g.") || key.startsWith("e.")) {
           expect(text, key).not.toMatch(/[▸◆]/);
-          // Only ASCII plus what the G2 font is known to draw.
-          expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○—×]*$/);
+          // Only ASCII plus what the G2 font is known to draw (↑ is drawn on the G2).
+          expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○—×↑]*$/);
         }
       }
     }
@@ -189,11 +189,28 @@ function allViews(locale: Locale): AgentView[] {
   states.push({ ...base, error: "Even Terminal " + "unreachable because of a long story ".repeat(20) });
 
   const many = Array.from({ length: 23 }, (_, i) => ({ title: `${longTitle} ${i}`, cwd: "/w", status: i % 2 ? "running" : "idle" }));
+  const aged = many.map((item, i) => ({ ...item, timestamp: new Date(NOW.getTime() - i * 7_777_000) }));
+  const longest = { ...base, controllable: true, busy: true, startedAt: new Date(NOW.getTime() - 9_999_000) };
   return [
     ...states.map((state) => buildView(state, NOW, locale)),
+    // Paging back through a long answer, at every depth.
+    ...[0, 1, 2, 5, 99].map((page) => buildView(longest, NOW, locale, page)),
+    ...[0, 1, 3].map((page) => buildView({ ...longest, controllable: false }, NOW, locale, page)),
+    // The answer list at both cursor positions, armed, and the armed interrupt.
+    ...([0, 1] as const).flatMap((choice) => [null, "allow", "deny"].map((armed) => buildView(
+      { ...base, pending: { kind: "permission", title: "Bash", detail: "rm -rf build && ".repeat(30) }, controllable: true },
+      NOW, locale, 0, { choice, armed: armed as "allow" | "deny" | null, decisions: true },
+    ))),
+    buildView({ ...base, controllable: true, busy: true }, NOW, locale, 0, { choice: 0, armed: "interrupt", decisions: true }),
+    buildView({ ...base, pending: { kind: "permission", title: "Bash", detail: "ls" }, controllable: true }, NOW, locale, 0, { choice: 0, armed: null, decisions: false }),
+    helpView(locale),
     sessionList([], 0, locale),
     sessionList(many, 0, locale),
     sessionList(many, 22, locale),
+    sessionList(aged, 3, locale, true, { canCreate: true, now: NOW }),
+    sessionList(aged, 23, locale, true, { canCreate: true, now: NOW }),
+    sessionList([], 0, locale, false, { canCreate: true, now: NOW }),
+    sessionList(aged.slice(0, 1), 1, locale, true, { canCreate: true, listable: false, now: NOW }),
   ];
 }
 
@@ -213,12 +230,13 @@ describe("glasses text budget", () => {
   it("really shows German on the glasses", () => {
     const session: Session = { id: "s", title: "T", cwd: "/w", provider: "codex", status: "running", timestamp: NOW };
     const asked: AgentState = { ...EMPTY_STATE, session, controllable: true, pending: { kind: "permission", title: "Bash", detail: "ls" } };
-    expect(buildView(asked, NOW, "de").header).toBe("Freigabe nötig");
-    expect(buildView(asked, NOW, "de").footer).toBe("Hoch = erlauben · Runter = ablehnen");
+    expect(buildView(asked, NOW, "de").header).toBe("AGENT · Freigabe · T");
+    expect(buildView(asked, NOW, "de").body.slice(-2)).toEqual(["● Erlauben", "○ Ablehnen"]);
+    expect(buildView(asked, NOW, "de").footer).toBe("Tippen = wählen · Wischen · 2× = Ende");
     expect(buildView({ ...EMPTY_STATE, error: "Even Terminal unreachable" }, NOW, "de").body)
       .toEqual(["", "Even Terminal nicht erreichbar", "", "Einrichtung in der Handy-App prüfen."]);
-    expect(buildView({ ...EMPTY_STATE }, NOW, "de").footer).toBe("Halten = Sitzung wählen");
-    expect(sessionList([], 0, "de").header).toBe("Sitzungen");
+    expect(buildView({ ...EMPTY_STATE }, NOW, "de").footer).toBe("Halten = Liste · 2× = Ende");
+    expect(sessionList([], 0, "de").header).toBe("AGENT · Sitzungen (0)");
   });
 });
 
@@ -226,7 +244,7 @@ describe("phone page", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  it("renders in German with the language picker on top", () => {
+  it("renders in German, in tabs, with the language picker under \"Mehr\"", () => {
     let html = "";
     const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root, documentElement: { lang: "" } });
@@ -249,10 +267,17 @@ describe("phone page", () => {
     };
     mountPhoneUi(ports);
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf('id="language"')).toBeLessThan(html.indexOf('id="provider"'));
+    expect(html.indexOf('data-tab="more"')).toBeLessThan(html.indexOf('id="language"'));
+    expect(html.indexOf('data-tab="connect"')).toBeLessThan(html.indexOf('id="provider"'));
+    expect(html).toContain('<nav class="tabbar"');
+    for (const id of ["agent", "speech", "glasses", "connect", "more"]) expect(html).toContain(`data-tab-go="${id}"`);
+    expect(html).toContain('id="hdr-chip"');
+    for (const id of ["apply", "refresh", "send-prompt", "speech-enable", "speech-rate", "address", "token", "conn", "transcript", "session-list"]) expect(html).toContain(`id="${id}"`);
     expect(html).toContain("Speichern und verbinden");
     expect(html).toContain("Vorlese-Sprache");
-    expect(html).toContain("Nach oben wischen");
+    expect(html).toContain("Wischrichtung umkehren");
+    expect(html.indexOf('data-tab-go="glasses"')).toBeLessThan(html.indexOf('data-tab-go="connect"'));
+    expect(html.indexOf('data-tab-go="connect"')).toBeLessThan(html.indexOf('data-tab-go="more"'));
     expect(html).not.toContain("Save and connect");
   });
 });
@@ -309,7 +334,10 @@ describe("switching language on the phone", () => {
     harness.bridge = {
       getLocalStorage: async () => "",
       setLocalStorage: async () => true,
-      rebuildPageContainer: async () => true,
+      // The language switch rebuilds the page once (the menu labels change).
+      rebuildPageContainer: async (page: { textObject?: { content?: string }[] }) => {
+        drawn.push((page.textObject ?? []).map((item) => item.content ?? "").join("\n")); return true;
+      },
       createStartUpPageContainer: async (page: { textObject?: { content?: string }[] }) => {
         drawn.push((page.textObject ?? []).map((item) => item.content ?? "").join("\n")); return 0;
       },
@@ -323,7 +351,8 @@ describe("switching language on the phone", () => {
     vi.resetModules();
     await import("../src/main");
     await vi.waitFor(() => expect(ready && html.length > 0).toBe(true));
-    expect(drawn.join("\n")).toContain("hold = interrupt");
+    // No token: demo on first start, with the one-line hint (QIS v1.2 #7).
+    expect(drawn.join("\n")).toContain("Demo · set up the connection on the phone · 2× = exit");
     expect(html).toContain("Save and connect");
 
     const before = drawn.length;
@@ -332,7 +361,7 @@ describe("switching language on the phone", () => {
     await vi.advanceTimersByTimeAsync(5);
 
     const after = drawn.slice(before).join("\n");
-    expect(after).toContain("Halten = unterbrechen");
+    expect(after).toContain("Demo · Verbindung am Handy einrichten · 2× = Ende");
     expect(after).toContain("arbeitet");
     expect(html).toContain("Speichern und verbinden");
     expect(stored.get("quietglass.locale")).toBe("de");

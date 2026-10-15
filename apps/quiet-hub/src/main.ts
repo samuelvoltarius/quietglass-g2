@@ -1,4 +1,4 @@
-import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { AppLocationAccuracy, AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { createClient, ApiError, classifyError, insecureServer, serverHost, type LinkProblem } from "./api/client";
 import { emptyReport } from "./api/empty";
 import { createDemoApi, DEMO_SCENES, type DemoScene } from "./api/demo";
@@ -7,7 +7,11 @@ import { rememberLocale, resolveLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
-import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, selectedAgent, withLink, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, ROOT_ITEMS, selectedAgent, withBrief, withLink, withLiveText, withHomePending, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { morningStart } from "./hub/brief";
+import { createLocator } from "./hub/place";
+import { initialLivePoll, isOlder, noteLongFailure, noteReport, planPoll } from "./api/live-poll";
+import { buildLiveSttUrl, chooseVoicePath, startLiveStt, type LiveSttSession } from "./stt/live-stt";
 import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
 import { createPage, rebuildPage, updatePage } from "./glasses/render";
@@ -26,16 +30,11 @@ import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
 const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) ?? "default";
-const POLL_MS = 5000;
-/** While an agent works, ask more often so its steps and words keep moving. */
-const BUSY_POLL_MS = 1500;
-/** Faster while an agent works or a permission card waits, so answers stream. */
-const POLL_FAST_MS = 1500;
-const BUILD = "0.6.6";
+const BUILD = "0.9.2";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
-/** A voice note is cut off here and sent; also guards against a lost "release" event. */
-export const MAX_RECORD_MS = 18_000;
+/** A voice note is cut off here and sent (10 min dictation); also guards against a lost "release" event. */
+export const MAX_RECORD_MS = 600_000;
 /** Less audio than this is a mis-press (16 kHz, 16 bit, mono = 32 bytes per ms). */
 const MIN_RECORD_BYTES = 32 * 400;
 
@@ -67,10 +66,22 @@ async function boot(): Promise<void> {
     }
   }
   const finishParam = Number(params.get("finish") ?? "");
-  let api: HubApi = DEMO ? createDemoApi(locale, DEMO_SCENE, Number.isFinite(finishParam) && finishParam > 0 ? finishParam * 1000 : null) : createClient({ baseUrl: settings.serverUrl, token: settings.token });
+  // The phone's position for the Tagesstart weather: rounded to ~1 km, cached 30 min,
+  // never waited for longer than 4 s (then the daemon's default place is used).
+  const locator = createLocator({
+    getLocation: typeof (bridge as Partial<EvenAppBridge>).getAppLocation === "function"
+      ? () => bridge.getAppLocation({ accuracy: AppLocationAccuracy.Medium, timeoutMs: 3_500 })
+      : undefined,
+  });
+  // QIS v1.2 #7: without a server the first start is the demo (hint "Demo · Verbindung am Handy einrichten").
+  // `?demo=1` is the same demo without the hint (simulator, screenshots).
+  const unconfigured = (): boolean => settings.serverUrl.trim() === "";
+  let demoMode = DEMO || unconfigured();
+  const demoApi = (): HubApi => createDemoApi(locale, DEMO ? DEMO_SCENE : "default", DEMO && Number.isFinite(finishParam) && finishParam > 0 ? finishParam * 1000 : null);
+  let api: HubApi = demoMode ? demoApi() : createClient({ baseUrl: settings.serverUrl, token: settings.token });
 
-  // ---- connection state: real data or an honest reason, never demo data ----
-  const conn = { lastOkAt: null as number | null, lastProblem: null as LinkProblem | "missing" | null, lastAt: null as number | null, raw: "" as string, fails: 0, hadData: DEMO };
+  // ---- connection state: real data or an honest reason; demo data only while no server is set ----
+  const conn = { lastOkAt: null as number | null, lastProblem: null as LinkProblem | "missing" | null, lastAt: null as number | null, raw: "" as string, fails: 0, hadData: demoMode };
   const problemFor = (error: unknown): LinkProblem | "missing" => {
     if (settings.serverUrl.trim() === "") return "missing";
     if (insecureServer(settings.serverUrl, globalThis.location?.protocol)) return "insecure";
@@ -91,8 +102,8 @@ async function boot(): Promise<void> {
     conn.fails = 0;
     conn.hadData = true;
   };
-  if (DEMO) {
-    model = createModel(await api.report());
+  if (demoMode) {
+    model = { ...createModel(await api.report()), setupHint: !DEMO };
   } else if (problemFor(null) !== "error") {
     // No server, or an http:// server that an https page may not call (mixed content): do not even try.
     markFailure(null);
@@ -106,7 +117,9 @@ async function boot(): Promise<void> {
   model = { ...model, quietWhileWorking: settings.quietWhileWorking || params.get("quiet") === "1" };
   const savedUi = await loadUiState(bridge);
   let launchSource: "appMenu" | "glassesMenu" | null = null;
-  if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, Math.min(savedUi.rootSelected ?? 0, 3)) };
+  if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, Math.min(savedUi.rootSelected ?? 0, ROOT_ITEMS.length - 1)) };
+  // "Tagesstart als Startseite bis 11:00": in the morning every start lands on the briefing.
+  if (morningStart(settings.briefMorning === true, new Date())) model = { ...model, screen: "brief", briefPage: 0, briefLoad: "loading" };
   let lastView: ScreenView | null = null;
   let menuKey = "";
   let pageCreated = false;
@@ -118,12 +131,24 @@ async function boot(): Promise<void> {
   let fast = false;
   let newestEventId: string | null = model.report.inbox.events[0]?.id ?? null;
   // The first report is what was there at start, not news: it must not auto-open a page.
-  let firstReport = !DEMO;
+  let firstReport = !demoMode;
   // Spoken answers on the phone (AirPods / headphones), opt-in on the phone page.
   // Piper server voice (private build: VITE_TTS_URL), browser voice as fallback.
   const serverTts = new ServerTts({ url: buildTtsUrl(), voices: DEFAULT_VOICES });
   const narrator = new HubNarrator(createServerSpeechEngine(createBrowserSpeechEngine(), serverTts), () => settings.speakAnswers, () => locale);
-  const applyReport = (report: Awaited<ReturnType<HubApi["report"]>>): void => {
+  // ---- report updates: long-poll when the daemon offers it, plain polling otherwise ----
+  let livePoll = initialLivePoll();
+  /** Bumped when the server changes: answers of requests to the old one are dropped. */
+  let pollGen = 0;
+  /** A poll request is on its way (a long-poll may be held by the daemon for 25 s). */
+  let pollBusy = false;
+  const schedulePoll = (ms: number): void => {
+    if (pollTimer !== null) clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => { pollTimer = null; void poll(); }, ms);
+  };
+  const nextPollMs = (): number => planPoll(livePoll, fast, Date.now()).delayMs;
+  const applyReport = (report: Awaited<ReturnType<HubApi["report"]>>, viaLong = false): void => {
+    livePoll = noteReport(livePoll, report, viaLong);
     markOk();
     const wasBusy = new Set(model.report.agents.filter((agent) => agent.busy).map((agent) => agent.id));
     model = mergeReport(model, report);
@@ -136,6 +161,14 @@ async function boot(): Promise<void> {
 
   // ---- microphone (voice notes) ------------------------------------------
   const micChunks: Uint8Array[] = [];
+  // Live STT (private build: VITE_LIVE_STT_URL): the transcript grows on the glasses while
+  // the wearer speaks. The PCM is kept in micChunks anyway: WAV upload is the fallback.
+  const liveSttUrl = DEMO ? "" : buildLiveSttUrl();
+  let liveStt: LiveSttSession | null = null;
+  const stopLiveStt = (): void => {
+    liveStt?.cancel();
+    liveStt = null;
+  };
   const MIC_DRAIN_MS = 150;
 
   /**
@@ -166,7 +199,7 @@ async function boot(): Promise<void> {
     maxMs: MAX_RECORD_MS,
     onLimit: () => {
       if (!model.recording) return;
-      model = { ...model, message: { text: tr(messages, locale, "voice.limit", { s: MAX_RECORD_MS / 1000 }), until: Date.now() + MESSAGE_MS } };
+      model = { ...model, message: { text: tr(messages, locale, "voice.limit", { m: MAX_RECORD_MS / 60_000 }), until: Date.now() + MESSAGE_MS } };
       onGesture("longPressRelease");
     },
   });
@@ -254,22 +287,31 @@ async function boot(): Promise<void> {
 
   // ---- data --------------------------------------------------------------
   const poll = async (): Promise<void> => {
-    if (closed) return;
-    if (!DEMO && problemFor(null) !== "error") {
+    if (closed || pollBusy) return;
+    if (!demoMode && problemFor(null) !== "error") {
       // Nothing to poll (no server / insecure URL); saving new settings triggers a poll.
       markFailure(null);
       await draw();
       refreshPhone();
       return;
     }
+    const gen = pollGen;
+    const plan = planPoll(livePoll, fast, Date.now());
+    const viaLong = plan.mode === "long" && api.reportAfter !== undefined;
+    pollBusy = true;
     try {
-      const report = await api.report();
+      const report = viaLong && plan.mode === "long" ? await api.reportAfter!(plan.cursor, plan.waitS) : await api.report();
+      if (gen === pollGen) pollBusy = false;
+      // Settings changed meanwhile: this answer is from the old server.
+      if (gen !== pollGen || closed) return;
+      // A held answer overtaken by a newer report (fetched right after a tap): just ask again.
+      if (viaLong && isOlder(report, livePoll.cursor)) { schedulePoll(nextPollMs()); return; }
       const nextId = report.inbox.events[0]?.id ?? null;
       const isNew = !firstReport && nextId !== null && nextId !== newestEventId;
       const newCard = !firstReport && report.approvals.length > 0 && model.report.approvals.length === 0;
       firstReport = false;
       newestEventId = nextId;
-      applyReport(report);
+      applyReport(report, viaLong);
       // A permission card must be answered, so it opens the agent page. A plain
       // "done" notice never pulls the wearer out of a page they are working in:
       // it only opens from the overview (it is waiting in Meldungen otherwise).
@@ -286,24 +328,44 @@ async function boot(): Promise<void> {
       if (isNew) model = wake(model, Date.now());
       fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
     } catch (error) {
+      if (gen === pollGen) pollBusy = false;
+      if (gen !== pollGen || closed) return;
+      if (viaLong) {
+        // A held request may be cut by a proxy or the WebView: a plain report decides whether the hub is really gone.
+        livePoll = noteLongFailure(livePoll, Date.now());
+        console.warn("[quiethub] long-poll failed, plain report next:", rawText(error));
+        schedulePoll(nextPollMs());
+        return;
+      }
       if (!(error instanceof ApiError)) console.warn("[quiethub] poll failed:", error);
       markFailure(error);
       await draw();
       refreshPhone();
-      pollTimer = setTimeout(() => void poll(), BACKOFF_MS[Math.min(conn.fails - 1, BACKOFF_MS.length - 1)]);
+      schedulePoll(BACKOFF_MS[Math.min(conn.fails - 1, BACKOFF_MS.length - 1)] ?? 30_000);
       return;
     }
     await draw();
     refreshPhone();
-    pollTimer = setTimeout(() => void poll(), fast ? POLL_FAST_MS : POLL_MS);
+    schedulePoll(nextPollMs());
   };
 
   const runEffect = async (effect: Effect | undefined): Promise<void> => {
     if (effect === undefined) return;
     try {
       if (effect.kind === "recordStart") {
+        stopLiveStt();
+        if (liveSttUrl !== "") {
+          // Opens while the mic switches on; PCM that comes first is held until the socket is open.
+          liveStt = startLiveStt({
+            url: liveSttUrl,
+            language: locale,
+            // The 500 ms face tick redraws the listening page; unchanged text costs nothing.
+            onText: (text) => { model = withLiveText(model, text); },
+          });
+        }
         // "cancelled": the hold was released meanwhile - the release already handles the rest.
         if ((await startMic()) === "refused") {
+          stopLiveStt();
           // Say why nothing is happening instead of a silent dead microphone.
           model = { ...model, recording: false, recordAgent: null, message: { text: tr(messages, locale, "voice.mic"), until: Date.now() + MESSAGE_MS } };
           await draw();
@@ -312,6 +374,7 @@ async function boot(): Promise<void> {
         return;
       }
       if (effect.kind === "recordAbort") {
+        stopLiveStt();
         await stopMic();
         micChunks.length = 0;
         await draw();
@@ -336,6 +399,25 @@ async function boot(): Promise<void> {
         refreshPhone();
         return;
       }
+      if (effect.kind === "brief") {
+        // Its own request: the daemon answers from its ~2 min cache unless the wearer tapped "reload".
+        if (api.brief === undefined) {
+          model = withBrief(model, null, "unsupported", locale);
+        } else {
+          try {
+            const place = await locator.locate();
+            refreshPhone();
+            model = withBrief(model, await api.brief(effect.refresh, place), "ready", locale);
+          } catch (error) {
+            const old = error instanceof ApiError && error.status === 404;
+            model = withBrief(model, null, old ? "unsupported" : "error", locale);
+            if (!old) console.warn("[quiethub] brief failed:", rawText(error));
+          }
+        }
+        await draw();
+        refreshPhone();
+        return;
+      }
       if (effect.kind === "exit") {
         // Required by Even QA on the root page. Do not clean up here: the user
         // may cancel. Cleanup happens only on SYSTEM/ABNORMAL_EXIT below.
@@ -344,9 +426,23 @@ async function boot(): Promise<void> {
       }
       if (effect.kind === "recordStop") {
         await stopMic();
-        const wav = buildWav(micChunks);
         const fail = (key: string): void => { model = withVoiceFailed(model, tr(messages, locale, key), Date.now()); };
-        if (wav.length <= 44) {
+        const session = liveStt;
+        liveStt = null;
+        const live = session === null ? { ok: false, text: "" } : await session.finish();
+        const wav = buildWav(micChunks);
+        if (chooseVoicePath(live) === "live") {
+          // The wearer already read it while speaking: straight to the confirm step, no upload, no second pass.
+          micChunks.length = 0;
+          try {
+            if (settings.voiceAutoSend) await api.ask(live.text, effect.agentId);
+            model = withVoiceHeard(model, effect.agentId, live.text, settings.voiceAutoSend, Date.now(), locale);
+          } catch (error) {
+            const status = error instanceof ApiError ? error.status : undefined;
+            fail(status === 503 ? "agent.offline" : status === 409 ? "agent.busy" : "voice.failed");
+            console.warn("[quiethub] live voice ask failed:", error);
+          }
+        } else if (wav.length <= 44) {
           fail("voice.empty");
         } else if (wav.length - 44 < MIN_RECORD_BYTES) {
           fail("voice.short");
@@ -385,6 +481,16 @@ async function boot(): Promise<void> {
         await api.readEvent(effect.id, true);
       } else if (effect.kind === "toggle") {
         await api.toggle(effect.device);
+      } else if (effect.kind === "homeAction") {
+        if (api.homeAction === undefined) {
+          await api.toggle(effect.target);
+        } else {
+          const result = await api.homeAction(effect.target, effect.action, effect.value);
+          // Lock / alarm / garage: nothing happened yet; the next tap on the same row confirms.
+          if (result.confirm !== undefined) { model = withHomePending(model, effect.target, result.confirm, Date.now()); watchConfirm(); }
+        }
+      } else if (effect.kind === "homeConfirm") {
+        await api.homeConfirm?.(effect.token);
       } else {
         await api.printer(effect.action);
       }
@@ -392,23 +498,35 @@ async function boot(): Promise<void> {
       newestEventId = report.inbox.events[0]?.id ?? newestEventId;
       applyReport(report);
       fast = report.approvals.length > 0 || report.agents.some((agent) => agent.busy);
-      if (fast && pollTimer !== null) { clearTimeout(pollTimer); pollTimer = setTimeout(() => void poll(), POLL_FAST_MS); }
+      // A held long-poll answers by itself on the next change; otherwise ask again soon.
+      if (!pollBusy) schedulePoll(nextPollMs());
     } catch (error) {
       console.warn("[quiethub] effect failed:", error);
       const problem = classifyError(error);
       if (problem !== "error") markFailure(error);
-      const why = tr(messages, locale, problem === "error" ? "effect.failedHttp" : `link.title.${problem}`, { status: error instanceof ApiError ? (error.status ?? "") : "" });
+      // QIS v1.2 #8: the glasses get plain words, the exact error goes to the phone (Mehr).
+      else { conn.raw = rawText(error); conn.lastAt = Date.now(); }
+      const why = tr(messages, locale, problem === "error" ? "effect.failedHttp" : `link.title.${problem}`);
       model = { ...model, message: { text: tr(messages, locale, "effect.failed", { why }), until: Date.now() + MESSAGE_MS } };
-      if (problem !== "error" && pollTimer !== null) { clearTimeout(pollTimer); pollTimer = setTimeout(() => void poll(), BACKOFF_MS[0]); }
+      if (problem !== "error" && !pollBusy) schedulePoll(BACKOFF_MS[0]);
     }
     await draw();
     refreshPhone();
   };
 
   // ---- input -------------------------------------------------------------
+  // QIS v1: an armed action ("Nochmal tippen = stoppen") disarms by itself after CONFIRM_MS; redraw then so the old footer returns.
+  let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+  const watchConfirm = (): void => {
+    if (confirmTimer !== null) { clearTimeout(confirmTimer); confirmTimer = null; }
+    const armed = model.confirm;
+    if (armed === null) return;
+    confirmTimer = setTimeout(() => { confirmTimer = null; if (!closed) void draw(); }, Math.max(0, armed.until - Date.now()) + 60);
+  };
   const apply = (outcome: { model: HubModel; effect?: Effect | undefined }): void => {
     model = outcome.model;
     saveUiState(bridge, model);
+    watchConfirm();
     void draw();
     refreshPhone();
     void runEffect(outcome.effect);
@@ -447,6 +565,7 @@ async function boot(): Promise<void> {
       closed = true;
       if (pollTimer !== null) clearTimeout(pollTimer);
       if (mic.active) void mic.stop();
+      stopLiveStt();
       saveUiState(bridge, model);
       unsubscribeEvents();
       unsubscribeDevice();
@@ -458,7 +577,10 @@ async function boot(): Promise<void> {
     const pcm = audio?.audioPcm;
     if ((mic.active || micDraining) && audio !== undefined) {
       const bytes = toBytes(pcm);
-      if (bytes !== null && bytes.length > 0) micChunks.push(bytes);
+      if (bytes !== null && bytes.length > 0) {
+        micChunks.push(bytes);
+        liveStt?.send(bytes);
+      }
       return;
     }
     const gesture = gestureFromEvent(event, { invertScroll: settings.invertScroll });
@@ -469,8 +591,10 @@ async function boot(): Promise<void> {
   bridge.onLaunchSource((source) => {
     launchSource = source;
     if (source === "glassesMenu") {
-      model = { ...model, screen: startScreen(source, null), confirm: null, help: false, picker: null };
+      const morning = morningStart(settings.briefMorning === true, new Date());
+      model = { ...model, screen: morning ? "brief" : startScreen(source, null), confirm: null, help: false, picker: null };
       void draw();
+      if (morning) void runEffect({ kind: "brief", refresh: false });
     }
   });
   void launchSource;
@@ -496,7 +620,7 @@ async function boot(): Promise<void> {
   if (phoneRoot !== null) {
     const connView = (): ConnView => ({
       configured: settings.serverUrl.trim() !== "",
-      connected: model.link === null && model.report.connection !== "missing" && model.report.connection !== "error" && model.report.connection !== "loading",
+      connected: !(demoMode && !DEMO) && model.link === null && model.report.connection !== "missing" && model.report.connection !== "error" && model.report.connection !== "loading",
       host: serverHost(settings.serverUrl),
       lastOkAt: conn.lastOkAt,
       problem: conn.lastProblem,
@@ -512,9 +636,32 @@ async function boot(): Promise<void> {
       const saved = await saveSettings(bridge, settings);
       if (!saved.persisted) console.warn("[quiethub] settings were not persisted");
       if (DEMO) return { ok: true, persisted: saved.persisted, problem: null };
+      if (unconfigured()) {
+        // Server removed: back to the demo with its hint instead of an empty "not connected" page.
+        demoMode = true;
+        api = demoApi();
+        pollGen += 1;
+        if (pollTimer !== null) clearTimeout(pollTimer);
+        pollTimer = null;
+        model = { ...mergeReport(withLink(model, null), await api.report()), setupHint: true };
+        conn.hadData = true;
+        await draw();
+        return { ok: false, persisted: saved.persisted, problem: "missing" };
+      }
+      if (demoMode) {
+        // Leaving the demo: no demo data may pass for the real hub, a failing first try shows at once.
+        demoMode = false;
+        conn.hadData = false;
+        model = { ...model, setupHint: false };
+      }
       api = createClient({ baseUrl: settings.serverUrl, token: settings.token });
       conn.fails = 0;
+      // Another server: forget the old long-poll (its answer is dropped) and its cursor.
+      pollGen += 1;
+      pollBusy = false;
+      livePoll = initialLivePoll();
       if (pollTimer !== null) clearTimeout(pollTimer);
+      pollTimer = null;
       if (problemFor(null) !== "error") {
         markFailure(null);
         await draw();
@@ -523,16 +670,17 @@ async function boot(): Promise<void> {
       try {
         applyReport(await api.report());
         await draw();
-        pollTimer = setTimeout(() => void poll(), model.report.agents.some((agent) => agent.busy) ? BUSY_POLL_MS : POLL_MS);
+        fast = model.report.approvals.length > 0 || model.report.agents.some((agent) => agent.busy);
+        schedulePoll(nextPollMs());
         return { ok: true, persisted: saved.persisted, problem: null };
       } catch (error) {
         markFailure(error);
         await draw();
-        pollTimer = setTimeout(() => void poll(), BACKOFF_MS[0]);
+        schedulePoll(BACKOFF_MS[0]);
         return { ok: false, persisted: saved.persisted, problem: conn.lastProblem };
       }
     };
-    refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings, conn: connView(), speech: narrator.status() }), {
+    refreshPhone = mountPhoneUi(phoneRoot, () => ({ model, locale, settings, conn: connView(), speech: narrator.status(), location: locator.state() }), {
       onSpeechActivate: () => { serverTts.unlock(); narrator.activate(); },
       onLocale: (next) => {
         locale = next;
@@ -542,6 +690,7 @@ async function boot(): Promise<void> {
         refreshPhone();
       },
       onSettings: applySettings,
+      onBriefRefresh: () => runEffect({ kind: "brief", refresh: true }),
       onTest: async (candidate) => {
         const started = Date.now();
         if (candidate.serverUrl.trim() === "") return { ok: false, problem: "missing", ms: 0 };
@@ -558,13 +707,15 @@ async function boot(): Promise<void> {
         const asset = await bridge.captureImageFromCamera().catch(() => null);
         if (asset === null || asset.base64 === "") throw new Error("Kamera abgebrochen");
         const value = await decodeQr(asset.base64, asset.mimeType || "image/jpeg");
-        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend, speakAnswers: settings.speakAnswers, quietWhileWorking: settings.quietWhileWorking };
+        return { ...parseSetupQr(value, settings.autoOpenNotifications), invertScroll: settings.invertScroll, voiceAutoSend: settings.voiceAutoSend, speakAnswers: settings.speakAnswers, quietWhileWorking: settings.quietWhileWorking, briefMorning: settings.briefMorning === true };
       },
     });
   }
 
   await draw();
   void poll();
+  // Started on the Tagesstart (morning setting or the page open last time): load it right away.
+  if (model.screen === "brief") void runEffect({ kind: "brief", refresh: false });
 }
 
 /** The exact error text of a failed request ("Load failed", "Failed to fetch", "HTTP 401" ...) - tells a whitelist block from a network error. */

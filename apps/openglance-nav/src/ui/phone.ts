@@ -1,17 +1,24 @@
+import { clampUsableKwh } from "../car/byd";
+import { buildSugarUrl } from "../sugar/glucose";
+import { briefConfigured } from "../appointments/appointments";
 import {
-  addPlace, destinationOf, nextPlaceId, parseCoordinates, removePlace,
+  addPlace, chooseDestination, destinationOf, nextPlaceId, parseCoordinates, removePlace,
   usesMockRouter, validateRouterUrl, type NavData,
 } from "../storage/persist";
 import type { LatLng } from "../geo/geometry";
 import { DEFAULT_ROUTER_URL, type RouteOutcome, type TravelMode } from "../routing/provider";
-import { addRoute, makeSavedRoute, removeRoute, renameRoute, type RoutePoint } from "../trip/saved";
+import { addRoute, forgetRoute, makeSavedRoute, removeRoute, renameRoute, type RoutePoint } from "../trip/saved";
 import { buildChargersUrl, chargersAlong, type ChargerOutcome } from "../chargers/chargers";
 import { buildStreetsUrl } from "../overview/route-streets";
 import { chargerErrorKey, emptyPlan, insertStop, planOf, plannerTemplate, withPoints, type PlanState } from "./planner";
 import { DEFAULT_GEOCODER_URL, type FoundPlace, type SearchOutcome } from "../geocode/photon";
+import { googleMapsDirUrl } from "../geocode/gmaps";
 import type { GlassLayout } from "../glasses/view";
 import { escapeHtml, languageSelect, tr, type Locale } from "../i18n";
 import { messages } from "../messages";
+import { compassPoint, PEAK_RADII, sightsFrom, type PeakOutcome, type PeakSight } from "../peaks/peaks";
+import { formatDistance } from "../geo/geometry";
+import { buildTrafficUrl } from "../traffic/traffic";
 
 /**
  * The phone companion, written for someone who has never set up navigation
@@ -35,6 +42,41 @@ export interface PhoneUiPorts {
   readonly planRoute?: (points: readonly LatLng[], mode: TravelMode) => Promise<RouteOutcome>;
   /** Charging stations along a route line. */
   readonly chargersAlong?: (line: readonly LatLng[]) => Promise<ChargerOutcome>;
+  /** Car link (private build with VITE_BYD_URL); absent = no car section. */
+  readonly getCar?: () => CarLine | null;
+  /** Peaks of the area around the current position (cached per area); absent = no peaks tab. */
+  readonly loadPeaks?: () => Promise<{ readonly here: LatLng | null; readonly outcome: PeakOutcome }>;
+}
+
+/** What the peaks tab shows. */
+export interface PeakListState {
+  readonly busy: boolean;
+  /** Within the radius, nearest first; null before the first load. */
+  readonly sights: readonly PeakSight[] | null;
+  readonly errorKey: string | null;
+  readonly waitS?: number;
+  readonly fromCache: boolean;
+  /** Radius the list was made for. */
+  readonly radiusKm: number;
+}
+
+/** Facing directions to choose from (standing still); null = north up. */
+const FACINGS: readonly number[] = [0, 45, 90, 135, 180, 225, 270, 315];
+
+/** What the phone page says about the car link. */
+export interface CarLine {
+  readonly status: "off" | "waiting" | "ok" | "offline";
+  readonly soc: number | null;
+  readonly rangeKm: number | null;
+}
+
+/** "Auto verbunden: 87 % · 296 km", or what the link is doing. */
+export function carLineText(line: CarLine, locale: Locale): string {
+  const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  if (line.status === "ok") {
+    return t("p.carLinked", { soc: line.soc === null ? "– %" : `${Math.round(line.soc)} %`, range: line.rangeKm === null ? "– km" : `${Math.round(line.rangeKm)} km` });
+  }
+  return t(line.status === "offline" ? "p.carOffline" : "p.carWaiting");
 }
 
 const MODES: readonly { mode: TravelMode; icon: string; key: string }[] = [
@@ -48,29 +90,57 @@ const VIEWS: readonly { view: GlassLayout; key: string }[] = [
   { view: "overview", key: "p.viewOverview" },
 ];
 
+/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "go", icon: "🎯", key: "p.tabGo" },
+  { id: "routes", icon: "🗺️", key: "p.tabRoutes" },
+  { id: "peaks", icon: "⛰️", key: "p.tabPeaks" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "connection", icon: "🔌", key: "p.tabConn" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.openglance.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "go"; } catch { return "go"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 /** Text inputs whose unsaved contents are carried across a redraw. */
 const DRAFT_FIELDS = ["url", "geocoder", "label", "coords", "query", "plan-query", "plan-name", "rename"] as const;
 
-interface SearchState {
+export interface SearchState {
   readonly busy: boolean;
   readonly results: readonly FoundPlace[];
   readonly errorKey: string | null;
 }
 
-export function mountPhoneUi(ports: PhoneUiPorts): void {
+/** Mounts the page; the returned function redraws it (e.g. after routes came in from the route store). */
+export function mountPhoneUi(ports: PhoneUiPorts): () => void {
   const root = document.getElementById("app");
-  if (!root) return;
+  if (!root) return () => undefined;
 
   let notice = "";
   let search: SearchState = { busy: false, results: [], errorKey: null };
   let plan: PlanState = emptyPlan(ports.getData().mode);
+  let tab = readTab();
+  let peaks: PeakListState = { busy: false, sights: null, errorKey: null, fromCache: false, radiusKm: ports.getData().peakRadiusKm };
   const locale = (): Locale => ports.getLocale?.() ?? "en";
 
   const render = (): void => {
     const data = ports.getData();
     // Whatever is half typed survives a redraw caused by another control.
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
-    root.innerHTML = template(data, notice, ports.getPosition(), locale(), search, Boolean(ports.search), ports.getVoiceState?.() ?? null)
+    root.innerHTML = template(data, notice, ports.getPosition(), locale(), search, Boolean(ports.search), ports.getVoiceState?.() ?? null, ports.getCar?.() ?? null, ports.loadPeaks ? peaks : null)
       .replace("<!--planner-->", plannerTemplate(plan, data.routes, locale(), { canSearch: Boolean(ports.search), canRoute: Boolean(ports.planRoute), chargers: data.chargers && Boolean(ports.chargersAlong) }));
     DRAFT_FIELDS.forEach((id, index) => {
       const field = root.querySelector<HTMLInputElement>("#" + id);
@@ -78,6 +148,15 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       if (field && value !== undefined) field.value = value;
     });
     notice = "";
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "go";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
     wire(root, ports, data, locale(), {
       notify: (message) => { notice = message; render(); },
       rerender: render,
@@ -85,9 +164,12 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       getSearch: () => search,
       setPlan: (next) => { plan = next; render(); },
       getPlan: () => plan,
+      setPeaks: (next) => { peaks = next; render(); },
+      getPeaks: () => peaks,
     });
   };
   render();
+  return render;
 }
 
 function template(
@@ -98,6 +180,8 @@ function template(
   search: SearchState,
   canSearch: boolean,
   voice: "needs-tap" | "server" | "browser" | "off" | null,
+  car: CarLine | null = null,
+  peaks: PeakListState | null = null,
 ): string {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const destination = destinationOf(data);
@@ -107,17 +191,22 @@ function template(
   const searchName = searchHost ? t("p.ownServer", { host: searchHost }) : "Photon by komoot";
 
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>OpenGlance</h1>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>OpenGlance</h1>
+    </div>
+    <span class="chip${destination ? " on" : ""}">${escapeHtml(destination ? destination.label : t("p.chipNone"))}</span>
   </header>
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
   ${usesMockRouter(data) ? `<p class="notice warn">${escapeHtml(t("p.demoActive"))}</p>` : ""}
 
+  <div class="tab" data-tab="go">
   ${destination
-    ? `<section class="card ready"><p>${escapeHtml(t("p.ready", { place: destination.label }))}</p></section>`
+    ? `<section class="card ready"><p>${escapeHtml(t("p.ready", { place: destination.label }))}</p>
+    <p><a class="gmaps" href="${escapeHtml(googleMapsDirUrl({ destination: destination.at, mode: data.mode }))}" target="_blank" rel="noopener noreferrer">${escapeHtml(t("p.openGoogle"))}</a></p></section>`
     : `<section class="card">
     <h2>${t("p.howTitle")}</h2>
     <ol class="steps">
@@ -133,6 +222,7 @@ function template(
     <label for="query">${t("p.searchLabel")}</label>
     <input id="query" type="search" enterkeyhint="search" autocomplete="off" placeholder="${escapeHtml(t("p.searchPlaceholder"))}" />
     <button id="search" type="button"${search.busy ? " disabled" : ""}>${search.busy ? t("p.searching") : t("p.search")}</button>
+    <p class="hint">${escapeHtml(t("p.searchMapsHint"))}</p>
     ${search.errorKey ? '<p class="hint error">' + escapeHtml(t(search.errorKey)) + "</p>" : ""}
     ${search.results.length ? `<ul class="scripts results">
       ${search.results.map((place, index) => `
@@ -170,14 +260,6 @@ function template(
     </details>
   </section>
 
-  <!--planner-->
-
-  <section class="card">
-    <h2>${t("p.chargers")}</h2>
-    <label class="check"><input id="chargers" type="checkbox"${data.chargers ? " checked" : ""} /> ${t("p.chargersOn")}</label>
-    <p class="hint">${escapeHtml(t(buildChargersUrl() ? "p.chargersHintOwn" : "p.chargersHint"))}</p>
-  </section>
-
   <section class="card">
     <h2>${t("p.travel")}</h2>
     <div class="choices">
@@ -190,7 +272,28 @@ function template(
     </div>
     ${data.mode === "driving" ? `<p class="hint">${escapeHtml(t("p.drivingHint"))}</p>` : ""}
   </section>
+  </div>
 
+  <div class="tab" data-tab="routes">
+  ${car ? `<section class="card">
+    <h2>${t("p.carTitle")}</h2>
+    <p id="car-line"${car.status === "ok" ? ' class="car-ok"' : ""}>${escapeHtml(carLineText(car, locale))}</p>
+    <label for="usable-kwh">${t("p.usableKwh")}</label>
+    <input id="usable-kwh" type="number" inputmode="decimal" min="10" max="150" step="0.1" value="${data.carUsableKwh}" />
+    <p class="hint">${escapeHtml(t("p.usableHint"))}</p>
+  </section>` : ""}
+  <!--planner-->
+
+  <section class="card">
+    <h2>${t("p.chargers")}</h2>
+    <label class="check"><input id="chargers" type="checkbox"${data.chargers ? " checked" : ""} /> ${t("p.chargersOn")}</label>
+    <p class="hint">${escapeHtml(t(buildChargersUrl() ? "p.chargersHintOwn" : "p.chargersHint"))}</p>
+  </section>
+  </div>
+
+  ${peaks ? `<div class="tab" data-tab="peaks">${peaksTemplate(data, peaks, locale)}</div>` : ""}
+
+  <div class="tab" data-tab="glasses">
   <section class="card">
     <h2>${t("p.glassView")}</h2>
     ${VIEWS.map(({ view, key }) => `
@@ -201,6 +304,39 @@ function template(
     <p class="hint">${escapeHtml(t("p.viewHint"))}</p>
   </section>
 
+  <section class="card">
+    <h2>${t("p.hudLayout")}</h2>
+    ${(["new", "classic"] as const).map((layout) => `
+      <label class="check">
+        <input type="radio" name="hud-layout" value="${layout}"${layout === data.hudLayout ? " checked" : ""} />
+        <span>${t(layout === "new" ? "p.hudNew" : "p.hudClassic")}</span>
+      </label>`).join("")}
+    <p class="hint">${escapeHtml(t("p.hudHint"))}</p>
+  </section>
+
+  <section class="card">
+    <h2>${t("p.cameras")}</h2>
+    <label class="check"><input id="cameras" type="checkbox"${data.cameras ? " checked" : ""} /> ${t("p.cameras")}</label>
+    <p class="hint">${escapeHtml(t("p.camerasHint"))}</p>
+  </section>
+
+  ${buildTrafficUrl() === "" ? "" : `<section class="card">
+    <h2>${t("p.traffic")}</h2>
+    <p class="hint">${escapeHtml(t("p.trafficHint"))}</p>
+  </section>`}
+
+  ${buildSugarUrl() === "" ? "" : `<section class="card">
+    <h2>${t("p.sugar")}</h2>
+    <label class="check"><input id="sugar" type="checkbox"${data.sugar ? " checked" : ""} /> ${t("p.sugar")}</label>
+    <p class="hint">${escapeHtml(t("p.sugarHint"))}</p>
+  </section>`}
+
+  ${!briefConfigured() ? "" : `<section class="card">
+    <h2>${t("p.appts")}</h2>
+    <label class="check"><input id="appointments" type="checkbox"${data.appointments ? " checked" : ""} /> ${t("p.appts")}</label>
+    <p class="hint">${escapeHtml(t("p.apptsHint"))}</p>
+  </section>`}
+
   ${voice === null ? "" : `<section class="card">
     <h2>${t("p.announce")}</h2>
     <label class="check"><input id="announce" type="checkbox"${data.announce ? " checked" : ""} /> ${t("p.announce")}</label>
@@ -210,17 +346,27 @@ function template(
   </section>`}
 
   <section class="card">
+    <h2>${t("p.glassesOther")}</h2>
+    <label class="check"><input id="invert" type="checkbox"${data.invertScroll ? " checked" : ""} /> ${t("p.invertSwipe")}</label>
+    <label class="check"><input id="streets" type="checkbox"${data.streets ? " checked" : ""} /> ${t("p.streets")}</label>
+    <p class="hint">${escapeHtml(t(buildStreetsUrl() ? "p.streetsHintOwn" : "p.streetsHint"))}</p>
+  </section>
+
+  <section class="card">
     <h2>${t("p.controls")}</h2>
     <table class="keys">
       <tr><td>${t("p.tap")}</td><td>${t("p.tapDoes")}</td></tr>
       <tr><td>${t("p.swipe")}</td><td>${t("p.swipeDoes")}</td></tr>
       <tr><td>${t("p.hold")}</td><td>${t("p.holdDoes")}</td></tr>
+      <tr><td>${t("p.menu")}</td><td>${t("p.menuDoes")}</td></tr>
       <tr><td>${t("p.doubleTap")}</td><td>${t("p.doubleTapDoes")}</td></tr>
     </table>
   </section>
+  </div>
 
-  <details class="card">
-    <summary>${t("p.advanced")}</summary>
+  <div class="tab" data-tab="connection">
+  <section class="card">
+    <h2>${t("p.tabConn")}</h2>
     <label for="url">${t("p.routerUrl")}</label>
     <input id="url" type="text" inputmode="url" value="${escapeHtml(data.valhallaUrl)}" placeholder="${DEFAULT_ROUTER_URL}" />
     <p class="hint">${escapeHtml(t("p.routerHint"))}</p>
@@ -229,29 +375,39 @@ function template(
     <p class="hint">${escapeHtml(t("p.geocoderHint"))}</p>
     <button id="save-url" type="button">${t("p.saveServers")}</button>
     <label class="check"><input id="demo" type="checkbox"${data.demo ? " checked" : ""} /> ${t("p.demo")}</label>
-    <label class="check"><input id="invert" type="checkbox"${data.invertScroll ? " checked" : ""} /> ${t("p.invertSwipe")}</label>
-    <label class="check"><input id="streets" type="checkbox"${data.streets ? " checked" : ""} /> ${t("p.streets")}</label>
-    <p class="hint">${escapeHtml(t(buildStreetsUrl() ? "p.streetsHintOwn" : "p.streetsHint"))}</p>
-    ${languageSelect(locale)}
-  </details>
+  </section>
+  </div>
 
-  <footer class="hint">
+  <div class="tab" data-tab="more">
+  <section class="card">
+    <h2>${t("p.tabMore")}</h2>
+    ${languageSelect(locale)}
+  </section>
+
+  <footer class="card hint">
     <p>${t("p.attribution")}</p>
     <p>${escapeHtml(t("p.routedBy", { provider: routerName }))} · ${escapeHtml(t("p.searchBy", { provider: searchName }))}</p>
     ${data.streets && !usesMockRouter(data) ? `<p>${escapeHtml(t(buildStreetsUrl() ? "p.streetsByOwn" : "p.streetsBy"))}</p>` : ""}
     ${data.chargers ? `<p>${escapeHtml(t(buildChargersUrl() ? "p.chargersByOwn" : "p.chargersBy"))}</p>` : ""}
     <p>${escapeHtml(t("p.privacy"))}</p>
     <p>${escapeHtml(t("p.privacyRoutes"))}</p>
-  </footer>`;
+  </footer>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.filter(({ id }) => id !== "peaks" || peaks).map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${escapeHtml(t(key))}</button>`).join("")}
+  </nav>`;
 }
 
-interface WireHooks {
+export interface WireHooks {
   readonly notify: (message: string) => void;
   readonly rerender: () => void;
   readonly setSearch: (state: SearchState) => void;
   readonly getSearch: () => SearchState;
   readonly setPlan: (state: PlanState) => void;
   readonly getPlan: () => PlanState;
+  readonly setPeaks?: (state: PeakListState) => void;
+  readonly getPeaks?: () => PeakListState;
 }
 
 function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Locale, hooks: WireHooks): void {
@@ -283,6 +439,18 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
     commit({ ...data, invertScroll: Boolean((event.target as HTMLInputElement).checked) });
   });
 
+  byId<HTMLInputElement>("cameras")?.addEventListener("change", (event) => {
+    commit({ ...data, cameras: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
+  byId<HTMLInputElement>("sugar")?.addEventListener("change", (event) => {
+    commit({ ...data, sugar: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
+  byId<HTMLInputElement>("appointments")?.addEventListener("change", (event) => {
+    commit({ ...data, appointments: Boolean((event.target as HTMLInputElement).checked) });
+  });
+
   byId<HTMLInputElement>("announce")?.addEventListener("change", (event) => {
     commit({ ...data, announce: Boolean((event.target as HTMLInputElement).checked) });
   });
@@ -292,11 +460,16 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
     hooks.rerender();
   });
 
+  byId<HTMLInputElement>("usable-kwh")?.addEventListener("change", (event) => {
+    commit({ ...data, carUsableKwh: clampUsableKwh((event.target as HTMLInputElement).value) });
+  });
+
   byId<HTMLInputElement>("chargers")?.addEventListener("change", (event) => {
     commit({ ...data, chargers: Boolean((event.target as HTMLInputElement).checked) });
   });
 
   wirePlanner(root, ports, data, locale, hooks, commit);
+  wirePeaks(root, ports, data, locale, hooks, commit);
 
   byId<HTMLInputElement>("streets")?.addEventListener("change", (event) => {
     commit({ ...data, streets: Boolean((event.target as HTMLInputElement).checked) });
@@ -316,6 +489,12 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
   root.querySelectorAll<HTMLInputElement>('input[name="glass-view"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       if (radio.checked) commit({ ...data, glassView: radio.value === "overview" ? "overview" : "turns" });
+    });
+  });
+
+  root.querySelectorAll<HTMLInputElement>('input[name="hud-layout"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.checked) commit({ ...data, hudLayout: radio.value === "classic" ? "classic" : "new" });
     });
   });
 
@@ -386,8 +565,8 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
   });
 }
 
-/** The route planner and the saved routes: every control redraws from the plan state. */
-function wirePlanner(
+/** The route planner and the saved routes: every control redraws from the plan state. Also used by the PC page. */
+export function wirePlanner(
   root: HTMLElement,
   ports: PhoneUiPorts,
   data: NavData,
@@ -533,7 +712,98 @@ function wirePlanner(
   root.querySelectorAll<HTMLButtonElement>("[data-route-delete]").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["routeDelete"] ?? "";
-      commit({ ...data, routes: removeRoute(data.routes, id), destinationId: data.destinationId === id ? null : data.destinationId });
+      commit({
+        ...data,
+        routes: removeRoute(data.routes, id),
+        deletedRoutes: forgetRoute(data.deletedRoutes, id),
+        destinationId: data.destinationId === id ? null : data.destinationId,
+      });
+    });
+  });
+}
+
+/** The peaks tab: settings, the load button, the list (distance, bearing, elevation), the attribution. */
+export function peaksTemplate(data: NavData, peaks: PeakListState, locale: Locale): string {
+  const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  const list = peaks.sights;
+  return `<section class="card">
+    <h2>${t("p.peaksTitle")}</h2>
+    <label class="check"><input id="peaks-on" type="checkbox"${data.peaks ? " checked" : ""} /> ${t("p.peaksOn")}</label>
+    <label for="peak-radius">${t("p.peaksRadius")}</label>
+    <select id="peak-radius">
+      ${PEAK_RADII.map((r) => `<option value="${r}"${r === data.peakRadiusKm ? " selected" : ""}>${r} km</option>`).join("")}
+    </select>
+    <label for="peak-facing">${t("p.peaksFacing")}</label>
+    <select id="peak-facing">
+      <option value=""${data.peakFacing === null ? " selected" : ""}>${escapeHtml(t("p.facingNorth"))}</option>
+      ${FACINGS.map((deg) => `<option value="${deg}"${deg === data.peakFacing ? " selected" : ""}>${compassPoint(deg, locale)} · ${deg}°</option>`).join("")}
+    </select>
+    <p class="hint">${escapeHtml(t("p.peaksFacingHint"))}</p>
+    <button id="peaks-load" type="button"${peaks.busy ? " disabled" : ""}>${t(peaks.busy ? "p.peaksLoading" : "p.peaksLoad")}</button>
+    ${peaks.errorKey ? `<p class="hint error">${escapeHtml(t(peaks.errorKey, { s: peaks.waitS ?? 20 }))}</p>` : ""}
+    ${list ? `<p class="hint">${escapeHtml(t("p.peaksCount", { n: list.length, r: peaks.radiusKm }))}${peaks.fromCache ? " · " + escapeHtml(t("p.peaksCached")) : ""}</p>
+    <ul class="scripts results peaks">
+      ${list.slice(0, 60).map((sight, index) => `
+        <li>
+          <span>${escapeHtml(sight.peak.name)} · ${sight.peak.ele} m<br /><small>${escapeHtml(formatDistance(sight.distance, locale))} · ${compassPoint(sight.bearing, locale)} ${Math.round(sight.bearing)}°</small></span>
+          <button type="button" class="pick-peak" data-peak="${index}">${t("p.peaksGo")}</button>
+        </li>`).join("")}
+    </ul>` : ""}
+    <p class="hint">${escapeHtml(t("p.peaksHint"))}</p>
+    <p class="hint">${escapeHtml(t("p.peaksBy"))}</p>
+  </section>`;
+}
+
+/** Peaks tab controls: settings are saved at once; loading is only ever on a press. */
+export function wirePeaks(
+  root: HTMLElement,
+  ports: PhoneUiPorts,
+  data: NavData,
+  locale: Locale,
+  hooks: WireHooks,
+  commit: (next: NavData) => void,
+): void {
+  const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
+  const get = hooks.getPeaks;
+  const set = hooks.setPeaks;
+  if (!get || !set) return;
+
+  byId<HTMLInputElement>("peaks-on")?.addEventListener("change", (event) => {
+    commit({ ...data, peaks: Boolean((event.target as HTMLInputElement).checked) });
+  });
+  byId<HTMLSelectElement>("peak-radius")?.addEventListener("change", (event) => {
+    const value = Number((event.target as HTMLSelectElement).value);
+    if (value === 10 || value === 25 || value === 50) commit({ ...data, peakRadiusKm: value });
+  });
+  byId<HTMLSelectElement>("peak-facing")?.addEventListener("change", (event) => {
+    const raw = (event.target as HTMLSelectElement).value;
+    commit({ ...data, peakFacing: raw === "" ? null : Number(raw) });
+  });
+
+  byId<HTMLButtonElement>("peaks-load")?.addEventListener("click", () => {
+    if (!ports.loadPeaks || get().busy) return;
+    const radiusKm = ports.getData().peakRadiusKm;
+    set({ ...get(), busy: true, errorKey: null });
+    void ports.loadPeaks()
+      .catch(() => ({ here: null, outcome: { peaks: [], error: "server" as const } }))
+      .then(({ here, outcome }) => {
+        if (!here) { set({ busy: false, sights: null, errorKey: "p.peaksNoPosition", fromCache: false, radiusKm }); return; }
+        if (outcome.error) {
+          const code = outcome.error === "invalid" || outcome.error === "oversized" ? "server" : outcome.error;
+          set({ busy: false, sights: get().sights, errorKey: "k." + code, ...(outcome.waitS !== undefined ? { waitS: outcome.waitS } : {}), fromCache: false, radiusKm: get().radiusKm });
+          return;
+        }
+        set({ busy: false, sights: sightsFrom(here, outcome.peaks, radiusKm * 1000), errorKey: null, fromCache: outcome.fromCache === true, radiusKm });
+      });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>(".pick-peak").forEach((button) => {
+    button.addEventListener("click", () => {
+      const sight = get().sights?.[Number(button.dataset["peak"])];
+      if (!sight) return;
+      // The same way as a spoken destination: into "recent", selected, ready on the glasses list.
+      commit(chooseDestination(ports.getData(), { id: "", label: sight.peak.name, at: sight.peak.at }));
+      hooks.notify(tr(messages, locale, "p.peaksSet", { name: sight.peak.name }));
     });
   });
 }
@@ -559,6 +829,7 @@ export function searchErrorKey(error: SearchOutcome["error"]): string | null {
     case "offline": return "err.offline";
     case "timeout": return "err.timeout";
     case "busy": return "err.busy";
+    case "shortLink": return "p.mapsShortLink";
     default: return "err.server";
   }
 }

@@ -1,4 +1,5 @@
 import type { Locale } from "../i18n";
+import { armedFooter, ft } from "../footer";
 import { t } from "../messages";
 import type { Departure, RideStop, Stop } from "../transit/types";
 import { delayMinutes, minutesUntil } from "../transit/types";
@@ -144,11 +145,14 @@ const metresText = (metres: number | null): string => metres === null
  */
 export function boardScene(
   stop: Stop, departures: readonly Departure[], metresAway: number | null, locale: Locale, selected: number, now: Date,
+  helpRow = false,
 ): Scene {
   const place = `${rideStopName(stop.name, 30)}${metresText(metresAway)}`;
   if (departures.length === 0) {
-    return messageScene(t(locale, "g.emptyBoardTitle"), `${place} · ${t(locale, "g.emptyBoardHint")}`, t(locale, "g.footerEmptyBoard"), "--");
+    return messageScene(t(locale, "g.emptyBoardTitle"), `${place} · ${t(locale, "g.emptyBoardHint")}`, ft(locale, "exit", { hold: "goal" }), "--");
   }
+  // Without a side menu the list ends with "Hilfe" (QIS v1): one swipe past the last departure.
+  if (helpRow && selected >= departures.length) return helpEntryScene(locale);
   const index = Math.max(0, Math.min(selected, departures.length - 1));
   const chosen = departures[index]!;
   const track = chosen.track ? ` · ${t(locale, "g.track", { track: chosen.track })}` : "";
@@ -160,8 +164,13 @@ export function boardScene(
     strip: `${chosen.cancelled ? `${t(locale, "g.cancelled")}: ` : "→ "}${glanceHeadsign(chosen.headsign)}`,
     // What matters about the big one first; the stop's name is the part that gives way.
     rows: [`${track ? `${track.slice(3)} · ` : ""}${sureness(chosen, locale)} · ${place}`, ...later],
-    footer: `${position}${t(locale, "g.footerBoard")}`,
+    footer: ft(locale, "exit", { tap: "follow", swipe: "select", hold: "goal" }, position.replace(/ · $/, "")),
   });
+}
+
+/** The last entry of the departure list: "Hilfe". A tap opens the help page. */
+export function helpEntryScene(locale: Locale): Scene {
+  return messageScene(t(locale, "g.helpTitle"), t(locale, "g.helpHint"), ft(locale, "exit", { tap: "open", swipe: "select" }), "?");
 }
 
 /** Right after the tap: the bus that was picked, while its stops are being fetched. */
@@ -171,7 +180,7 @@ export function followLoadingScene(departure: Departure, now: Date, locale: Loca
     picture: { kind: "bus", frame: -1 },
     strip: `${departure.line} → ${glanceHeadsign(departure.headsign)}`,
     rows: [t(locale, "g.followLoading")],
-    footer: t(locale, "g.footerFollow"),
+    footer: ft(locale, "exit", { tap: "cancel" }),
   });
 }
 
@@ -180,7 +189,13 @@ export function followLoadingScene(departure: Departure, now: Date, locale: Loca
  * and where it is now (the bus drives into the picture in the last minute);
  * on board, the minutes to the next stop and its name in bold.
  */
-export function followScene(departure: Departure, follow: Follow, now: Date, locale: Locale, beat: number): Scene {
+export function followScene(departure: Departure, follow: Follow, now: Date, locale: Locale, beat: number, armed = false): Scene {
+  const scene = followPage(departure, follow, now, locale, beat);
+  // Armed (QIS v1): the next single tap ends the ride; swipe, 2× or 4 s without input cancel.
+  return armed ? { ...scene, view: { ...scene.view, footer: armedFooter(locale, t(locale, "q.end")) } } : scene;
+}
+
+function followPage(departure: Departure, follow: Follow, now: Date, locale: Locale, beat: number): Scene {
   // The board's words for the bus: a trip's own direction text is often a
   // whole itinerary ("Salzburg via Strobl ~ St.Gilgen ~ Fuschl").
   const title = `${departure.line} → ${glanceHeadsign(departure.headsign)}`;
@@ -198,7 +213,7 @@ export function followScene(departure: Departure, follow: Follow, now: Date, loc
         `${clock(follow.departs)} · ${sureness(follow.boarding, locale)} · ${rideStopName(follow.boarding.stop.name, 30)}`,
         where,
       ],
-      footer: t(locale, "g.footerFollow"),
+      footer: ft(locale, "exit", { tap: "end" }),
       animated: arriving,
     });
   }
@@ -208,7 +223,7 @@ export function followScene(departure: Departure, follow: Follow, now: Date, loc
       picture: { kind: "words", lines: [{ text: t(locale, "g.rideOverTitle"), size: 40 }] },
       strip: rideStopName(follow.terminus.stop.name),
       rows: [t(locale, "g.rideOver")],
-      footer: t(locale, "g.footerFollow"),
+      footer: ft(locale, "exit", { tap: "back" }),
     });
   }
 
@@ -229,6 +244,6 @@ export function followScene(departure: Departure, follow: Follow, now: Date, loc
       ...(then ? [t(locale, "g.thenStop", { stop: short(then, 28), when: waitText(then.expected, now, locale) })] : []),
       t(locale, left === 1 ? "g.terminusOne" : "g.terminusMany", { stop: short(terminus, 24), time: clock(terminus.expected), count: left }),
     ],
-    footer: `${t(locale, progress.basis === "gps" ? "g.basisGps" : "g.basisClock")} · ${t(locale, "g.footerFollow")}`,
+    footer: ft(locale, "exit", { tap: "end" }, t(locale, progress.basis === "gps" ? "g.basisGps" : "g.basisClock")),
   });
 }

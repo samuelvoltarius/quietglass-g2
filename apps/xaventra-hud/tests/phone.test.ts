@@ -29,6 +29,13 @@ describe("phone page", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 
+  it("is split into tabs with a tab bar and keeps every control", () => {
+    const { root } = mount({ serverUrl: "", invertScroll: false });
+    expect(root.innerHTML).toContain('class="tabbar"');
+    for (const id of ["xaventra", "glasses", "server", "more"]) expect(root.innerHTML).toContain(`data-tab-go="${id}"`);
+    for (const id of ["#url", "#token", "#save", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
+  });
+
   it("first run: explains what to do and offers an empty address field", () => {
     const { root } = mount({ serverUrl: "", invertScroll: false });
     expect(root.innerHTML).toContain("Erster Start");

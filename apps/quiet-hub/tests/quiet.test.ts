@@ -68,12 +68,12 @@ describe("quiet while the agent works (0.6.6)", () => {
     expect(next.model.wakeUntil).toBe(T0 + 10_000 + WAKE_MS);
   });
 
-  it("double tap keeps its meaning while quiet: it stops the running agent", () => {
+  it("double tap keeps its meaning while quiet: back, never a stop", () => {
     const working = session(true);
     const q = quietGesture(working, "doubleClick", T0);
     expect(q.consumed).toBe(false);
     const out = decide(q.model, "doubleClick", T0);
-    expect(out.effect).toEqual({ kind: "cancel", agentId: working.report.agents[0]!.id });
+    expect(out.effect?.kind).not.toBe("cancel");
     expect(isQuiet(out.model, T0)).toBe(false);
   });
 
@@ -98,13 +98,13 @@ describe("quiet while the agent works (0.6.6)", () => {
 
   it("the glasses menu switches it, with a fixed label (no rebuild) and an effect to persist it", () => {
     const off = session(true, false);
-    const items = menuFor(off, "de").items;
+    const items = menuFor(off, "de", true).items;
     expect(items.map((item) => item.label)).toContain("Ruhe beim Arbeiten an/aus");
     expect(items.length).toBeLessThanOrEqual(6);
     const on = applyMenu(off, MENU.quiet, T0);
     expect(on.effect).toEqual({ kind: "quietSetting", on: true });
     expect(on.model.quietWhileWorking).toBe(true);
-    expect(menuFor(on.model, "de").key).toBe(menuFor(off, "de").key);
+    expect(menuFor(on.model, "de", true).key).toBe(menuFor(off, "de", true).key);
     // The acknowledgement is readable first, then the display goes quiet.
     expect(isQuiet(on.model, T0)).toBe(false);
     expect(isQuiet(on.model, T0 + 6000)).toBe(true);
@@ -127,7 +127,7 @@ describe("quiet on the glasses: brightness in place, no create, no rebuild", () 
   /** What main's drawOnce sends for one state. */
   function frame(model: HubModel, now: number): { view: ScreenView; icon: readonly string[]; menuKey: string } {
     const quiet = isQuiet(model, now);
-    return { view: quiet ? QUIET_VIEW : buildView(model, "de", now), icon: quiet ? BLANK_ICON : pixelIconFor(model, now), menuKey: menuFor(model, "de").key };
+    return { view: quiet ? QUIET_VIEW : buildView(model, "de", now), icon: quiet ? BLANK_ICON : pixelIconFor(model, now), menuKey: menuFor(model, "de", true).key };
   }
 
   it("normal -> quiet -> woken -> quiet -> done: only text upgrades, the face blanked", async () => {

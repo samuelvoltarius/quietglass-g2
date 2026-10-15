@@ -261,7 +261,7 @@ describe("session", () => {
     expect(session.status()).toBe("loading");
     // The map is already up: the state is in the header, with the nearest town.
     expect(session.text().note).toBe("");
-    expect(session.text().header).toBe("RADAR  Salzburg  Loading");
+    expect(session.text().header).toBe("RAINLENS · RADAR  Salzburg  Loading");
     await vi.advanceTimersByTimeAsync(0);
     expect(session.status()).toBe("ready");
     expect(session.text().note).toBe("");
@@ -311,7 +311,7 @@ describe("session", () => {
     session.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(session.status()).toBe("error");
-    expect(session.text().header).toBe("RADAR  Unreachable · Tap = retry");
+    expect(session.text().header).toBe("RAINLENS · RADAR  Unreachable · Tap = retry");
     expect(session.text().note).toBe("");
     fail = false; session.reload();
     await vi.advanceTimersByTimeAsync(0);

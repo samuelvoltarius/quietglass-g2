@@ -179,17 +179,19 @@ describe("glasses text budget", () => {
       }
     });
 
-    it(`never drops the microphone indicator, mock marker or connection state (${locale})`, () => {
+    it(`never drops the app name, microphone indicator, mock marker or connection state from the header (${locale})`, () => {
       for (const [name, view] of screens(locale)) {
+        expect(view.header.startsWith("BABEL · "), name).toBe(true);
         if (name.startsWith("idle")) {
-          expect(view.footer, name).not.toContain(t(locale, "g.mic"));
+          expect(view.header + view.footer, name).not.toContain(t(locale, "g.mic"));
           continue;
         }
-        expect(view.footer.startsWith(t(locale, "g.mic")), name).toBe(true);
-        if (name.startsWith("worst")) {
-          expect(view.footer, name).toContain(t(locale, "g.mock"));
-          expect(view.footer, name).toContain(statusLabel("reconnecting", locale));
+        expect(view.header.startsWith("BABEL · " + t(locale, "g.mic")), name).toBe(true);
+        expect(view.footer, name).not.toContain(t(locale, "g.mic"));
+        if (name.startsWith("worst") || name === "listening mock") {
+          expect(view.header, name).toContain(t(locale, "g.mock"));
         }
+        if (name.startsWith("worst")) expect(view.header, name).toContain(statusLabel("reconnecting", locale));
       }
     });
   }
@@ -197,15 +199,16 @@ describe("glasses text budget", () => {
   it("speaks German on the glasses", () => {
     const idle = buildView(createBuffer(), { ...base, listening: false, locale: "de" });
     expect(idle).toEqual({
-      header: "Babel Glass",
-      body: ["Mikrofon ist aus.", "Tippe, um Untertitel zu starten."],
-      footer: "Tippen = Start · 2× = Ende",
+      header: "BABEL · Kunde wählen",
+      body: [],
+      footer: "Tippen = Start · Halten = Hilfe · 2× = Ende",
     });
     const listening = buildView(createBuffer(), { ...base, locale: "de" });
     expect(listening.body).toEqual(["hört zu…"]);
-    expect(listening.footer).toBe("● MIKRO · Tippen = Stopp");
+    expect(listening.header).toBe("BABEL · ● MIKRO");
+    expect(listening.footer).toBe("Tippen = Stopp · Wischen = Verlauf · 2× = Ende");
     const failed = buildView(withLine("Привет"), { ...base, translating: true, translateError: "unreachable", locale: "de" });
-    expect(failed.footer).toBe("● MIKRO · Übersetzung: nicht erreichbar");
+    expect(failed.header).toBe("BABEL · ● MIKRO · Übersetzen: nicht erreichbar");
   });
 
   it("translates the translator's error words and keeps unknown ones verbatim", () => {
@@ -226,9 +229,9 @@ describe("glasses text budget", () => {
     const view = buildView(withLine("x"), {
       ...base, translating: true, locale: "de", translateError: "a very long raw error message from somewhere deep",
     });
-    expect(view.footer.startsWith("● MIKRO · Übersetzung: a very")).toBe(true);
-    expect(view.footer.endsWith("…")).toBe(true);
-    expect(chars(view.footer)).toBe(GLASS_COLS);
+    expect(view.header.startsWith("BABEL · ● MIKRO · Übersetzen: a very")).toBe(true);
+    expect(view.header.endsWith("…")).toBe(true);
+    expect(chars(view.header)).toBe(GLASS_COLS);
   });
 });
 
@@ -263,22 +266,36 @@ function fakeRoot() {
 }
 
 describe("phone page", () => {
-  it("renders in German with the language picker on top", () => {
+  it("renders in German, in tabs, with the app language under \"Mehr\"", () => {
     const root = fakeRoot();
     mountPhoneUiInto(root, { getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de" });
     const html = root.innerHTML;
-    expect(html.indexOf('id="language"')).toBeLessThan(html.indexOf('id="source"'));
-    for (const text of ["Gesprochene Sprache", "Übersetzen in", "Demo-Modus", "<strong>DEMO</strong>", "Erweitert: Server",
+    expect(html.indexOf('data-tab="more"')).toBeLessThan(html.indexOf('id="language"'));
+    expect(html).toContain('<nav class="tabbar"');
+    for (const id of ["talk", "languages", "glasses", "more"]) expect(html).toContain(`data-tab-go="${id}"`);
+    for (const text of ["Gesprochene Sprache", "Übersetzen in", "Demo-Modus", "<strong>DEMO</strong>", "Spracherkennung (Server)",
       "Bedienung an der Brille", "<strong>● MIKRO</strong>", "Speichern", "Gespräch — wenige Zeilen, beide Sprachen"]) {
       expect(html).toContain(text);
     }
     expect(html).not.toMatch(/Spoken language|Save<|Controls on the glasses/);
   });
 
-  it("keeps server jargon inside the Advanced sections", () => {
+  it("QIS v1: tabs run content · Brille · Verbindung · Mehr, the invert switch sits under Brille", () => {
     const root = fakeRoot();
     mountPhoneUiInto(root, { getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de" });
-    const outside = root.innerHTML.replace(/<details[^]*?<\/details>/g, "");
+    const html = root.innerHTML;
+    const tabs = [...html.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1]);
+    expect(tabs).toEqual(["talk", "languages", "memory", "glasses", "connection", "more"]);
+    const glasses = html.split('data-tab="glasses"')[1]!.split('data-tab="connection"')[0]!;
+    expect(glasses).toContain('id="invert"');
+    expect(glasses).toContain("<td>2×</td>");
+    expect(html.split('data-tab="connection"')[1]!.split('data-tab="more"')[0]).toContain('id="stt"');
+  });
+
+  it("keeps server jargon inside the \"Verbindung\" tab", () => {
+    const root = fakeRoot();
+    mountPhoneUiInto(root, { getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de" });
+    const outside = root.innerHTML.split('data-tab="connection"')[0]!;
     expect(outside).not.toMatch(/WebSocket|Endpoint|LLM|Bearer|API/);
   });
 
@@ -326,7 +343,11 @@ describe("switching language on the phone redraws the glasses", () => {
     harness.bridge = {
       getLocalStorage: async () => "",
       setLocalStorage: async () => true,
-      rebuildPageContainer: async () => true,
+      // 0.7.0: a new UI language changes the side menu labels, so the page is rebuilt (text included).
+      rebuildPageContainer: async (page: { textObject?: Array<{ containerName?: string; content?: string }> }) => {
+        for (const item of page.textObject ?? []) screen[item.containerName ?? ""] = item.content ?? "";
+        return true;
+      },
       createStartUpPageContainer: async (page: { textObject?: Array<{ containerName?: string; content?: string }> }) => {
         for (const item of page.textObject ?? []) screen[item.containerName ?? ""] = item.content ?? "";
         return 0;
@@ -355,15 +376,18 @@ describe("switching language on the phone redraws the glasses", () => {
 
   it("redraws the idle screen at once and remembers the choice", async () => {
     const app = await boot();
-    expect(app.screen.body).toBe("Not listening.\nTap to start captions.");
+    // 0.7.0: the start screen is the customer list; without a model server only "No customer" is offered.
+    expect(app.screen.body).toBe("> No customer – translate\n  Learn my voice\n  Delete my voice\n  People: 2");
+    expect(app.screen.header).toBe("BABEL · pick customer · MOCK");
     expect(app.page.innerHTML).toContain("Spoken language");
 
     app.page.el("language").value = "de";
     app.page.fire("language", "change");
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(app.screen.body).toBe("Mikrofon ist aus.\nTippe, um Untertitel zu starten.");
-    expect(app.screen.footer).toBe("Demo ohne Server");
+    expect(app.screen.body).toBe("> Ohne Kunde – Übersetzen\n  Meine Stimme lernen\n  Meine Stimme löschen\n  Personen: 2");
+    expect(app.screen.header).toBe("BABEL · Kunde wählen · DEMO");
+    expect(app.screen.footer).toBe("Tippen = Start · Halten = Hilfe · 2× = Ende");
     expect(app.page.innerHTML).toContain("Gesprochene Sprache");
     expect(app.documentElement.lang).toBe("de");
     expect(app.saved).toEqual(["de"]);
@@ -373,13 +397,13 @@ describe("switching language on the phone redraws the glasses", () => {
     const app = await boot();
     app.tap();
     await vi.advanceTimersByTimeAsync(3100);
-    expect(app.screen.footer.startsWith("● MIC · MOCK")).toBe(true);
+    expect(app.screen.header.startsWith("BABEL · ● MIC · MOCK")).toBe(true);
     expect(app.screen.body).toContain("Good morning!");
 
     app.page.el("language").value = "de";
     app.page.fire("language", "change");
     await vi.advanceTimersByTimeAsync(10);
-    expect(app.screen.footer.startsWith("● MIKRO · DEMO")).toBe(true);
+    expect(app.screen.header.startsWith("BABEL · ● MIKRO · DEMO")).toBe(true);
 
     await vi.advanceTimersByTimeAsync(3000);
     expect(app.screen.body).toContain("Gern. Die Abnahme");

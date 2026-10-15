@@ -2,8 +2,10 @@ import type { RideStop } from "../transit/types";
 import { delayMinutes, metresBetween } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import { CURSOR, fit, rideStopName, wrap, type StopView } from "../glasses/view";
+import { tailLines } from "../voice/live-stt";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { armedFooter, ft } from "../footer";
 import {
   arrivalOf, clock, departureOf, distanceText, firstTransit, waitText, whenPhrase,
   type Journey, type TransitLeg, type WalkLeg,
@@ -45,7 +47,7 @@ export function placesView(targets: readonly Target[], selected: number, now: Da
     return {
       header,
       body: ["", t(locale, "r.noPlaces1"), "", t(locale, "r.noPlaces2"), t(locale, "r.noPlaces3"), "", t(locale, "r.hintVoice")],
-      footer: t(locale, "r.footerPlacesEmpty"),
+      footer: ft(locale, "back", { hold: "speak" }),
     };
   }
   const first = Math.max(0, Math.min(selected - ROUTE_ROWS + 1, targets.length - ROUTE_ROWS));
@@ -53,7 +55,7 @@ export function placesView(targets: readonly Target[], selected: number, now: Da
     const label = target.isNow ? t(locale, "r.nowPrefix", { name: target.name }) : target.name;
     return row(`${first + offset === selected ? CURSOR : " "} ${label}`);
   });
-  return { header, body, footer: t(locale, "r.footerPlaces") };
+  return { header, body, footer: ft(locale, "back", { tap: "go", swipe: "select", hold: "speak" }) };
 }
 
 // ---- connections ----------------------------------------------------------
@@ -116,7 +118,7 @@ export function plansView(
       total: Math.round((chosen.end.getTime() - chosen.start.getTime()) / 60000),
     })));
   }
-  return { header, body, footer: t(locale, "r.footerPlans") };
+  return { header, body, footer: ft(locale, "back", { tap: "go", swipe: "select" }) };
 }
 
 // ---- companion ------------------------------------------------------------
@@ -137,8 +139,11 @@ export function boardLines(leg: TransitLeg, now: Date, locale: Locale, keyTime: 
 }
 
 export interface GuideDisplay {
-  /** First press of "end guidance": ask once more before leaving. */
-  readonly confirmStop?: boolean;
+  /**
+   * QIS v1: the next single tap carries out the armed action ("stop" = end the guide, "search" =
+   * plan anew after a missed bus). Swipe, 2x or 4 s without input cancel it.
+   */
+  readonly armed?: "stop" | "search" | undefined;
   /** Where the walker is on the walking route of this step, when there is one. */
   readonly walk?: WalkNav | null;
   /** When the whole journey is expected to end; shown in every header. */
@@ -186,7 +191,7 @@ export function guideView(
   return {
     ...view,
     header: fit(`${view.header}${arrival}`, ROUTE_WIDTH),
-    footer: display.rerouted && !display.confirmStop ? t(locale, "r.footerRerouted") : view.footer,
+    footer: display.rerouted && !display.armed ? ft(locale, "exit", { tap: "next" }, t(locale, "r.footerRerouted")) : view.footer,
   };
 }
 
@@ -198,17 +203,16 @@ function guideViewInner(
   const basis = state.progress?.basis === "gps" || (position !== null && state.phase !== "ride")
     ? t(locale, "r.footerGuideGps")
     : t(locale, "r.footerGuideClock");
-  const counter = t(locale, "r.footerGuide", {
-    step: Math.min(state.index + 1, state.steps.length), total: state.steps.length, basis,
-  });
-  const footer = display.confirmStop ? t(locale, "r.footerConfirmStop") : counter;
+  const counter = ft(locale, "exit", { tap: "next" }, `${Math.min(state.index + 1, state.steps.length)}/${state.steps.length} · ${basis}`);
+  const armed = display.armed !== undefined;
+  const footer = display.armed ? armedFooter(locale, t(locale, display.armed === "stop" ? "q.end" : "q.search")) : counter;
 
   if (step.kind === "arrived") {
     const goal = [...state.steps].reverse().find((s): s is Extract<Step, { kind: "walk" }> => s.kind === "walk");
     return {
       header: t(locale, "r.headerDone", { time }),
       body: [`${CURSOR} ${t(locale, "r.arrived")}`, goal ? row(goal.leg.toName) : "", "", t(locale, "r.arrivedHint")],
-      footer: display.confirmStop ? footer : t(locale, "r.footerArrived"),
+      footer: armed ? footer : ft(locale, "back", { tap: "done" }),
     };
   }
 
@@ -275,7 +279,7 @@ function guideViewInner(
     return {
       header: t(locale, "r.headerMissed", { time }),
       body: [`${CURSOR} ${t(locale, "r.missedTitle", { line: leg.line })}`, "", t(locale, "r.missedHint")],
-      footer: display.confirmStop ? footer : t(locale, "r.footerMissed"),
+      footer: armed ? footer : ft(locale, "exit", { tap: "search" }),
     };
   }
 
@@ -335,8 +339,9 @@ function guideViewInner(
 // ---- spoken destination -----------------------------------------------------
 
 export type VoiceState =
-  | { readonly phase: "recording" }
-  | { readonly phase: "working" }
+  /** `live`: what the live recogniser heard so far, shown while still speaking. */
+  | { readonly phase: "recording"; readonly live?: string }
+  | { readonly phase: "working"; readonly heard?: string }
   | {
     readonly phase: "results"; readonly heard: string; readonly results: readonly GeoResult[];
     readonly selected: number; readonly saved: boolean;
@@ -347,18 +352,30 @@ export function voiceView(state: VoiceState, now: Date, locale: Locale): StopVie
   const header = t(locale, "r.headerVoice", { time: clock(now) });
   switch (state.phase) {
     case "recording":
+      // Live words: the newest at the bottom, the start scrolls off the top while speaking.
+      if (state.live) {
+        return {
+          header,
+          body: [t(locale, "r.voiceRecording"), "", ...tailLines(state.live, ROUTE_WIDTH, ROUTE_ROWS - 2)],
+          footer: ft(locale, "back", { hold: "speak" }),
+        };
+      }
       return {
         header,
         body: [t(locale, "r.voiceRecording"), t(locale, "r.voiceRelease"), "", row(t(locale, "r.voiceSay"))],
-        footer: t(locale, "r.voiceFooterRecording"),
+        footer: ft(locale, "back", { hold: "speak" }),
       };
     case "working":
-      return { header, body: [t(locale, "r.voiceWorking")], footer: t(locale, "r.voiceFooterRecording") };
+      return {
+        header,
+        body: [t(locale, "r.voiceWorking"), ...(state.heard ? ["", ...tailLines(state.heard, ROUTE_WIDTH, ROUTE_ROWS - 2)] : [])],
+        footer: ft(locale, "back"),
+      };
     case "error":
       return {
         header,
         body: [...wrapRows(state.error), "", ...wrapRows(state.hint)].slice(0, ROUTE_ROWS),
-        footer: t(locale, "r.voiceFooterBack"),
+        footer: ft(locale, "back", { tap: "back" }),
       };
     case "results": {
       const rows: string[] = [row(t(locale, "r.voiceHeard", { text: state.heard }))];
@@ -366,9 +383,18 @@ export function voiceView(state: VoiceState, now: Date, locale: Locale): StopVie
         rows.push(row(`${index === state.selected ? CURSOR : " "} ${result.name}`));
         rows.push(row(`  ${result.detail}`));
       });
-      return { header, body: rows, footer: t(locale, state.saved ? "r.voiceFooterSaved" : "r.voiceFooterResults") };
+      return { header, body: rows, footer: ft(locale, "back", { tap: "go", swipe: "select" }, state.saved ? t(locale, "r.leadSaved") : "") };
     }
   }
+}
+
+/** The help page (QIS v1): the four gestures in footer order, then what the app needs. */
+export function helpView(locale: Locale): StopView {
+  return {
+    header: `NEXTSTOP · ${t(locale, "h.title")}`,
+    body: ["", t(locale, "h.tap"), t(locale, "h.swipe"), t(locale, "h.hold"), t(locale, "h.back"), t(locale, "h.arm"), t(locale, "h.needs")],
+    footer: ft(locale, "back", { tap: "close" }),
+  };
 }
 
 function wrapRows(text: string): string[] {

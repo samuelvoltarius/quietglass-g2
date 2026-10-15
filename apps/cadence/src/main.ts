@@ -3,19 +3,25 @@ import {
   clampBpm, createState, msPerBeat, msToNextBeat, restartCount, retime, toggle, type MetronomeState,
 } from "./metronome/engine";
 import { addSession, nextSessionId, type PracticeSession } from "./practice/log";
-import { gestureFromEvent } from "./input/gestures";
-import { buildView, type CadenceView } from "./glasses/view";
+import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
+import { ARM_MS, buildView, type CadenceView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage, ICON_HEIGHT, ICON_WIDTH } from "./glasses/render";
+import { createPage, updatePage, ICON_HEIGHT, ICON_WIDTH, type MenuSpec } from "./glasses/render";
 import { PENDULUM_MIDSWING_MAX_BPM, bpmFrame, pendulumFrame, pendulumSwing } from "./glasses/charts";
 import { bitmapKey, iconBitmap } from "./glasses/gfx";
 import { load, loadRunRaw, parseRun, RUN_RESUME_MS, save, saveRun, setSettings, type CadenceData } from "./storage/persist";
 import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
+import { t } from "./messages";
 import { createExitRequest } from "./exit";
 
 const METRONOME_SIGN = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
+
+/** Side menu entries of the glasses (QIS v1.2). */
+const MENU_HELP = 1;
+/** The glasses' side menu (QIS v1.2). Off: its clicks do not arrive on current firmware and a hold opens it instead of reaching the app (step log 15.10.2026). */
+const SIDE_MENU = false;
 
 /** Tempo step for a swipe on the glasses. */
 const BPM_STEP = 4;
@@ -40,11 +46,24 @@ async function boot(): Promise<void> {
   let lastHeartbeat = 0;
   let drawing: Promise<void> | null = null;
   let drawAgain = false;
+  /** A pause is waiting for its confirming tap (QIS v1: arm, then confirm within ARM_MS). */
+  let armedUntil = 0;
+  let armTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The help page is open. */
+  let helpOpen = false;
   let locale: Locale = await resolveLocale(bridge);
+
+  // Without a working side menu (see SIDE_MENU) the pages carry none; a hold on the stopped beat opens the help again.
+  const menu = (): MenuSpec => ({ items: SIDE_MENU ? [{ id: MENU_HELP, label: t(locale, "g.m.help") }] : [] });
+
+  const isArmed = (): boolean => armedUntil > Date.now() && state.running;
+  const disarm = (): void => { armedUntil = 0; clearTimeout(armTimer); armTimer = undefined; };
 
   const currentView = (): CadenceView =>
     buildView(state, data.settings, {
       locale,
+      armed: isArmed(),
+      help: helpOpen,
       ...(data.activeItem ? { item: data.activeItem } : {}),
       ...(sessionStartedAt !== null
         ? { sessionSeconds: (Date.now() - sessionStartedAt) / 1000 }
@@ -63,7 +82,7 @@ async function boot(): Promise<void> {
     const key = [frames.icon, frames.bpm, frames.pendulum].map(bitmapKey).join("|");
     if (pageReady && sameView(lastView, view) && key === lastFrames) return;
 
-    const result = pageReady ? await updatePage(bridge, view, frames, lastView) : await createPage(bridge, view, frames);
+    const result = pageReady ? await updatePage(bridge, view, frames, lastView) : await createPage(bridge, view, frames, menu());
     if (result.ok) {
       pageReady = true;
       lastView = view;
@@ -194,6 +213,7 @@ async function boot(): Promise<void> {
       clearTimeout(timer);
       clearTimeout(midTimer);
       clearInterval(tick);
+      disarm();
     },
   }, "cadence");
 
@@ -203,16 +223,48 @@ async function boot(): Promise<void> {
     if (closed) return;
     const lifecycle = lifecycleFromEvent(event);
     if (lifecycle === "foreground") { paused = true; resume(); return; }
-    if (lifecycle === "background") { persistRun(); paused = true; stopTimers(); return; }
+    if (lifecycle === "background") { persistRun(); paused = true; disarm(); stopTimers(); return; }
     if (lifecycle === "exit") { persistRun(); closed = true; stopTimers(); return; }
     // A gesture means the app is on the glasses again, even if no "foreground" came.
     resume();
+    // The side menu: Hilfe. It cancels a pending pause like any other input; the beat keeps running.
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      disarm();
+      if (menuId === MENU_HELP) helpOpen = true;
+      void draw();
+      return;
+    }
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
+
+    // Anything but the confirming tap cancels a pending pause: a swipe never changes
+    // the tempo then, a hold never restarts the count, and a double tap goes back, not out.
+    if (gesture.gesture !== "click" && isArmed()) {
+      disarm();
+      void draw();
+      return;
+    }
+
+    // The help page: only the double tap does something (back).
+    if (helpOpen) {
+      if (gesture.gesture === "doubleClick") { helpOpen = false; void draw(); }
+      return;
+    }
 
     switch (gesture.gesture) {
       case "click": {
         const now = Date.now();
+        if (state.running) {
+          if (!isArmed()) {
+            // First tap: arm. The timer restores the footer when the time runs out.
+            armedUntil = now + ARM_MS;
+            clearTimeout(armTimer);
+            armTimer = setTimeout(() => { disarm(); void draw(); }, ARM_MS);
+            break;
+          }
+          disarm();
+        }
         state = toggle(state, data.settings, now);
         if (state.running) sessionStartedAt = sessionStartedAt ?? now;
         else endSession();
@@ -231,13 +283,19 @@ async function boot(): Promise<void> {
         scheduleBeat();
         break;
       case "longPress":
+        // Stopped: the help (with the side menu it lives there instead). Running:
+        if (!state.running) {
+          if (SIDE_MENU) return;
+          helpOpen = true;
+          break;
+        }
         // From the top: bar 1 again, a running beat keeps running.
         state = restartCount(state, Date.now());
         persistRun();
         scheduleBeat();
         break;
       case "doubleClick":
-        // System exit dialog; the beat keeps running until the user confirms.
+        // Back one level; on the main screen it leaves: system exit dialog, the beat keeps running until the user confirms. It never pauses.
         void requestExit();
         return;
       default:
@@ -260,6 +318,7 @@ async function boot(): Promise<void> {
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
+      pageReady = false; // the side menu is part of the page: rebuilt in the new language
       rememberLocale(bridge, next);
       void draw();
     },

@@ -19,7 +19,10 @@ export interface Transcript {
   readonly final: boolean;
   /** BCP-47 tag if the provider detected one. */
   readonly language?: string;
-  /** Speaker label ("A", "B" …) from the server's change detector, finals only. */
+  /**
+   * Speaker label ("A", "B" …) from the server's change detector, finals only.
+   * 0.8.0: "ME" = the user (voice enrolled under "Meine Stimme lernen").
+   */
   readonly speaker?: string;
   /** Part of a partial that two consecutive hypotheses agreed on (will not change). */
   readonly stable?: string;
@@ -60,6 +63,14 @@ export interface SttConfig {
    * sending finals only, so this is always safe to turn on.
    */
   readonly stream?: boolean;
+  /**
+   * 0.8.0: people in the conversation, the user included ("Personen" in the side
+   * menu), and how many OTHER people that is (one less when the user's voice is
+   * enrolled). The server opens at most that many speaker letters; servers that
+   * do not know the fields ignore them.
+   */
+  readonly persons?: number;
+  readonly speakers?: number;
   /** Injectable for tests. */
   readonly WS?: typeof WebSocket;
 }
@@ -112,6 +123,8 @@ export function createWebSocketStt(config: SttConfig): SttProvider {
           sampleRate: 16_000,
           encoding: "s16le",
           ...(config.stream ? { stream: true } : {}),
+          ...(config.persons ? { persons: config.persons } : {}),
+          ...(config.speakers ? { speakers: config.speakers } : {}),
           ...(config.token ? { token: config.token } : {}),
         }));
         resolve();
@@ -186,7 +199,8 @@ export function parseTranscript(raw: unknown): Transcript | null {
       || value["type"] === "final";
 
     const language = typeof value["language"] === "string" ? value["language"] : undefined;
-    const speaker = typeof value["speaker"] === "string" && /^[A-Z]$/.test(value["speaker"]) ? value["speaker"] : undefined;
+    // One letter for other people; "ME" (0.8.0) for the user whose voice the server knows.
+    const speaker = typeof value["speaker"] === "string" && /^(?:[A-Z]|ME)$/.test(value["speaker"]) ? value["speaker"] : undefined;
     const stable = !final && typeof value["stable"] === "string" && value["stable"] ? value["stable"] : undefined;
 
     return {

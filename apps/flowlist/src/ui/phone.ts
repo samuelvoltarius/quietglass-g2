@@ -1,6 +1,7 @@
 import { parseMarkdown, parsePack, toPack } from "../checklist/parse";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { t } from "../messages";
+import { VERSION } from "../version";
 import {
   activeList, addSamples, nextListId, removeList, samplesMissing, setSettings, upsertList,
   type FlowListData, type FlowListSettings,
@@ -25,6 +26,29 @@ export interface PhoneUiPorts {
 /** Text fields that hold an unsaved draft and must survive a re-render. */
 const DRAFT_FIELDS = ["source"] as const;
 
+/** The page is split into tabs instead of one long column. */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "lists", icon: "📋", key: "p.tabLists" },
+  { id: "add", icon: "✍️", key: "p.tabAdd" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.flowlist.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "lists"; } catch { return "lists"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 type Commit = (
   next: FlowListData,
   options?: { readonly keepDraft?: boolean; readonly notice?: string },
@@ -36,6 +60,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
   let notice = "";
   let locale: Locale = ports.locale?.() ?? getLocale();
+  let tab = readTab();
 
   // Re-rendered after every change, so the lists show what is stored. Handlers
   // always read the current data: a closure over the data of the first render
@@ -45,6 +70,15 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     root.innerHTML = template(ports.getData(), notice, locale);
     notice = "";
     if (draft) writeDraft(root, draft);
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "lists";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
     wire(root, ports.getData, commit, (message) => { notice = message; render(); }, locale);
     root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
       const value = (event.target as HTMLSelectElement).value;
@@ -91,20 +125,23 @@ function template(data: FlowListData, notice: string, locale: Locale): string {
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const active = activeList(data);
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>FlowList</h1>
-    <p class="hint">${L("p.lede")}</p>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>FlowList</h1>
+    </div>
+    <span class="chip${active ? " on" : ""}">${active ? escapeHtml(active.title) : L("p.chipNone")}</span>
   </header>
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
+  <div class="tab" data-tab="lists">
   <section class="card">
     <h2>${L("p.start")}</h2>
     ${active
       ? `<p>${L("p.now", { title: escapeHtml(active.title) })} ${L("p.nextStep")}</p>`
       : `<p>${L("p.noneYet")}</p>`}
-    ${languageSelect(locale)}
+    <p class="hint">${L("p.lede")}</p>
   </section>
 
   <section class="card">
@@ -126,7 +163,9 @@ function template(data: FlowListData, notice: string, locale: Locale): string {
     </ul>
     ${samplesMissing(data) ? `<button id="samples" type="button">${L("p.addExamples")}</button>` : ""}
   </section>
+  </div>
 
+  <div class="tab" data-tab="add">
   <section class="card">
     <h2>${L("p.add")}</h2>
     <label for="source">${L("p.sourceLabel")}</label>
@@ -134,7 +173,9 @@ function template(data: FlowListData, notice: string, locale: Locale): string {
     <p class="hint">${L("p.syntax")}</p>
     <button id="add" type="button">${L("p.addButton")}</button>
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
   <section class="card">
     <h2>${L("p.display")}</h2>
     <label class="check"><input id="next" type="checkbox" ${s.showNext ? "checked" : ""} /> ${L("p.showNext")}</label>
@@ -145,15 +186,29 @@ function template(data: FlowListData, notice: string, locale: Locale): string {
   </section>
 
   <section class="card">
+    ${languageSelect(locale)}
+  </section>
+  </div>
+
+  <div class="tab" data-tab="more">
+  <section class="card">
     <h2>${L("p.controls")}</h2>
     <table class="keys">
-      ${(["tap", "up", "down", "hold", "end", "double"] as const)
+      ${(["tap", "swipe", "hold", "end", "double"] as const)
         .map((key) => `<tr><td>${L("p.key." + key)}</td><td>${L("p.key." + key + "Do")}</td></tr>`).join("")}
     </table>
     <p class="hint">${L("p.controlsHint")}</p>
   </section>
 
-  <footer class="hint">${L("p.privacy")}</footer>`;
+  <section class="card">
+    <p><strong>FlowList</strong> · ${L("p.moreVersion")} ${VERSION}</p>
+    <p class="hint">${L("p.privacy")}</p>
+  </section>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${L(key)}</button>`).join("")}
+  </nav>`;
 }
 
 function wire(

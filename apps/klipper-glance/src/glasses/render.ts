@@ -1,5 +1,7 @@
 import {
   CreateStartUpPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -9,8 +11,9 @@ import {
 import type { ScreenView } from "./screen";
 import type { Layout, PrintView } from "./views";
 import type { Bitmap } from "./gfx";
-import { ImageLink, imageContainer, type ImageSlot } from "./images";
+import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, type ImageSlot } from "./images";
 import { CURVE_HEIGHT, CURVE_WIDTH, RING_SIZE } from "./charts";
+import { VIEW_HEIGHT, VIEW_WIDTH } from "./layers";
 
 /**
  * Renders a view onto the G2.
@@ -21,7 +24,9 @@ import { CURVE_HEIGHT, CURVE_WIDTH, RING_SIZE } from "./charts";
  *    text beside it, the 288 x 64 nozzle curve below the ring with the two
  *    temperature lines next to it, footer at the bottom;
  *  - "plain": header, seven body rows, footer — everything that is not a print
- *    in progress, and the control screen.
+ *    in progress, and the control screen;
+ *  - "model": header, the 576 x 216 layer view as four 288 x 108 image tiles,
+ *    footer (the header captures input here).
  *
  * `createStartUpPageContainer` runs exactly once. A change of layout is the
  * only reason to `rebuildPageContainer`; everything else goes through
@@ -44,10 +49,23 @@ interface TextSpec {
 
 const HEADER: TextSpec = { id: 1, name: "header", x: 0, y: 0, width: SCREEN_WIDTH, height: 32 };
 const FOOTER: TextSpec = { id: 3, name: "footer", x: 0, y: 252, width: SCREEN_WIDTH, height: 34 };
-const BODY: Readonly<Record<Layout, TextSpec>> = {
+const BODY: Readonly<Record<Exclude<Layout, "model">, TextSpec>> = {
   plain: { id: 2, name: "body", x: 0, y: 36, width: SCREEN_WIDTH, height: 214 },
   print: { id: 2, name: "body", x: RING_SIZE + 8, y: 36, width: SCREEN_WIDTH - RING_SIZE - 8, height: RING_SIZE + 2 },
 };
+/** Model layout: header and footer only, the picture in between. */
+const MODEL_HEADER: TextSpec = { id: 1, name: "header", x: 0, y: 0, width: SCREEN_WIDTH, height: 32 };
+const MODEL_TOP = 34;
+export const MODEL_TILES: readonly ImageSlot[] = [0, 1, 2, 3].map((i) => ({
+  id: 10 + i,
+  name: "tile" + i,
+  x: (i % 2) * (VIEW_WIDTH / 2),
+  y: MODEL_TOP + Math.floor(i / 2) * (VIEW_HEIGHT / 2),
+  width: VIEW_WIDTH / 2,
+  height: VIEW_HEIGHT / 2,
+  z: 10 + i,
+}));
+
 const TEMPS: TextSpec = { id: 6, name: "temps", x: CURVE_WIDTH + 8, y: 186, width: SCREEN_WIDTH - CURVE_WIDTH - 8, height: CURVE_HEIGHT };
 
 export const RING: ImageSlot = { id: 4, name: "ring", x: 0, y: 36, width: RING_SIZE, height: RING_SIZE, z: 4 };
@@ -56,6 +74,8 @@ export const CURVE: ImageSlot = { id: 5, name: "curve", x: 0, y: 186, width: CUR
 export interface Frames {
   readonly ring: Bitmap;
   readonly curve: Bitmap;
+  /** The four layer-view tiles (model layout only). */
+  readonly tiles?: readonly Bitmap[] | undefined;
 }
 
 export interface RenderResult {
@@ -66,7 +86,26 @@ export interface RenderResult {
 
 const link = new ImageLink();
 
-function pageParts(view: ScreenView | PrintView, layout: Layout) {
+/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec { readonly items: readonly MenuItemSpec[] }
+
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Quiet Hub. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({
+    menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })),
+  });
+}
+
+function pageParts(view: ScreenView | PrintView, layout: Layout, menu: MenuSpec | null) {
+  const menuObject = buildMenu(menu);
+  const withMenu = <T extends object>(parts: T): T & { menuObject?: MenuContainerProperty } =>
+    menuObject === undefined ? parts : { ...parts, menuObject };
+  if (layout === "model") {
+    const texts = [text(MODEL_HEADER, view.header, 1, true), text(FOOTER, view.footer, 3, false)];
+    return withMenu({ containerTotalNum: texts.length + MODEL_TILES.length, textObject: texts, imageObject: MODEL_TILES.map(imageContainer) });
+  }
   const print = layout === "print";
   const temps = print && "temps" in view ? view.temps.join(NL) : "";
   const texts = [
@@ -76,15 +115,15 @@ function pageParts(view: ScreenView | PrintView, layout: Layout) {
     text(FOOTER, view.footer, 3, false),
     ...(print ? [text(TEMPS, temps, 6, false)] : []),
   ];
-  return {
+  return withMenu({
     containerTotalNum: texts.length + (print ? 2 : 0),
     textObject: texts,
     ...(print ? { imageObject: [imageContainer(RING), imageContainer(CURVE)] } : {}),
-  };
+  });
 }
 
-export function buildPage(view: ScreenView | PrintView, layout: Layout = "plain"): CreateStartUpPageContainer {
-  return new CreateStartUpPageContainer(pageParts(view, layout));
+export function buildPage(view: ScreenView | PrintView, layout: Layout = "plain", menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer(pageParts(view, layout, menu));
 }
 
 function text(spec: TextSpec, content: string, zOrderIndex: number, captureEvents: boolean): TextContainerProperty {
@@ -112,22 +151,23 @@ function text(spec: TextSpec, content: string, zOrderIndex: number, captureEvent
  */
 const started = new WeakSet<EvenAppBridge>();
 
-async function installPage(bridge: EvenAppBridge, view: ScreenView | PrintView, layout: Layout, frames: Frames): Promise<RenderResult> {
-  const page = buildPage(view, layout);
+async function installPage(bridge: EvenAppBridge, view: ScreenView | PrintView, layout: Layout, frames: Frames, menu: MenuSpec | null = null): Promise<RenderResult> {
+  // A rebuild without the menu would clear it, so every page carries it again.
+  const page = buildPage(view, layout, menu);
   sentLength.clear();
   link.reset();
   try {
     if (!started.has(bridge)) {
       try {
-        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       } catch {
         // Expected on current firmware; the creation below is the real path.
       }
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
       started.add(bridge);
     } else {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       // A refused rebuild leaves the old page in place.
       if (!ok) return { ok: false, reason: "rebuild refused" };
     }
@@ -161,6 +201,15 @@ export const renderStats = { upgrades: 0 };
 
 /** Sends the ring and the curve when they changed (the plain layout has neither). */
 async function pushImages(bridge: EvenAppBridge, layout: Layout, frames: Frames): Promise<RenderResult> {
+  if (layout === "model") {
+    for (const [index, slot] of MODEL_TILES.entries()) {
+      const tile = frames.tiles?.[index];
+      if (!tile) continue;
+      const sent = await link.push(bridge, slot, tile);
+      if (!sent.ok) return { ok: false, reason: sent.reason ?? "image failed" };
+    }
+    return { ok: true };
+  }
   if (layout !== "print") return { ok: true };
   for (const [slot, frame] of [[RING, frames.ring], [CURVE, frames.curve]] as const) {
     const sent = await link.push(bridge, slot, frame);
@@ -178,7 +227,10 @@ export async function updatePage(
   previous: ScreenView | PrintView | null = null,
 ): Promise<RenderResult> {
   const temps = (v: ScreenView | PrintView | null): string | undefined => (v === null ? undefined : "temps" in v ? v.temps.join(NL) : "");
-  const updates: Array<[TextSpec, string, string | undefined]> = [
+  const updates: Array<[TextSpec, string, string | undefined]> = layout === "model" ? [
+    [MODEL_HEADER, view.header, previous?.header],
+    [FOOTER, view.footer, previous?.footer],
+  ] : [
     [HEADER, view.header, previous?.header],
     [BODY[layout], view.body.join(NL), previous?.body.join(NL)],
     [FOOTER, view.footer, previous?.footer],
@@ -189,11 +241,11 @@ export async function updatePage(
     for (const [spec, content, before] of updates) {
       if (before !== undefined && before === content) continue;
       renderStats.upgrades += 1;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
-      }));
+      })), TEXT_CALL_MS, "text " + spec.name);
     }
     return await pushImages(bridge, layout, frames);
   } catch (error) {

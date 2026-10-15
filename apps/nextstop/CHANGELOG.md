@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.7.3] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks im Menü kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein Menü mehr; Menücode und `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Die Abfahrtsliste endet wieder mit dem Eintrag „Hilfe“: Wischen bis ganz unten, Tippen öffnet die Hilfe, Tippen oder 2× schließt sie.
+- Halten in der Begleitung merkt „Fahrt abbrechen“ vor (wie vorher das Menü „Begleitung beenden“): ein einzelnes Tippen innerhalb von 4 s beendet die Begleitung, Wischen, 2×, ein zweites Halten oder 4 s ohne Eingabe brechen ab. Halten auf der Abfahrtstafel sagt weiter das Ziel.
+- Hilfetexte der Brille (de/en) und die Hinweise am Handy („Route planen“ jetzt: Halten und Ziel sagen, 2× in der Aufnahme öffnet die Zielliste) beschreiben wieder die Gesten statt des Menüs.
+- Nur mit dem Menü erreichbar, ohne Gesten-Ersatz: „Andere Haltestelle“, „Neu laden“ (die Tafel lädt von selbst nach), „Neu suchen“ bei fertiger Verbindungsliste, „Als Favorit merken“ (Favoriten legst du am Handy an).
+- Tests: Seiten ohne `menuObject`, Hilfe als letzte Listenzeile, Halten in der Begleitung merkt das Abbrechen vor und ein Tippen führt es aus.
+
+## [0.7.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach wird die Seite neu aufgebaut.
+
+## [0.7.0] — 2026-10-14
+
+### Changed (QIS v1.2)
+
+- Conforms to QIS v1.2 (`docs/BEDIENSTANDARD.md`, audit 2026-10-14).
+- Help is only in the side menu: the last list row "Hilfe" is gone (swiping stops at the last departure), and every page menu (board, goals, connections, voice, guide) now carries "Hilfe". Closing the help returns to the page it was opened from, so a running guide or a plan is no longer dropped by a look at the help; on the help page the menu entry reads "Schließen".
+- The menu entries "Neu suchen" (connections) and "Als Favorit merken" (voice) are armed like every risky action: the first click changes the footer to `Nochmal tippen = <Aktion> · 2× = abbrechen`, a second click on the same entry or a single tap within 4 s carries it out; swipe, 2× or 4 s without input cancel. "Begleitung beenden" takes a second menu click as confirmation, too.
+- Glossary: the armed row for a followed ride / guide says `Nochmal tippen = Fahrt abbrechen · 2× = abbrechen` instead of "beenden"; the help line was changed likewise.
+
+## [0.6.0] — 2026-10-14
+
+### Changed (QIS v1)
+
+- Conforms to the Quietglass Interaction Standard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Safety: a single tap no longer ends a running ride, and a double tap no longer ends the guide. Ending a followed ride, ending the guide (menu entry "Begleitung beenden") and "search again" after a missed bus are **armed**: the first action changes the footer to `Nochmal tippen = beenden · Wischen/2× = abbrechen`, a second single tap within 4 s carries it out; swipe, hold, 2× or 4 s without input cancel. 2× is only back (help -> board, connections -> goals -> board); on the departure board and during a guide it opens the system exit dialog (which can be declined). The menu entry "Neu laden" no longer drops a followed ride.
+- Footers come from one `footer()` helper in the order Tippen, Wischen, Halten, 2× and end in `2× = zurück` or `2× = Ende` (swipe part dropped first when the row is too wide, then the page counter, then the hold). Pages with a header read `NEXTSTOP · state`. "doppeltippen"/"tippen oder doppeltippen" are gone from the glasses; English uses Tap/Swipe/Hold/2×.
+- Help page: "Hilfe" is the last entry of the departure list (one swipe past the last departure) and an entry of the board menu; it lists the four gestures plus what the app needs.
+- Swipe direction: new switch "Wischrichtung umkehren" on the phone (tab "Brille", `invertScroll`, off by default) is honoured by every list; it used to be fixed to off.
+- Phone tabs in the fixed order Haltestellen · Ziele · Brille · Verbindung · Mehr: the language moved to "Brille", the source and the addresses to the new tab "Verbindung".
+
+## [0.5.1] — 2026-10-13
+
+- Handy-Seite in Tabs statt einer langen Spalte: Haltestellen · Ziele · Brille · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip mit der gewählten Quelle oben. „Erweitert“ ist jetzt eine normale Karte im Tab „Mehr“.
+
+## [0.5.0] — 2026-10-13
+
+- **Live-Spracherkennung** beim Ziel per Sprache (privater Build, `VITE_LIVE_STT_URL`): die erkannten Wörter erscheinen schon beim Sprechen auf der Brille (neueste unten), beim Loslassen wird der Live-Text sofort genommen. Verbindet der Live-Server nicht binnen 3 s oder bricht ab, geht die Aufnahme wie bisher an den Sprachserver (`VITE_STT_URL`) – es geht nichts verloren.
+- Aufnahme-Sicherheitsgrenze 30 s statt 8 s.
+
 ## [0.4.2] — 2026-10-13
 
 ### Fixed

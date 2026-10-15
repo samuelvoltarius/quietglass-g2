@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.7.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks im Menü kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein Menü mehr; Menücode und `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Wischen öffnet wieder die Hilfe (nochmal wischen, Tippen, Halten oder 2× schließen sie; Wischen aktualisiert dabei die Motte wie vorher). Wischen bricht außerdem eine offene Rückfrage ab.
+- Halten merkt wieder „Neue Quest“ vor (sie ersetzt eine offene): ein einzelnes Tippen innerhalb von 4 s holt sie, Wischen, 2×, ein zweites Halten oder 4 s ohne Eingabe brechen ab.
+- Fußzeile „Tippen = Foto · Wischen = Hilfe · Halten = Quest · 2× = Ende“, Hilfetexte der Brille (de/en) und Hinweise am Handy beschreiben wieder die Gesten statt des Menüs. Die Versionsangabe in „Mehr“ am Handy stimmt wieder (stand noch auf 0.7.0).
+- Tests: Seiten ohne `menuObject`, Wischen öffnet die Hilfe, Halten merkt die neue Quest vor und ein Tippen holt sie.
+
+## [0.7.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach wird die Seite neu aufgebaut.
+
+## [0.7.0] — 2026-10-14
+
+Bedienung nach QIS v1.2 (Audit 14.10.2026).
+
+### Geändert (QIS v1.2)
+
+- **Seitenmenü der Brille** (`menuObject`, Klicks über `menuItemClickEvent`; Vorlage Babel Glass): `Hilfe` und `Neue Quest`. Die Hilfe hängt nicht mehr an Wischen. „Neue Quest“ (früher Halten) ist im Menü und bleibt scharf geschaltet: der erste Klick merkt vor („Nochmal tippen = neue Quest · Wischen/2× = abbrechen“), ein einzelnes Tippen oder ein zweiter Klick auf denselben Menüpunkt innerhalb von 4 s holt sie, Wischen, 2× oder 4 s ohne Eingabe brechen ab.
+- **Wischen tut nichts mehr** außer eine offene Rückfrage abzubrechen oder die Hilfe zu schließen; es öffnet keine Hilfe und holt keine Daten. Halten ist dem Menü der Brille überlassen.
+- **Foto senden bleibt Tippen:** der Auslöser der Handy-Kamera ist die Bestätigung, gesendet wird erst danach.
+- **2× während der Aufnahme** öffnet die Systemfrage zum Beenden, ohne die Aufnahme zu beenden. Wird das Beenden bestätigt, wird ein danach ausgelöstes Foto nicht mehr gesendet; wird abgebrochen, läuft die Aufnahme normal weiter und das Foto wird nach dem Auslösen gesendet.
+- **Ohne Fachwörter auf der Brille (v1.2 Nr. 8):** „HTTP 500“ und Ausnahmetexte erscheinen nicht mehr; die Brille sagt „LUMEN meldet einen Fehler“. Die technische Meldung steht im Handy-Tab „Mehr“.
+- **Erster Start = Demo (v1.2 Nr. 7):** Ohne gespeicherte Adresse (und ohne eingebauten Server) zeigt die App Beispieldaten mit der Zeile „Demo · Verbindung am Handy einrichten“, schickt nichts ins Netz und öffnet die Kamera nicht (Tippen zeigt, wie eine erledigte Quest aussieht, „Neue Quest“ wechselt die Beispiel-Quest). Sobald am Handy eine Adresse gespeichert wird, endet die Demo. Am Handy trägt der Chip „Demo“ und ein Hinweis zum Tab „Verbindung“. `?demo=1` bleibt für Vorführungen.
+- Fußzeile `Halten = Menü` statt `Wischen = Hilfe · Halten = Quest`; Hilfeseite und Handy-Tabelle beschreiben das neue Verhalten. Sprachwechsel am Handy baut die Brillenseite neu auf (das Menü trägt die Sprache).
+
+## [0.6.0] — 2026-10-14
+
+### Geändert (QIS v1)
+
+- Bedienung nach dem Quietglass-Bedienstandard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- **Sicherheit:** Eine neue Quest ersetzt die offene. Halten ersetzt sie nicht mehr selbst (vorher: zweimal Halten), es fragt nur („Nochmal tippen = neue Quest · Wischen/2× = abbrechen“); ein einzelnes Tippen innerhalb von 4 s holt die Quest, Wischen, 2×, nochmal Halten oder 4 s ohne Eingabe brechen ab. Ein Tippen unmittelbar nach dem Halten (unter 0,4 s, das Loslassen selbst) zählt nicht. Auch ohne offene Quest fragt Halten erst nach.
+- Wischen holt keine Daten mehr nebenbei und ändert nichts: es öffnet die Hilfeseite (nochmal Wischen schließt sie und aktualisiert die Motte).
+- 2× geht eine Ebene zurück (Hilfe schließen, Frage abbrechen, Ergebnis verlassen), ganz außen öffnet es die Systemfrage zum Beenden; während das Foto gesendet wird, tut 2× nichts. Das Foto selbst wird erst nach dem Auslösen der Handy-Kamera gesendet; Tippen öffnet nur die Kamera.
+- Kopfzeilen `LUMEN · Zustand` auf allen Seiten, Fußzeilen über den gemeinsamen `footer()`-Helfer in der Reihenfolge Tippen/Wischen/Halten/2× mit `2× = Ende` bzw. `2× = zurück`. Lichtbalken, Serie und Lichtfenster („Gold in 24 min“) stehen jetzt als letzte Zeile im Text statt in der Fußzeile.
+- Neue Hilfeseite (Wischen) mit den Gesten und dem, was die App braucht. Es gibt keine Liste, also gilt `invertScroll` nur noch der Form halber; der Schalter ist jetzt im Handy-Tab „Brille“ und wirkt sofort.
+- Handy-Seite: Tabs `Motte · Brille · Verbindung · Mehr`. „Brille“ hat Wischrichtung und Sprache, „Verbindung“ Adresse und Anmeldung, „Mehr“ Bedienung, Version und Datenschutz. „2×“ statt „Doppeltippen“.
+
+## [0.5.2] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Motte · Lumen · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip „verbunden/offline“ oben. Die Sprachwahl steht jetzt unter „Mehr“.
+
 ## [0.5.1] — 2026-10-13
 
 ### Changed

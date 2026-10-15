@@ -103,3 +103,34 @@ button.remove {
 .scripts label { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text); }
 
 .notice { margin: 0 0 16px; padding: 10px 14px; background: var(--card); border: 1px solid var(--accent); border-radius: 10px; font-size: 14px; }
+
+/* ---- Tabs instead of one long column (13.10.2026) ---- */
+body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+.brand.bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.chip {
+  max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); background: var(--card);
+}
+.chip::before { content: "●"; margin-right: 6px; color: var(--muted); }
+.chip.on { color: var(--text); }
+.chip.on::before { color: var(--accent); }
+.tab[hidden] { display: none !important; }
+.tab { animation: tab-in 0.18s ease-out; }
+@keyframes tab-in { from { opacity: 0; transform: translateY(4px); } }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+}
+.tabbar button {
+  all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 0; border-radius: 10px; font-size: 12px; color: var(--muted);
+}
+.tabbar button span { font-size: 20px; line-height: 1; filter: grayscale(1); opacity: 0.7; }
+.tabbar button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.tabbar button.on span { filter: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .tab { animation: none; } }

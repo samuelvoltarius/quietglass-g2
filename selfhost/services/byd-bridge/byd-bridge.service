@@ -1,0 +1,23 @@
+# BYD Glass bridge: BYD telemetry (Overdrive MQTT) + a few checked commands for the G2.
+# systemd --user unit (runs as the same user as the broker / pybyd-mqtt bridge):
+#   mkdir -p ~/byd-bridge
+#   cp byd_bridge.py ~/byd-bridge/
+#   install -m 600 .env.example ~/byd-bridge/.env        # then fill it in
+#   cp byd-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now byd-bridge
+#   tailscale serve --bg --https=8471 http://127.0.0.1:8472   # never "serve reset"
+[Unit]
+Description=BYD Glass bridge (BYD telemetry + checked commands for the Even G2)
+After=network-online.target
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=%h/byd-bridge/.env
+ExecStart=/usr/bin/python3 %h/byd-bridge/byd_bridge.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -9,10 +9,10 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   waitForEvenAppBridge: async () => harness.bridge,
 }));
 
-const CLICK = 0, UP = 1, DOWN = 2, DOUBLE = 3;
+const CLICK = 0, UP = 1, DOWN = 2, DOUBLE = 3, HOLD = 9;
 const SETTINGS = "quietglass.starglass.v1";
 
-type Page = { textObject?: Array<{ containerID?: number; content?: string }>; imageObject?: unknown[] };
+type Page = { textObject?: Array<{ containerID?: number; content?: string }>; imageObject?: unknown[]; menuObject?: { menuItems?: Array<{ itemName?: string; itemID?: number }> } };
 
 function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage?: boolean } = {}) {
   let handler: ((event: unknown) => void) | undefined;
@@ -42,6 +42,8 @@ function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage
     body: () => screen.get(2) ?? "",
     footer: () => screen.get(3) ?? "",
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
+    menu: (itemID: number) => handler?.({ menuItemClickEvent: { itemID } }),
+    menus: () => pages.map((page) => (page.menuObject?.menuItems ?? []).map((item) => item.itemID + ":" + item.itemName)),
     ready: () => handler !== undefined,
   };
 }
@@ -103,11 +105,17 @@ describe("Star Glass lifecycle", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  it("first run: explains the setup in German (account in Austria) and fetches nothing", async () => {
+  it("first run: starts in demo with the hint line, explains the setup on the phone and fetches nothing", async () => {
     const fake = fakeGlasses();
     const root = await boot(fake);
-    await vi.waitFor(() => expect(fake.body()).toContain("Noch keine Bridge eingerichtet."));
+    // QIS v1.2 no. 7: no empty setup page, a demo night with the hint to set up the connection.
+    await vi.waitFor(() => expect(fake.body()).toContain("Demo · Verbindung am Handy einrichten"));
+    expect(fake.header()).toContain("DEMO");
     await vi.waitFor(() => expect(root.innerHTML).toContain("Erster Start"));
+    // The phone page is split into tabs, with the bar at the bottom.
+    expect(root.innerHTML).toContain('<nav class="tabbar"');
+    for (const tab of ["night", "weather", "glasses", "more"]) expect(root.innerHTML).toContain(`data-tab="${tab}"`);
+    expect(root.innerHTML).toContain("</span>Nacht</button>");
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
 
@@ -121,16 +129,16 @@ describe("Star Glass lifecycle", () => {
   it("one ignored rebuild, one create, then only rebuilds while swiping through the pages", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("ÜBERSICHT · läuft"));
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     expect(fake.bridge.rebuildPageContainer.mock.invocationCallOrder[0]).toBeLessThan(fake.bridge.createStartUpPageContainer.mock.invocationCallOrder[0]!);
-    const headers = ["GUIDING & FOKUS · läuft", "AUSRÜSTUNG · läuft", "LETZTES BILD · läuft", "ÜBERSICHT · läuft"];
+    const headers = ["STARGLASS · WETTER · läuft", "STARGLASS · GUIDING & FOKUS · läuft", "STARGLASS · AUSRÜSTUNG · läuft", "STARGLASS · LETZTES BILD · läuft", "STARGLASS · ÜBERSICHT · läuft"];
     for (const expected of headers) {
       fake.emit(DOWN);
       await vi.waitFor(() => expect(fake.header()).toBe(expected));
     }
     fake.emit(UP);
-    await vi.waitFor(() => expect(fake.header()).toBe("LETZTES BILD · läuft"));
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · LETZTES BILD · läuft"));
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     for (const page of fake.pages) expect((page.imageObject ?? []).length).toBeLessThanOrEqual(4);
   });
@@ -138,7 +146,7 @@ describe("Star Glass lifecycle", () => {
   it("the newest frame is fetched for the image page only, once per key", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("ÜBERSICHT · läuft"));
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
     expect(server.state.previews).toBe(0);
     fake.emit(UP);
     await vi.waitFor(() => expect(server.state.previews).toBe(1));
@@ -152,15 +160,85 @@ describe("Star Glass lifecycle", () => {
   it("stopping the sequence needs two taps", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("ÜBERSICHT · läuft"));
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.body()).toContain("> Sequenz anhalten"));
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Nochmal tippen = ANHALTEN bestätigen"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Nochmal tippen = anhalten · Wischen/2× = abbrechen"));
     expect(server.state.commands).toEqual([]);
     fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.commands).toEqual(["stop"]));
-    await vi.waitFor(() => expect(fake.header()).toBe("ÜBERSICHT · bereit"));
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · bereit"));
+  });
+
+  it("2× or a swipe cancels the armed stop and sends nothing; 2× then goes back", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("> Sequenz anhalten"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen = anhalten"));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = anwählen · Wischen = Zeile · 2× = zurück"));
+    expect(fake.body()).toContain("> Sequenz anhalten");
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen = anhalten"));
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = anwählen · Wischen = Zeile · 2× = zurück"));
+    expect(server.state.commands).toEqual([]);
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    expect(fake.exit.calls).toEqual([]);
+  });
+
+  it("the armed stop expires after 4 s", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("> Sequenz anhalten"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen = anhalten"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = anwählen · Wischen = Zeile · 2× = zurück"), { timeout: 5_500 });
+    expect(server.state.commands).toEqual([]);
+  });
+
+  it("a hold opens the help page; only 2× leaves it", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    fake.emit(HOLD);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · Hilfe"));
+    expect(fake.footer()).toBe("2× = zurück");
+    fake.emit(DOWN);
+    fake.emit(CLICK);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fake.header()).toBe("STARGLASS · Hilfe");
+    expect(server.state.commands).toEqual([]);
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    expect(fake.exit.calls).toEqual([]);
+  });
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.header()).not.toBe("STARGLASS · ÜBERSICHT · läuft"));
+    expect(fake.pages.length).toBeGreaterThan(0);
+    for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
+    expect(fake.menus().every((menu) => menu.length === 0)).toBe(true);
+  });
+
+  it("QIS v1.2: a bridge that answers with an error shows no HTTP code on the glasses; the phone keeps it", async () => {
+    server.fetchMock.mockImplementation(async () => new Response("{}", { status: 503 }));
+    const fake = fakeGlasses(configured());
+    const root = await boot(fake);
+    await vi.waitFor(() => expect(fake.body()).toContain("Bridge: Serverfehler"));
+    expect(fake.body() + fake.header() + fake.footer()).not.toMatch(/HTTP|503/);
+    await vi.waitFor(() => expect(root.innerHTML).toContain("HTTP 503"));
   });
 
   it("an unreachable bridge is named, not hidden", async () => {
@@ -168,18 +246,55 @@ describe("Star Glass lifecycle", () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Bridge: nicht erreichbar"));
-    expect(fake.header()).toBe("STAR GLASS · keine Verbindung");
+    expect(fake.header()).toBe("STARGLASS · keine Verbindung");
   });
 
   it("comes back on the same page after a restart (phone locked, app unloaded)", async () => {
     const first = fakeGlasses(configured());
     await boot(first);
-    await vi.waitFor(() => expect(first.header()).toBe("ÜBERSICHT · läuft"));
+    await vi.waitFor(() => expect(first.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
     first.emit(DOWN);
-    await vi.waitFor(() => expect(first.header()).toBe("GUIDING & FOKUS · läuft"));
+    first.emit(DOWN);
+    await vi.waitFor(() => expect(first.header()).toBe("STARGLASS · GUIDING & FOKUS · läuft"));
     const second = fakeGlasses(Object.fromEntries(first.storage));
     await boot(second);
-    await vi.waitFor(() => expect(second.header()).toBe("GUIDING & FOKUS · läuft"));
+    await vi.waitFor(() => expect(second.header()).toBe("STARGLASS · GUIDING & FOKUS · läuft"));
+  });
+
+  it("fetches the forecast for N.I.N.A.'s site (rounded) and pops a cloud warning up over the page", async () => {
+    server.state.status = { ...STATUS, site: { lat: 47.8123, lon: 13.0456 } };
+    const asked: URL[] = [];
+    const bridgeFetch = server.fetchMock.getMockImplementation()!;
+    server.fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      if (url.hostname !== "api.open-meteo.com") return bridgeFetch(input, init);
+      asked.push(url);
+      const start = Math.floor(Date.now() / 3_600_000) * 3600 - 3600;
+      const time = Array.from({ length: 15 }, (_, i) => start + i * 3600);
+      const all = (v: number): number[] => time.map(() => v);
+      return new Response(JSON.stringify({ hourly: {
+        time, cloud_cover: all(90), cloud_cover_low: all(80), cloud_cover_mid: all(50), cloud_cover_high: all(20), precipitation_probability: all(5),
+        precipitation: all(0), relative_humidity_2m: all(70), dew_point_2m: all(1), temperature_2m: all(8), wind_speed_10m: all(5), wind_gusts_10m: all(9),
+      } }));
+    });
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · Bewölkt: 90 %"));
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.searchParams.get("latitude")).toBe("47.81");
+    expect(asked[0]!.searchParams.get("longitude")).toBe("13.05");
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.body()).toContain("Bewölkt, kein Aufklaren"));
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.some((call) => call[0].containerName === "clouds")).toBe(true));
+  });
+
+  it("without a site, coordinates or phone location the weather page asks for a location and nothing is fetched", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("STARGLASS · ÜBERSICHT · läuft"));
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.body()).toContain("Kein Standort bekannt."));
+    expect(server.fetchMock.mock.calls.some((call) => String(call[0]).includes("open-meteo"))).toBe(false);
   });
 
   it("stops asking N.I.N.A. in the background and starts again on return", async () => {

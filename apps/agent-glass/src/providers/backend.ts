@@ -3,14 +3,21 @@ import type { AgentEvent, HistoryEntry, Session } from "../terminal/types";
 import type { ProviderKind, Settings } from "../storage/persist";
 import { HermesBackend } from "./hermes";
 import { OpenClawBackend } from "./openclaw";
+import type { SessionManager } from "../sessions/manage";
 
 export interface BackendCapabilities {
   readonly decisions: boolean;
+  /** The backend keeps a real list of sessions (false: one conversation only). */
   readonly sessions: boolean;
   readonly createSession: boolean;
 }
 
-export interface AgentBackend {
+/**
+ * `renameSession` / `deleteSession` (from SessionManager) are optional: only a
+ * backend that can really do it on the agent's side implements them. Without
+ * them the phone falls back to a local name and hiding (see sessions/manage.ts).
+ */
+export interface AgentBackend extends SessionManager {
   readonly kind: ProviderKind;
   readonly capabilities: BackendCapabilities;
   sessions(): Promise<readonly Session[]>;

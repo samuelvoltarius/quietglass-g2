@@ -185,7 +185,7 @@ describe("radar page with the map", () => {
     const session = createRadarSession({ position: () => SALZBURG, t, locale: () => "de", redraw: () => undefined, load: () => new Promise(() => undefined), now: () => Date.now() });
     session.start();
     expect(session.status()).toBe("loading");
-    expect(session.text().header).toBe("RADAR  Salzburg  Loading");
+    expect(session.text().header).toBe("RAINLENS · RADAR  Salzburg  Loading");
     const { keys, lane: target } = lane();
     session.requestImages(target);
     expect(keys).toHaveLength(4);

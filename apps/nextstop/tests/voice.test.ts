@@ -93,9 +93,9 @@ describe("the voice page", () => {
 
   it("shows the recording, the work, the hits and the errors", () => {
     expect(voiceView({ phase: "recording" }, NOW, "de")).toEqual({
-      header: "Spracheingabe · 14:29",
+      header: "NEXTSTOP · Spracheingabe · 14:29",
       body: ["● Aufnahme …", "loslassen = fertig", "", "Sag das Ziel, z. B. „Hauptbahnhof“."],
-      footer: "doppeltippen = abbrechen",
+      footer: "Halten = sprechen · 2× = zurück",
     });
     expect(voiceView({ phase: "working" }, NOW, "de").body).toEqual(["Verstehe …"]);
     const results = voiceView({
@@ -114,9 +114,9 @@ describe("the voice page", () => {
   });
 
   it("has a menu to keep the hit as a favourite", () => {
-    expect(menuFor("voice", "de").items.map((item) => item.label)).toEqual(["Als Favorit merken", "Ziele"]);
+    expect(menuFor("voice", "de").items.map((item) => item.label)).toEqual(["Als Favorit merken", "Ziele", "Hilfe"]);
     expect(MIN_VOICE_BYTES).toBe(12800);
-    expect(MAX_VOICE_MS).toBe(8000);
+    expect(MAX_VOICE_MS).toBe(30_000);
   });
 });
 
@@ -202,11 +202,11 @@ describe("saying a destination", () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de", () => Promise.reject(new Error("no network in the demo")));
     fake.menu(1);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
 
     fake.gesture(LONG_PRESS);
     await vi.waitFor(() => expect(fake.state.body).toContain("● Aufnahme …"));
-    expect(fake.state.header).toMatch(/^Spracheingabe/);
+    expect(fake.state.header).toMatch(/^NEXTSTOP · Spracheingabe/);
     fake.gesture(LONG_PRESS_RELEASE);
     await vi.waitFor(() => expect(fake.state.body).toContain("Verstanden: Hauptbahnhof Salzburg"));
     expect(fake.state.body).toContain("> Salzburg Hauptbahnhof");
@@ -223,11 +223,13 @@ describe("saying a destination", () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de&scene=voice", () => Promise.reject(new Error("no network")));
     await vi.waitFor(() => expect(fake.state.body).toContain("Verstanden:"));
-    fake.menu(9);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("gemerkt · tippen = Verbindungen"));
+    fake.menu(9); // QIS v1.2: the first click arms
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = merken · Wischen/2× = abbrechen"));
+    fake.menu(9); // the second click within 4 s keeps it
+    await vi.waitFor(() => expect(fake.state.footer).toBe("gemerkt · Tippen = los · 2× = zurück"));
     expect(fake.state.saved.size).toBe(0); // the demo never writes
     fake.gesture(DOUBLE);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
     expect(fake.state.body).toContain("Salzburg Hauptbahnhof");
   });
 
@@ -237,13 +239,13 @@ describe("saying a destination", () => {
     const fake = fakeBridge({ [PLACES_KEY]: serializePlaces(HOME) });
     await boot(fake, "", () => Promise.resolve(new Response("[]", { status: 200 })));
     fake.menu(1);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
     fake.gesture(LONG_PRESS);
     await vi.waitFor(() => expect(fake.state.body).toContain("Spracheingabe braucht einen eigenen Whisper-Server"));
     expect(fake.state.body).toContain("Erweitert");
     expect(fake.state.mic).toEqual([]);
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
   });
 
   it("records from the glasses, uploads the file, looks the words up and shows the hit", async () => {
@@ -257,7 +259,7 @@ describe("saying a destination", () => {
       return new Response("[]", { status: 200 });
     });
     fake.menu(1);
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
 
     fake.gesture(LONG_PRESS);
     await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
@@ -279,8 +281,11 @@ describe("saying a destination", () => {
     expect(fake.state.body).toContain("> Salzburg Hauptbahnhof");
 
     fake.menu(9);
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = merken · Wischen/2× = abbrechen"));
+    expect(fake.state.saved.get(PLACES_KEY) ?? "").not.toContain("Salzburg Hauptbahnhof"); // armed only
+    fake.gesture(0); // a single tap confirms as well
     await vi.waitFor(() => expect(fake.state.saved.get(PLACES_KEY) ?? "").toContain("Salzburg Hauptbahnhof"));
-    await vi.waitFor(() => expect(fake.state.footer).toBe("gemerkt · tippen = Verbindungen"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("gemerkt · Tippen = los · 2× = zurück"));
   });
 
   it("refuses a mis-press and reports a missing microphone", async () => {
@@ -288,7 +293,7 @@ describe("saying a destination", () => {
     const short = fakeBridge({ "quietglass.nextstop.v1": settings });
     await boot(short, "", async () => new Response("[]", { status: 200 }));
     short.menu(1);
-    await vi.waitFor(() => expect(short.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(short.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
     short.gesture(LONG_PRESS);
     await vi.waitFor(() => expect(short.state.mic).toEqual([true]));
     short.send({ audioEvent: { audioPcm: new Uint8Array(100) } });
@@ -299,7 +304,7 @@ describe("saying a destination", () => {
     const deaf = fakeBridge({ "quietglass.nextstop.v1": settings }, false);
     await boot(deaf, "", async () => new Response("[]", { status: 200 }));
     deaf.menu(1);
-    await vi.waitFor(() => expect(deaf.state.header).toMatch(/^Wohin\?/));
+    await vi.waitFor(() => expect(deaf.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
     deaf.gesture(LONG_PRESS);
     await vi.waitFor(() => expect(deaf.state.body).toContain("Mikrofon nicht verfügbar"));
   });
@@ -310,7 +315,7 @@ describe("saying a destination", () => {
       const fake = fakeBridge({ "quietglass.nextstop.v1": settings });
       await boot(fake, "", async (url) => reply(url));
       fake.menu(1);
-      await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\?/));
+      await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
       fake.gesture(LONG_PRESS);
       await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
       fake.send({ audioEvent: { audioPcm: new Uint8Array(32000) } });

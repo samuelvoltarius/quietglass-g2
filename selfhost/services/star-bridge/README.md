@@ -4,6 +4,8 @@ N.I.N.A. läuft auf dem Aufnahme-Rechner (Windows), das Handy kann überall sein
 Rechner mit N.I.N.A.**, liest das Plugin **Advanced API** (`http://127.0.0.1:1888/v2/api`) und liefert dem Handy
 einen kompakten Status plus ein kleines Vorschaubild. „Sequenz anhalten / fortsetzen“ ist **aus**, bis du
 `STAR_ALLOW_CONTROL=1` setzt – und wird ohne Anmeldung (`STAR_TAILSCALE_USERS` oder `TOKEN`) trotzdem verweigert.
+Wetterstation und Safety-Monitor aus N.I.N.A. gehen automatisch mit in den Status. Den Standort (für die
+Wettervorhersage in der App) gibt die Brücke nur mit `STAR_SITE=1` weiter, auf 2 Nachkommastellen (~1 km) gerundet.
 **Der Code liegt im Repo und wird nicht kopiert:**
 [`apps/star-glass/examples/star-bridge.mjs`](../../../apps/star-glass/examples/star-bridge.mjs)
 (Node ≥ 18, keine Abhängigkeiten). Zum Testen ohne Teleskop: `mock-nina.mjs` im selben Ordner.

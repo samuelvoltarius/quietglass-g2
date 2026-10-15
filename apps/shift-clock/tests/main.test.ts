@@ -40,6 +40,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
+    menu: (itemID: number) => (resetGestureDedupe(), handler?.({ menuItemClickEvent: { itemID } })),
     ready: () => handler !== undefined,
   };
 }
@@ -74,6 +75,7 @@ async function boot(fake: Fake): Promise<FakeRoot> {
   await import("../src/main");
   await vi.waitFor(() => expect(fake.ready()).toBe(true));
   await vi.waitFor(() => expect(root.renders).toBeGreaterThan(0));
+  await sleep(20); // let the first page finish, so a gesture right after boot is an update, not part of the first page
   return root;
 }
 
@@ -139,7 +141,7 @@ describe("shiftclock lifecycle", () => {
     fake.emit(0);
     fake.emit(0);
     await sleep(20);
-    expect(lastBody(fake)).toBe("0:00");
+    expect(lastBody(fake).split("\n")[0]).toBe("0:00");
   });
 
   it("regression: stops redrawing the running clock once the app was closed", async () => {
@@ -176,7 +178,8 @@ describe("shiftclock lifecycle", () => {
     const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 600_000 }));
     await boot(fake);
     await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(1));
-    fake.emit(0); // stop
+    fake.emit(0); // arm
+    fake.emit(0); // confirm: stop
     await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(2));
     const update = (fake.bridge.updateImageRawData.mock.calls[1] as unknown as [{ containerID?: number; containerName?: string }])[0];
     expect(update).toMatchObject({ containerID: 4, containerName: "day-bar" });
@@ -294,10 +297,140 @@ describe("shiftclock first run", () => {
     const fake = fakeBridge(data());
     await boot(fake);
     fake.emit(0); // open the picker on Client A
-    fake.emit(1); // up wraps to Cancel
+    fake.emit(1); // up wraps to the last row (Help), one more up: Cancel
+    fake.emit(1);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("> Cancel"));
     fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toBe("stopped"));
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("stopped"));
     expect(stored(fake).open.project).toBeNull();
+  });
+});
+
+describe("shiftclock QIS v1: stopping is armed, then confirmed", () => {
+  beforeEach(() => { resetGestureDedupe(); vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const running = () => fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+  const footerOf = (fake: Fake): string => {
+    const calls = fake.bridge.textContainerUpgrade.mock.calls
+      .map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0])
+      .filter((upgrade) => upgrade.containerID === 3);
+    return calls[calls.length - 1]?.content ?? "";
+  };
+
+  it("one tap only arms: the clock keeps running and the footer asks for a second tap", async () => {
+    const fake = running();
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("Tap again = stop · Swipe/2× = cancel"));
+    await sleep(30);
+    expect(fake.bridge.setLocalStorage.mock.calls.length).toBe(0); // nothing stopped, nothing saved
+  });
+
+  it("a second tap within the window stops and saves", async () => {
+    const fake = running();
+    await boot(fake);
+    fake.emit(0);
+    fake.emit(0);
+    await vi.waitFor(() => expect(stored(fake).open.project).toBeNull());
+    expect(stored(fake).entries).toHaveLength(1);
+  });
+
+  it("a swipe cancels the pending stop and the next tap only arms again", async () => {
+    const fake = running();
+    await boot(fake);
+    fake.emit(0);
+    fake.emit(1);
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("Tap = stop · Hold = help · 2× = exit"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("Tap again"));
+    expect(fake.bridge.setLocalStorage.mock.calls.length).toBe(0);
+  });
+
+  it("a hold never stops, and a double tap while armed cancels instead of leaving", async () => {
+    const fake = running();
+    await boot(fake);
+    fake.emit(9); // hold: the help page, certainly not a stop
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("2× = back"));
+    expect(fake.bridge.setLocalStorage.mock.calls.length).toBe(0);
+    fake.emit(3);
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("2× = exit"));
+    fake.emit(0); // arm
+    fake.emit(3); // cancel
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("Tap = stop · Hold = help · 2× = exit"));
+    await sleep(30);
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    expect(fake.bridge.setLocalStorage.mock.calls.length).toBe(0);
+  });
+
+  it("without a second tap the arming lapses after 4 s", async () => {
+    const fake = running();
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("Tap again"));
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("Tap = stop · Hold = help · 2× = exit"), { timeout: 5500 });
+    fake.emit(0);
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("Tap again"));
+    expect(fake.bridge.setLocalStorage.mock.calls.length).toBe(0);
+  }, 12_000);
+
+  it("the double tap is back inside the picker, exit only at the root", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0); // picker
+    fake.emit(3); // back to the root, not out
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("2× = exit"));
+    await sleep(30);
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+  });
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0); // picker
+    fake.emit(1); // wraps to the last row: Help
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Help"));
+    fake.emit(9); // hold in the picker does nothing (it has its own row)
+    await sleep(30);
+    expect(lastBody(fake)).toContain("> Help");
+    fake.emit(3); fake.emit(9); // back to the root, then hold
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("2× = back"));
+    for (const call of fake.bridge.createStartUpPageContainer.mock.calls as unknown as unknown[][]) {
+      expect((call[0] as { menuObject?: unknown }).menuObject).toBeUndefined();
+    }
+    for (const call of fake.bridge.rebuildPageContainer.mock.calls as unknown as unknown[][]) {
+      expect((call[0] as { menuObject?: unknown }).menuObject).toBeUndefined();
+    }
+  });
+
+  it("the help by gesture: the picker's Help row opens it, 2× goes back to the root, a tap there does not leave", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0); // picker
+    fake.emit(1); // Help row
+    fake.emit(0);
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("2× = back"));
+    expect(lastBody(fake)).toContain("Hold = this help");
+    fake.emit(0); fake.emit(2); // tap and swipe do nothing there
+    await sleep(30);
+    expect(footerOf(fake)).toBe("2× = back");
+    fake.emit(3);
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("2× = exit"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    expect(stored(fake).open.project).toBeNull();
+  });
+
+  it("an armed stop is cancelled by a hold (it never opens the help or stops), then the hold opens the help", async () => {
+    const fake = running();
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(footerOf(fake)).toContain("Tap again"));
+    fake.emit(9);
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("Tap = stop · Hold = help · 2× = exit"));
+    expect(fake.bridge.setLocalStorage.mock.calls.length).toBe(0);
+    fake.emit(9);
+    await vi.waitFor(() => expect(footerOf(fake)).toBe("2× = back"));
   });
 });

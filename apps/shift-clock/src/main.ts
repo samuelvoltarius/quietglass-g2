@@ -2,18 +2,27 @@ import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hu
 import {
   addEntry, isRunning, nextEntryId, startProject, stop, type ClockState,
 } from "./tracking/clock";
-import { gestureFromEvent } from "./input/gestures";
-import { buildView, CANCEL, dayBarFor, type ClockView } from "./glasses/view";
+import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
+import { ARM_MS, buildView, CANCEL, dayBarFor, HELP, type ClockView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendDayBar, updatePage } from "./glasses/render";
+import { createPage, sendDayBar, updatePage, type MenuSpec } from "./glasses/render";
 import { drawDayBar, sameDayBar, type DayBarState } from "./glasses/daybar";
 import { createImageSync } from "./glasses/image-sync";
 import { addProject, load, save, type ClockData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
-import { defaultProject } from "./messages";
+import { defaultProject, t } from "./messages";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
+
+/** Side-menu item ids (QIS v1.2: the help lives in the glasses' side menu). */
+const MENU_HELP = 1;
+/**
+ * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app and, while a page carries it, a hold opens it
+ * instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages carry no menu,
+ * a hold opens the help and the project picker has its "Help" row again.
+ */
+const SIDE_MENU = false;
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
@@ -29,6 +38,11 @@ async function boot(): Promise<void> {
   let clock: ClockState = data.open;
   /** Non-null while the user is picking a project on the glasses. */
   let selecting: string | null = null;
+  /** A stop is pending its confirming tap (QIS v1: arm, then confirm within ARM_MS). */
+  let armedUntil = 0;
+  let armTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The help page is open. */
+  let helpOpen = false;
   let lastView: ClockView | null = null;
   let pageReady = false;
   /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
@@ -38,8 +52,15 @@ async function boot(): Promise<void> {
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
 
+  /** Key of the side menu the page on the glasses carries; a different one (language) needs a rebuild. */
+  let pageMenuKey = "";
+  const menuSpec = (): MenuSpec => !SIDE_MENU ? { key: "none", items: [] } : ({ key: `help:${locale}`, items: [{ id: MENU_HELP, label: t(locale, "g.menu.help") }] });
+
+  const isArmed = (): boolean => armedUntil > Date.now() && isRunning(clock);
+  const disarm = (): void => { armedUntil = 0; clearTimeout(armTimer); armTimer = undefined; };
+
   const currentView = (): ClockView =>
-    buildView(clock, data.entries, { selecting, projects: data.projects, locale, targetHours: data.dailyTargetHours });
+    buildView(clock, data.entries, { selecting, projects: data.projects, locale, targetHours: data.dailyTargetHours, armed: isArmed(), help: helpOpen, holdHelp: !SIDE_MENU });
 
   /**
    * The day bar runs on its own lane: an image is a slow BLE transfer and must
@@ -59,14 +80,16 @@ async function boot(): Promise<void> {
   const drawOnce = async (): Promise<void> => {
     const view = currentView();
     // Checked on every redraw, but only sent when a five-minute step changed.
-    const created = !pageReady || rebuildWanted;
+    const menu = menuSpec();
+    const created = !pageReady || rebuildWanted || menu.key !== pageMenuKey;
     rebuildWanted = false;
     if (!created) dayBar.request(dayBarFor(clock, data.entries, data.dailyTargetHours));
     if (!created && sameView(lastView, view)) return;
 
-    const result = created ? await createPage(bridge, view) : await updatePage(bridge, view);
+    const result = created ? await createPage(bridge, view, menu) : await updatePage(bridge, view);
     if (result.ok) {
       pageReady = true;
+      if (created) pageMenuKey = menu.key;
       lastView = view;
       // A new page starts with an empty image container.
       if (created) { dayBar.reset(); dayBar.request(dayBarFor(clock, data.entries, data.dailyTargetHours)); }
@@ -120,7 +143,7 @@ async function boot(): Promise<void> {
   };
 
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; stopTicker(); },
+    onConfirmed: () => { closed = true; stopTicker(); disarm(); },
   }, "shiftclock");
   let leaving: Promise<void> | null = null;
 
@@ -151,11 +174,17 @@ async function boot(): Promise<void> {
     // is saved either way (the clock itself keeps running, as on a double tap).
     const step = lifecycleFromEvent(event);
     if (step === "foregroundEnter") { startTicker(); redrawFully(); return; }
-    if (step === "foregroundExit") { stopTicker(); persistInBackground(); return; }
+    if (step === "foregroundExit") { stopTicker(); disarm(); persistInBackground(); return; }
     if (isFinalExit(step)) {
       closed = true;
       stopTicker();
       persist().catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); });
+      return;
+    }
+    // QIS v1.2: the side menu opens the help; a click on it never touches the clock.
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      if (menuId === MENU_HELP) { disarm(); selecting = null; helpOpen = true; void draw(); }
       return;
     }
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
@@ -163,9 +192,31 @@ async function boot(): Promise<void> {
 
     const now = Date.now();
 
+    // Anything but the confirming tap cancels a pending stop: a swipe or a
+    // hold never carries it out, and a double tap goes back instead of out.
+    if (gesture.gesture !== "click" && isArmed()) {
+      disarm();
+      void draw();
+      return;
+    }
+
+    // The help page: only the double tap does something (back).
+    if (helpOpen) {
+      if (gesture.gesture === "doubleClick") { helpOpen = false; void draw(); }
+      return;
+    }
+
     switch (gesture.gesture) {
       case "click": {
         if (isRunning(clock)) {
+          if (!isArmed()) {
+            // First tap: arm. The timer restores the footer when the time runs out.
+            armedUntil = now + ARM_MS;
+            clearTimeout(armTimer);
+            armTimer = setTimeout(() => { disarm(); void draw(); }, ARM_MS);
+            break;
+          }
+          disarm();
           const result = stop(clock, now, () => nextEntryId(data.entries));
           clock = result.state;
           if (result.closed) data = { ...data, entries: addEntry(data.entries, result.closed) };
@@ -175,6 +226,10 @@ async function boot(): Promise<void> {
           data = addProject(data, defaultProject(locale));
         } else if (selecting === CANCEL) {
           selecting = null;
+          break;
+        } else if (selecting === HELP) {
+          selecting = null;
+          helpOpen = true;
           break;
         } else if (selecting !== null || data.projects.length === 1) {
           // A single project needs no picker: the tap starts it.
@@ -197,12 +252,20 @@ async function boot(): Promise<void> {
       case "scrollDown": {
         if (data.projects.length === 0) break;
         if (!isRunning(clock)) {
-          selecting = stepProject(data.projects, selecting, gesture.gesture === "scrollDown" ? 1 : -1);
+          selecting = stepProject(data.projects, selecting, gesture.gesture === "scrollDown" ? 1 : -1, !SIDE_MENU);
         }
         break;
       }
 
+      case "longPress":
+        // Without the side menu (SIDE_MENU): hold is the harmless secondary action, the help page (the picker has its own row).
+        if (SIDE_MENU || selecting !== null) return;
+        helpOpen = true;
+        break;
+
       case "doubleClick":
+        // Back one level; only on the root screen does it leave the app.
+        if (selecting !== null) { selecting = null; break; }
         close();
         return;
 
@@ -229,7 +292,7 @@ async function boot(): Promise<void> {
       data = next;
       clock = next.open;
       // A project removed on the phone cannot stay highlighted in the picker.
-      if (selecting !== null && selecting !== CANCEL && !data.projects.includes(selecting)) selecting = null;
+      if (selecting !== null && selecting !== CANCEL && selecting !== HELP && !data.projects.includes(selecting)) selecting = null;
       await save(bridge, next);
       await draw();
     },
@@ -248,8 +311,9 @@ function stepProject(
   projects: readonly string[],
   current: string | null,
   delta: number,
+  helpRow: boolean,
 ): string {
-  const choices = [...projects, CANCEL];
+  const choices = helpRow ? [...projects, CANCEL, HELP] : [...projects, CANCEL];
   const index = current === null ? -1 : choices.indexOf(current);
   const count = choices.length;
   const next = (((index + delta) % count) + count) % count;

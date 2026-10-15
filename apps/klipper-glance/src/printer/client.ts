@@ -10,7 +10,14 @@ export interface PrinterApi {
   readonly demo: boolean;
   status(): Promise<PrinterStatus>;
   command(command: Command): Promise<void>;
+  /** The slicer's preview picture (PNG) of a print file, or null when it has none. */
+  thumbnail?(file: string): Promise<Uint8Array | null>;
+  /** The print's layers for the layer view: the raw bridge JSON, "preparing", or null (none / older bridge). */
+  layers?(file: string): Promise<unknown | "preparing" | null>;
 }
+
+/** Previews larger than this are ignored (slicer previews are a few kB to ~100 kB). */
+export const MAX_THUMBNAIL_BYTES = 1_500_000;
 
 export type ApiErrorCode = "timeout" | "unreachable" | "auth" | "http" | "bad-reply" | "refused";
 
@@ -69,6 +76,45 @@ export function createClient(options: ClientOptions): PrinterApi {
         body: JSON.stringify({ command }),
       });
       if (reply["ok"] !== true) throw new ApiError("refused", 0, typeof reply["error"] === "string" ? reply["error"] : "");
+    },
+    layers: async (file) => {
+      if (!file) return null;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20_000);
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (options.token) headers["Authorization"] = "Bearer " + options.token;
+      try {
+        const response = await doFetch(base + "/api/printer/model?file=" + encodeURIComponent(file), {
+          headers, cache: "no-store", signal: controller.signal,
+        });
+        if (response.status === 202) return "preparing";
+        if (!response.ok) return null;
+        return await response.json();
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    // Best effort: any failure (older bridge, no preview, offline) means "no picture", never an error.
+    thumbnail: async (file) => {
+      if (!file) return null;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      const headers: Record<string, string> = { Accept: "image/png" };
+      if (options.token) headers["Authorization"] = "Bearer " + options.token;
+      try {
+        const response = await doFetch(base + "/api/printer/thumb?file=" + encodeURIComponent(file), {
+          headers, cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok || !(response.headers.get("content-type") ?? "").startsWith("image/png")) return null;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return bytes.length > 0 && bytes.length <= MAX_THUMBNAIL_BYTES ? bytes : null;
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 }

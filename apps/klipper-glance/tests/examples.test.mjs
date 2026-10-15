@@ -53,6 +53,46 @@ describe("the Klipper Glance bridge example", () => {
     expect(typeof status.progress).toBe("number");
   }, 15000);
 
+  it("serves the slicer preview of the current file, and nothing for unknown or unsafe names", async () => {
+    const { bridge } = await printerAndBridge({}, cleanup);
+    const reply = await fetch(bridge.base + "/api/printer/thumb?file=bracket_v3.gcode");
+    expect(reply.status).toBe(200);
+    expect(reply.headers.get("content-type")).toBe("image/png");
+    const bytes = new Uint8Array(await reply.arrayBuffer());
+    expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect((await fetch(bridge.base + "/api/printer/thumb?file=other.gcode")).status).toBe(404);
+    expect((await fetch(bridge.base + "/api/printer/thumb?file=" + encodeURIComponent("../moonraker.conf"))).status).toBe(404);
+    expect((await fetch(bridge.base + "/api/printer/thumb")).status).toBe(404);
+  }, 15000);
+
+  it("reports the active Spoolman spool and the nozzle height", async () => {
+    const { bridge } = await printerAndBridge({}, cleanup);
+    const status = await (await fetch(bridge.base + "/api/printer")).json();
+    expect(status.spool).toEqual({ id: 7, material: "PLA", vendor: "Prusament", name: "Galaxy Black", grams: 412, meters: 138.3 });
+    expect(typeof status.z).toBe("number");
+  }, 15000);
+
+  it("turns the G-code into layers for the layer view", async () => {
+    const { bridge } = await printerAndBridge({}, cleanup);
+    const url = bridge.base + "/api/printer/model?file=bracket_v3.gcode";
+    let reply = await fetch(url);
+    expect(reply.status).toBe(202);
+    for (let i = 0; i < 50 && reply.status === 202; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      reply = await fetch(url);
+    }
+    expect(reply.status).toBe(200);
+    const model = await reply.json();
+    expect(model.layersTotal).toBe(20);
+    expect(model.z[0]).toBe(0.2);
+    expect(model.z[model.z.length - 1]).toBe(4);
+    expect(model.bounds).toEqual([100, 100, 0.2, 120, 120, 4]);
+    const ints = new Int16Array(Uint8Array.from(Buffer.from(model.segs, "base64")).buffer);
+    expect(ints.length).toBe(20 * 4 * 4);
+    expect([...ints.slice(0, 4)]).toEqual([1000, 1000, 1200, 1000]);
+    expect((await fetch(bridge.base + "/api/printer/model?file=../x.gcode")).status).toBe(404);
+  }, 15000);
+
   it("refuses control unless KL_ALLOW_CONTROL=1", async () => {
     const { printer, bridge } = await printerAndBridge({}, cleanup);
     const reply = await command(bridge.base, "cancel");

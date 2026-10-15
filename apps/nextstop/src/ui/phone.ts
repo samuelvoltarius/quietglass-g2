@@ -42,6 +42,23 @@ export interface PhoneUiPorts {
   isDemo?(): boolean;
 }
 
+/** The page is split into tabs instead of one long column. */
+const TAB_KEY = "quietglass.nextstop.tab";
+
+function readTab(ids: readonly string[]): string {
+  try { const v = localStorage.getItem(TAB_KEY); return ids.includes(v ?? "") ? v! : "stops"; } catch { return "stops"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -52,6 +69,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   let query = "";
   let results: readonly GeoResult[] = [];
   let searchNote = "";
+  let tab = "";
 
   const statusText = (): string => {
     const lang = locale();
@@ -193,26 +211,40 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const x = (key: string, vars: Record<string, string | number> = {}): string => t(lang, key, vars);
     if (document.documentElement) document.documentElement.lang = lang;
 
+    const hasPlaces = Boolean(ports.getPlaces && ports.setPlaces);
+    const tabs = [
+      { id: "stops", icon: "🚏", key: "p.tabStops" },
+      ...(hasPlaces ? [{ id: "goals", icon: "🎯", key: "p.tabGoals" }] : []),
+      { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+      { id: "connection", icon: "🔌", key: "p.tabConnection" },
+      { id: "more", icon: "⚙️", key: "p.tabMore" },
+    ];
+    const ids = tabs.map((entry) => entry.id);
+    if (!ids.includes(tab)) tab = readTab(ids);
+
     root.innerHTML = `
-      <div class="brand"><span class="brand-mark">Quietglass</span> NextStop</div>
-      <div class="card compact">${languageSelect(lang)}</div>
+      <header class="brand bar">
+        <div><span class="brand-mark">Quietglass</span><h1>NextStop</h1></div>
+        <span class="chip on">${x(settings.backend === "oebb" ? "p.chipOebb" : "p.chipMotis")}</span>
+      </header>
+
+      <div class="tab" data-tab="stops">
       <p class="next" id="next"></p>
-
-      ${ports.getPlaces && ports.setPlaces ? placesCard(lang) : ""}
-
-      <div class="card">
-        <label for="backend">${x("p.sourceLabel")}</label>
-        <select id="backend">
-          <option value="motis">${x("p.sourceMotis")}</option>
-          <option value="oebb">${x("p.sourceOebb")}</option>
-        </select>
-        <p class="hint" id="backend-hint"></p>
-      </div>
 
       <div class="card">
         <label>${x("p.status")}</label>
         <p class="hint" id="status"></p>
         <button id="refresh-now" type="button">${x("p.refreshNow")}</button>
+      </div>
+      </div>
+
+      ${hasPlaces ? `<div class="tab" data-tab="goals">${placesCard(lang)}</div>` : ""}
+
+      <div class="tab" data-tab="glasses">
+      <div class="card compact">
+        ${languageSelect(lang)}
+        <label class="check"><input id="invert" type="checkbox" /> ${x("p.invert")}</label>
+        <p class="hint">${x("p.invertHint")}</p>
       </div>
 
       ${ports.getVoiceState ? `<div class="card">
@@ -233,9 +265,20 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           ${x("p.routeHowTo")}
         </p>
       </div>
+      </div>
 
-      <details class="card advanced" id="advanced">
-        <summary>${x("p.advanced")}</summary>
+      <div class="tab" data-tab="connection">
+      <div class="card">
+        <label for="backend">${x("p.sourceLabel")}</label>
+        <select id="backend">
+          <option value="motis">${x("p.sourceMotis")}</option>
+          <option value="oebb">${x("p.sourceOebb")}</option>
+        </select>
+        <p class="hint" id="backend-hint"></p>
+      </div>
+
+      <div class="card advanced" id="advanced">
+        <h2>${x("p.advanced")}</h2>
 
         <div id="oebb-card">
           <label for="oebb-url">${x("p.oebbUrl")}</label>
@@ -264,12 +307,29 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         <p class="hint">
           ${x("p.refreshHint")}
         </p>
-      </details>
+      </div>
 
+      </div>
+
+      <div class="tab" data-tab="more">
       <p class="credits">
         ${x("p.credits", { link: `<a href="https://transitous.org/sources/" target="_blank" rel="noopener">${x("p.creditsLink")}</a>` })}
       </p>
+      </div>
+
+      <nav class="tabbar" role="tablist">
+        ${tabs.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${x(key)}</button>`).join("")}
+      </nav>
     `;
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "stops";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
 
     const backend = root.querySelector<HTMLSelectElement>("#backend");
     const oebbUrl = root.querySelector<HTMLInputElement>("#oebb-url");
@@ -293,10 +353,6 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     // editing the one that is not in use and wondering why nothing changed.
     if (oebbCard) oebbCard.hidden = settings.backend !== "oebb";
     if (motisCard) motisCard.hidden = settings.backend !== "motis";
-    // Choosing ÖBB is only half the job until the add-on's address is set, so
-    // the drawer holding it opens by itself.
-    const advanced = root.querySelector<HTMLDetailsElement>("#advanced");
-    if (advanced) advanced.open = settings.backend === "oebb";
 
     if (backendHint) {
       backendHint.textContent = x(settings.backend === "oebb" ? "p.sourceHintOebb" : "p.sourceHintMotis");
@@ -304,6 +360,12 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
     updateStatus();
     bindPlaces(lang);
+
+    const invert = root.querySelector<HTMLInputElement>("#invert");
+    if (invert) {
+      invert.checked = settings.invertScroll;
+      invert.addEventListener("change", () => { void ports.setSettings({ ...ports.getSettings(), invertScroll: invert.checked }); });
+    }
 
     const announce = root.querySelector<HTMLInputElement>("#announce");
     if (announce) {

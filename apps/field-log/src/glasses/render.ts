@@ -1,5 +1,7 @@
 import {
   CreateStartUpPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -39,8 +41,22 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-export function buildPage(view: LogView): CreateStartUpPageContainer {
+/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec { readonly items: readonly MenuItemSpec[] }
+
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel Glass. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({
+    menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })),
+  });
+}
+
+export function buildPage(view: LogView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
   return new CreateStartUpPageContainer({
+    ...(menuObject === undefined ? {} : { menuObject }),
     containerTotalNum: 3,
     textObject: [
       text(CONTAINER.header, view.header, 1, false),
@@ -72,19 +88,37 @@ function text(
 }
 
 /**
+ * Every call into the glasses is bounded. Draws run one after another, so a
+ * single answer that never comes (a Bluetooth write lost on the way) used to
+ * freeze the display for good on whatever it showed last. A call that times
+ * out counts as failed: the caller marks the page broken and the next draw
+ * rebuilds it.
+ */
+export const PAGE_CALL_MS = 8_000;
+export const TEXT_CALL_MS = 5_000;
+export const IMAGE_CALL_MS = 10_000;
+
+function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Puts the page on the glasses: created once per bridge, every later call
  * (reconnect) rebuilds it. The caller resends all images afterwards.
  */
 const started = new WeakSet<object>();
 
-export async function createPage(bridge: EvenAppBridge, view: LogView): Promise<RenderResult> {
-  const page = buildPage(view);
+export async function createPage(bridge: EvenAppBridge, view: LogView, menu: MenuSpec | null = null): Promise<RenderResult> {
+  // A rebuild without the menu would clear it, so every rebuild supplies it again.
+  const page = buildPage(view, menu);
   sentLength.clear();
   // One creation per bridge, then only rebuilds: a rebuild before the first
   // creation or a second creation leaves the page without its input route.
   if (started.has(bridge)) {
     try {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
     } catch (error) {
       return { ok: false, reason: errorMessage(error) };
@@ -93,12 +127,12 @@ export async function createPage(bridge: EvenAppBridge, view: LogView): Promise<
   try {
     // Measured on real glasses: the first page needs one rebuild call before the creation
     // (it registers input); the result is ignored.
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+    await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
   } catch {
     // Expected to fail before the first page.
   }
   try {
-    const result = await bridge.createStartUpPageContainer(page);
+    const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
     if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
@@ -133,11 +167,11 @@ export async function updatePage(bridge: EvenAppBridge, view: LogView): Promise<
 
   try {
     for (const [spec, content] of updates) {
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
-      }));
+      })), TEXT_CALL_MS, "text " + spec.name);
     }
     return { ok: true };
   } catch (error) {

@@ -1,6 +1,7 @@
 import { formatDistance, formatDuration, projectOntoPath, cumulativeMeters, distanceMeters, type LatLng } from "../geo/geometry";
 import { MAX_STOPS, type Route, type TravelMode } from "../routing/provider";
 import type { FoundPlace } from "../geocode/photon";
+import { googleMapsDirUrl } from "../geocode/gmaps";
 import type { RoutePoint, SavedRoute } from "../trip/saved";
 import { powerText, priceText, socketsText, speedOf, type ChargerError, type RouteCharger } from "../chargers/chargers";
 import { escapeHtml, tr, type Locale } from "../i18n";
@@ -159,6 +160,7 @@ export function plannerTemplate(
     <label for="plan-query">${t("r.searchLabel")}</label>
     <input id="plan-query" type="search" enterkeyhint="search" autocomplete="off" placeholder="${t("p.searchPlaceholder")}" />
     <button id="plan-search" type="button"${plan.search.busy ? " disabled" : ""}>${plan.search.busy ? t("p.searching") : t("p.search")}</button>
+    <p class="hint">${t("p.searchMapsHint")}</p>
     ${plan.search.errorKey ? `<p class="hint error">${t(plan.search.errorKey)}</p>` : ""}
     ${plan.search.results.length ? `<ul class="scripts results">
       ${plan.search.results.map((place, index) => `
@@ -184,6 +186,7 @@ export function plannerTemplate(
 
     ${options.canRoute ? `<button id="plan-route" type="button"${plan.busy || !plan.to ? " disabled" : ""}>${plan.busy ? t("r.calculating") : t("r.calculate")}</button>` : ""}
     ${plan.errorKey ? `<p class="hint error">${t(plan.errorKey)}</p>` : ""}
+    ${plan.to ? `<p><a class="gmaps" id="plan-google" href="${escapeHtml(googleUrlOf(plan.start, plan.stops, plan.to, plan.mode))}" target="_blank" rel="noopener noreferrer">${t("p.openGoogle")}</a></p>` : ""}
 
     ${route ? `
     <div class="preview">
@@ -223,6 +226,7 @@ export function plannerTemplate(
           <button type="button" class="pick" data-route-rename-ok="${escapeHtml(r.id)}">${t("r.renameOk")}</button>`
             : `<span>${escapeHtml(r.name)}<br /><small>${escapeHtml(routeLine(r, locale))}</small></span>
           <span class="actions">
+            <a class="gmaps button-link" href="${escapeHtml(googleUrlOf(r.start, r.stops, r.to, r.mode))}" target="_blank" rel="noopener noreferrer">Google Maps</a>
             <button type="button" class="remove" data-route-edit="${escapeHtml(r.id)}">${t("r.edit")}</button>
             <button type="button" class="remove" data-route-rename="${escapeHtml(r.id)}">${t("r.rename")}</button>
             <button type="button" class="remove" data-route-delete="${escapeHtml(r.id)}">${t("r.delete")}</button>
@@ -230,6 +234,11 @@ export function plannerTemplate(
         </li>`).join("")}
     </ul>`}
   </section>`;
+}
+
+/** The Google Maps link of a plan or saved route: no start = from where the phone is. */
+export function googleUrlOf(start: RoutePoint | null, stops: readonly RoutePoint[], to: RoutePoint, mode: TravelMode): string {
+  return googleMapsDirUrl({ origin: start?.at ?? null, destination: to.at, waypoints: stops.map((s) => s.at), mode });
 }
 
 /** "Mein Standort → Stopp → Ziel · 45 km · 38 min · Auto" */

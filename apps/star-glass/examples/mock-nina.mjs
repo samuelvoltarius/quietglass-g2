@@ -71,6 +71,12 @@ const server = createServer((request, response) => {
       Connected: true, TrackingEnabled: true, AtPark: false, Slewing: false, Altitude: 41.26, Azimuth: 160.4, TimeToMeridianFlip: 0.2,
       SideOfPier: "pierEast", SiteLatitude: 1.2345, SiteLongitude: 6.789, SiteElevation: 500,
     }));
+    case "/equipment/weather/info": return json(ok({
+      Connected: true, Name: "Mock CloudWatcher", DisplayName: "Mock CloudWatcher", CloudCover: 35, RainRate: 0, Humidity: 81,
+      DewPoint: 3.24, Temperature: 6.1, WindSpeed: 2.5, WindGust: 5, SkyQuality: 20.84, Pressure: "NaN",
+    }));
+    case "/equipment/safetymonitor/info": return json(ok({ Connected: true, IsSafe: true, Name: "Mock Safety" }));
+    case "/profile/show": return json(ok({ Name: "Mock", AstrometrySettings: { Latitude: 1.2345, Longitude: 6.789, Elevation: 500 } }));
     case "/equipment/focuser/info": return json(ok({ Connected: true, Position: 12000, Temperature: 6.25, IsMoving: false }));
     case "/equipment/filterwheel/info": return json(ok({ Connected: true, SelectedFilter: { Name: "L", Id: 0 } }));
     case "/equipment/guider/info": return json(ok({

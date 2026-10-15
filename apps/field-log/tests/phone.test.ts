@@ -161,6 +161,18 @@ describe("phone page for beginners", () => {
     expect(page.data().quickNotes).toEqual([]);
   });
 
+  it("is split into tabs, with the speech server in the last one", () => {
+    const html = mountIn("de-AT", open()).root.innerHTML;
+    expect(html).toContain('<nav class="tabbar"');
+    for (const id of ["walk", "archive", "glasses", "more"]) {
+      expect(html).toContain(`data-tab="${id}"`);
+      expect(html).toContain(`data-tab-go="${id}"`);
+    }
+    expect(html).toContain('class="chip on">Flat 3');
+    expect(html.indexOf('data-tab="more"')).toBeLessThan(html.indexOf('id="stt"'));
+    expect(html.indexOf('data-tab="walk"')).toBeLessThan(html.indexOf('id="add-note"'));
+  });
+
   it("keeps the speech server under Advanced, marked optional", () => {
     const page = mountIn("de-AT", open());
     expect(page.root.innerHTML).toContain("Erweitert: Notizen sprechen (optional)");

@@ -9,7 +9,8 @@ describe("not listening", () => {
   it("says so and never implies it is measuring", () => {
     const view = buildView(quiet, DEFAULT_DOSE, { listening: false, level: null, calibrated: true });
     expect(view.body[0]).toBe("Not listening.");
-    expect(view.footer).toContain("tap = start");
+    expect(view.header).toBe("DECIBELGUARD · ready");
+    expect(view.footer).toBe("Tap = start · Hold = clear dose · 2× = exit");
     expect(view.footer).not.toContain("MIC");
   });
 
@@ -20,7 +21,7 @@ describe("not listening", () => {
 
   it("keeps the accumulated dose visible while paused", () => {
     const dose = { ...quiet, fraction: 0.4 };
-    expect(buildView(dose, DEFAULT_DOSE, { listening: false, level: null, calibrated: true }).footer)
+    expect(buildView(dose, DEFAULT_DOSE, { listening: false, level: null, calibrated: true }).body[0])
       .toContain("40%");
   });
 });
@@ -47,7 +48,7 @@ describe("listening", () => {
 
   it("stays minimal while the dose is zero", () => {
     expect(buildView(quiet, DEFAULT_DOSE, listening).body).toHaveLength(0);
-    expect(buildView(quiet, DEFAULT_DOSE, listening).header).toBe("");
+    expect(buildView(quiet, DEFAULT_DOSE, listening).header).toBe("DECIBELGUARD · listening");
   });
 });
 
@@ -62,13 +63,13 @@ describe("dose escalation", () => {
   it("warns at halfway, before the limit is passed", () => {
     const dose = { ...quiet, fraction: 0.6 };
     expect(buildView(dose, DEFAULT_DOSE, { listening: true, level: 85, calibrated: true }).header)
-      .toBe("HALFWAY");
+      .toBe("DECIBELGUARD · halfway");
   });
 
   it("becomes unmissable once the dose is full", () => {
     const dose = { ...quiet, fraction: 1.2 };
     const view = buildView(dose, DEFAULT_DOSE, { listening: true, level: 90, calibrated: true });
-    expect(view.header).toBe("DAILY DOSE REACHED");
+    expect(view.header).toBe("DECIBELGUARD · limit reached");
     expect(view.body.join(" ")).not.toContain("left at this level");
   });
 

@@ -23,7 +23,9 @@ export function forecastUrl(position: Coordinates): URL {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", String(position.latitude)); url.searchParams.set("longitude", String(position.longitude));
   url.searchParams.set("current", "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m");
-  url.searchParams.set("hourly", "temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m");
+  url.searchParams.set("hourly", "temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m");
+  // The cockpit's "rain in ~25 min": 15-minute steps for the next 12 hours.
+  url.searchParams.set("minutely_15", "precipitation,weather_code"); url.searchParams.set("forecast_minutely_15", "48");
   url.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset");
   url.searchParams.set("forecast_days", "3"); url.searchParams.set("timezone", "auto");
   return url;

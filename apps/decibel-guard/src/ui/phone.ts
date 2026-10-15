@@ -22,10 +22,48 @@ export interface PhoneUiPorts {
   readonly setLocale?: (locale: Locale) => void;
 }
 
+/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "main", icon: "🎯", key: "p.tabMain" },
+  { id: "set", icon: "🎚️", key: "p.tabSet" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.decibel-guard.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "main"; } catch { return "main"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
+/** Applies the active tab after a redraw and wires the tab bar. */
+function bindTabs(root: HTMLElement, current: string, change: (next: string) => void): void {
+  applyTab(root, current);
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = button.dataset["tabGo"] ?? "main";
+      change(next);
+      try { localStorage.setItem(TAB_KEY, next); } catch { /* private mode */ }
+      applyTab(root, next);
+      window.scrollTo({ top: 0 });
+    });
+  });
+}
+
 export function mountPhoneUi(ports: PhoneUiPorts): void {
   const root = document.getElementById("app");
   if (!root) return;
   const locale = (): Locale => ports.getLocale?.() ?? "en";
+  let tab = readTab();
 
   const render = (): void => {
     const data = ports.getData();
@@ -34,6 +72,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const open = [...root.querySelectorAll<HTMLDetailsElement>("details")].map((item) => item.open);
     root.innerHTML = template(data, locale(), ports.getLevel());
     root.querySelectorAll<HTMLDetailsElement>("details").forEach((item, index) => { if (open[index]) item.open = true; });
+    bindTabs(root, tab, (next) => { tab = next; });
     wire(root, ports, render);
   };
 
@@ -64,16 +103,18 @@ function template(data: NoiseData, locale: Locale, level: { listening: boolean; 
   const d = data.dose;
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>DecibelGuard</h1>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>DecibelGuard</h1>
+    </div>
+    <span class="chip${isCalibrated(data) ? " on" : ""}">${isCalibrated(data) ? x("p.chipCal") : x("p.chipEst")}</span>
   </header>
 
+  <div class="tab" data-tab="main">
   <section class="card next">
     <p id="next" class="${level.micError ? "warn" : ""}">${nextStep(level, locale)}</p>
   </section>
-
-  <section class="card compact">${languageSelect(locale)}</section>
 
   <section class="card">
     <h2>${x("p.aboutTitle")}</h2>
@@ -81,7 +122,9 @@ function template(data: NoiseData, locale: Locale, level: { listening: boolean; 
     <p class="hint">${isCalibrated(data) ? x("p.calibratedNote") : x("p.estimateNote")}</p>
     <p class="hint">${x("p.notMeter")}</p>
   </section>
+  </div>
 
+  <div class="tab" data-tab="set">
   <section class="card">
     <h2>${x("p.rulesTitle")}</h2>
     <p class="hint">${x("p.rulesPlain")}</p>
@@ -124,18 +167,36 @@ function template(data: NoiseData, locale: Locale, level: { listening: boolean; 
       <p class="hint">${x("p.offsetHint", { estimate: ESTIMATED_OFFSET })}</p>
     </details>
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
+  <section class="card">
+    <h2>${x("p.glassesTitle")}</h2>
+    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
+    <p class="hint">${x("p.invertHint")}</p>
+  </section>
+  </div>
+
+  <div class="tab" data-tab="more">
   <section class="card">
     <h2>${x("p.controlsTitle")}</h2>
     <table class="keys">
       <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
+      <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
       <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
       <tr><td>${x("p.double")}</td><td>${x("p.doubleDo")}</td></tr>
     </table>
     <p class="hint">${x("p.micNote")}</p>
   </section>
 
-  <footer class="hint">${x("p.privacy")}</footer>`;
+  <section class="card compact">${languageSelect(locale)}</section>
+
+  <footer class="hint">${x("p.privacy")}</footer>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${x(key)}</button>`).join("")}
+  </nav>`;
 }
 
 function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): void {
@@ -152,6 +213,11 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): voi
     const value = (event.target as HTMLSelectElement).value;
     ports.setLocale?.(value === "de" ? "de" : "en");
     rerender();
+  });
+
+  byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
+    const checked = (event.target as HTMLInputElement).checked;
+    commit((data) => ({ ...data, invertScroll: checked }));
   });
 
   bindRange(byId("offset"), byId("offset-out"), (v) => commit((data) => ({ ...data, calibrationOffset: v })));

@@ -1,5 +1,5 @@
 import { resetGestureDedupe } from "../src/input/gestures";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 // Boots the real app against a fake bridge, so route ordering, stopping and
 // the close path can be checked without glasses, GPS or a Valhalla server.
@@ -73,13 +73,14 @@ function fakeBridge(stored: Record<string, unknown> = {}) {
   let onEvent: ((event: unknown) => void) | undefined;
   const state = {
     calls: [] as string[],
-    locationStarts: 0, shutdowns: 0, shutdownFails: false, draws: 0, body: "", header: "",
-    noFix: false, mic: [] as boolean[], pages: [] as string[], images: [] as string[], saved: "",
+    locationStarts: 0, shutdowns: 0, shutdownFails: false, draws: 0, body: "", header: "", footer: "",
+    noFix: false, mic: [] as boolean[], pages: [] as string[], images: [] as string[], saved: "", menus: [] as string[][],
   };
   const record = (id: number | undefined, content: string | undefined): void => {
     state.draws += 1;
     if (id === 2) state.body = content ?? "";
     if (id === 1) state.header = content ?? "";
+    if (id === 3) state.footer = content ?? "";
   };
   const bridge = {
     getLocalStorage: async () => JSON.stringify({
@@ -89,14 +90,16 @@ function fakeBridge(stored: Record<string, unknown> = {}) {
       ...stored,
     }),
     setLocalStorage: async (_key: string, value: string) => { state.saved = value; return true; },
-    rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
+    rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[]; menuObject?: { menuItems?: { itemName?: string }[] } }) => {
       state.calls.push("rebuild");
+      state.menus.push((page.menuObject?.menuItems ?? []).map((item) => item.itemName ?? ""));
       state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return true;
     },
-    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[] }) => {
+    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; imageObject?: { containerName?: string }[]; menuObject?: { menuItems?: { itemName?: string }[] } }) => {
       state.calls.push("create");
+      state.menus.push((page.menuObject?.menuItems ?? []).map((item) => item.itemName ?? ""));
       state.pages.push(page.imageObject?.[0]?.containerName ?? "text-only");
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
       return 0;
@@ -122,6 +125,7 @@ function fakeBridge(stored: Record<string, unknown> = {}) {
     bridge, state,
     ready: () => onEvent !== undefined,
     send: (event: unknown) => onEvent?.(event),
+    menu: (itemID: number) => onEvent?.({ menuItemClickEvent: { itemID } }),
     gesture: (eventType: number) => (resetGestureDedupe(), onEvent?.({ sysEvent: { eventType, eventSource: 1 } })),
   };
 }
@@ -132,6 +136,8 @@ const DOUBLE_TAP = 3;
 const SWIPE_DOWN = 2;
 const HOLD = 9;
 const RELEASE = 10;
+/** Ids of the glasses' side menu (see MENU in main.ts). */
+const MENU_HELP = 1, MENU_VIEW_TURNS = 2, MENU_VIEW_MAP = 3, MENU_STOP = 6;
 
 describe("openglance lifecycle", () => {
   let unhandled: unknown[];
@@ -173,6 +179,12 @@ describe("openglance lifecycle", () => {
   }
 
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 20));
+  /** Stopping needs the menu entry (it only asks) and a second click on it (QIS v1.2). */
+  const stopNav = async (fake: ReturnType<typeof fakeBridge>): Promise<void> => {
+    fake.menu(MENU_STOP);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    fake.menu(MENU_STOP);
+  };
 
   it("never lets an older route answer overwrite a newer one", async () => {
     // Regression: each tap started a request without retiring the last, so a
@@ -182,7 +194,7 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     // Hold goes back to the list, tap starts again while the first answer is still out.
-    fake.gesture(HOLD);
+    await stopNav(fake);
     await settle();
     fake.gesture(TAP);
     // The second request waits out the one-per-second limit of the public router.
@@ -203,7 +215,7 @@ describe("openglance lifecycle", () => {
     await boot(fake);
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
-    fake.gesture(HOLD);
+    await stopNav(fake);
     await settle();
     replies[0]?.(valhalla("Late Street"));
     await settle();
@@ -222,7 +234,7 @@ describe("openglance lifecycle", () => {
     replies[0]?.(valhalla("First Street"));
     await vi.waitFor(() => expect(harness.road).toContain("First Street"));
 
-    fake.gesture(HOLD);
+    await stopNav(fake);
     await settle();
     const before = fake.state.locationStarts;
     fake.gesture(TAP);
@@ -248,11 +260,7 @@ describe("openglance lifecycle", () => {
     const fake = fakeBridge();
     fake.state.shutdownFails = true;
     await boot(fake);
-    fake.gesture(TAP);
-    await vi.waitFor(() => expect(replies).toHaveLength(1));
-    replies[0]?.(valhalla("Main Street"));
-    await vi.waitFor(() => expect(harness.road).toContain("Main Street"));
-
+    // 2× on the list is the exit (while navigating it only asks to stop, see below).
     fake.gesture(DOUBLE_TAP);
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
     await settle();
@@ -260,7 +268,7 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.advanceTimersByTimeAsync(10000);
     expect(fake.state.draws).toBe(drawsAtClose);
-    expect(replies).toHaveLength(1);
+    expect(replies).toHaveLength(0);
   });
   it("builds the first page with one rebuild before the single create, then only rebuilds", async () => {
     const fake = fakeBridge();
@@ -269,13 +277,13 @@ describe("openglance lifecycle", () => {
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.(valhalla("Map Street"));
     await vi.waitFor(() => expect(harness.road).toContain("Map Street"));
-    fake.gesture(SWIPE);
+    fake.menu(MENU_VIEW_MAP);
     await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("map-nw"));
     expect(fake.state.calls.slice(0, 2)).toEqual(["rebuild", "create"]);
     expect(fake.state.calls.filter((call) => call === "create")).toHaveLength(1);
     expect(fake.state.calls.filter((call) => call === "rebuild").length).toBeGreaterThanOrEqual(2);
   });
-  it("switches to the overview map on a swipe, and back", async () => {
+  it("switches to the overview map through the side menu, and back", async () => {
     const fake = fakeBridge();
     await boot(fake);
     fake.gesture(TAP);
@@ -283,7 +291,7 @@ describe("openglance lifecycle", () => {
     replies[0]?.(valhalla("Map Street"));
     await vi.waitFor(() => expect(harness.road).toContain("Map Street"));
 
-    fake.gesture(SWIPE);
+    fake.menu(MENU_VIEW_MAP);
     // The map is four images covering the display, and one short line of text on it.
     await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("map-nw"));
     await vi.waitFor(() => expect(fake.state.images).toEqual(expect.arrayContaining(["map-nw", "map-ne", "map-sw", "map-se"])));
@@ -291,7 +299,7 @@ describe("openglance lifecycle", () => {
     // The choice is remembered for next time.
     expect(JSON.parse(fake.state.saved).glassView).toBe("overview");
 
-    fake.gesture(SWIPE);
+    fake.menu(MENU_VIEW_TURNS);
     await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("pixel-icon"));
     // Switching views is local: it never asks the router again.
     expect(replies).toHaveLength(1);
@@ -370,7 +378,7 @@ describe("openglance lifecycle", () => {
     answer?.({ latitude: START.lat, longitude: START.lon });
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     // A hold cancels the start and goes back to the list.
-    fake.gesture(HOLD);
+    await stopNav(fake);
     await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
   });
 
@@ -401,7 +409,7 @@ describe("openglance lifecycle", () => {
     expect(fetchUrl(1)).toContain("q=Tamsweg");
     const feature = (name: string, lat: number) => ({ geometry: { coordinates: [13.81, lat] }, properties: { name, postcode: "5580", country: "Austria" } });
     replies[1]?.({ features: [feature("Tamsweg", 47.128), feature("Tamsweg Bahnhof", 47.125)] });
-    await vi.waitFor(() => expect(fake.state.header).toContain("Heard: „Tamsweg“"));
+    await vi.waitFor(() => expect(fake.state.header).toContain("heard: „Tamsweg“"));
     expect(fake.state.body).toContain("→ Tamsweg");
     fake.gesture(SWIPE_DOWN);
     await vi.waitFor(() => expect(fake.state.body).toContain("→ Tamsweg Bahnhof"));
@@ -434,7 +442,7 @@ describe("openglance lifecycle", () => {
     const saved = JSON.parse(fake.state.saved);
     expect(saved.recent[0].label).toBe("Tamsweg");
     expect(saved.destinationId).toBe(saved.recent[0].id);
-    fake.gesture(HOLD);
+    await stopNav(fake);
     await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Tamsweg · recent"));
     vi.unstubAllEnvs();
   });
@@ -456,6 +464,8 @@ describe("openglance lifecycle", () => {
     const fake = fakeBridge({
       places: [],
       destinationId: null,
+      // The classic turn page draws the road as an image (the HUD layout has its own test in hud-main.test.ts).
+      hudLayout: "classic",
       routes: [{
         id: "s1", name: "Morning", mode: "driving", start: null,
         stops: [{ label: "Charger", at: { lat: START.lat + 0.002, lon: START.lon } }],
@@ -508,7 +518,7 @@ describe("openglance lifecycle", () => {
     fake.gesture(TAP);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0));
-    fake.gesture(HOLD);
+    await stopNav(fake);
     await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
   });
 
@@ -535,9 +545,47 @@ describe("openglance lifecycle", () => {
     await vi.waitFor(() => expect(fake.state.body).toContain("→ 2,2 km · 150 kW · Fast One".replace("2,2", "2.2")));
     expect(fake.state.body).not.toContain("Wallbox");
     fake.gesture(TAP);
-    await vi.waitFor(() => expect(replies).toHaveLength(2));
-    expect(fetchUrl(1)).toContain("valhalla.test/route");
+    // Timers of an earlier test's app may still call fetch: look at the URLs, not the order.
+    const urls = (): string[] => (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
+    await vi.waitFor(() => expect(urls().some((url) => url.includes("valhalla.test/route"))).toBe(true));
     expect(JSON.parse(fake.state.saved).recent[0].label).toBe("Fast One");
+  });
+
+  it("shows peaks nearby on a compass band, lists them by distance and navigates to one; the area is asked for once", async () => {
+    const fake = fakeBridge({ peaks: true, peakRadiusKm: 10 });
+    await boot(fake);
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ Peaks nearby …"));
+    // Timers of an earlier test's app may still call fetch: look at the URLs, not the order.
+    const calls = (): string[] => (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
+    const overpass = (): number => calls().filter((url) => url === "https://overpass-api.de/api/interpreter").length;
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(overpass()).toBe(1));
+    replies[calls().indexOf("https://overpass-api.de/api/interpreter")]?.({ elements: [
+      { type: "node", id: 1, lat: START.lat + 0.03, lon: START.lon, tags: { natural: "peak", name: "Far Peak", ele: "1800" } },
+      { type: "node", id: 2, lat: START.lat + 0.01, lon: START.lon, tags: { natural: "peak", name: "Near Hill", ele: "640" } },
+      { type: "node", id: 3, lat: START.lat + 0.02, lon: START.lon, tags: { natural: "peak", name: "No Height" } },
+    ] });
+    await vi.waitFor(() => expect(fake.state.body).toContain("2 peaks within 10 km · nearest"));
+    expect(fake.state.body).toContain("Facing 0° N · north up");
+    expect(fake.state.pages).toContain("band-left");
+    expect(fake.state.images).toEqual(expect.arrayContaining(["band-left", "band-right"]));
+
+    // Tap: the list, nearest first; tap again navigates there.
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.header).toBe("OPENGLANCE · peaks 10 km · 1/2"));
+    expect(fake.state.body).toContain("→ 1.1 km · N · Near Hill 640 m");
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(calls().some((url) => url.includes("valhalla.test/route"))).toBe(true));
+    await vi.waitFor(() => expect(JSON.parse(fake.state.saved).recent?.[0]?.label).toBe("Near Hill"));
+
+    // Back on the peaks page in the same area: from the cache, no third request to Overpass.
+    await stopNav(fake);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Peaks nearby …"));
+    for (let i = 0; i < 8 && !fake.state.body.includes("→ Peaks nearby …"); i++) { fake.gesture(SWIPE_DOWN); await settle(); }
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("2 peaks within 10 km"));
+    expect(overpass()).toBe(1);
   });
 
   it("switches the microphone off when its yes comes after the timeout", async () => {
@@ -553,4 +601,221 @@ describe("openglance lifecycle", () => {
     await vi.waitFor(() => expect(fake.state.mic).toEqual([true, false]), { timeout: 2000 });
     vi.unstubAllEnvs();
   }, 10_000);
+  describe("QIS v1.2: stopping needs the menu entry and one more click or tap", () => {
+    const navigate = async (fake: ReturnType<typeof fakeBridge>): Promise<void> => {
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(replies).toHaveLength(1));
+      replies[0]?.(valhalla("Main Street"));
+      await vi.waitFor(() => expect(harness.road).toContain("Main Street"));
+    };
+    // Every test ends by closing its app, so no timer of it reaches into the next test.
+    let current: ReturnType<typeof fakeBridge> | null = null;
+    afterEach(() => { current?.send({ sysEvent: { eventType: 7 } }); current = null; });
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      expect(fake.state.menus.every((menu) => menu.length === 0)).toBe(true);
+    });
+
+    it("a swipe switches between the turn view and the map (no side menu for it)", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      const before = JSON.parse(fake.state.saved).glassView ?? "turns";
+      fake.gesture(SWIPE);
+      await vi.waitFor(() => expect(JSON.parse(fake.state.saved).glassView).not.toBe(before));
+      fake.gesture(SWIPE_DOWN);
+      await vi.waitFor(() => expect(JSON.parse(fake.state.saved).glassView ?? "turns").toBe(before));
+    });
+
+    it("a hold asks to stop (the footer says what the next tap does), a tap after it stops", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      fake.gesture(HOLD);
+      await vi.waitFor(() => expect(fake.state.footer).toBe("Tap again = stop · Swipe/2× = cancel"));
+      expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+      expect(fake.state.shutdowns).toBe(0);
+      await sleep(600);
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
+    });
+
+    it("a tap with nothing else to do asks to stop too (holds never reached the app on hardware), a second tap stops", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(fake.state.footer).toBe("Tap again = stop · Swipe/2× = cancel"));
+      expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+      await sleep(600);
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
+      expect(fake.state.shutdowns).toBe(0);
+    });
+
+    it("a second click on the entry within 4 s stops", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      fake.menu(MENU_STOP);
+      await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
+      fake.menu(MENU_STOP);
+      await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
+      await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
+    });
+
+    it("a tap on the heels of the menu click is not a confirmation; a later tap is", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      fake.menu(MENU_STOP);
+      await sleep(50);
+      fake.gesture(TAP);
+      await sleep(100);
+      expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+      await sleep(450);
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
+    });
+
+    it("a swipe, a hold, a double tap or another menu entry cancels; a double tap does not leave the app", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      for (const cancel of [() => fake.gesture(SWIPE), () => fake.gesture(HOLD), () => fake.gesture(DOUBLE_TAP), () => fake.menu(MENU_VIEW_TURNS)]) {
+        fake.menu(MENU_STOP);
+        await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
+        await sleep(450);
+        cancel();
+        await vi.waitFor(() => expect(fake.state.footer).not.toContain("Tap again"));
+        await sleep(50);
+        // After a cancel a plain tap does not stop (it is only a tap), and the next menu click asks again.
+        expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+      }
+      expect(fake.state.shutdowns).toBe(0);
+    });
+
+    it("without a second click the question lapses after 4 s", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      await navigate(fake);
+      fake.menu(MENU_STOP);
+      await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
+      await vi.waitFor(() => expect(fake.state.footer).not.toContain("Tap again"), { timeout: 5500 });
+      fake.menu(MENU_STOP); // the lapsed question is gone: this asks again, it does not stop
+      await sleep(100);
+      expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+    }, 12_000);
+
+    it("the menu entry during the start only asks as well", async () => {
+      const fake = fakeBridge();
+      current = fake;
+      await boot(fake);
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(replies).toHaveLength(1));
+      fake.menu(MENU_STOP);
+      await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
+      await sleep(450);
+      fake.gesture(TAP);
+      await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
+    });
+  });
+
+  it("QIS v1.2: Help is no list row any more; the side menu opens it, tap or 2× closes it, nothing else leaves", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    onTestFinished(() => fake.send({ sysEvent: { eventType: 7 } }));
+    fake.gesture(SWIPE_DOWN); // travel mode: the last row
+    fake.gesture(SWIPE_DOWN); // stays there
+    await settle();
+    expect(fake.state.body).not.toContain("Help");
+    fake.menu(MENU_HELP);
+    await vi.waitFor(() => expect(fake.state.header).toBe("OPENGLANCE · help"));
+    expect(fake.state.footer).toBe("2× = back");
+    expect(fake.state.body).toContain("Stop: tap (or hold), then tap again");
+    fake.gesture(SWIPE_DOWN);
+    await settle();
+    expect(fake.state.header).toBe("OPENGLANCE · help");
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.body).toContain("→ ● Office"));
+    expect(fake.state.header).toBe("OPENGLANCE · where to?");
+    fake.menu(MENU_HELP);
+    await vi.waitFor(() => expect(fake.state.header).toBe("OPENGLANCE · help"));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(fake.state.header).toBe("OPENGLANCE · where to?"));
+    expect(fake.state.shutdowns).toBe(0);
+  });
+
+  it("QIS v1.2: help opened during a navigation returns to it - the navigation is not dropped", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    onTestFinished(() => fake.send({ sysEvent: { eventType: 7 } }));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(valhalla("Main Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Main Street"));
+    fake.menu(MENU_HELP);
+    await vi.waitFor(() => expect(fake.state.header).toBe("OPENGLANCE · help"));
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("pixel-icon"));
+    expect(harness.road).toContain("Main Street");
+    expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+    expect(replies).toHaveLength(1);
+    expect(fake.state.shutdowns).toBe(0);
+  });
+
+  it("QIS v1.2: a swipe never changes the view; the side menu sets it, explicitly, and a hold does nothing", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    onTestFinished(() => fake.send({ sysEvent: { eventType: 7 } }));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(valhalla("Map Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Map Street"));
+    fake.gesture(SWIPE);
+    fake.gesture(SWIPE_DOWN);
+    fake.gesture(HOLD);
+    await settle();
+    expect(fake.state.pages.at(-1)).toBe("pixel-icon");
+    expect(JSON.parse(fake.state.saved).glassView ?? "turns").toBe("turns");
+    fake.menu(MENU_VIEW_MAP);
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("map-nw"));
+    expect(JSON.parse(fake.state.saved).glassView).toBe("overview");
+    fake.menu(MENU_VIEW_MAP); // setting what is set changes nothing
+    await settle();
+    expect(fake.state.pages.at(-1)).toBe("map-nw");
+    fake.menu(MENU_VIEW_TURNS);
+    await vi.waitFor(() => expect(fake.state.pages.at(-1)).toBe("pixel-icon"));
+  });
+
+  it("2x on a running navigation asks to stop and never opens the system's exit dialog (cancelling it left the app dead on the glasses, 15.10.)", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    onTestFinished(() => fake.send({ sysEvent: { eventType: 7 } }));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(replies).toHaveLength(1));
+    replies[0]?.(valhalla("Main Street"));
+    await vi.waitFor(() => expect(harness.road).toContain("Main Street"));
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
+    expect(fake.state.shutdowns).toBe(0);
+    expect(JSON.parse(fake.state.saved).activeSince).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    fake.gesture(TAP);
+    await vi.waitFor(() => expect(JSON.parse(fake.state.saved).activeSince).toBeNull());
+    expect(fake.state.shutdowns).toBe(0);
+  });
+
 });

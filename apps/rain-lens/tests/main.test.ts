@@ -75,6 +75,16 @@ describe("rainlens images", () => {
     return fake;
   }
 
+  it("shows the phone page in tabs with every control still on it", async () => {
+    const app = { innerHTML: "", querySelectorAll: () => [] };
+    vi.stubGlobal("document", { querySelector: (selector: string) => (selector === "#app" ? app : null), querySelectorAll: () => [] });
+    await boot();
+    expect(app.innerHTML).toContain('<nav class="tabbar"');
+    for (const tab of ["weather", "place", "glasses", "more"]) expect(app.innerHTML).toContain(`data-tab="${tab}"`);
+    expect(app.innerHTML).toContain("</span>Weather</button>");
+    for (const id of ["refresh", "automatic", "place", "search", "lat", "lon", "coords", "language"]) expect(app.innerHTML, id).toContain(`id="${id}"`);
+  });
+
   it("draws the chart once the real forecast is in, and never for the loading notice", async () => {
     const fake = await boot();
     expect(fake.images.filter((name) => name === "rain-chart")).toHaveLength(1);
@@ -156,7 +166,7 @@ describe("rainlens images", () => {
 
   it("says how old the forecast is", async () => {
     const fake = await boot();
-    expect(footer(fake)).toMatch(/^as of \d\d:\d\d · tap = refresh/);
+    expect(footer(fake)).toMatch(/^as of \d\d:\d\d · Tap = refresh/);
   });
 
   it("comes back on the same page after a restart", async () => {

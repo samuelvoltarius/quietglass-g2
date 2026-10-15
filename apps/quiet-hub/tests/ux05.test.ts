@@ -29,6 +29,13 @@ const patchAgents = (report: HubReport, patch: (a: AgentInfo, i: number) => Part
 });
 const LONG = "Das ist eine lange Antwort mit vielen Wörtern, die sich über mehrere Seiten erstreckt. ".repeat(8);
 
+/** The report of an older daemon: only the flat device list, no Zuhause view. */
+function noView(report: HubReport): HubReport {
+  const { homeView: _drop, ...rest } = report;
+  void _drop;
+  return rest;
+}
+
 describe("overview shows everything at a glance", () => {
   it("counts online agents, marks busy and waiting ones, unread alerts, lights and printer", () => {
     const report: HubReport = {
@@ -40,17 +47,17 @@ describe("overview shows everything at a glance", () => {
     expect(body[0]).toContain("!*○"); // hermes waits, claude busy, codex offline
     expect(body[0]).toContain("1 aktiv");
     expect(body[0]).toContain("1 wartet");
-    expect(body[1]).toContain("1 Licht an");
-    expect(body[1]).toContain("5 Geräte");
+    expect(body[1]).toContain("2 Lichter an");
+    expect(body[1]).toContain("16 Geräte");
     expect(body[2]).toContain("72 %");
     expect(body[2]).toContain("41 min");
     expect(body[3]).toContain("1 neu");
-    expect(body.join("\n")).toContain("claude-win: Bearbeitet Datei");
+    expect(body.join("\n")).toContain("Hilfe — Bedienung");
     expect(body.join("\n")).toContain("hermes-spark fragt");
   });
 
   it("explains in one line what is missing", () => {
-    const empty: HubReport = { ...demoReport(), agents: [], home: { selected: 0, devices: [] }, inbox: { selected: 0, events: [] }, printer: { ...demoReport().printer, job: null, state: "ready" } };
+    const empty: HubReport = { ...noView(demoReport()), agents: [], home: { selected: 0, devices: [] }, inbox: { selected: 0, events: [] }, printer: { ...demoReport().printer, job: null, state: "ready" } };
     const de = buildView(model("root", empty), "de", T0).body;
     expect(de[0]).toContain("keiner verbunden");
     expect(de[1]).toContain("keine Geräte");
@@ -81,7 +88,7 @@ describe("fixed status line", () => {
         expect(line).not.toContain("…");
       }
     }
-    expect(statusLine(model("printer", report), "de")).toBe("Drucker · Demo · 1 neu · 1 aktiv");
+    expect(statusLine(model("printer", report), "de")).toBe("QUIET HUB · Drucker · Demo · 1 neu · 1 aktiv");
   });
 
   it("is the header and counts pending approvals", () => {
@@ -96,7 +103,7 @@ describe("native contextual menu", () => {
     for (const locale of ["de", "en"] as const) {
       for (const screen of screens) {
         for (const report of [demoReport(), { ...demoReport(), approvals: [card] }]) {
-          const spec = menuFor(model(screen, report), locale);
+          const spec = menuFor(model(screen, report), locale, true);
           expect(spec.items.length).toBeGreaterThan(0);
           expect(spec.items.length).toBeLessThanOrEqual(6);
           const ids = spec.items.map((item) => item.id);
@@ -112,7 +119,7 @@ describe("native contextual menu", () => {
   });
 
   it("offers the page's actions: agent stop / new session / switch, alerts mark-all, card allow / deny", () => {
-    const labels = (screen: Screen, report?: HubReport) => menuFor(model(screen, report), "de").items.map((item) => item.label);
+    const labels = (screen: Screen, report?: HubReport) => menuFor(model(screen, report), "de", true).items.map((item) => item.label);
     expect(labels("agent")).toEqual(expect.arrayContaining(["Stoppen", "Neue Sitzung", "Agent wechseln"]));
     expect(labels("inbox")).toContain("Alle gelesen");
     expect(labels("agent", { ...demoReport(), approvals: [card] })).toEqual(["Erlauben", "Ablehnen", "Hilfe"]);
@@ -120,15 +127,18 @@ describe("native contextual menu", () => {
   });
 
   it("changes its key (= one rebuild) only when the page or card state changes", () => {
-    const a = menuFor(model("agent"), "de").key;
-    expect(menuFor({ ...model("agent"), agentView: "ask", questionIndex: 2 }, "de").key).toBe(a);
-    expect(menuFor(model("home"), "de").key).not.toBe(a);
-    expect(menuFor(model("agent", { ...demoReport(), approvals: [card] }), "de").key).not.toBe(a);
+    const a = menuFor(model("agent"), "de", true).key;
+    expect(menuFor({ ...model("agent"), agentView: "ask", questionIndex: 2 }, "de", true).key).toBe(a);
+    expect(menuFor(model("home"), "de", true).key).not.toBe(a);
+    expect(menuFor(model("agent", { ...demoReport(), approvals: [card] }), "de", true).key).not.toBe(a);
   });
 
   it("Stoppen stops a running agent, otherwise says nothing runs", () => {
     const busy = model("agent", patchAgents(demoReport(), (_a, i) => (i === 0 ? { busy: true } : {})));
-    const out = applyMenu(busy, MENU.stop, T0);
+    const armed = applyMenu(busy, MENU.stop, T0);
+    expect(armed.effect).toBeUndefined();
+    expect(armed.model.confirm?.what).toBe("stop:hermes-spark");
+    const out = decide(armed.model, "click", T0 + 100);
     expect(out.effect).toEqual({ kind: "cancel", agentId: "hermes-spark" });
     expect(applyMenu(model("agent"), MENU.stop, T0).model.message?.text).toBe("Es läuft nichts");
   });
@@ -145,8 +155,9 @@ describe("native contextual menu", () => {
 
   it("Erlauben / Ablehnen answer the card; Alle gelesen marks every unread alert", () => {
     const withCard = model("agent", { ...demoReport(), approvals: [card] });
-    expect(applyMenu(withCard, MENU.allow, T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
-    expect(applyMenu(withCard, MENU.deny, T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
+    expect(applyMenu(withCard, MENU.allow, T0).effect).toBeUndefined();
+    expect(decide(applyMenu(withCard, MENU.allow, T0).model, "click", T0 + 100).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
+    expect(decide(applyMenu(withCard, MENU.deny, T0).model, "click", T0 + 100).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
     expect(applyMenu(model("inbox"), MENU.markAll, T0).effect).toEqual({ kind: "readAll", ids: ["demo-codex-1"] });
   });
 
@@ -157,9 +168,11 @@ describe("native contextual menu", () => {
     expect(decide(armed.model, "click", T0 + 100).effect).toEqual({ kind: "printer", action: "cancel" });
     const pause = applyMenu(model("printer"), MENU.pauseResume, T0);
     expect(pause.model.confirm?.what).toBe("printer:pause");
-    const toggle = applyMenu(model("home"), MENU.toggle, T0);
-    expect(toggle.effect).toBeUndefined();
-    expect(toggle.model.confirm?.what).toBe("light_office");
+    // The lock (favourite 3) only asks the daemon for a token; nothing moves without the second tap.
+    const lockRow = { ...model("home"), zh: { level: "list" as const, index: 2, areaId: null, areaIndex: 0, detailId: null, pending: null } };
+    const toggle = applyMenu(lockRow, MENU.toggle, T0);
+    expect(toggle.effect).toEqual({ kind: "homeAction", target: "lock.haustuer", action: "toggle" });
+    expect(toggle.model.report.homeView?.entities["lock.haustuer"]?.on).toBe(false);
   });
 
   it("navigation entries open the page and the help item shows the controls", () => {
@@ -178,7 +191,7 @@ describe("native contextual menu", () => {
 
   it("the SDK accepts the page with the menu and a rebuild re-supplies it", () => {
     const view = buildView(model("agent"), "de", T0);
-    const spec = menuFor(model("agent"), "de");
+    const spec = menuFor(model("agent"), "de", true);
     const page = buildPage(view, spec);
     expect(page.menuObject?.menuItems?.map((item) => item.itemName)).toEqual(spec.items.map((item) => item.label));
     expect(validateEvenHubPageContainer(page).valid).toBe(true);
@@ -212,19 +225,19 @@ describe("voice with confirmation", () => {
     const view = buildView(heard, "de", T0 + 3000);
     expect(view.body[1]).toBe("Verstanden:");
     expect(view.body[2]).toBe("Wie spät ist es");
-    expect(view.footer).toBe("Tippen = senden · 2× = verwerfen");
+    expect(view.footer).toBe("Tippen = senden · Halten = verwerfen · 2× = zurück");
     const sent = decide(heard, "click", T0 + 4000);
     expect(sent.effect).toEqual({ kind: "ask", agentId: "hermes-spark", question: "Wie spät ist es" });
     expect(sent.model.voice).toBeNull();
     expect(sent.model.report.agents[0]?.busy).toBe(true);
   });
 
-  it("double tap discards the transcript without asking", () => {
+  it("QIS v1.2 #2: double tap goes back and keeps the transcript (never discards)", () => {
     const heard = withVoiceHeard(decide(decide(ask(), "longPress", T0).model, "longPressRelease", T0).model, "hermes-spark", "Test", false, T0);
     const out = decide(heard, "doubleClick", T0);
     expect(out.effect).toBeUndefined();
-    expect(out.model.voice).toBeNull();
-    expect(out.model.message?.text).toBe("Verworfen");
+    expect(out.model.voice).toMatchObject({ state: "confirm", text: "Test", parked: true });
+    expect(out.model.message?.text).toBe("Sprachnotiz bleibt · im Gespräch senden");
   });
 
   it("swipes and long presses cannot leave the confirmation; tapping while transcribing does nothing", () => {
@@ -252,7 +265,10 @@ describe("voice with confirmation", () => {
     const sent = withVoiceHeard(stop, "hermes-spark", "Test", true, T0);
     expect(sent.voice).toBeNull();
     expect(sent.message?.text).toBe("Gesendet: Test");
-    const discarded = decide(stop, "doubleClick", T0).model;
+    // Discarded explicitly (menu arms, the next tap discards): a late transcript is not resurrected.
+    const armed = applyMenu(stop, MENU.discardVoice, T0).model;
+    const discarded = decide(armed, "click", T0 + 100).model;
+    expect(discarded.voice).toBeNull();
     expect(withVoiceHeard(discarded, "hermes-spark", "Test", false, T0).voice).toBeNull();
   });
 
@@ -277,13 +293,16 @@ describe("visible feedback and help", () => {
     const ask = { ...model("agent"), agentView: "ask" as const };
     expect(buildView(decide(ask, "click", T0).model, "de", T0 + 1).footer).toMatch(/^Gesendet: /);
     const withCard = model("agent", { ...demoReport(), approvals: [card] });
-    expect(buildView(decide(withCard, "click", T0).model, "de", T0 + 1).footer).toBe("Erlaubt");
-    expect(buildView(decide(decide(withCard, "scrollDown", T0, "en").model, "click", T0, "en").model, "en", T0 + 1).footer).toBe("Denied");
+    const allowed = decide(decide(withCard, "click", T0).model, "click", T0 + 500).model;
+    expect(buildView(allowed, "de", T0 + 501).footer).toBe("Erlaubt");
+    const denyArmed = decide(decide(withCard, "scrollDown", T0, "en").model, "click", T0, "en").model;
+    expect(buildView(denyArmed, "en", T0 + 1).footer).toBe("Tap again = Deny · Swipe/2× = cancel");
+    expect(buildView(decide(denyArmed, "click", T0 + 500, "en").model, "en", T0 + 501).footer).toBe("Denied");
     expect(buildView(decide(withCard, "doubleClick", T0, "en").model, "en", T0 + 1).footer).toBe("Approval still waiting");
     const running = { ...ask, report: patchAgents(ask.report, (_a, i) => (i === 0 ? { busy: true } : {})) };
-    expect(buildView(decide(running, "doubleClick", T0).model, "de", T0 + 1).footer).toContain("gestoppt");
+    expect(buildView(decide(decide(running, "click", T0).model, "click", T0 + 500).model, "de", T0 + 501).footer).toContain("gestoppt");
     expect(decide({ ...model("inbox"), report: { ...demoReport(), inbox: { selected: 0, events: [] } } }, "click", T0).model.message?.text).toBe("Nichts ausgewählt");
-    expect(decide(model("home", { ...demoReport(), home: { selected: 0, devices: [] } }), "click", T0).model.message?.text).toBe("Kein schaltbares Gerät");
+    expect(decide(model("home", { ...noView(demoReport()), home: { selected: 0, devices: [] } }), "click", T0).model.message?.text).toBe("Kein schaltbares Gerät");
   });
 
   it("every page keeps a short gesture hint in the footer (no feedback pending)", () => {
@@ -428,11 +447,11 @@ describe("tool lines and permission cards", () => {
   it("shows what the running agent does in the header, with the time", () => {
     const report = patchAgents(demoReport(), (_a, i) => (i === 0 ? { busy: true, activity: "Bash: npm test", answer: null, lastQuestion: "Teste" } : {}));
     const view = buildView({ ...model("agent", report), agentView: "ask" }, "de", T0);
-    expect(view.header).toMatch(/^Führt Tests aus.* · [0-9]{2}:[0-9]{2}$/);
+    expect(view.header).toMatch(/^QUIET HUB · Führt Tests aus.* · [0-9]{2}:[0-9]{2}$/);
     expect(view.body[0]).toMatch(/^—+$/);
     expect(view.body).toContain("Du: Teste");
     const thinking = patchAgents(report, (_a, i) => (i === 0 ? { activity: "" } : {}));
-    expect(buildView({ ...model("agent", thinking), agentView: "ask" }, "de", T0).header.startsWith("Denkt nach")).toBe(true);
+    expect(buildView({ ...model("agent", thinking), agentView: "ask" }, "de", T0).header.startsWith("QUIET HUB · Denkt nach")).toBe(true);
   });
 
   it("a card shows who asks, the tool, the command and the choice", () => {
@@ -441,8 +460,8 @@ describe("tool lines and permission cards", () => {
     expect(view.body[0]).toBe("! Freigabe · claude-win");
     expect(view.body[1]).toBe("Tool: Bash");
     expect(view.body[2]).toBe("npm test -- --run");
-    expect(view.footer).toBe("Wischen · Tippen = senden · 2× zurück");
-    expect(buildView(withCard, "en", T0).footer).toBe("Swipe · Tap = send · 2× back");
+    expect(view.footer).toBe("Tippen = senden · Wischen = wählen · 2× = zurück");
+    expect(buildView(withCard, "en", T0).footer).toBe("Tap = send · Swipe = select · 2× = back");
   });
 
   it("older daemons (no tool field) still split tool and command from the title", () => {
@@ -475,7 +494,7 @@ describe("page building and rebuilds", () => {
   }
 
   it("stays inside the container limits: <= 4 images, <= 8 text, exactly one event capture", () => {
-    const page: CreateStartUpPageContainer = buildPage(buildView(model(), "de", T0), menuFor(model(), "de"));
+    const page: CreateStartUpPageContainer = buildPage(buildView(model(), "de", T0), menuFor(model(), "de", true));
     expect((page.imageObject ?? []).length).toBeLessThanOrEqual(4);
     expect((page.textObject ?? []).length).toBeLessThanOrEqual(8);
     expect((page.textObject ?? []).filter((c) => c.isEventCapture === 1).length).toBe(1);
@@ -500,7 +519,7 @@ describe("page building and rebuilds", () => {
   it("a menu change is the one rebuild and carries the menuObject again", async () => {
     const { bridge, calls, rebuilt } = fakeBridge();
     const before = renderStats.rebuilds;
-    const spec = menuFor(model("home"), "de");
+    const spec = menuFor(model("home"), "de", true);
     const result = await rebuildPage(bridge, buildView(model("home"), "de", T0), pixelIconFor(model("home")), spec);
     expect(result.ok).toBe(true);
     expect(renderStats.rebuilds).toBe(before + 1);

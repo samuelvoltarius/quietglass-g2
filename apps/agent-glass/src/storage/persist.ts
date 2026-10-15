@@ -1,6 +1,7 @@
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { EMPTY_PREFS, parsePrefs, type SessionPrefs } from "../sessions/model";
 
 /**
  * Where Even Terminal runs, and the token to reach it.
@@ -26,6 +27,10 @@ export interface Settings {
   /** Browser-provided voice name; empty uses the best language match. */
   readonly speechVoice: string;
   readonly speechRate: number;
+  /** Names given and sessions hidden on this phone (never sent anywhere). */
+  readonly sessionPrefs: SessionPrefs;
+  /** Swap the two swipe directions (phone tab "Brille"). */
+  readonly invertScroll: boolean;
 }
 
 const KEY = "quietglass.agentglass.v1";
@@ -39,6 +44,8 @@ export const DEFAULT_SETTINGS: Settings = {
   speechLanguage: "auto",
   speechVoice: "",
   speechRate: 1,
+  sessionPrefs: EMPTY_PREFS,
+  invertScroll: false,
 };
 
 export async function save(bridge: EvenAppBridge, settings: Settings): Promise<void> {
@@ -68,6 +75,8 @@ export function parseSettings(raw: string): Settings {
         ? value.speechLanguage : "auto",
       speechVoice: typeof value.speechVoice === "string" ? value.speechVoice : "",
       speechRate: clampRate(value.speechRate),
+      sessionPrefs: parsePrefs(value.sessionPrefs),
+      invertScroll: value.invertScroll === true,
     };
   } catch {
     return DEFAULT_SETTINGS;

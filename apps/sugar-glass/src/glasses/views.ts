@@ -5,6 +5,7 @@ import { delta, type Direction, type PumpStatus, type Reading, type SugarData } 
 import { glucose, insulin, signedDelta, unitLabel, type Unit } from "../ns/units";
 import { ICON_STEP_MS, curveFrame, dropFrame, valueFrame, type Mood } from "./charts";
 import type { Bitmap } from "./gfx";
+import { footer as qisFooter } from "./footer";
 import { fit, MAX_BODY_ROWS } from "./screen";
 
 /**
@@ -30,10 +31,14 @@ export interface ViewState {
   readonly connection: Connection;
   readonly data: SugarData | null;
   readonly page: Page;
+  /** The help page is open (a hold, or the side menu when it is on; 2× closes it). */
+  readonly help?: boolean;
   readonly unit: Unit;
   readonly limits: Limits;
   /** Wall clock (animation, "x min ago"). */
   readonly now: number;
+  /** First start without a server address: the values are a demo and the glasses say how to set up the real thing (QIS v1.2 no. 7). */
+  readonly demoHint?: boolean;
 }
 
 export interface PageView {
@@ -45,10 +50,21 @@ export interface PageView {
 
 export const HEADER_WIDTH = 50;
 export const ROW_WIDTH = 56;
+
+/**
+ * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses and a hold
+ * opens the menu instead of reaching the app (step log of 15.10.2026), so a hold opens the help again.
+ */
+export const SIDE_MENU = false;
 /** Rows under the pictures on the glucose page. */
 export const GLUCOSE_ROWS = 2;
 
-export function errorReason(locale: Locale, code: string, status?: number): string {
+/**
+ * Why something failed, in plain words. The glasses never show a status code (QIS v1.2 no. 8);
+ * the phone asks with `detail` and gets "Fehler (HTTP 503)".
+ */
+export function errorReason(locale: Locale, code: string, status?: number, detail = false): string {
+  if (detail && code === "http") return t(locale, "p.err.httpDetail", { status: status ?? 0 });
   return t(locale, "g.err." + code, { status: status ?? 0 });
 }
 
@@ -88,25 +104,49 @@ function header(state: ViewState, list: readonly Alert[]): string {
   const value = newest ? glucose(newest.mgdl, state.unit, state.locale) : "–";
   const age = newest ? ageText(state.locale, state.now - newest.at) : "";
   const worst = list[0];
+  const app = L("g.app");
   let out: string;
   if (worst && worst.kind !== "noData") {
     const text = L("g.alert." + worst.kind, { value, unit, age });
     // Pulses: the marks come and go with the sign's animation step.
     const on = Math.floor(state.now / ICON_STEP_MS) % 2 === 0;
-    out = worst.critical ? (on ? `!! ${text} !!` : `   ${text}   `) : text;
+    out = `${app} · ` + (worst.critical ? (on ? `!! ${text} !!` : `   ${text}   `) : text);
   } else if (state.page === "pump") {
-    out = L("g.header.pump", { device: state.data?.pump?.device ?? "–" });
+    out = `${app} · ` + L("g.header.pump", { device: state.data?.pump?.device ?? "–" });
   } else if (newest) {
-    out = L("g.header.value", { value, unit, age });
+    out = `${app} · ` + L("g.header.value", { value, unit, age });
   } else {
-    out = L("g.header.noValue", { page: L("g.page." + state.page), state: L("g.state.noData") });
+    out = L("g.header.noValue", { page: app, state: L("g.state.noData") });
   }
-  if (state.demo) out += " · " + L("g.demo");
+  // An alert needs the whole row: the app name leaves first when the line would be cut.
+  if (out.length > HEADER_WIDTH && out.startsWith(`${app} · `)) out = out.slice(app.length + 3);
+  // The demo mark only when it still fits next to the state.
+  const demo = " · " + L("g.demo");
+  if ((state.demo || state.demoHint) && out.length + demo.length <= HEADER_WIDTH) out += demo;
   return fit(out, HEADER_WIDTH);
 }
 
+/** QIS v1 footer: Tippen / Wischen / Halten / 2×, page indicator in front. */
 function footer(state: ViewState): string {
-  return fit(t(state.locale, "g.footer." + state.page), ROW_WIDTH);
+  const L = (key: string): string => t(state.locale, key);
+  const index = PAGES.indexOf(state.page) + 1;
+  return fit(qisFooter(state.locale, {
+    tap: L("g.f.reload"),
+    swipe: L(state.page === "glucose" ? "g.f.toPump" : "g.f.toValue"),
+    hold: L(SIDE_MENU ? "g.f.menu" : "g.f.help"),
+  }, "exit", `${index}/${PAGES.length}`), ROW_WIDTH);
+}
+
+/** No data yet: nothing to switch between. */
+function plainFooter(state: ViewState, tap: boolean): string {
+  const L = (key: string): string => t(state.locale, key);
+  return fit(qisFooter(state.locale, { ...(tap ? { tap: L("g.f.reload") } : {}), hold: L(SIDE_MENU ? "g.f.menu" : "g.f.help") }, "exit"), ROW_WIDTH);
+}
+
+function helpView(state: ViewState): PageView {
+  const L = (key: string): string => t(state.locale, key);
+  const body = [1, 2, 3, 4, 5, 6, 7].map((n) => L("g.help." + n));
+  return { layout: "plain", header: fit(`${L("g.app")} · ${L("g.h.help")}`, HEADER_WIDTH), body: rows(body), footer: qisFooter(state.locale, {}, "back") };
 }
 
 const rows = (list: readonly string[], max = MAX_BODY_ROWS): string[] => list.slice(0, max).map((row) => fit(row, ROW_WIDTH));
@@ -127,7 +167,8 @@ function glucoseRows(state: ViewState): string[] {
     ? L("g.row.server", { reason: errorReason(state.locale, state.connection.code, state.connection.status) })
     : change === null ? L("g.row.noDelta", { low, high }) : L("g.row.delta", { delta: signedDelta(change, state.unit, state.locale), unit, low, high });
   const pump = state.data?.pump;
-  const second = pump
+  // First start: the demo says how to set up the real thing (information only, as always).
+  const second = state.demoHint ? L("g.demoHint") : pump
     ? L("g.row.pump", {
       iob: pump.iob === null ? "–" : insulin(pump.iob, state.locale),
       reservoir: pump.reservoir === null ? "–" : insulin(pump.reservoir, state.locale),
@@ -171,7 +212,7 @@ function pumpRows(state: ViewState): string[] {
     L("g.pump.iob", { iob: pump.iob === null ? "–" : insulin(pump.iob, state.locale) }),
     L("g.pump.reservoir", { reservoir: pump.reservoir === null ? "–" : insulin(pump.reservoir, state.locale), battery: percent(pump.battery) }),
     sensorRow(state, pump),
-    L("g.pump.phone", { battery: percent(pump.uploaderBattery), age: pump.at === null ? "–" : ageText(state.locale, state.now - pump.at) }),
+    state.demoHint ? L("g.demoHint") : L("g.pump.phone", { battery: percent(pump.uploaderBattery), age: pump.at === null ? "–" : ageText(state.locale, state.now - pump.at) }),
     meal,
     L("g.pump.notice"),
   ]);
@@ -179,17 +220,18 @@ function pumpRows(state: ViewState): string[] {
 
 export function buildView(state: ViewState): PageView {
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
+  if (state.help) return helpView(state);
   if (state.connection.kind === "setup") {
-    return { layout: "plain", header: fit(L("g.title"), HEADER_WIDTH), body: rows([L("g.setup.1"), L("g.setup.2"), "", L("g.notice"), L("g.notice2")]), footer: L("g.footer.setup") };
+    return { layout: "plain", header: fit(`${L("g.app")} · ${L("g.h.setup")}`, HEADER_WIDTH), body: rows([L("g.setup.1"), L("g.setup.2"), "", L("g.notice"), L("g.notice2")]), footer: plainFooter(state, false) };
   }
   if (!state.data) {
     const word = state.connection.kind === "error" ? L("g.state.noServer") : L("g.state.loading");
     const reason = state.connection.kind === "error" ? errorReason(state.locale, state.connection.code, state.connection.status) : "";
     return {
       layout: "plain",
-      header: fit(L("g.header.noValue", { page: L("g.title"), state: word }) + (state.demo ? " · " + L("g.demo") : ""), HEADER_WIDTH),
+      header: fit(L("g.header.noValue", { page: L("g.app"), state: word }) + (state.demo ? " · " + L("g.demo") : ""), HEADER_WIDTH),
       body: rows([reason ? L("g.row.server", { reason }).replace(/ –.*$/, "") : "", "", L("g.notice"), L("g.notice2")]),
-      footer: footer(state),
+      footer: plainFooter(state, true),
     };
   }
   const list = currentAlerts(state);

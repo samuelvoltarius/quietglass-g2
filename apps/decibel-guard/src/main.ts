@@ -3,10 +3,10 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import { levelFromPcm, smoothDb, toApproxSpl } from "./audio/level";
 import { accumulate, createDose, resetDose, type DoseState } from "./noise/dose";
-import { gestureFromEvent } from "./input/gestures";
-import { buildView, type NoiseView } from "./glasses/view";
+import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
+import { buildView, HELP_PAGES, type NoiseView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendImage, updatePage } from "./glasses/render";
+import { createPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
 import { quantize } from "./glasses/bitmap";
 import { DOSE_BAR, METER, doseKey, dosePercent, drawDoseBar, drawMeter, meterKey, meterLevel, type MeterState } from "./glasses/gauge";
 import { createImageLane } from "./glasses/lane";
@@ -18,9 +18,19 @@ import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
+import { t } from "./messages";
 
-/** A hold arms "clear today's dose"; a second hold or a tap within this window confirms. */
-const RESET_CONFIRM_MS = 4000;
+/** A hold arms "clear today's dose" and a tap arms "stop measuring"; a single tap within this window confirms (QIS v1, section 2). */
+const ARM_MS = 4000;
+/**
+ * The glasses' side menu is off: on the real glasses its clicks never arrive (`menuItemClickEvent`) and a
+ * hold opens the menu instead of reaching the app (step log 15.10.2026). The menu code stays for later.
+ */
+const SIDE_MENU = false;
+/** Side-menu item ids (QIS v1.2: the help lives in the glasses' side menu). */
+const MENU_HELP = 1;
+/** Taps right after the arming are ignored, so the release of the hold cannot confirm by accident. */
+const RESET_SETTLE_MS = 400;
 /** While measuring, today's dose is written this often (one number, see persist.ts). */
 const DOSE_SAVE_MS = 30_000;
 
@@ -47,8 +57,14 @@ async function boot(): Promise<void> {
   // Today's dose survives a restart (the phone was locked and the Even app unloaded us).
   let dose: DoseState = parseDose(await loadDoseRaw(bridge)) ?? createDose();
   let lastDoseSave = Date.now();
-  /** Until when a second hold (or a tap) clears today's dose; 0 = not asked. */
-  let resetArmedUntil = 0;
+  /** Which risky action waits for its confirming tap, until when, and since when. */
+  let armedKind: "reset" | "stop" | null = null;
+  let armedUntil = 0;
+  let armedAt = 0;
+  /** Key of the side menu the page on the glasses carries; a different one needs a rebuild. */
+  let pageMenuKey = "";
+  /** Zero-based page of the help, null while it is closed. */
+  let helpPage: number | null = null;
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
   /** Left through the system while measuring: the microphone reopens when the app comes back. */
   let resumeAfterBackground = false;
@@ -79,6 +95,14 @@ async function boot(): Promise<void> {
   const displayLevel = (): number | null =>
     smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, effectiveOffset(data));
 
+  const isArmed = (): boolean => armedKind !== null && armedUntil > Date.now();
+
+  /** QIS v1.2: the side menu holds the help (and nothing the wearer could trigger by accident). */
+  const menuSpec = (): MenuSpec => ({
+    key: SIDE_MENU ? `help:${locale}` : "none",
+    items: SIDE_MENU ? [{ id: MENU_HELP, label: t(locale, "g.menu.help") }] : [],
+  });
+
   const currentView = (): NoiseView =>
     buildView(dose, data.dose, {
       listening,
@@ -86,7 +110,8 @@ async function boot(): Promise<void> {
       calibrated: isCalibrated(data),
       locale,
       micError,
-      confirmReset: resetArmedUntil > Date.now(),
+      armed: isArmed() ? armedKind : null,
+      helpPage,
     });
 
   const persistDose = (): void => {
@@ -95,9 +120,18 @@ async function boot(): Promise<void> {
   };
 
   const disarmReset = (): void => {
-    resetArmedUntil = 0;
+    armedKind = null;
+    armedUntil = 0;
     clearTimeout(resetTimer);
     resetTimer = undefined;
+  };
+
+  const arm = (kind: "reset" | "stop"): void => {
+    armedKind = kind;
+    armedAt = Date.now();
+    armedUntil = armedAt + ARM_MS;
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(() => { disarmReset(); void draw(); }, ARM_MS + 20);
   };
 
   /**
@@ -121,15 +155,19 @@ async function boot(): Promise<void> {
   const drawOnce = async (): Promise<void> => {
     if (closed || backgrounded) return;
     const view = currentView();
+    const menu = menuSpec();
+    // The side menu travels with the page: a different one (language) means one rebuild.
+    if (pageReady && menu.key !== pageMenuKey) pageReady = false;
     if (!pageReady || !sameView(lastView, view)) {
       const created = !pageReady;
-      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, menu);
       if (!result.ok) {
         pageReady = false;
         console.warn("[decibelguard] draw failed:", result.reason);
         return;
       }
       pageReady = true;
+      if (created) pageMenuKey = menu.key;
       lastView = view;
       // A new page starts with blank images.
       if (created) lane.invalidate();
@@ -194,36 +232,32 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  /** Measuring was on when the exit dialog opened; cancelling turns it back on. */
-  let resumeListening = false;
-
+  /**
+   * The exit is confirmed: only now measuring ends (QIS v1.2 ruling 2). `closed` goes first, so a
+   * microphone that is still opening closes itself again.
+   */
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => {
+    onConfirmed: async () => {
       persistDose();
       closed = true;
-      resumeListening = false;
       clearInterval(tick);
       clearInterval(demoTimer);
       disarmReset();
       lane.close();
-    },
-    onStayed: async () => {
-      if (!resumeListening) return;
-      resumeListening = false;
-      await startListening();
+      if (opening) await opening.catch(() => undefined);
+      if (listening) {
+        listening = false;
+        await bridge.audioControl(false).catch(() => undefined);
+      }
     },
   }, "decibelguard");
 
   /**
-   * Double tap asks the system exit dialog. The microphone closes before it
-   * appears, so nothing is measured while the user decides; the dose so far is
-   * kept, and cancelling reopens the microphone.
+   * Double tap asks the system exit dialog. Measuring goes on while the user decides, so cancelling
+   * changes nothing; the microphone closes only if the exit is confirmed (the indicator stays on
+   * the screen the whole time).
    */
   const exitWithDialog = async (): Promise<void> => {
-    if (listening || opening) {
-      resumeListening = true;
-      await stopListening().catch((error: unknown) => { console.warn("[decibelguard] stop failed:", error); });
-    }
     await requestExit();
   };
 
@@ -275,6 +309,16 @@ async function boot(): Promise<void> {
     if (lifecycle === "foreground") { void comeBack(); return; }
     if (lifecycle === "background") { void goBackground(); return; }
     if (lifecycle === "exit") { void shutDown(); return; }
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      if (backgrounded) { void comeBack(); return; }
+      if (menuId === MENU_HELP) {
+        disarmReset();
+        helpPage = 0;
+        void draw();
+      }
+      return;
+    }
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
 
@@ -302,25 +346,54 @@ async function boot(): Promise<void> {
     // A gesture means the app is visible again, even if no "foreground" came first.
     if (backgrounded) { void comeBack(); return; }
 
-    // Clearing today's dose takes two steps: hold asks, a second hold or a tap within 4 s confirms.
-    const armed = resetArmedUntil > Date.now();
-    if (armed && (gesture.gesture === "longPress" || gesture.gesture === "click")) {
+    // Risky actions take two steps (QIS v1 section 2): a hold asks to clear today's dose, a tap asks to
+    // stop measuring; ONE single tap within 4 s confirms. Anything else (a second hold, a swipe, 2×) or
+    // the timeout cancels, and a plain tap never clears.
+    if (isArmed()) {
+      if (gesture.gesture === "longPressRelease") return;
+      if (gesture.gesture === "click") {
+        // The tail of the hold itself is not a confirmation.
+        if (armedKind === "reset" && Date.now() - armedAt < RESET_SETTLE_MS) return;
+        const kind = armedKind;
+        disarmReset();
+        if (kind === "reset") {
+          dose = resetDose();
+          persistDose();
+          void draw();
+        } else {
+          void stopListening();
+        }
+        return;
+      }
       disarmReset();
-      dose = resetDose();
-      persistDose();
       void draw();
       return;
     }
-    if (armed && gesture.gesture !== "longPressRelease") disarmReset();
+
+    // The help page: swipes turn its pages, the double tap goes back; nothing else does anything.
+    if (helpPage !== null) {
+      if (gesture.gesture === "doubleClick") helpPage = null;
+      else if (gesture.gesture === "scrollDown") helpPage = Math.min(HELP_PAGES - 1, helpPage + 1);
+      else if (gesture.gesture === "scrollUp") helpPage = Math.max(0, helpPage - 1);
+      else return;
+      void draw();
+      return;
+    }
 
     switch (gesture.gesture) {
       case "click":
-        void (listening ? stopListening() : startListening());
-        return;
+        // Stopping is armed first (QIS v1.2): one tap asks, a second one within 4 s stops.
+        if (listening) arm("stop");
+        else { void startListening(); return; }
+        break;
       case "longPress":
-        resetArmedUntil = Date.now() + RESET_CONFIRM_MS;
-        clearTimeout(resetTimer);
-        resetTimer = setTimeout(() => { disarmReset(); void draw(); }, RESET_CONFIRM_MS + 20);
+        arm("reset");
+        break;
+      case "scrollUp":
+      case "scrollDown":
+        // Without the side menu a swipe on the main screen opens the help again.
+        if (SIDE_MENU) return;
+        helpPage = 0;
         break;
       case "doubleClick":
         void exitWithDialog();

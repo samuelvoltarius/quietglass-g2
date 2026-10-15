@@ -2,7 +2,8 @@ import { positionAt, type MetronomeSettings, type MetronomeState } from "../metr
 import { formatDuration } from "../practice/log";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import { fitView, HEADER_COLS, LINE_COLS } from "./fit";
+import { fitView } from "./fit";
+import { armedFooter, footer } from "./footer";
 
 /**
  * What the glasses show.
@@ -36,7 +37,14 @@ export interface ViewOptions {
   readonly sessionSeconds?: number;
   /** Language for every line; English when omitted. */
   readonly locale?: Locale;
+  /** A running beat was tapped once: the next tap pauses it (QIS v1, arm then confirm). */
+  readonly armed?: boolean;
+  /** The help page is open. */
+  readonly help?: boolean;
 }
+
+/** A pause must be confirmed by a second tap within this time (QIS v1). */
+export const ARM_MS = 4_000;
 
 export function buildView(
   state: MetronomeState,
@@ -56,18 +64,39 @@ export function composeView(
 ): CadenceView {
   const position = positionAt(state, settings, now);
   const locale = options.locale ?? "en";
+  const head = (stateKey: string): string => t(locale, "g.title") + " · " + t(locale, stateKey);
+
+  if (options.help) {
+    return {
+      header: head("g.s.help"),
+      body: [1, 2, 3, 4].map((n) => t(locale, "g.help." + n)),
+      footer: footer(locale, {}, "back"),
+    };
+  }
+
   // Never started yet: one sentence saying what to do.
   const fresh = !state.running && state.beatsBefore === 0;
+  const armed = options.armed === true && state.running;
+  // What is being practised and for how long; the user's own item text is cut so it cannot wrap.
+  const timed = options.sessionSeconds !== undefined && options.sessionSeconds > 0;
+  const practice = [
+    ...(options.item ? [truncate(options.item, 30)] : []),
+    ...(timed ? [formatDuration(options.sessionSeconds ?? 0, locale)] : []),
+  ].join(" · ");
 
   return {
-    // The item is the user's own text; a long one must not wrap into the body.
-    header: truncate(options.item ?? t(locale, "g.title"), HEADER_WIDTH),
+    header: head(armed ? "g.s.armed" : state.running ? "g.s.running" : fresh ? "g.s.ready" : "g.s.paused"),
     body: [
       beatRow(settings, position.beat, state.running),
       t(locale, "g.info", { bpm: settings.bpm, sig: signatureLabel(settings), bar: position.bar }),
-      ...(fresh ? ["", t(locale, "g.first")] : []),
+      ...(practice === "" ? [] : [practice]),
+      ...(fresh ? [t(locale, "g.first")] : []),
     ],
-    footer: footerText(state, options, locale),
+    footer: armed
+      ? armedFooter(locale, t(locale, "g.a.pause"))
+      : state.running
+        ? footer(locale, { tap: t(locale, "g.a.pauseShort"), swipe: t(locale, "g.a.tempo"), hold: t(locale, "g.a.top") }, "exit")
+        : footer(locale, { tap: t(locale, "g.a.start"), swipe: t(locale, "g.a.tempo"), hold: t(locale, "g.a.help") }, "exit"),
   };
 }
 
@@ -101,9 +130,6 @@ export function beatRow(
   return markers.join(GAP);
 }
 
-/** Characters that fit one header line on the 576 px display. */
-const HEADER_WIDTH = HEADER_COLS;
-
 export function truncate(text: string, maxWidth: number): string {
   if (text.length <= maxWidth) return text;
   return text.slice(0, Math.max(0, maxWidth - 1)).trimEnd() + "…";
@@ -111,21 +137,4 @@ export function truncate(text: string, maxWidth: number): string {
 
 export function signatureLabel(settings: MetronomeSettings): string {
   return settings.signature.beats + "/" + settings.signature.unit;
-}
-
-function footerText(state: MetronomeState, options: ViewOptions, locale: Locale): string {
-  const parts: string[] = [];
-  parts.push(t(locale, state.running ? "g.running" : "g.paused"));
-
-  const timed = options.sessionSeconds !== undefined && options.sessionSeconds > 0;
-  if (timed) parts.push(formatDuration(options.sessionSeconds ?? 0, locale));
-
-  parts.push(t(locale, state.running ? "g.tapPause" : "g.tapStart"));
-  // As many gesture hints as fit, in this order; the session clock always stays.
-  const extras = [t(locale, "g.swipeTempo"), t(locale, "g.holdTop"), t(locale, "g.exit")];
-  for (let n = extras.length; n > 0; n--) {
-    const line = [...parts, ...extras.slice(0, n)].join(" · ");
-    if (line.length <= LINE_COLS) return line;
-  }
-  return parts.join(" · ");
 }

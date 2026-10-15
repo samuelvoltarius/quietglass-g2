@@ -120,15 +120,60 @@ export async function runAction(
  * replaced with `action`, so `https://h/status` becomes `https://h/action`.
  */
 export function actionUrl(statusUrl: string): string {
+  return siblingUrl(statusUrl, "action");
+}
+
+/** `https://h/status` → `https://h/devices`: where the network watch takes "known". */
+export function devicesUrl(statusUrl: string): string {
+  return siblingUrl(statusUrl, "devices");
+}
+
+function siblingUrl(statusUrl: string, name: string): string {
   try {
     const parsed = new URL(statusUrl);
     const segments = parsed.pathname.split("/").filter(Boolean);
     segments.pop();
-    segments.push("action");
+    segments.push(name);
     parsed.pathname = "/" + segments.join("/");
     parsed.search = "";
     return parsed.toString();
   } catch {
-    return statusUrl.replace(/\/[^/]*$/, "") + "/action";
+    return statusUrl.replace(/\/[^/]*$/, "") + "/" + name;
+  }
+}
+
+/**
+ * Marks a device of the source's home network as known (or not):
+ * `POST <url>/devices` with `{"mac": "...", "known": true}`, with the same
+ * token as the status request. The server refuses it without a login.
+ */
+export async function markDeviceKnown(
+  statusUrl: string,
+  mac: string,
+  known: boolean,
+  options: FetchOptions = {},
+): Promise<ActionOutcome> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT);
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (options.token) headers["Authorization"] = "Bearer " + options.token;
+
+    const response = await doFetch(devicesUrl(statusUrl), {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({ mac, known }),
+    });
+
+    return response.ok
+      ? { ok: true, error: null }
+      : { ok: false, error: "HTTP " + response.status };
+  } catch (error) {
+    return { ok: false, error: describeError(error) };
+  } finally {
+    clearTimeout(timeout);
   }
 }

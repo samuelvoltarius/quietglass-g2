@@ -24,8 +24,20 @@ export interface OnlineStatus {
   /** Speed factor in percent. */
   readonly speed: number;
   readonly message: string;
+  /** Nozzle height in mm (G-code position), when the bridge reports it. */
+  readonly z: number | null;
+  /** The active Spoolman spool, when Spoolman is set up. */
+  readonly spool: Spool | null;
   /** The bridge allows pause/resume/cancel. */
   readonly controllable: boolean;
+}
+
+export interface Spool {
+  readonly material: string;
+  readonly vendor: string;
+  readonly name: string;
+  readonly grams: number | null;
+  readonly meters: number | null;
 }
 
 export type OfflineReason = "searching" | "no-printer" | "printer-silent" | "unknown";
@@ -56,6 +68,20 @@ const number = (value: unknown, min: number, max: number): number | null => {
 
 const text = (value: unknown, max: number): string => (typeof value === "string" ? value.replace(/[\r\n\t]+/g, " ").slice(0, max) : "");
 
+function spool(value: unknown): Spool | null {
+  if (!value || typeof value !== "object") return null;
+  const v = record(value);
+  const meters = typeof v["meters"] === "number" && Number.isFinite(v["meters"]) ? Math.max(0, Math.round(v["meters"] * 10) / 10) : null;
+  const result = {
+    material: text(v["material"], 20),
+    vendor: text(v["vendor"], 24),
+    name: text(v["name"], 32),
+    grams: number(v["grams"], 0, 100_000),
+    meters,
+  };
+  return result.material || result.vendor || result.name || result.grams !== null ? result : null;
+}
+
 function temperature(value: unknown): Temperature | null {
   const t = record(value);
   const now = number(t["now"], -50, 600);
@@ -84,6 +110,8 @@ export function parseStatus(raw: unknown): PrinterStatus {
     bed: temperature(value["bed"]),
     speed: number(value["speed"], 0, 1000) ?? 100,
     message: text(value["message"], 120),
+    z: typeof value["z"] === "number" && Number.isFinite(value["z"]) ? Math.max(0, Math.min(10_000, value["z"])) : null,
+    spool: spool(value["spool"]),
     controllable,
   };
 }
@@ -101,6 +129,24 @@ export function duration(minutes: number | null): string {
   if (minutes === null) return "–";
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+
+/** Local clock time when the print should finish: "23:40", or "Mo 08:15" when it is not today. */
+export function finishClock(minutesLeft: number | null, now: number, locale: "de" | "en"): string | null {
+  if (minutesLeft === null || !Number.isFinite(now)) return null;
+  const end = new Date(now + minutesLeft * 60_000);
+  const start = new Date(now);
+  const time = String(end.getHours()).padStart(2, "0") + ":" + String(end.getMinutes()).padStart(2, "0");
+  const sameDay = end.getFullYear() === start.getFullYear() && end.getMonth() === start.getMonth() && end.getDate() === start.getDate();
+  if (sameDay) return time;
+  const days = locale === "de" ? ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return days[end.getDay()] + " " + time;
+}
+
+/** "PLA · Prusament · 412 g" — the parts that are known. */
+export function spoolLine(spool: Spool | null): string {
+  if (!spool) return "";
+  return [spool.material, spool.vendor, spool.grams === null ? "" : spool.grams + " g"].filter(Boolean).join(" · ");
 }
 
 /** A progress bar from glyphs the G2 is known to draw. */

@@ -130,19 +130,28 @@ function covers(shape: Shape, x: number, y: number): boolean {
   }
 }
 
-const cache = new Map<ManeuverType | "blank", PixelIcon>();
+const cache = new Map<string, PixelIcon>();
 
 /** The arrow of a manoeuvre as a 72 × 72 grid of "#" (white) and "." (black); all "." without one. */
 export function pixelArrowFor(type?: ManeuverType): PixelIcon {
-  const key = type ?? "blank";
+  return pixelArrowGrid(type, ARROW_GRID);
+}
+
+/**
+ * The same arrow sampled into `grid` × `grid` cells: the shapes are defined in
+ * a 144 px square, so a finer grid draws the identical arrow larger and
+ * smoother (the HUD layout uses 100 cells for a 200 px arrow).
+ */
+export function pixelArrowGrid(type: ManeuverType | undefined, grid: number): PixelIcon {
+  const key = (type ?? "blank") + "@" + grid;
   const known = cache.get(key);
   if (known) return known;
-  const cell = ARROW_SIZE / ARROW_GRID;
+  const cell = ARROW_SIZE / grid;
   const shapes = type ? SHAPES[type] : [];
   const rows: string[] = [];
-  for (let row = 0; row < ARROW_GRID; row++) {
+  for (let row = 0; row < grid; row++) {
     let line = "";
-    for (let column = 0; column < ARROW_GRID; column++) {
+    for (let column = 0; column < grid; column++) {
       const x = (column + 0.5) * cell, y = (row + 0.5) * cell;
       line += shapes.some((shape) => covers(shape, x, y)) ? "#" : ".";
     }

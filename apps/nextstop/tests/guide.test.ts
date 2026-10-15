@@ -212,13 +212,13 @@ describe("the guide on the glasses", () => {
 
   it("tells the walk to the stop, and what comes after it", () => {
     const view = show(guideState(steps, T0, null), T0);
-    expect(view.header).toBe(`Zu Fuß · ${clock(T0)}`);
+    expect(view.header).toBe(`NEXTSTOP · Zu Fuß · ${clock(T0)}`);
     expect(view.body[0]).toBe("> Geh zur Haltestelle");
     expect(view.body[1]).toBe("Salzburg Vogelweiderstraße");
     expect(view.body[2]).toBe("200 m · 3 min zu Fuß");
     expect(view.body[4]).toBe("Dann: O-Bus 2 Richtung Walserfeld");
     expect(view.body[5]).toBe(`um ${clock(departureOf(bus1))} ~ (in 4 min)`);
-    expect(view.footer).toBe("Schritt 1/6 · Uhr · 2× = beenden");
+    expect(view.footer).toBe("1/6 · Uhr · Tippen = weiter · 2× = Ende");
   });
 
   it("uses the measured distance when GPS is there", () => {
@@ -231,7 +231,7 @@ describe("the guide on the glasses", () => {
   it("tells the boarding: vehicle, direction, time, stand, and where to get off", () => {
     const now = at(2);
     const view = show(guideState(steps, now, here(stopOfBus1)), now, here(stopOfBus1));
-    expect(view.header).toBe(`Einsteigen · ${clock(now)}`);
+    expect(view.header).toBe(`NEXTSTOP · Einsteigen · ${clock(now)}`);
     expect(view.body[0]).toBe("> Warte auf O-Bus 2");
     expect(view.body[1]).toBe("Richtung Walserfeld");
     expect(view.body[2]).toBe(`um ${clock(departureOf(bus1))} ~ (in 2 min)`);
@@ -250,7 +250,7 @@ describe("the guide on the glasses", () => {
   it("tells when to get off and how many halts are left", () => {
     const now = new Date(bus1.stops[1]!.expected.getTime() - 20000);
     const view = show(guideState(steps, now, null), now);
-    expect(view.header).toBe(`Unterwegs · O-Bus 2 · ${clock(now)}`);
+    expect(view.header).toBe(`NEXTSTOP · Unterwegs · O-Bus 2 · ${clock(now)}`);
     expect(view.body[0]).toBe("> Aussteigen: Salzburg Mirabellplatz");
     expect(view.body[1]).toBe(`noch 4 Stationen · an ${clock(arrivalOf(bus1))}`);
     expect(view.body[3]).toBe("Nächster Halt: Salzburg Bayerhamerstraße · jetzt");
@@ -275,7 +275,7 @@ describe("the guide on the glasses", () => {
   it("calls the change a change: walk, vehicle, direction, stand, time", () => {
     const now = new Date(arrivalOf(bus1).getTime() + 2 * 60000);
     const view = show(guideState(steps, now, null), now);
-    expect(view.header).toBe(`Umsteigen · ${clock(now)}`);
+    expect(view.header).toBe(`NEXTSTOP · Umsteigen · ${clock(now)}`);
     expect(view.body[0]).toBe("> Umsteigen: O-Bus 10");
     expect(view.body[1]).toMatch(/^Geh zu Salzburg Ferdinand-Hanusch-Platz · \d+0 m$/);
     expect(view.body[2]).toBe("Richtung Walserfeld · Steig A");
@@ -289,22 +289,23 @@ describe("the guide on the glasses", () => {
     expect(walking.body[1]).toBe("Heim");
     const position = here({ lat: lastWalk.toLat, lon: lastWalk.toLon });
     const done = show(guideState(steps, rideDone, position), rideDone, position);
-    expect(done.header).toBe(`Ziel erreicht · ${clock(rideDone)}`);
+    expect(done.header).toBe(`NEXTSTOP · Ziel erreicht · ${clock(rideDone)}`);
     expect(done.body).toEqual(["> Ziel erreicht", "Heim", "", "Tippen = zurück zu den Zielen"]);
-    expect(done.footer).toBe("Tippen = fertig");
+    expect(done.footer).toBe("Tippen = fertig · 2× = zurück");
   });
 
   it("says plainly that the vehicle has gone", () => {
     const late = new Date(departureOf(bus1).getTime() + 150000);
     const view = show(guideState(steps, late, here(stopOfBus1)), late, here(stopOfBus1));
-    expect(view.header).toBe(`Verpasst? · ${clock(late)}`);
+    expect(view.header).toBe(`NEXTSTOP · Verpasst? · ${clock(late)}`);
     expect(view.body[0]).toBe("> O-Bus 2 ist schon abgefahren.");
-    expect(view.body[2]).toBe("Tippen = neue Verbindung suchen");
+    expect(view.body[2]).toBe("Tippen, dann nochmal = neu suchen");
   });
 
-  it("asks before ending the guide", () => {
+  it("asks before ending the guide: the footer says the next single tap ends it (QIS v1)", () => {
     const state = guideState(steps, T0, null);
-    expect(guideView(state, T0, null, "de", { confirmStop: true }).footer).toBe("Nochmal doppeltippen = Begleitung beenden");
+    expect(guideView(state, T0, null, "de", { armed: "stop" }).footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen");
+    expect(guideView(state, T0, null, "en", { armed: "stop" }).footer).toBe("Tap again = cancel trip · Swipe/2× = cancel");
   });
 
   it("speaks English too", () => {
@@ -340,10 +341,10 @@ describe("the guide on the glasses", () => {
         [rideDone, here({ lat: lastWalk.toLat, lon: lastWalk.toLon })],
       ];
       for (const [now, position] of moments) {
-        for (const confirmStop of [false, true]) {
-          const view = guideView(guideState(steps, now, position), now, position, locale, { confirmStop });
+        for (const armed of [undefined, "stop", "search"] as const) {
+          const view = guideView(guideState(steps, now, position), now, position, locale, { armed });
           expect(view.header.length, view.header).toBeLessThanOrEqual(ROUTE_WIDTH);
-          expect(view.footer.length, view.footer).toBeLessThanOrEqual(46);
+          expect(view.footer.length, view.footer).toBeLessThanOrEqual(ROUTE_WIDTH);
           expect(view.body.length, view.body.join("|")).toBeLessThanOrEqual(ROUTE_ROWS);
           for (const line of view.body) expect(line.length, line).toBeLessThanOrEqual(ROUTE_WIDTH);
         }

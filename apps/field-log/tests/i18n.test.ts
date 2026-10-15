@@ -9,7 +9,7 @@ import { safeName } from "../src/ui/phone";
 const GLASSES_WIDTH = 56;
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 /** Worst-case values for every placeholder that reaches the glasses. */
-const WORST: Record<string, string | number> = { major: 999, minor: 999, note: 999, time: "99h 59m", severity: "WICHTIG" };
+const WORST: Record<string, string | number> = { major: 999, minor: 999, note: 999, time: "99h 59m", severity: "WICHTIG", seconds: 30 };
 
 describe("message catalogue", () => {
   it("has every key in German and English, none empty", () => {
@@ -92,9 +92,10 @@ describe("glasses copy fits the display", () => {
           for (const voice of [false, true]) {
             for (const status of ["idle", "error", "connecting"] as const) {
               for (const pickIndex of [0, 3, 7]) {
+                for (const extra of [{}, { helpSelected: true }, { sideMenu: true }, { help: true }, { reviewChoice: 1 as const }, { reviewChoice: 2 as const, confirmDiscard: true }]) {
                 const options: ViewOptions = {
                   phase, severity: "major", pending: long, status, mock: true, locale, voice,
-                  quickNotes: quickNotes(locale, []), pickIndex,
+                  quickNotes: quickNotes(locale, []), pickIndex, ...extra,
                 };
                 const view = buildView(inspectionWith(entries), options, 360_000_000);
                 expect(view.body.length, phase).toBeLessThanOrEqual(MAX_BODY_ROWS);
@@ -102,6 +103,7 @@ describe("glasses copy fits the display", () => {
                 expect(view.header.length).toBeLessThanOrEqual(HEADER_WIDTH);
                 expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
                 expect(view.footer, `${phase} footer`).not.toBe("");
+                }
               }
             }
           }
@@ -112,7 +114,10 @@ describe("glasses copy fits the display", () => {
     it(`${locale}: with nothing open, the glasses say a tap starts an inspection`, () => {
       const view = buildView(null, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false, locale });
       expect(view.body).toEqual([t(locale, "g.none.1"), t(locale, "g.none.2")]);
-      expect(view.footer).toBe(t(locale, "g.none.footer"));
+      expect(view.footer).toBe(locale === "de" ? "Tippen = starten · Halten = Hilfe · 2× = Ende" : "Tap = start · Hold = help · 2× = exit");
+      // With the side menu switched on (SIDE_MENU in main.ts) the hold names the menu.
+      const withMenu = buildView(null, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false, locale, sideMenu: true });
+      expect(withMenu.footer).toBe(locale === "de" ? "Tippen = starten · Halten = Menü · 2× = Ende" : "Tap = start · Hold = menu · 2× = exit");
     });
 
     it(`${locale}: every default quick note fits a row with its marker`, () => {
@@ -125,12 +130,18 @@ describe("glasses copy fits the display", () => {
     const empty = buildView(startInspection("i", "Rundgang", 0), { ...base, phase: "idle" }, 60_000);
     expect(empty.body).toContain("Noch keine Einträge.");
     expect(empty.body).toContain("Nächster Eintrag: WICHTIG · Wischen = ändern");
-    expect(empty.footer).toBe("seit 1m · Tippen = Notiz · Halten = Foto");
+    expect(empty.header).toBe("FIELDLOG · Rundgang · seit 1m");
+    expect(empty.footer).toBe("Tippen = Notiz · Halten = Foto · 2× = Ende");
     const review = buildView(startInspection("i", "R", 0), { ...base, phase: "review" });
-    expect(review.header).toBe("Behalten?");
-    expect(review.footer).toBe("Tippen = behalten · Wischen = verwerfen · Halten = Foto");
+    expect(review.header).toBe("FIELDLOG · Behalten?");
+    expect(review.body.slice(-3)).toEqual(["> Behalten", "  Behalten + Foto", "  Verwerfen"]);
+    expect(review.footer).toBe("Tippen = behalten · Wischen = Auswahl");
+    const armed = buildView(startInspection("i", "R", 0), { ...base, phase: "review", reviewChoice: 2, confirmDiscard: true });
+    expect(armed.body.slice(-1)).toEqual(["> SICHER? Verwerfen"]);
+    expect(armed.footer).toBe("Nochmal tippen = Text verwerfen · Wischen/2× = abbrechen");
     const pick = buildView(startInspection("i", "R", 0), { ...base, phase: "pick", quickNotes: ["Passt", "Fehlt"], pickIndex: 2 });
-    expect(pick.header).toBe("Schnellnotiz");
+    expect(pick.header).toBe("FIELDLOG · Schnellnotiz");
+    expect(pick.footer).toBe("Tippen = speichern · Wischen = wählen · 2× = zurück");
     expect(pick.body).toEqual(["  Passt", "  Fehlt", "> Abbrechen", "Speichern als: WICHTIG"]);
   });
 });

@@ -157,11 +157,11 @@ describe("the connections page", () => {
   it("lists up to four connections and details the selected one underneath", () => {
     expect(journeys).toHaveLength(4);
     const view = plansView("Heim", journeys, 1, T0, "de");
-    expect(view.header).toBe(`→ Heim · ${clock(T0)}`);
+    expect(view.header).toBe(`NEXTSTOP · → Heim · ${clock(T0)}`);
     expect(view.body.slice(0, 4).map((line) => line[0])).toEqual([" ", ">", " ", " "]);
     expect(view.body[5]).toBe("Ab Salzburg Sterneckstraße · Steig D");
     expect(view.body[6]).toMatch(/^Gehen \d+ min · Dauer 42 min$/);
-    expect(view.footer).toBe("Tippen = los · Wischen = andere · 2× = zurück");
+    expect(view.footer).toBe("Tippen = los · Wischen = wählen · 2× = zurück");
   });
 
   for (const locale of ["de", "en"] as const) {

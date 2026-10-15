@@ -14,11 +14,11 @@
  * a message or confirm countdown, recording / a voice transcript, help, the
  * page picker, a broken link, the smile after an answer. Any tap or swipe
  * while quiet wakes the display for WAKE_MS and is otherwise swallowed;
- * double tap and hold keep their meaning (stop / exit / speak).
+ * double tap and hold keep their meaning (back / exit / speak); tap arms the stop.
  */
 import type { ScreenView } from "../glasses/screen";
 import type { PixelIcon } from "../glasses/pixel";
-import { linkBlocks, selectedAgent, type HubGesture, type HubModel } from "./model";
+import { linkBlocks, selectedAgent, voiceOwns, type HubGesture, type HubModel } from "./model";
 
 /** How long a gesture (or a new alert) shows the working agent before it goes quiet again. */
 export const WAKE_MS = 20_000;
@@ -41,7 +41,7 @@ export function isQuiet(model: HubModel, now: number): boolean {
   if (model.quietWhileWorking !== true) return false;
   if ((model.wakeUntil ?? 0) > now) return false;
   if (model.report.approvals.length > 0) return false;
-  if (model.recording || model.voice !== null || model.help || model.picker !== null) return false;
+  if (model.recording || voiceOwns(model) || model.help || model.picker !== null) return false;
   if (model.message !== null && model.message.until > now) return false;
   if (model.confirm !== null && model.confirm.until > now) return false;
   if ((model.cheerUntil ?? 0) > now) return false;

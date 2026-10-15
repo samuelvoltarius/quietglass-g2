@@ -1,5 +1,6 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { ft } from "../footer";
 import { fit, rideStopName, stopNamer, type StopView } from "../glasses/view";
 import { minutesUntil } from "../transit/types";
 import type { Position } from "../ride/tracker";
@@ -224,13 +225,11 @@ function rideFooter(
 ): string {
   const after = step.after;
   const line = after?.kind === "transit" ? after.leg.line : after?.kind === "walk" ? after.next?.line : undefined;
-  const key = line ? "r.footRideTransfer" : after?.kind === "walk" ? "r.footRideGoal" : "r.footRideDone";
-  return t(locale, key, {
-    line: line ? fit(line, 10) : "",
-    step: Math.min(state.index + 1, state.steps.length),
-    total: state.steps.length,
-    basis: t(locale, state.progress?.basis === "gps" ? "r.footerGuideGps" : "r.footerGuideClock"),
-  });
+  const key = line ? "r.leadRideTransfer" : after?.kind === "walk" ? "r.leadRideGoal" : "r.leadRideDone";
+  const basis = t(locale, state.progress?.basis === "gps" ? "r.footerGuideGps" : "r.footerGuideClock");
+  const lead = `${t(locale, key, { line: line ? fit(line, 10) : "" })} · ${Math.min(state.index + 1, state.steps.length)}/${state.steps.length} · ${basis}`;
+  // While riding there is nothing to tap or swipe for; the footer says what comes next.
+  return ft(locale, "exit", {}, lead);
 }
 
 function rideScene(
@@ -255,7 +254,7 @@ function rideScene(
   const body = alert && state.progress?.arriving && !state.progress.finished
     ? [...list.slice(-1), row(t(locale, "r.alightNow"))]
     : alert ? list.slice(-1) : list;
-  const footer = display.confirmStop || display.rerouted ? view.footer : rideFooter(step, state, locale);
+  const footer = display.armed || display.rerouted ? view.footer : rideFooter(step, state, locale);
 
   const [pre, digits, post] = RIDE_IMAGES;
   return {

@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.6.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Klicks kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen. Die Seiten tragen kein `menuObject` mehr; der Menücode bleibt.
+- Hilfe: Wischen in der Übersicht öffnet sie wieder (Hinweis `Wischen = Hilfe`); in der Hilfe blättert Wischen, 2× geht zurück.
+- Unverändert per Geste: Tippen = messen / (beim Messen) nachfragen, nochmal tippen = stoppen; Halten = Dosis löschen fragen, ein Tippen bestätigt; 2× = zurück / Ende.
+
+## [0.6.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach gilt der Aufruf als fehlgeschlagen und die Seite wird neu aufgebaut.
+
+## [0.6.0] — 2026-10-14
+
+### Changed (QIS v1.2)
+
+- Safety: stopping the measurement is arm-and-confirm. A tap while measuring only asks (`● MIKRO AN · Nochmal tippen = stoppen · 2× = abbrechen`); a second single tap within 4 s stops. A swipe, 2× or 4 s without input cancel. Starting still takes one tap.
+- Safety: 2× on the main screen opens the system exit dialog without stopping first. Measuring (and the `● MIKRO AN` indicator) goes on while the dialog is open and after "stay"; the microphone only closes once the exit is confirmed.
+- Side menu: the glasses' side menu (`menuObject`, `menuItemClickEvent`) carries `Hilfe`. A swipe no longer opens the help (swipes only turn its pages); the idle hint reads `Hilfe: Menü der Brille`.
+- Footers (idle, measuring, armed, help, microphone error) come from a shared `footer()` helper (`glasses/footer.ts`); no hand-built gesture strings any more.
+- Phone: new tab `Brille` (swipe direction moved there), order `Start · Einstellen · Brille · Mehr`. No `Verbindung` tab (the app has no server). Phone texts say `2×` instead of "Doppeltippen" / "Double tap".
+
+## [0.5.0] — 2026-10-14
+
+### Changed (QIS v1)
+
+- Conforms to the Quietglass Interaction Standard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Safety: clearing today's dose is arm-and-confirm. A hold only asks (`Nochmal tippen = Dosis löschen · Wischen/2× = abbrechen`); one single tap within 4 s confirms. A second hold, a swipe, a double tap or 4 s without input cancel, and a tap on the heels of the hold (under 0.4 s) is ignored. A plain tap never clears the dose.
+- Double tap is back one level (help, question); only on the main screen it leaves the app.
+- Header is `DECIBELGUARD · state`; footer lists Tippen/Wischen/Halten/2× in that order and ends in `2× = zurück` or `2× = Ende`.
+- New help page ("Hilfe", two pages) opened by a swipe; the microphone indicator stays in the footer while it is open.
+- `invertScroll` is no longer dead: the phone page has the switch, and it turns the help pages.
+
+## [0.4.2] — 2026-10-13
+
+### Changed
+
+- Handy-Seite in Tabs statt einer langen Spalte: Start · Einstellen · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Chip „kalibriert/geschätzt“ oben.
+
 ## [0.4.1] — 2026-10-13
 
 ### Fixed

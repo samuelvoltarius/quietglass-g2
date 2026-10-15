@@ -4,6 +4,7 @@ import { sourceState, type SourceStatus } from "../monitor/dashboard";
 import type { MetricHistory, SparkSeries } from "../monitor/history";
 import { cpuMetric, detailLines } from "./host";
 import { isOffline } from "./fleet";
+import { footer } from "./footer";
 import { HEADER_WIDTH, fit, type StatusView } from "./view";
 
 /**
@@ -28,9 +29,9 @@ export function detailPage(source: SourceStatus, page: number, locale: Locale, n
   const pager = pages > 1 ? ` · ${shown + 1}/${pages}` : "";
   return {
     view: {
-      header: fit(source.name, HEADER_WIDTH - 3 - t(locale, state).length - pager.length) + " · " + t(locale, state) + pager,
+      header: "STATUS · " + fit(source.name, HEADER_WIDTH - 12 - t(locale, state).length - pager.length) + " · " + t(locale, state) + pager,
       body: lines.slice(shown * DETAIL_ROWS, shown * DETAIL_ROWS + DETAIL_ROWS),
-      footer: t(locale, "g.detailFooter"),
+      footer: footer(locale, { tap: t(locale, "g.w.next"), swipe: t(locale, "g.w.page"), hold: t(locale, "g.w.seen") }, "back"),
     },
     pages,
     page: shown,

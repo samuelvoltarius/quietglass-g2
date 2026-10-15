@@ -3,6 +3,41 @@
 All notable changes to Endurance HUD are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus: Die Klicks im Menü kommen auf der Brille nie in der App an, und Halten öffnet bei einer Seite mit Menü nur das Menü. Die Seiten tragen jetzt kein Menü (`SIDE_MENU = false`); der Menü-Code bleibt für später.
+- Wischen wechselt wieder die Sportart (Rad / Laufen) und speichert sie.
+- Halten öffnet wieder die Hilfe; Tippen oder 2× schließt sie.
+- Tippen lädt neu, 2× beendet (in der Hilfe: zurück). Fußzeile des Live-Bilds: `Tippen = neu · Wischen = Sport · Halten = Hilfe · 2× = Ende`. Die Hilfeseite und die Hinweise am Handy beschreiben wieder diese Gesten.
+- Die Sportart-Liste gehört zum Seitenmenü und ist damit vorerst nicht erreichbar; die Sportart lässt sich per Wischen oder im Handy-Tab „Brille“ wählen.
+
+## [0.5.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach gilt der Aufruf als fehlgeschlagen und die Seite wird neu aufgebaut.
+
+## [0.5.0] — 2026-10-14
+
+### Geändert (QIS v1.2)
+
+- Seitenmenü der Brille (Halten): **Sportart** und **Hilfe**. Halten allein öffnet nicht mehr die Hilfe.
+- Wischen speichert keine Sportart mehr (QIS v1.2, Regel 5): die Sportart wird in einer Liste gewählt (Automatisch / Rad / Laufen), Wischen bewegt den Cursor, Tippen setzt und speichert, 2× geht zurück ohne etwas zu ändern. Auf dem Live-Bild macht Wischen nichts.
+- Fußzeile des Live-Bilds: `Tippen = neu · 2× = Ende`. Die Hilfeseite beschreibt das Seitenmenü.
+- Das Seitenmenü gehört zur Seite: ein Sprachwechsel am Handy baut sie neu auf, damit die Menüeinträge in der neuen Sprache stehen.
+
+## [0.4.0] — 2026-10-14
+
+### Geändert (QIS v1)
+
+- Bedienung nach dem Quietglass-Bedienstandard (QIS v1, `docs/BEDIENSTANDARD.md`). Die App stoppt, löscht und sendet nichts; ein Arm-und-bestätigen war nicht nötig. Wischen wechselt nur die Sportart (Anzeige), Tippen lädt neu, 2× beendet über die Systemfrage.
+- Kopfzeile `ENDURANCE HUD · Zustand`, Fußzeile über den gemeinsamen `footer()`-Helfer in der Reihenfolge Tippen/Wischen/Halten/2× und mit `2× = Ende`; passt die Zeile nicht in 56 Zeichen, entfällt zuerst der Wisch-Teil.
+- Neue Hilfeseite: Halten öffnet sie (die App hat keine Liste); Tippen oder 2× schließen sie, 2× beendet dort nie die App.
+- Neu: Einstellung „Wischrichtung umkehren“ (`invertScroll`) im Handy-Tab „Brille“; sie gilt für das Wischen zwischen den Sportarten.
+- Handy-Seite in Tabs `Live · Brille · Verbindung · Mehr`; „Mehr“ zeigt Version und Datenschutz.
+
 ## [0.3.1] — 2026-10-13
 
 ### Fixed

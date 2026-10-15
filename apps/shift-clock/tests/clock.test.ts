@@ -194,14 +194,15 @@ describe("display", () => {
     const view = buildView(STOPPED, [], { projects, selecting: "Client B" }, 0);
     expect(view.body).toContain("> Client B");
     expect(view.footer).toContain("Tap = start");
+    expect(view.footer).toContain("2× = back");
   });
 
   it("shows the running clock and the project", () => {
     const started = startProject(STOPPED, "Client A", 0, ids()).state;
     const view = buildView(started, [], { projects }, 65_000);
-    expect(view.header).toBe("Client A");
+    expect(view.header).toBe("SHIFTCLOCK · Client A");
     expect(view.body[0]).toBe("1:05");
-    expect(view.footer).toContain("Tap = stop");
+    expect(view.footer).toBe("Tap = stop · 2× = exit");
   });
 
   it("includes the running entry in today's total", () => {
@@ -211,13 +212,14 @@ describe("display", () => {
 
     const view = buildView(started, [earlier], { projects }, day + 180_000);
     // 60s recorded + 60s still running
-    expect(view.footer).toContain("2:00");
+    expect(view.body).toContain("today 2:00");
   });
 
   it("states plainly when nothing is being tracked", () => {
     const view = buildView(STOPPED, [], { projects }, 0);
     expect(view.body).toContain("stopped");
     expect(view.footer).toContain("Tap = choose project");
+    expect(view.body).toContain("today 0:00");
   });
 });
 
@@ -235,7 +237,7 @@ describe("days and midnight", () => {
     const started = startProject(STOPPED, "Client A", at(2026, 3, 9, 23), ids()).state;
     const view = buildView(started, [], { projects: ["Client A"] }, at(2026, 3, 10, 1));
     expect(view.body[0]).toBe("2:00:00");
-    expect(view.footer).toContain("today 1:00:00");
+    expect(view.body).toContain("today 1:00:00");
   });
 
   it("regression: a day is a calendar day, not 24 hours, across a DST change", () => {

@@ -1,11 +1,11 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { EMPTY_CHECKLIST, type Checklist } from "./checklist/model";
 import { startRun, type RunState } from "./checklist/run";
-import { dispatch } from "./input/dispatch";
-import { gestureFromEvent } from "./input/gestures";
+import { dispatch, dispatchMenu, MENU, type Armed, type DispatchResult } from "./input/dispatch";
+import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, progressBarFor, type FlowView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendProgressBar, sendStepImage, updatePage } from "./glasses/render";
+import { createPage, sendProgressBar, sendStepImage, updatePage, type MenuSpec } from "./glasses/render";
 import { browserMeasure, layoutStep, sameLayout, type Measure, type StepLayout } from "./glasses/stepimage";
 import { drawProgressBar, sameProgressBar, type ProgressBarState } from "./glasses/progressbar";
 import { createImageSync } from "./glasses/image-sync";
@@ -14,9 +14,21 @@ import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { createExitRequest } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
+import { t } from "./messages";
+
+/**
+ * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses, and while a page
+ * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it a swipe
+ * arms "step back" / "skip" and the hold shows the step info or opens the help.
+ */
+const SIDE_MENU = false;
 
 /** Redraw cadence for the elapsed-time readout while a run is open. */
 const CLOCK_MS = 1000;
+/** An armed action (skip, start over, confirm) is cancelled after this long without input (QIS v1, section 2). */
+export const ARM_MS = 4000;
+/** A tap this soon after the help opened is the end of the hold itself and does not close it. */
+const HELP_GUARD_MS = 400;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -29,12 +41,27 @@ async function boot(): Promise<void> {
   // the run continues at the step where it was left.
   let state: RunState = restoreRun(await loadRun(bridge), list) ?? startRun(list);
   let showDetail = false;
+  /** Skip or start-over waits for a second tap; a pending critical confirmation counts the same way. */
+  let armed: Armed | null = null;
+  let armedAt = 0;
+  let helpOpen = false;
+  let helpOpenedAt = 0;
   let lastView: FlowView | null = null;
   let pageReady = false;
   /** Set once the user leaves; nothing may be drawn on a closed page. */
   let closed = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
+
+  /** QIS v1.2: the side menu. Supplied again on every page (re)build, in the current language. */
+  const menu = (): MenuSpec => ({
+    items: !SIDE_MENU ? [] : [
+      { id: MENU.help, label: t(locale, "m.help") },
+      { id: MENU.info, label: t(locale, "m.info") },
+      { id: MENU.back, label: t(locale, "m.back") },
+      { id: MENU.skip, label: t(locale, "m.skip") },
+    ],
+  });
 
   let measureText: Measure | null = null;
   const measure: Measure = (text, size) => (measureText ??= browserMeasure())(text, size);
@@ -44,6 +71,9 @@ async function boot(): Promise<void> {
       showDetail,
       lineWidth: data.settings.lineWidth,
       locale,
+      armed,
+      sideMenu: SIDE_MENU,
+      help: helpOpen,
       headlineFits: (text) => !layoutStep(measure, text).truncated,
     });
 
@@ -76,7 +106,7 @@ async function boot(): Promise<void> {
     if (sameView(lastView, view)) return;
 
     const created = !pageReady;
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, menu());
     if (result.ok) {
       pageReady = true;
       lastView = view;
@@ -122,8 +152,22 @@ async function boot(): Promise<void> {
     list = activeList(data) ?? EMPTY_CHECKLIST;
     state = startRun(list);
     showDetail = false;
+    armed = null;
     lastView = null;
     persistRun();
+  };
+
+  /** Nothing waits for a second tap any more: the armed action and a pending confirmation are dropped. */
+  const disarm = (): void => {
+    armed = null;
+    if (state.awaitingConfirm) state = { ...state, awaitingConfirm: false };
+  };
+  /** Cancels whatever was armed more than ARM_MS ago. Returns true when the screen changed. */
+  const expireArm = (now = Date.now()): boolean => {
+    if (armed === null && !state.awaitingConfirm) return false;
+    if (now - armedAt < ARM_MS) return false;
+    disarm();
+    return true;
   };
 
   /**
@@ -143,7 +187,7 @@ async function boot(): Promise<void> {
   /** Only the elapsed-time readout changes on its own; it pauses while the app is in the background. */
   const startClock = (): void => {
     if (clock !== undefined || closed) return;
-    clock = setInterval(() => { void draw(); }, CLOCK_MS);
+    clock = setInterval(() => { if (expireArm()) persistRun(); void draw(); }, CLOCK_MS);
   };
   const stopClock = (): void => {
     if (clock !== undefined) clearInterval(clock);
@@ -162,6 +206,26 @@ async function boot(): Promise<void> {
     void requestExit();
   };
 
+  /** Applies what a gesture or a menu click decided. */
+  const applyResult = (result: DispatchResult, now: number, clearDetail: boolean): void => {
+    const wasConfirming = state.awaitingConfirm;
+    const changed = result.state !== state;
+    if (changed) { state = result.state; persistRun(); }
+    if (state.awaitingConfirm && !wasConfirming) armedAt = now;
+    if (clearDetail && changed) showDetail = false;
+
+    for (const effect of result.effects) {
+      if (effect.kind === "exit") {
+        close();
+        return;
+      }
+      if (effect.kind === "showDetail") showDetail = effect.on;
+      if (effect.kind === "arm") { armed = effect.action; armedAt = now; }
+      if (effect.kind === "help") { helpOpen = true; helpOpenedAt = now; }
+    }
+    void draw();
+  };
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     // Left or reopened through the system rather than by a double tap.
@@ -176,20 +240,36 @@ async function boot(): Promise<void> {
     if (lifecycle === "background") { persistRun(); stopClock(); return; }
     if (lifecycle === "exit") { persistRun(); stopClock(); closed = true; return; }
     if (clock === undefined) startClock();
+
+    // QIS v1.2: a click in the side menu. Stepping back and skipping are armed first.
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      const now = Date.now();
+      expireArm(now);
+      if (helpOpen) return;
+      applyResult(dispatchMenu(list, state, menuId, armed), now, menuId !== MENU.info);
+      return;
+    }
+
     const gesture = gestureFromEvent(event, { invertScroll: data.settings.invertScroll });
     if (!gesture) return;
 
-    const result = dispatch(list, state, gesture.gesture);
-    if (result.state !== state) { state = result.state; persistRun(); }
+    const now = Date.now();
+    expireArm(now);
 
-    for (const effect of result.effects) {
-      if (effect.kind === "exit") {
-        close();
-        return;
+    // The help page is a subpage: tap, hold or 2× go back; swipes change nothing there.
+    if (helpOpen) {
+      const justOpened = now - helpOpenedAt < HELP_GUARD_MS;
+      if (gesture.gesture === "doubleClick" || gesture.gesture === "longPress" || (gesture.gesture === "click" && !justOpened)) {
+        helpOpen = false;
+        void draw();
       }
-      if (effect.kind === "showDetail") showDetail = effect.on;
+      return;
     }
-    void draw();
+
+    // The info pinned from the menu goes with the next gesture; a hold shows it by itself.
+    if (gesture.gesture !== "longPress" && gesture.gesture !== "longPressRelease") showDetail = false;
+    applyResult(dispatch(list, state, gesture.gesture, armed, SIDE_MENU), now, true);
   });
 
   // The page does not survive a disconnect. The last view is forgotten too,
@@ -217,6 +297,8 @@ async function boot(): Promise<void> {
     onLocaleChange: (next) => {
       locale = next;
       rememberLocale(bridge, next);
+      // The side menu carries the language: the page is rebuilt with it.
+      if (SIDE_MENU) { pageReady = false; lastView = null; }
       void draw();
     },
   });

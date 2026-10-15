@@ -32,7 +32,7 @@ export function agentMood(state: AgentState, offline: boolean): Mood {
 }
 
 /** The header picture for a screen, at a given time. */
-export function headerIcon(screen: "agent" | "sessions", state: AgentState, offline: boolean, now: number): Bitmap {
-  if (screen === "sessions") return iconBitmap(LIST, ICON_WIDTH, ICON_HEIGHT);
+export function headerIcon(screen: "agent" | "sessions" | "help", state: AgentState, offline: boolean, now: number): Bitmap {
+  if (screen !== "agent") return iconBitmap(LIST, ICON_WIDTH, ICON_HEIGHT);
   return iconBitmap(mascotFrame(agentMood(state, offline), now), ICON_WIDTH, ICON_HEIGHT);
 }

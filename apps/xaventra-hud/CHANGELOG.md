@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.6.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): seine Klicks kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (auch das Sprechen per Halten war damit blockiert). Die Seiten tragen kein `menuObject` mehr; der Menücode und der `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Halten spricht wieder (Loslassen zeigt das Erkannte, Tippen sendet, 2× verwirft). Die Hilfe ist wieder die letzte Zeile der Liste (Ja / Nein / Hilfe): Wischen bewegt den Cursor, Tippen öffnet die Hilfe, Tippen oder 2× schließt sie; ohne offene Fragen öffnet Tippen die Hilfe.
+
+## [0.6.1] — 2026-10-15
+
+### Behoben
+
+- Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben; jetzt hat jeder Aufruf an die Brille ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s), danach gilt der Aufruf als fehlgeschlagen und die Seite wird beim nächsten Zeichnen neu aufgebaut.
+
+## [0.6.0] — 2026-10-14
+
+### Geändert — QIS v1.2 (docs/BEDIENSTANDARD.md, Entscheidungen nach dem Audit vom 2026-10-14)
+
+- **Sprache beantwortet nie mehr selbst** (QIS v1.2 #4): Meldet Xaventra auf eine Aufnahme `answered_ja`/`answered_nein` (oder `needs_confirm`), wählt die Brille nur diese Antwort in der Liste und schaltet sie scharf (`Gehört: Ja. …`, Fußzeile `Nochmal tippen = Ja senden · Wischen/2× = abbrechen`); erst das bestätigende Tippen innerhalb von 4 s sendet sie über `POST /hud/answer`. Wischen, 2× oder 4 s ohne Eingabe brechen ab. Hinweis: Das gilt end-to-end nur, wenn der Xaventra-Server ein gesprochenes Ja/Nein ebenfalls nur meldet und nicht selbst bucht; ein schon gebuchtes Ja führt beim Tippen zu „Schon beantwortet“ und die Karte verschwindet.
+- **Freier Text erst zeigen, dann senden:** Mit Live-Spracherkennung steht nach dem Loslassen das Erkannte auf der Brille (`XAVENTRA · senden?`, `Tippen = senden · 2× = verwerfen`). Tippen schickt es an `/hud/ask` (bzw. das WAV, wenn der Server `/hud/ask` nicht kennt), 2× verwirft es. Ein bloßes Ja/Nein geht gar nicht an den Server, sondern wird wie oben gewählt und scharfgeschaltet. Ohne Live-Text geht die Aufnahme wie bisher beim Loslassen.
+- **Hilfe im Seitenmenü** (QIS v1.2 #1): Die Seite meldet ein Seitenmenü mit `Hilfe` an (`menuObject`, Klicks über `menuItemClickEvent`); „Hilfe“ ist kein Listeneintrag mehr. Die Liste hat nur noch Ja / Nein, Wischen läuft durch Ja/Nein aller Karten.
+- **Fußzeilen nur noch über `footer()`**: keine leeren und keine handgebauten Zeilen mehr (Aufnahme `Loslassen = fertig · 2× = abbrechen`, Senden `2× = abbrechen`, ohne Einrichtung/offline `2× = Ende`, scharf über `armedFooter()`). Rückmeldungen („Abgebrochen.“, „Nicht eindeutig …“) stehen jetzt im Text, nicht mehr anstelle der Fußzeile.
+- **Keine HTTP-Codes auf der Brille** (QIS v1.2 #8): „Token abgelehnt“, „Server meldet einen Fehler“; der Code steht nur noch am Handy in der Verbindungszeile (`… (HTTP 401)`).
+- Handy: „Doppeltippen“ → „2×“ (QIS v1.2 #9), Bedienungstexte und neue Zeile „Seitenmenü“. Store-Text (`store/listing.json`) und README beschreiben die echte Bedienung (vorher: „Tippen = Ja, Doppeltippen = Nein, Wischen = nächste Karte“).
+- `package-lock.json` trug noch 0.4.0; jetzt wie `package.json`/`app.json` 0.6.0.
+
+## [0.5.0] — 2026-10-14
+
+### Geändert — Bedienstandard QIS v1 (docs/BEDIENSTANDARD.md)
+
+- **Wischen beantwortet nie mehr etwas.** Die Antwort ist eine Liste `Ja / Nein / Hilfe`: Wischen bewegt nur den Cursor, Tippen scharfschalten (`Nochmal tippen = Ja|Nein senden · Wischen/2× = abbrechen`), ein zweites einzelnes Tippen innerhalb von 4 s sendet. Wischen, Doppeltippen oder 4 s ohne Eingabe brechen ab (Doppeltippen beendet die App erst, wenn nichts scharf ist). Gilt jetzt für Ja und Nein auf jeder Karte, nicht nur für Karten mit Wirkung nach außen. Protokoll zum Server unverändert.
+- Kopfzeile `XAVENTRA · Zustand`, Fußzeile in der Reihenfolge Tippen → Wischen → Halten → 2× mit `2× = Ende`/`2× = zurück` (gemeinsamer `footer()`), Englisch Tap/Swipe/Hold/2×. Test: alle Zeilen in Deutsch und Englisch innerhalb der Zeilenbreite.
+- Neu: Hilfeseite („Hilfe“ als letzter Listeneintrag) mit den Gesten.
+- Handy-Tabs in der Standardreihenfolge: Xaventra · Brille · Verbindung · Mehr (Sprache und Datenschutz unter „Mehr“). „Wischrichtung umkehren“ (Brille) gilt weiter für die Liste.
+
+## [0.4.1] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Xaventra · Server · Brille (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip mit dem Verbindungszustand oben. Sprachwahl und Datenschutz stehen jetzt unter „Server“, „Scroll umkehren“ unter „Brille“.
+
+## [0.4.0] — 2026-10-13
+
+### Neu — Live-Text beim Sprechen
+
+- **Was du sagst, steht sofort auf der Brille.** Private Builds mit `VITE_LIVE_STT_URL` streamen das Mikrofon während des Haltens an die eigene Live-Spracherkennung; die neuesten Wörter bleiben sichtbar, die Kopfzeile zeigt die Laufzeit (m:ss), unten „Loslassen = senden · 2× = abbrechen“. Neuzeichnen höchstens alle 300 ms und nur bei geändertem Text.
+- **Loslassen schickt den Live-Text** an `POST /hud/ask { text, cardId }`. Kennt der Server das noch nicht (404/405 oder abgelehnter Preflight), geht wie bisher das WAV an `/hud/voice`, und die App fragt in dieser Sitzung nicht noch einmal. Antwortet die Spracherkennung nicht binnen 3 s oder bricht ab, wird ebenfalls das WAV gesendet – es geht nichts verloren.
+- Während des Sendens bleibt das Gesagte stehen, darunter die Statuszeile von Xaventra als Fortschritt.
+
+### Geändert
+
+- Höchstdauer einer Aufnahme 2 Minuten statt 15 s (Schutz gegen ein verlorenes Loslassen). Hinweis: Xaventras `/hud/voice` nimmt nur bis 20 s an; „Aufnahme zu lang für den Server“ heißt, der Server braucht `/hud/ask`.
+
 ## [0.3.0] — 2026-10-13
 
 ### Changed — answering "no"

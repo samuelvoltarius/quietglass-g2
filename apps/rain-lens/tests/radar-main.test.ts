@@ -143,9 +143,9 @@ describe("rainlens radar page (private build)", () => {
     await vi.advanceTimersByTimeAsync(7 * 700);
     expect(tileRequests).toBe(loaded);
     expect(tileImages() - start).toBeLessThanOrEqual(4 * 7);
-    // Swiping on stops the loop and shows the weather again by rebuilding.
+    // Swiping on (past the cockpit) stops the loop and shows the weather again by rebuilding.
     const rebuilds = fake.calls.rebuild;
-    await swipe(fake, 1);
+    await swipe(fake, 2);
     await vi.advanceTimersByTimeAsync(1000);
     expect(fake.calls.rebuild).toBeGreaterThan(rebuilds);
     expect(fake.pages.at(-1)).toEqual(expect.arrayContaining(["body", "chart-text"]));

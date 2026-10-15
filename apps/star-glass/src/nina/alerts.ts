@@ -14,7 +14,8 @@ export type AlertKind =
   | "flipNow"
   | "cameraLost"
   | "mountLost"
-  | "error";
+  | "error"
+  | "unsafe";
 
 export interface Alert {
   readonly kind: AlertKind;
@@ -40,6 +41,9 @@ export function alerts(status: StarStatus | null): Alert[] {
 
   const error = recent(status, /^(ERROR-|CAMERA-DOWNLOAD-TIMEOUT)/);
   if (error) out.push({ kind: "error", level: "critical", vars: { name: error.name.replace(/^ERROR-/, "") } });
+
+  // N.I.N.A.'s safety monitor says the sky is not safe (rain, clouds, wind - whatever it watches).
+  if (status.safety.connected && status.safety.safe === false) out.push({ kind: "unsafe", level: "critical", vars: {} });
 
   if (running && !status.camera.connected) out.push({ kind: "cameraLost", level: "critical", vars: {} });
   if (running && !status.mount.connected) out.push({ kind: "mountLost", level: "critical", vars: {} });

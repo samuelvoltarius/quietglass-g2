@@ -5,10 +5,10 @@ import { sampleFrom, type Vec3 } from "./imu/vector";
 import {
   addSample, calibrate, createMonitor, reset, type PostureMonitor,
 } from "./posture/monitor";
-import { gestureFromEvent } from "./input/gestures";
+import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, type PostureView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendImage, updatePage } from "./glasses/render";
+import { createPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
 import { GAUGE, drawGauge, gaugeAngle, gaugeKey, type GaugeState } from "./glasses/gauge";
 import { createImageLane } from "./glasses/lane";
 import { angleKey, drawAngle, ANGLE_IMAGE, type AngleState } from "./glasses/digits";
@@ -16,9 +16,13 @@ import { FIGURE_IMAGE, drawFigure, figureKey, nextStage, type FigureStage, type 
 import { quantize } from "./glasses/bitmap";
 import { encodePng } from "./glasses/pixel";
 import { load, save, type PostureData } from "./storage/persist";
-import { mountPhoneUi } from "./ui/phone";
+import { mountPhoneUi, type PhoneUi } from "./ui/phone";
+import { addToStats, createStats, record, recordingDone, startRecording, type Recording, type SensorStats } from "./imu/diagnostics";
+import { buildSensorView } from "./glasses/sensor-view";
+import { buildHelpView, buildMenuView, HELP_PAGES, MENU_ENTRIES } from "./glasses/menu-view";
 import { createExitRequest } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
+import { t } from "./messages";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 import { activeConfirm, CONFIRM_WINDOW_MS, confirmStep, type PendingConfirm } from "./input/confirm";
 
@@ -30,6 +34,21 @@ const IMU_PACE = ImuReportPace.P500;
 
 /** Redraw cadence for the countdown; sameView() drops the no-op ticks. */
 const TICK_MS = 1000;
+
+/** Sensor test: the glasses text is refreshed at most five times a second. */
+const SENSOR_REFRESH_MS = 200;
+
+/** Side-menu item ids (QIS v1.2: help, sensor test and the tally live in the glasses' side menu). */
+const MENU_HELP = 1;
+const MENU_SENSOR = 2;
+const MENU_RESET = 3;
+
+/**
+ * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app and, while a page carries it, a hold
+ * opens it instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages carry
+ * no menu and a hold opens the app's own menu list again (sensor test, clear tally, help).
+ */
+const SIDE_MENU = false;
 
 /** How long the "saved" confirmation stays after a calibration. */
 const CONFIRM_MS = 8000;
@@ -59,9 +78,22 @@ async function boot(): Promise<void> {
   let rebuildWanted = false;
   /** In the background: the IMU is off and nothing is drawn. */
   let paused = false;
-  /** A tap that would overwrite the calibration, or a swipe that clears today's tally, waits for its second. */
+  /**
+   * A tap that would overwrite the calibration waits for a second tap; the side-menu entry that clears
+   * today's tally waits for the same entry again (QIS v1 / v1.2 ruling 3), both within 4 s.
+   */
   let pending: PendingConfirm<"calibrate" | "reset"> | null = null;
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The help page (side menu); "none" is the posture screen. */
+  let menuScreen: "none" | "menu" | "help" = "none";
+  let menuCursor = 0;
+  /** Shown in the own menu's header until the next gesture ("Tally cleared"), only without the side menu. */
+  let menuNote: string | null = null;
+  let helpPage = 0;
+  /** When today's tally was cleared; the header says so for a few seconds. */
+  let clearedAt: number | null = null;
+  /** Key of the side menu the page on the glasses carries; a different one (language) needs a rebuild. */
+  let pageMenuKey = "";
   let demoTimer: ReturnType<typeof setInterval> | undefined;
   let closed = false;
   let tick: ReturnType<typeof setInterval> | undefined;
@@ -78,6 +110,15 @@ async function boot(): Promise<void> {
   /** Angle as last drawn in the big digits, in whole degrees. */
   let digitsDeg: number | null = null;
   let figure: FigureStage | null = null;
+  /** Sensor test (long press, or the phone's "More" tab): raw values instead of the posture screen. */
+  let sensorMode = false;
+  /** The pace the sensor test asks for; the posture screen always uses IMU_PACE. */
+  let diagPace: ImuReportPace = IMU_PACE;
+  let diagStats: SensorStats = createStats();
+  let diagRec: Recording | null = null;
+  let diagRecReported = false;
+  let diagTimer: ReturnType<typeof setInterval> | undefined;
+  let phone: PhoneUi | null = null;
   /** Images are written at most every 700 ms and only when their picture changes. */
   const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
 
@@ -86,14 +127,30 @@ async function boot(): Promise<void> {
     monitor = { ...monitor, reference: data.reference, state: "good" };
   }
 
-  const currentView = (): PostureView =>
-    buildView(monitor, data.settings, {
-      showAngleWhenGood: data.showAngleWhenGood,
-      locale,
-      sensorOff,
-      justCalibrated: calibratedAt !== null && Date.now() - calibratedAt < CONFIRM_MS,
-      confirm: activeConfirm(pending, Date.now())?.kind ?? null,
-    });
+  const currentView = (): PostureView => sensorMode
+    ? buildSensorView(diagStats, { locale, pace: diagPace, recording: diagRec, sensorOff })
+    : menuScreen === "help"
+      ? buildHelpView(locale, helpPage)
+      : menuScreen === "menu"
+        ? buildMenuView({ locale, cursor: menuCursor, resetArmed: activeConfirm(pending, Date.now())?.kind === "reset", note: menuNote })
+        : buildView(monitor, data.settings, {
+        holdMenu: !SIDE_MENU,
+        showAngleWhenGood: data.showAngleWhenGood,
+        locale,
+        sensorOff,
+        justCalibrated: calibratedAt !== null && Date.now() - calibratedAt < CONFIRM_MS,
+        confirm: activeConfirm(pending, Date.now())?.kind ?? null,
+        note: clearedAt !== null && Date.now() - clearedAt < CONFIRM_MS ? t(locale, "g.m.cleared") : null,
+      });
+
+  const menuSpec = (): MenuSpec => !SIDE_MENU ? { key: "none", items: [] } : ({
+    key: `menu:${locale}`,
+    items: [
+      { id: MENU_HELP, label: t(locale, "g.m.help") },
+      { id: MENU_SENSOR, label: t(locale, "g.m.sensor") },
+      { id: MENU_RESET, label: t(locale, "g.m.reset") },
+    ],
+  });
 
   const calibrateTo = (sample: Vec3): void => {
     const now = Date.now();
@@ -133,15 +190,19 @@ async function boot(): Promise<void> {
     if (closed || paused) return;
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
     const view = currentView();
+    const menu = menuSpec();
+    // The side menu travels with the page: a different one (language) means one rebuild.
+    if (pageReady && menu.key !== pageMenuKey) pageReady = false;
     if (!pageReady || !sameView(lastView, view)) {
       const created = !pageReady;
-      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view);
+      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, menu);
       if (!result.ok) {
         pageReady = false;
         console.warn("[posturelens] draw failed:", result.reason);
         return;
       }
       pageReady = true;
+      if (created) pageMenuKey = menu.key;
       lastView = view;
       // A new page starts with a blank image.
       if (created) lane.invalidate();
@@ -167,7 +228,7 @@ async function boot(): Promise<void> {
 
   /** Turns IMU reporting on; a refusal or a call that never answers shows "no sensor". */
   const startImu = async (): Promise<void> => {
-    const imuOk = await withTimeout(bridge.imuControl(true, IMU_PACE), IMU_TIMEOUT_MS, false);
+    const imuOk = await withTimeout(bridge.imuControl(true, sensorMode ? diagPace : IMU_PACE), IMU_TIMEOUT_MS, false);
     if (closed || paused) return;
     if (!imuOk) {
       console.warn("[posturelens] IMU reporting was refused; posture cannot be measured.");
@@ -181,10 +242,61 @@ async function boot(): Promise<void> {
   /** Everything off for good: after the exit dialog, a system exit or a crash. */
   const shutDown = (): void => {
     closed = true;
+    clearInterval(diagTimer);
     clearInterval(tick);
     clearInterval(demoTimer);
     clearTimeout(confirmTimer);
     lane.close();
+  };
+
+  /** Every IMU sample, from the glasses or the demo. */
+  const onSample = (sample: Vec3, now: number, settings = data.settings): void => {
+    lastSample = sample;
+    sensorOff = false;
+    monitor = addSample(monitor, sample, settings, now);
+    if (calibratePending) calibrateTo(sample);
+    if (sensorMode) {
+      diagStats = addToStats(diagStats, sample, now);
+      if (diagRec) diagRec = record(diagRec, sample, now);
+      // The sensor screen is drawn by its own timer, never once per sample.
+      return;
+    }
+    void draw();
+  };
+
+  /** Runs while the sensor test is on: redraw (text only) and notice a finished recording. */
+  const sensorTick = (): void => {
+    if (closed || paused) return;
+    if (diagRec && !diagRecReported && recordingDone(diagRec, Date.now())) {
+      diagRecReported = true;
+      phone?.refresh();
+    }
+    void draw();
+  };
+
+  const setSensorMode = (on: boolean): void => {
+    if (on === sensorMode || closed) return;
+    sensorMode = on;
+    pending = null;
+    clearInterval(diagTimer);
+    diagTimer = undefined;
+    if (on) {
+      diagStats = createStats();
+      diagTimer = setInterval(sensorTick, SENSOR_REFRESH_MS);
+    } else {
+      diagRec = null;
+    }
+    // Back to the posture pace (or on to the chosen one) only when they differ.
+    if (diagPace !== IMU_PACE && !paused) void startImu();
+    void draw();
+    phone?.refresh();
+  };
+
+  const setDiagPace = (pace: number): void => {
+    diagPace = pace as ImuReportPace;
+    // The old rate no longer applies; min/max stay.
+    diagStats = { ...diagStats, recent: [] };
+    if (sensorMode && !paused) void startImu();
   };
 
   const requestExit = createExitRequest(bridge, {
@@ -198,12 +310,42 @@ async function boot(): Promise<void> {
    * Arms a gesture that overwrites something; the same gesture again within
    * a few seconds carries it out. Returns true when it is confirmed now.
    */
+  const disarm = (): void => {
+    pending = null;
+    clearTimeout(confirmTimer);
+  };
+
   const confirmed = (kind: "calibrate" | "reset"): boolean => {
     const step = confirmStep(pending, kind, Date.now());
     pending = step.pending;
     clearTimeout(confirmTimer);
     if (!step.confirmed) confirmTimer = setTimeout(() => { pending = null; void draw(); }, CONFIRM_WINDOW_MS + 50);
     return step.confirmed;
+  };
+
+  /** An item of the glasses' side menu. */
+  const onMenu = (itemId: number): void => {
+    if (paused) return;
+    if (itemId === MENU_HELP) {
+      disarm();
+      if (sensorMode) setSensorMode(false);
+      menuScreen = "help";
+      helpPage = 0;
+    } else if (itemId === MENU_SENSOR) {
+      disarm();
+      menuScreen = "none";
+      setSensorMode(true);
+    } else if (itemId === MENU_RESET) {
+      // Not while the sensor test or the help is in front: the wearer should see what is armed.
+      if (sensorMode || menuScreen !== "none") return;
+      if (!confirmed("reset")) { void draw(); return; }
+      pending = null;
+      monitor = reset(monitor);
+      clearedAt = Date.now();
+    } else {
+      return;
+    }
+    void draw();
   };
 
   // Gestures first: the IMU call below may never answer, and before this the
@@ -233,16 +375,85 @@ async function boot(): Promise<void> {
     if (sys?.eventType === OsEventTypeList.IMU_DATA_REPORT) {
       const sample = sampleFrom(sys.imuData);
       if (!sample) return;
-      lastSample = sample;
-      sensorOff = false;
-      monitor = addSample(monitor, sample, data.settings, Date.now());
-      if (calibratePending) calibrateTo(sample);
-      void draw();
+      onSample(sample, Date.now());
+      return;
+    }
+
+    // QIS v1.2: the glasses' side menu. A menu click never changes data on its own,
+    // except "clear tally", which is armed first and needs the same entry again within 4 s.
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      onMenu(menuId);
       return;
     }
 
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
+
+    // Anything but a tap cancels what is armed (swipe, 2x, hold) - QIS v1. The exception is the tally
+    // armed from the side menu: holding is how the wearer gets back into that menu to confirm, so a hold
+    // or a swipe never cancels it; a tap or 2× does (and so does the time running out).
+    const armedKind = activeConfirm(pending, Date.now())?.kind ?? null;
+    menuNote = null;
+    if (SIDE_MENU && armedKind === "reset") {
+      if (gesture.gesture === "click" || gesture.gesture === "doubleClick") { disarm(); void draw(); return; }
+      return;
+    }
+    if (gesture.gesture !== "click") {
+      const wasArmed = pending !== null;
+      disarm();
+      if (wasArmed) void draw();
+    }
+
+    if (sensorMode) {
+      // In the test a tap restarts min/max and 2x goes back one level; hold and swipes do nothing.
+      if (gesture.gesture === "click") { diagStats = createStats(); void draw(); }
+      else if (gesture.gesture === "doubleClick") setSensorMode(false);
+      return;
+    }
+
+    if (menuScreen === "help") {
+      if (gesture.gesture === "scrollDown") helpPage = (helpPage + 1) % HELP_PAGES;
+      else if (gesture.gesture === "scrollUp") helpPage = (helpPage + HELP_PAGES - 1) % HELP_PAGES;
+      else if (gesture.gesture === "doubleClick") menuScreen = SIDE_MENU ? "none" : "menu";
+      else return;
+      void draw();
+      return;
+    }
+
+    if (menuScreen === "menu") {
+      switch (gesture.gesture) {
+        case "scrollUp":
+          menuCursor = Math.max(0, menuCursor - 1);
+          break;
+        case "scrollDown":
+          menuCursor = Math.min(MENU_ENTRIES.length - 1, menuCursor + 1);
+          break;
+        case "click": {
+          const entry = MENU_ENTRIES[menuCursor];
+          if (entry === "reset") {
+            // Clearing today's tally takes two single taps within 4 s; anything else cancels.
+            if (!confirmed("reset")) break;
+            pending = null;
+            monitor = reset(monitor);
+            menuNote = t(locale, "g.m.cleared");
+            break;
+          }
+          disarm();
+          if (entry === "sensor") setSensorMode(true);
+          else if (entry === "help") { menuScreen = "help"; helpPage = 0; }
+          break;
+        }
+        case "doubleClick":
+          menuScreen = "none";
+          break;
+        default:
+          // Hold does nothing in the menu.
+          return;
+      }
+      void draw();
+      return;
+    }
 
     switch (gesture.gesture) {
       case "click":
@@ -255,18 +466,18 @@ async function boot(): Promise<void> {
         if (lastSample) calibrateTo(lastSample);
         else calibratePending = true;
         break;
-      case "scrollUp":
-      case "scrollDown":
-        // Clears today's tally: only on a second swipe within a few seconds.
-        if (!confirmed("reset")) break;
-        pending = null;
-        monitor = reset(monitor);
+      case "longPress":
+        // Without the side menu (SIDE_MENU): hold opens the app's own menu: sensor test, clearing the tally, help.
+        if (SIDE_MENU) return;
+        menuScreen = "menu";
+        menuCursor = 0;
         break;
       case "doubleClick":
         // System exit dialog; monitoring (and the IMU) carry on until the user confirms.
         void requestExit();
         return;
       default:
+        // A swipe only moves and a hold only opens the glasses' own menu; the posture screen has nothing to move.
         return;
     }
     void draw();
@@ -295,14 +506,11 @@ async function boot(): Promise<void> {
       const seconds = (Date.now() - started) / 1000;
       const radians = (Math.max(0, 24 + 24 * Math.sin(seconds / 4)) * Math.PI) / 180;
       const sample = { x: Math.sin(radians), y: 0, z: Math.cos(radians) };
-      lastSample = sample;
-      sensorOff = false;
-      monitor = addSample(monitor, sample, { ...data.settings, smoothing: 0.5 }, Date.now());
-      void draw();
+      onSample(sample, Date.now(), { ...data.settings, smoothing: 0.5 });
     }, 500);
   }
 
-  mountPhoneUi({
+  phone = mountPhoneUi({
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
@@ -316,6 +524,20 @@ async function boot(): Promise<void> {
       await persist(next);
       if (!next.reference) monitor = createMonitor();
       await draw();
+    },
+    sensor: {
+      isOn: () => sensorMode,
+      setOn: setSensorMode,
+      getPace: () => diagPace,
+      setPace: setDiagPace,
+      resetStats: () => { diagStats = createStats(); },
+      startRecording: () => {
+        setSensorMode(true);
+        diagRec = startRecording(Date.now());
+        diagRecReported = false;
+      },
+      getStats: () => diagStats,
+      getRecording: () => diagRec,
     },
   });
 }

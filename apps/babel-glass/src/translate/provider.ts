@@ -1,4 +1,5 @@
 import { AUTO, languageName } from "../text/languages";
+import { streamChat } from "../llm/stream";
 
 /**
  * Translation providers.
@@ -34,7 +35,11 @@ export interface TranslationProvider {
    * caller should pass the recogniser's detected language instead.
    */
   readonly needsConcreteSource?: boolean;
-  translate(request: TranslationRequest): Promise<TranslationResult>;
+  /**
+   * `onPartial` (optional) receives the translation so far while a streaming
+   * backend is still writing it; the resolved result is the final text.
+   */
+  translate(request: TranslationRequest, onPartial?: (text: string) => void): Promise<TranslationResult>;
 }
 
 export interface HttpTranslateConfig {
@@ -154,52 +159,65 @@ export function translationPrompt(from: string, to: string): string {
  * in particular — and can run on the same machine as Whisper.
  */
 export function createOpenAiTranslator(config: OpenAiTranslateConfig): TranslationProvider {
-  const doFetch = config.fetchImpl ?? fetch;
   const endpoint = chatCompletionsUrl(config.url);
 
   return {
     name: "openai",
     needsConcreteSource: true,
-    async translate({ text, from, to }): Promise<TranslationResult> {
+    async translate({ text, from, to }, onPartial): Promise<TranslationResult> {
       if (!text.trim()) return { text: "", error: null };
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 15_000);
-
-      try {
-        const response = await doFetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(config.apiKey ? { Authorization: "Bearer " + config.apiKey } : {}),
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: config.model,
-            temperature: config.temperature ?? 0.1,
-            stream: false,
-            messages: [
-              { role: "system", content: translationPrompt(from, to) },
-              { role: "user", content: text },
-            ],
-          }),
-        });
-
-        if (!response.ok) return { text: "", error: "HTTP " + response.status };
-
-        const value = await readJson(response);
-        const content = value === null ? null : readChatContent(value);
-        if (content === null) return { text: "", error: "unreadable response" };
-
-        const cleaned = cleanLlmOutput(content, text);
-        return cleaned ? { text: cleaned, error: null } : { text: "", error: "empty response" };
-      } catch (error) {
-        return { text: "", error: describeError(error) };
-      } finally {
-        clearTimeout(timeout);
-      }
+      const wait = config.timeoutMs ?? 15_000;
+      let lastPartial = "";
+      const result = await streamChat({
+        endpoint,
+        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+        ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+        body: {
+          model: config.model,
+          temperature: config.temperature ?? 0.1,
+          // Room for long caption lines (Cyrillic can be one token per letter);
+          // the proxy's default of 300 would cut a long sentence.
+          max_tokens: translationMaxTokens(text),
+          messages: [
+            { role: "system", content: translationPrompt(from, to) },
+            { role: "user", content: text },
+          ],
+        },
+        firstTokenMs: wait,
+        idleMs: Math.min(wait, 10_000),
+        totalMs: Math.max(wait * 3, 30_000),
+        onText: (visible) => {
+          if (!onPartial) return;
+          const partial = cleanPartialOutput(visible, text);
+          if (partial && partial !== lastPartial) {
+            lastPartial = partial;
+            onPartial(partial);
+          }
+        },
+      });
+      if (!result.ok) return { text: "", error: result.error };
+      const cleaned = cleanLlmOutput(result.text, text);
+      return cleaned ? { text: cleaned, error: null } : { text: "", error: "empty response" };
     },
   };
+}
+
+/** Output budget for one caption line: generous, but bounded. */
+export function translationMaxTokens(text: string): number {
+  return Math.min(2048, Math.max(256, 64 + text.length * 2));
+}
+
+/**
+ * A translation still being written, made presentable: the same cleaning as
+ * the final text, plus an opening quote whose partner has not arrived yet.
+ */
+export function cleanPartialOutput(visible: string, source = ""): string {
+  let text = cleanLlmOutput(visible, source);
+  if (!OPENING_QUOTE.test(source.trim())) text = text.replace(OPENING_QUOTE, "").trimStart();
+  // A preamble still being typed ("Here is the transl…") is not shown.
+  if (/^(?:sure|here|translation|übersetzung)\b[^:\n]{0,60}$/i.test(text) && !/[.!?]$/.test(text)) return "";
+  return text;
 }
 
 export function readChatContent(value: Record<string, unknown>): string | null {

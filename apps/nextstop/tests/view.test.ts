@@ -157,7 +157,7 @@ describe("the ride", () => {
 
   it("admits when the next stop is only a timetable estimate", () => {
     const view = ridingView(progress!, NOW, "O-Bus 6", "Itzling West", "de");
-    expect(view.footer).toContain("geschätzt");
+    expect(view.footer).toContain("Fahrplan");
   });
 
   it("says GPS, with the distance, when it actually has a fix", () => {

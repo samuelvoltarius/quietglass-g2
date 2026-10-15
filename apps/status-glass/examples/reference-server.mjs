@@ -33,15 +33,38 @@
  *   STATUS_DISKS            comma list of mount points; replaces the automatic
  *                           choice (network mounts are only read when listed)
  *
+ * Heimnetz-Wächter (home network watch, off by default, see netwatch.mjs):
+ *
+ *   STATUS_NETWATCH=1       read this machine's neighbour table (`ip neigh`,
+ *                           else /proc/net/arp) every STATUS_NETWATCH_MS
+ *                           (default 60000) and report a `network` block
+ *   STATUS_NETWATCH_FILE    where known devices are kept (JSON, mode 600);
+ *                           default ~/.local/state/quietglass/netwatch.json
+ *   STATUS_NETWATCH_IFACES  comma list of interfaces to watch (default: all
+ *                           but loopback, containers and VPNs)
+ *   STATUS_NETWATCH_DNS=0   no reverse DNS names
+ *   STATUS_NETWATCH_PING=1  additionally ping this machine's own private /24
+ *                           every STATUS_NETWATCH_PING_MS (default 1800000,
+ *                           at least 300000); RFC 1918 ranges only
+ *   STATUS_NETWATCH_SOURCE  read the neighbour table from this file instead
+ *                           (tests and debugging)
+ *
  * Everything slow (nvidia-smi, systemctl, docker, tailscale, disks) is sampled
  * in the background, so a request only reads memory and answers in a few ms.
- * Nothing secret is reported: no addresses, no tokens, no environment.
+ * Nothing secret is reported: no tokens, no environment, and no addresses —
+ * except the devices of the home network, and only with STATUS_NETWATCH=1.
+ *
+ * With the network watch on, `POST /devices` with {"mac": "...", "known": true}
+ * marks a device as known. It needs the same login as /status and is refused
+ * (403) when the server has neither a TOKEN nor STATUS_TAILSCALE_USERS.
  */
 import { createServer, request as httpRequest } from "node:http";
 import { execFile } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { statfs } from "node:fs/promises";
-import { cpus, freemem, totalmem, loadavg, uptime } from "node:os";
+import { reverse as reverseDns } from "node:dns/promises";
+import { cpus, freemem, totalmem, loadavg, uptime, homedir, networkInterfaces } from "node:os";
+import { join } from "node:path";
 
 const PORT = Number(process.env["PORT"] ?? 8099);
 const HOST = process.env["HOST"] ?? "127.0.0.1";
@@ -54,6 +77,15 @@ const IGNORE_UNITS = new Set(list(process.env["STATUS_IGNORE_UNITS"]).map(unitNa
 const DISKS = list(process.env["STATUS_DISKS"]);
 const FAST_MS = Number(process.env["STATUS_FAST_MS"] ?? 5000);
 const SLOW_MS = Number(process.env["STATUS_SLOW_MS"] ?? 15000);
+const NETWATCH = process.env["STATUS_NETWATCH"] === "1";
+const NETWATCH_MS = Math.max(10000, Number(process.env["STATUS_NETWATCH_MS"] ?? 60000) || 60000);
+const NETWATCH_FILE = process.env["STATUS_NETWATCH_FILE"]
+  || join(process.env["XDG_STATE_HOME"] || join(homedir(), ".local", "state"), "quietglass", "netwatch.json");
+const NETWATCH_IFACES = list(process.env["STATUS_NETWATCH_IFACES"]);
+const NETWATCH_DNS = process.env["STATUS_NETWATCH_DNS"] !== "0";
+const NETWATCH_PING = process.env["STATUS_NETWATCH_PING"] === "1";
+const NETWATCH_PING_MS = Math.max(300000, Number(process.env["STATUS_NETWATCH_PING_MS"] ?? 1800000) || 1800000);
+const NETWATCH_SOURCE = process.env["STATUS_NETWATCH_SOURCE"] ?? "";
 /** Tools installed outside the PATH a service gets (snap, sbin). */
 const PATH = [process.env["PATH"] ?? "", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin", "/snap/bin"].filter(Boolean).join(":");
 
@@ -324,6 +356,48 @@ async function sampleSlow() {
   }
 }
 
+// ---- Heimnetz-Wächter (only with STATUS_NETWATCH=1) ---------------------------
+
+// Loaded only when switched on, so a copy of this file without netwatch.mjs still runs.
+const netwatch = NETWATCH ? await import("./netwatch.mjs") : null;
+const book = netwatch ? new netwatch.DeviceBook({ file: NETWATCH_FILE }).load() : null;
+const dnsTried = new Map();
+
+/** The neighbour table this machine already has. Passive: nothing is sent. */
+async function neighbourTable() {
+  if (NETWATCH_SOURCE) return read(NETWATCH_SOURCE) ?? "";
+  const result = await run("ip", ["neigh", "show"]);
+  if (result.ok && result.stdout.trim()) return result.stdout;
+  return read("/proc/net/arp") ?? "";
+}
+
+let netBusy = false;
+async function sampleNetwork() {
+  if (!book || netBusy) return;
+  netBusy = true;
+  try {
+    const now = Date.now();
+    const entries = netwatch.parseNeighbours(await neighbourTable(), { ifaces: NETWATCH_IFACES });
+    const added = book.observe(entries, now);
+    if (added.length > 0) console.log(`netwatch: ${added.length} new device(s)`);
+    if (NETWATCH_DNS) await netwatch.resolveNames(book, (ip) => reverseDns(ip), now, { tried: dnsTried });
+    book.save(Date.now());
+  } catch (error) {
+    console.log("netwatch: " + (error instanceof Error ? error.message : "failed"));
+  } finally {
+    netBusy = false;
+  }
+}
+
+/** The optional light refresh: one ping to each address of this machine's own private /24. */
+async function pingRefresh() {
+  if (!netwatch || !NETWATCH_PING) return;
+  const targets = netwatch.pingTargets(networkInterfaces(), { ifaces: NETWATCH_IFACES });
+  if (targets.length === 0) return;
+  await netwatch.pingSweep(targets, run).catch(() => undefined);
+  void sampleNetwork();
+}
+
 // ---- the report ---------------------------------------------------------------
 
 function meminfo() {
@@ -412,14 +486,15 @@ function collect() {
 
   metrics.push({ id: "uptime", label: "Up", value: Math.round(uptime() / 3600), unit: "h" });
 
-  return { name: NAME, timestamp: Date.now(), metrics };
+  const now = Date.now();
+  return { name: NAME, timestamp: now, metrics, ...(book ? { network: book.summary(now) } : {}) };
 }
 
 const CORS = {
   // Status Glass runs in a WebView; allow it to read this.
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 const server = createServer((request, response) => {
@@ -433,20 +508,39 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (!request.url?.startsWith("/status")) {
+  const devices = request.method === "POST" && /^\/devices\/?(\?|$)/.test(request.url ?? "");
+  if (!devices && !request.url?.startsWith("/status")) {
     response.writeHead(404, { "Content-Type": "text/plain" });
     response.end("not found\n");
     return;
   }
 
   // Never log the token.
-  if ((TOKEN || TAILSCALE_USERS.length > 0) && tailscaleUser(request) === "") {
+  const guarded = TOKEN || TAILSCALE_USERS.length > 0;
+  if (guarded && tailscaleUser(request) === "") {
     const header = request.headers["authorization"] ?? "";
     if (!TOKEN || header !== "Bearer " + TOKEN) {
       response.writeHead(401, { ...CORS, "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "unauthorized" }));
       return;
     }
+  }
+
+  if (devices) {
+    // Without any login, CORS "*" would let every web page the phone opens change the book.
+    if (!guarded) return reply(response, 403, { error: "set TOKEN or STATUS_TAILSCALE_USERS first" });
+    if (!book) return reply(response, 404, { error: "network watch is off" });
+    void readBody(request).then((text) => {
+      if (text === null) return reply(response, 413, { error: "too large" });
+      let body;
+      try { body = JSON.parse(text); } catch { return reply(response, 400, { error: "invalid json" }); }
+      const mac = typeof body?.mac === "string" ? body.mac : "";
+      const known = body?.known !== false;
+      if (!book.markKnown(mac, known)) return reply(response, 404, { error: "unknown device" });
+      try { book.save(Date.now()); } catch { return reply(response, 500, { error: "could not save" }); }
+      reply(response, 200, { ok: true, known });
+    });
+    return;
   }
 
   let body;
@@ -464,8 +558,37 @@ const server = createServer((request, response) => {
   response.end(body);
 });
 
+/** A small JSON body (4 KiB at most); null when it is larger. */
+function readBody(request) {
+  return new Promise((resolve) => {
+    let body = "";
+    let done = false;
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      if (done) return;
+      body += chunk;
+      if (body.length > 4096) { done = true; resolve(null); request.resume(); }
+    });
+    request.on("end", () => { if (!done) { done = true; resolve(body); } });
+    request.on("error", () => { if (!done) { done = true; resolve(null); } });
+  });
+}
+
+function reply(response, status, value) {
+  response.writeHead(status, { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store" });
+  response.end(JSON.stringify(value));
+}
+
 sampleFast();
 void sampleSlow();
+if (book) {
+  void sampleNetwork();
+  setInterval(() => { void sampleNetwork(); }, NETWATCH_MS).unref();
+  if (NETWATCH_PING) {
+    setTimeout(() => { void pingRefresh(); }, 5000).unref();
+    setInterval(() => { void pingRefresh(); }, NETWATCH_PING_MS).unref();
+  }
+}
 setInterval(sampleFast, FAST_MS).unref();
 setInterval(() => { void sampleSlow(); }, SLOW_MS).unref();
 // The first CPU and network rate need two readings; take the second one soon.
@@ -475,4 +598,5 @@ server.listen(PORT, HOST, () => {
   console.log("Status Glass reference server on http://" + HOST + ":" + PORT + "/status");
   if (!TOKEN && TAILSCALE_USERS.length === 0) console.log("No TOKEN set: this endpoint is unauthenticated.");
   if (HOST === "0.0.0.0") console.log("Bound to all interfaces. Set a TOKEN and prefer TLS.");
+  if (book) console.log("Network watch on (passive" + (NETWATCH_PING ? " + ping refresh of the own private /24" : "") + ").");
 });

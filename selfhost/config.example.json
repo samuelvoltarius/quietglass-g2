@@ -8,6 +8,7 @@
     "oebb": "https://my-server.tailnet-name.ts.net:8458",
     "valhalla": "https://my-server.tailnet-name.ts.net:8455",
     "chargers": "https://my-server.tailnet-name.ts.net:8464",
+    "routes": "https://my-server.tailnet-name.ts.net:8465",
     "tts": "https://my-server.tailnet-name.ts.net:8459",
     "shoot-day": "https://my-server.tailnet-name.ts.net:8445",
     "klipper": "https://my-server.tailnet-name.ts.net:8447",
@@ -19,7 +20,9 @@
     ],
     "agent-glass": ["https://my-server.tailnet-name.ts.net:8446"],
     "lumen": "https://my-server.tailnet-name.ts.net:8454",
-    "xaventra": "https://my-server.tailnet-name.ts.net:8790"
+    "xaventra": "https://my-server.tailnet-name.ts.net:8790",
+    "byd": "https://my-server.tailnet-name.ts.net:8471",
+    "traffic": "https://my-server.tailnet-name.ts.net:8474"
   },
   "options": {
     "babelModel": "qwen",

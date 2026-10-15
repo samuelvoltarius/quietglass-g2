@@ -16,6 +16,9 @@ import type { PendingDecision } from "../terminal/types";
  */
 export const DECISION_ARM_MS = 800;
 
+/** QIS v1: the second tap must come within this time, else the first one lapses. */
+export const CONFIRM_MS = 4_000;
+
 export class DecisionGate {
   #shown: PendingDecision | null = null;
   #shownAt = 0;

@@ -52,7 +52,7 @@ export function cardKey(card: TurnCard | null): string {
 }
 
 /** 5 × 7 pixel glyphs for what a distance label can contain (a few are narrower than 5 columns). */
-const GLYPHS: Readonly<Record<string, readonly string[]>> = {
+export const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   "0": [".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."],
   "1": ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
   "2": [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
@@ -75,6 +75,12 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   "e": [".....", ".....", ".###.", "#...#", "#####", "#....", ".###."],
   "t": [".#...", ".#...", "####.", ".#...", ".#...", ".#..#", "..##."],
   "z": [".....", ".....", "#####", "...#.", "..#..", ".#...", "#####"],
+  // For the HUD speed: `km/h` and `GPS`.
+  "h": ["#....", "#....", "####.", "#...#", "#...#", "#...#", "#...#"],
+  "/": ["....#", "...#.", "...#.", "..#..", ".#...", ".#...", "#...."],
+  "G": [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."],
+  "P": ["####.", "#...#", "#...#", "####.", "#....", "#....", "#...."],
+  "S": [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
 };
 
 /**
@@ -140,4 +146,16 @@ export async function renderTurnCardPng(card: TurnCard | null, width = CARD_WIDT
   const canvas = createGrayCanvas(width, height);
   drawTurnCard(canvas, card, width, height);
   return encodePng(width, height, canvas.pixels);
+}
+
+/** Draws `label` in the 5 × 7 glyphs at `scale`, its top left corner at (x, y), in the current fill. */
+export function drawGlyphs(ctx: CardContext, label: string, x: number, y: number, scale: number): void {
+  for (const char of label) {
+    const glyph = GLYPHS[char];
+    if (!glyph) { x += SPACE_ADVANCE * scale; continue; }
+    glyph.forEach((row, gy) => {
+      for (let gx = 0; gx < row.length; gx++) if (row[gx] === "#") ctx.fillRect(x + gx * scale, y + gy * scale, scale, scale);
+    });
+    x += advanceOf(glyph) * scale;
+  }
 }

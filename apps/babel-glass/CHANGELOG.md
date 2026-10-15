@@ -1,5 +1,180 @@
 # Changelog
 
+## [0.8.3] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks auf die Menüeinträge kommen auf der Brille nie in der App an, und solange eine Seite ein Menü trägt, öffnet Halten das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein `menuObject` mehr; Menü-Code und `menuItemClickEvent`-Behandlung bleiben für später.
+- **Halten** bei gestoppten Untertiteln öffnet wieder die **Hilfe** (mit Übersicht auf den späteren Seiten); während der Untertitel bleibt Halten der Wortfinder. In der Zusammenfassung steht wieder „Halten = Hilfe“.
+- **Modus**: kein Menüeintrag mehr; die gewählte Zeile der Kundenliste legt ihn fest (Kunde = Kundengespräch, „Ohne Kunde“ = Übersetzen). **Kunde wechseln**: Untertitel stoppen (Tippen, Tippen), dann steht die Liste da. **Kundeninfo**: nur am Handy.
+- **Meine Stimme lernen**, **Meine Stimme löschen** und **Personen** stehen als Zeilen am Ende der Kundenliste: Tippen auf die Zeile führt aus; „Meine Stimme löschen“ braucht ein zweites Tippen auf dieselbe Zeile innerhalb von 4 s (`Nochmal tippen = löschen`), Wischen/2×/4 s ohne Eingabe brechen ab.
+- Hilfetexte der Brille und Hinweise am Handy beschreiben wieder die Gesten statt des Seitenmenüs.
+
+## [0.8.2] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach gilt der Aufruf als fehlgeschlagen und die Seite wird neu aufgebaut.
+
+## [0.8.1] — 2026-10-14
+
+QIS v1.2 (Bedienstandard, Entscheidungen nach dem Audit vom 2026-10-14).
+
+### Geändert
+
+- **Meine Stimme löschen** (Seitenmenü) ist scharfgeschaltet (QIS v1.2 #3): der erste Klick zeigt `Nochmal = löschen · Wischen/2× = abbrechen`, erst ein zweiter Klick auf denselben Eintrag innerhalb von 4 s löscht. Tippen, Wischen, 2× oder 4 s ohne Eingabe brechen ab; Halten nicht (damit öffnet man das Menü erneut).
+- **Kunde wechseln, Modus, Personen** während laufender Untertitel: der erste Klick zeigt `Nochmal = Neustart der Mitschrift`, erst der zweite Klick innerhalb von 4 s führt aus (Neustart bzw. Stopp der Untertitel). Bei gestoppten Untertiteln wirken sie wie bisher sofort.
+- **2× im Hauptbild** öffnet den System-Beenden-Dialog, ohne vorher zu stoppen (QIS v1.2 #2): die Untertitel laufen während der Frage weiter und enden erst, wenn das Beenden bestätigt wird. Abbrechen ändert nichts.
+- Handy-Text zu 2× beschreibt jetzt genau das (statt „Stoppt nie Untertitel“); Halten-Text nennt das Seitenmenü statt „Sonst: Hilfe“. README entsprechend.
+
+### Entfernt
+
+- Unerreichbarer Ruhebildschirm mit „Wischen = Hilfe“ / „Wischen hoch = Kunde · runter = Hilfe“ samt Texten: gestoppt zeigt die Brille immer die Kundenliste.
+
+## [0.8.0] — 2026-10-14
+
+### Neu
+
+- **Meine Stimme lernen** (Seitenmenü): Die Brille zeigt fünf Zeilen zum Vorlesen (`Lies laut vor · noch 16 s`, ~15 s). Das Mikrofon der Brille nimmt auf (`● MIKRO` im Kopf), der Ton geht über eine eigene Verbindung nur an den eigenen Spracherkennungs-Server (gleiche Adresse, gleicher Token wie die Untertitel; Startframe `{"type":"start","voice":"enroll"}`, dann PCM, dann `stop`). Der Server rechnet daraus einen Stimmabdruck (ECAPA-Mittelwert über ~3-s-Stücke, Ausreißer weg, zwei Stimmen werden abgelehnt) und meldet `Gespeichert … Qualität 83 %` oder warum nicht (`Zu wenig Stimme`, `Mehrere Stimmen oder Lärm`, `Server kann noch keine Stimmprofile`, `Server lehnt den Zugang ab`). Tippen oder 2× während des Vorlesens bricht ab: Mikro aus, Verbindung zu ohne `stop`, nichts gespeichert.
+- **Meine Stimme löschen** (Seitenmenü): `{"type":"start","voice":"delete"}` – der Server löscht den Stimmabdruck; laufende Untertitel enden vorher (die Sitzung hielt ihn im Speicher).
+- **Datenschutz**: Der Stimmabdruck ist ein biometrisches Merkmal. Er liegt nur auf dem eigenen Server (`~/whisper-unified/voices/owner.npy`, Ordner 0700, Datei 0600), wird nie geloggt oder weitergegeben; die Aufnahme selbst wird nicht gespeichert. In der App steht nur das Merkmal „Stimme gelernt“.
+- Untertitel: Erkennt der Server die eigene Stimme, kommt die Zeile als Sprecher `ME` und steht als **`Ich:`** (`Me:`) auf der Brille und im Handy-Protokoll; `A`, `B` … sind dann nur die anderen. Antwort-Vorschläge reagieren nie auf `Ich`-Zeilen (eine `Ich`-Zeile bricht einen wartenden Vorschlag ab), Wortfinder und „mein letzter Satz“ nehmen bevorzugt die `Ich`-Zeilen. Mit gelernter Stimme gilt jeder Buchstabe als „Gegenüber“.
+- **Personen: 2/3/4/5** (Seitenmenü, Tippen = weiter, gespeichert, Vorgabe 2): geht im Startframe an den Server (`persons`, und `speakers` = Personen − 1, wenn die Stimme gelernt ist). Der Server öffnet nie mehr Buchstaben als andere Personen; ist das Maß voll, bekommt jede Zeile den nächstliegenden. Läuft die Spracherkennung, startet sie mit der neuen Zahl neu.
+
+### Hintergrund
+
+- Café-Test 2026-10-14 (Brillenmikro, 2 Personen): der Server machte 7 Sprecher daraus. ECAPA-Ähnlichkeit derselben Person 0,4–0,8, anderer Personen 0,0–0,4. Mit `Personen: 2` bleiben es im Nachspielen 2 Buchstaben; mit gelernter Stimme `Ich` + `A`.
+- Die Server-Seite (whisper-unified auf dem eigenen Rechner) liegt nicht in diesem Repository; ältere Server ignorieren `persons`/`speakers` und antworten auf `voice` nicht – die App meldet dann `Server kann noch keine Stimmprofile` und öffnet das Mikrofon gar nicht.
+## 0.7.1
+
+### Neu
+
+- **Tipp-Karten** (nur Kundengespräch, wie Evens „Conversate“): läuft das Mikro, fragt Babel etwa alle 20 s – nur wenn seit der letzten Anfrage mindestens 2 neue fertige Zeilen dazukamen und gerade kein Antwortvorschlag (bzw. Wortfinder/eigener Satz) offen ist – den Proxy nach höchstens **einer** kurzen Karte: Rückfrage (`*` Tipp), gemeinter Begriff (`?`), kurze Rechnung/Tatsache (`#`) oder vorsichtiger Hinweis (`!` Achtung). Auf der Brille 8 s als kleines Popup (Titel + ein Satz, höchstens 3 Zeilen à 46 Zeichen, ASCII-Markierung, weil die Brillenschrift keine Emoji hat), niedrigste Popup-Priorität (Wortfinder > eigener Satz > Antwortvorschlag > Erklärung > Tipp-Karte).
+- Die letzten 50 Karten stehen im Handy-Tab **Gespräch** (mit Uhrzeit, neueste zuerst) und gehen mit in die Zusammenfassung (als „Tipp-Karten während des Gesprächs“, damit sie dort aufgegriffen werden können); der Proxy schneidet sie vor der Shoot-Day-Rückmeldung wieder ab – sie sind Hinweise der Brille, nichts, was der Kunde gesagt hat.
+- Handy: Schalter **Tipp-Karten** (Standard an).
+- Proxy: `POST /context/cue {transcript, customer?, recent_titles?}` → `{"cue": {title, text, kind}}` oder `{"none": true}` (nur lesend; gleicher Kundenkontext und `X-Babel-Customer` wie die anderen Aufrufe; ohne Denken, nur JSON, Temperatur 0.3, 120 Tokens, 6 s Grenze → 504; Wiederholungen von `recent_titles` werden verworfen).
+
+## [0.7.0] — 2026-10-14
+
+### Neu
+
+- Startbildschirm = **Kundenliste** (`BABEL · Kunde wählen`): Shoot-Day-Kunden (ohne „Ohne Zuordnung“) mit dem nächsten Projekttermin; Kunden mit Termin **heute** zuerst (nach Uhrzeit), dann alle anderen nach Name; letzte Zeile `Ohne Kunde – Übersetzen`. Wischen = Cursor (folgt „Wischrichtung umkehren“), Tippen = starten, 2× = Ende. Fußzeile `Tippen = starten · Wischen = wählen · 2× = Ende`.
+- Tippen auf einen Kunden: Kundengespräch mit genau diesem Kunden; jede Anfrage ans Sprachmodell trägt `X-Babel-Customer: <id>` (der Proxy nimmt dessen Shoot-Day-Kontext), die Kundeninfo wird mit `customer=<id>` geholt. Letzte Zeile: Übersetzen ohne Kundenkontext (`X-Babel-Customer: -`).
+- Liste nicht ladbar: `Kunden nicht erreichbar` (Tippen = neu laden) + `Ohne Kunde – Übersetzen`. Ohne Modell-Server gibt es nur die letzte Zeile.
+- **Seitenmenü** der Brille (Halten → Systemmenü neben Schließen und Helligkeit, SDK `menuObject` / `menuItemClickEvent` wie Quiet Hub): `Hilfe`, `Übersicht`, `Modus: Übersetzen`/`Modus: Kundengespräch` (umschalten; läuft es, startet die Spracherkennung mit der neuen Sprache neu), `Kunde wechseln` (stoppt und zeigt die Liste), `Kundeninfo` (Seite „Kunde“ des gewählten Kunden).
+- Proxy: `GET /context/customers` (nur lesend, gleiche Anmeldung/CORS wie `/context/customer`; 60 s Cache, 2 s Zeitlimit).
+
+### Geändert
+
+- Wischen öffnet nie mehr Hilfe oder Kunde: gestoppt bewegt es den Cursor der Liste, während der Untertitel blättert es wie bisher. Halten ist gestoppt ohne Wirkung (während der Untertitel weiter der Wortfinder). Eine Zusammenfassung legt Tippen oder 2× beiseite (zurück zur Liste); gespeichert bleibt sie.
+- Die Seite „Kunde“ hat keine Modus-Zeile mehr (der Modus liegt im Seitenmenü).
+
+## [0.6.3] — 2026-10-14
+
+### Neu
+
+- Modus an der Brille: **Kundengespräch** und **Übersetzen**. Gestoppt zeigt die Kopfzeile den Modus (`BABEL · Mikro aus · Kundengespräch` / `… · Übersetzen`).
+- Kundengespräch: Sprache fest Deutsch (`de` an die Spracherkennung, nie `auto` – das ließ Whisper bei Rauschen englische Sätze erfinden), keine Übersetzung (der Übersetzer wird gar nicht gefragt), nur deutsche Untertitel; Antwort-Vorschläge schneller (600 ms statt 1200 ms warten, höchstens alle 8 s statt 15 s, Anfragen alle 2,5 s statt 4 s). Sprecher-Buchstaben bleiben. Übersetzen: genau wie bisher.
+- Umschalten: gestoppt nach oben wischen öffnet wie bisher die Seite „Kunde“; ihre erste Zeile ist `> Kundengespräch starten` (Tippen = Modus Kundengespräch und sofort zuhören) bzw. im Kundengespräch `> Übersetzen-Modus` (Tippen = zurück zu Übersetzen, ohne zu starten). Auf späteren Seiten schließt Tippen wie bisher.
+- Handy, Reiter „Gespräch“: Modus als Umschalter mit zwei Knöpfen.
+- Vorgabe: Meldet Shoot Day einen Kunden, startet Babel im Kundengespräch, sonst im Übersetzen; sobald ein Modus gewählt wurde, bleibt er (gespeichert in den Einstellungen).
+
+## [0.6.2] — 2026-10-14
+
+### Behoben
+
+- Hilfe „hing auf Seite 3“: Hilfe und Kunde-Seite zeigen in der Fußzeile immer `Seite x/y`; die letzte Seite endet mit `— Ende · Tippen = schließen —`, und ein weiteres Wischen nach unten schließt das Fenster (zurück zum Hauptbildschirm).
+- Die Übersicht („was läuft wann“) beginnt auf einer eigenen Seite mit der Titelzeile `ÜBERSICHT · was läuft wann`.
+
+### Neu
+
+- Kunde aus Shoot Day (über den babel-llm-proxy, nur lesend, `GET /context/customer?full=1`, 3 s Zeitlimit beim Start und beim Öffnen): Meldet der Proxy einen Kunden, zeigt der Ruhebildschirm `Kunde: <Name> · n Ideen` und `Wischen hoch = Kunde · runter = Hilfe`. Wischen nach oben (gestoppt) öffnet die Seite „Kunde“ mit Projekt, Datum, Ort, Ideen, Storyboards (Szenentitel) und Slogans, geblättert wie die Hilfe. Wischen nach unten öffnet weiterhin die Hilfe, Halten bei laufenden Untertiteln bleibt der Wortfinder. Fehler/Zeitüberschreitung: keine Zeile, keine Seite.
+- Handy, Reiter „Gespräch“: Zeile `Kunde (Shoot Day): <Name> – n Ideen, m Storyboards`.
+- babel-llm-proxy: `GET /context/customer?full=1` liefert zusätzlich `date`, `place`, `ideas` (Texte), `storyboards` (`{title, scenes:[Titel]}`) und `slogans`; gleiche Anmeldung, gleicher Zwischenspeicher, nie der Prompt-Text.
+
+## [0.6.1] — 2026-10-14
+
+### Geändert
+
+- Sicherheit: Die Mitschrift lässt sich an der Brille nicht mehr löschen. Halten löscht und bereitet das Löschen nicht mehr vor; bei gestoppten Untertiteln öffnet Halten die Hilfe (während der Untertitel bleibt es der Wortfinder). Löschen geht nur noch am Handy (Reiter „Gespräch“, „Mitschrift löschen“), jetzt mit Rückfrage.
+- Fußzeilen und Hilfetexte angepasst („Halten = löschen“ entfällt).
+
+## [0.6.0] — 2026-10-14
+
+### Geändert (QIS v1)
+
+- Folgt dem Quietglass-Bedienstandard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Sicherheit: Ein einzelnes Tippen stoppt laufende Untertitel nicht mehr. Tippen bereitet den Stopp vor (`Nochmal tippen = stoppen · 2× = abbrechen`), ein zweites Tippen innerhalb von 4 s stoppt (und fasst zusammen). Wischen, Halten, 2× oder 4 s ohne Eingabe brechen ab.
+- Sicherheit: Die Mitschrift löscht nicht mehr „zweimal Halten“. Halten bereitet das Löschen vor (`Nochmal tippen = löschen · …`), ein Tippen innerhalb von 4 s löscht. Wischen, Halten, 2× oder 4 s brechen ab. Ohne Mitschrift oder Zusammenfassung tut Halten nichts und die Fußzeile bietet es nicht an. Das Loslassen nach dem Halten zählt nicht als eigene Geste.
+- 2× ist nur noch zurück: es schließt zuerst die Hilfe, dann ein Popup, und verlässt die App erst im Hauptbild (über den System-Dialog wie bisher). Es stoppt nie Untertitel.
+- Kopfzeile ist `BABEL · Zustand`; das Mikrofon-Zeichen bleibt immer in der Kopfzeile, solange das Mikrofon offen ist. Demo-Marke, Verbindungszustand, Übersetzungsfehler (jetzt „Übersetzen: …“), „Verlauf“ und „Stopp?“ wanderten aus der Fußzeile in die Kopfzeile. Fußzeilen kommen aus einem `footer()`-Helfer in der Reihenfolge Tippen/Wischen/Halten/2× und enden auf `2× = zurück` oder `2× = Ende`; Wischen fällt zuerst weg, wenn die Zeile zu breit wird.
+- Die Seitenzahl der Zusammenfassung steht in der Kopfzeile, die Fußzeile behält `Wischen = Seite`.
+- Hilfeseite (Wischen bei gestoppten Untertiteln): zuerst die vier Gesten in Fußzeilen-Reihenfolge und was die App braucht, danach wie bisher jede Hilfsfunktion mit Auslöser und Zustand.
+- Handy: Reiter `Gespräch · Sprachen · Gedächtnis · Brille · Verbindung · Mehr`. Server-Adressen und Schlüssel liegen unter „Verbindung“; der Schalter für die Wischrichtung bleibt unter „Brille“.
+- Unverändert: Wischen am neuesten Stand übersetzt weiter den letzten eigenen Satz (zeigt nur ein Popup, ändert und sendet nichts).
+
+## [0.5.0] — 2026-10-14
+
+### Neu — Antwort-Vorschläge
+
+- Beendet das **Gegenüber** (Sprecher-Buchstabe ≠ „Ich bin Sprecher“; bei „automatisch“ oder ohne Sprecher: eine Zeile, die nicht in deiner Sprache ist) eine Frage oder einen Satz, auf den man antwortet, schlägt dein Sprachmodell **einen** kurzen Satz vor (höchstens 12 Wörter) – als Popup „Antwort: …“ in der Gesprächssprache, bei einer Fremdsprache mit kurzer deutscher Übersetzung in Klammern. Kontext: die letzte Minute plus die drei passendsten Einträge aus dem eigenen Gedächtnis.
+- Streng: Braucht es keine Antwort, antwortet das Modell genau „-“ und es erscheint nichts. Höchstens ein Vorschlag pro 15 s, nie während du sprichst; hast du schon geantwortet, wird ein verspäteter Vorschlag verworfen. 64 Tokens, Temperatur 0,3, Denken aus, 8 s.
+- Popups kommen nie übereinander: Wortfinder/eigener Satz vor Antwort-Vorschlag vor Erklärung. Wartendes erscheint danach, solange es noch aktuell ist (Vorschlag 8 s, Erklärung 30 s).
+- Schalter „Antwort-Vorschläge“ (an). Die Demo ohne Server zeigt ein Beispiel.
+
+### Neu — Meine Sätze übersetzen
+
+- Schalter „Meine Sätze übersetzen“ (aus): Deine eigenen Sätze (Sprecher-Buchstabe oder – ohne Sprecher/automatisch – in deiner Sprache erkannt) werden in die **Gesprächssprache** übersetzt und groß als „→ …“ in den Untertiteln gezeigt, zum Vorlesen. Normale Richtung bleibt: gesprochene Sprache → „Übersetzen in“. Die Handy-Hilfe erklärt beide Richtungen.
+- Auf Abruf, wenn die Sprechererkennung danebenliegt: **am neuesten Stand nochmal zum Neuesten wischen** = deinen letzten Satz übersetzen (Popup „→ …“). Ausläufer derselben Wischbewegung lösen es nicht aus.
+
+### Neu — Übersicht: was läuft wann
+
+- Kopfzeile beim Zuhören zeigt kompakt nur Aktives, z. B. „● MIKRO · RU→DE · A/B · Antworten · Gedächtnis“; passt es nicht in 46 Zeichen, fallen Uhrzeit, Info, Gedächtnis … zuerst weg, das Mikro nie.
+- Jedes Popup trägt seine Art: „Info:“, „Antwort:“, „Wort:“, „→“ – auf der Brille und in der Mitschrift am Handy.
+- **Hilfe auf der Brille:** Wischen bei gestoppten Untertiteln (oder Knopf am Handy) zeigt jede Funktion mit Auslöser und ob sie gerade an ist; Tippen = zurück, Wischen blättert.
+- Handy: Tabelle **Übersicht** oben im Tab Gespräch – Untertitel, Übersetzung, Sprecher, Info-Popups, Antwort-Vorschläge, Eigene Sätze, Wortfinder, Mitschrift, Zusammenfassung, Gedächtnis – mit Schalter, Auslöser und Live-Status (Server live/Demo, Gedächtnis verbunden/nicht verfügbar).
+- Mitschrift am Handy markiert Antwort-Vorschläge („Antwort: …“) und übersetzte eigene Sätze („→ … zum Vorlesen“); beides bleibt mit „Letzte Mitschrift behalten“ erhalten.
+
+### Geändert
+
+- Die Kopfzeile zeigt beim Zuhören den Live-Status statt „Hört zu“/„Info“/„Wortfinder“; die Art des Popups steht jetzt vorne im Popup.
+- Eine Erklärung, die während eines Wortfinder-Popups fertig wird, wartet und erscheint danach (vorher: nur am Handy).
+
+## [0.4.0] — 2026-10-13
+
+### Neu — Wortfinder
+
+- **Halten während der Untertitel** = Wortfinder: Fehlt dir im Kundengespräch ein Wort, schickt Babel die letzten ~20 Sekunden der Mitschrift an dein Sprachmodell („Der Sprecher sucht ein Wort …“). Als Popup erscheint das wahrscheinlich gesuchte Wort plus 2–3 Ausweichwörter in einer Zeile (höchstens 40 Zeichen, z. B. „Kostenvoranschlag · Angebot · Offerte“); ist eine Übersetzung eingestellt, darunter das Wort in der Zielsprache. Antwort nach spätestens 8 s, sonst „kein Vorschlag“. Schnell gehalten: 40 Tokens, Temperatur 0,1, Denken aus.
+- Neue Einstellung „Ich bin Sprecher: automatisch / A / B“ – automatisch = wer zuletzt vor dem Halten sprach. Mit Sprecher-Buchstabe zählen vor allem deine eigenen Sätze; die vorläufige Zeile (der Satz mit der Lücke) geht mit.
+- Halten bei gestoppten Untertiteln löscht wie bisher die Mitschrift (zweimal halten). Fußzeile „Tippen = Stopp · Halten = Wort“, Handy-Hilfe angepasst. Ohne Server zeigt die Demo ein Beispiel.
+
+### Neu — eigenes Gedächtnis
+
+- Babel hat ein **eigenes** Gedächtnis auf deinem Server (babel-llm-proxy, neue Endpunkte `/memory`): Nach jeder Zusammenfassung werden Datum, Titel, Zusammenfassung und **Abmachungen** abgelegt (die Zusammenfassung fragt jetzt auch nach Abmachungen). Eine JSON-Datei neben dem Proxy, atomar geschrieben, nur für den Besitzer lesbar (600), höchstens 500 Einträge. Kein Zugriff auf irgendein anderes Gedächtnis.
+- Die Erklär-Popups bekommen die 3 besten Treffer zum aktuellen Thema als „Notizen des Nutzers“ und dürfen an ein früheres Gespräch erinnern – nur wenn es konkret passt; sonst antwortet das Modell genau „-“ und es erscheint nichts.
+- Handy: neuer Tab **Gedächtnis** – Liste (Datum, Titel, Abmachungen), einzeln löschen, alles löschen (zweimal tippen), Notiz hinzufügen, alles als Text exportieren. Schalter „Eigenes Gedächtnis“ im Tab Gespräch (an).
+- Ältere Proxys ohne `/memory`: der Tab sagt „nicht verfügbar“, sonst läuft alles wie bisher, ohne Fehlermeldungen.
+
+### Proxy (babel-llm-proxy)
+
+- `POST /memory`, `GET /memory?limit=`, `DELETE /memory/<id>`, `DELETE /memory`, `POST /memory/search` (Stichwortsuche nach BM25, reine Standardbibliothek). Gleiche Anmeldung wie der Chat-Endpunkt, CORS erlaubt jetzt DELETE. Datei per `BABEL_MEMORY_FILE` (Vorgabe: `babel-memory.json` neben dem Skript, gitignored). Selbsttest: `python3 babel_llm_proxy.py --selftest`.
+
+## [0.3.3] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Gespräch · Sprachen · Brille · Mehr (Tab-Leiste unten, gewählter Tab bleibt). Server-Einstellungen stehen nicht mehr eingeklappt, sondern als normale Karten unter „Mehr“ (mit eigenem Speichern-Knopf). Status-Chip oben zeigt „Quelle → Ziel“. Meldungen bleiben über den Tabs sichtbar.
+
+## [0.3.2] — 2026-10-13
+
+### Geändert — Sprachmodell-Text erscheint, während er entsteht
+
+- Übersetzung, Zusammenfassung und Erklärungen fragen das Sprachmodell mit `"stream": true` (Server-Sent-Events). Die Brille zeigt den Text schon beim Schreiben (höchstens alle 300 ms neu gezeichnet): die Übersetzung einer Untertitelzeile ersetzt sich Schritt für Schritt, Zusammenfassung und Erklärung wachsen.
+- Rückfall: Antwortet Server oder Proxy mit normalem JSON, wird das wie bisher gelesen; bricht der Stream vor dem ersten Wort ab oder lehnt der Server `stream` ab, kommt einmal eine normale Anfrage. Denkblöcke (`reasoning_content`, `<think>`) werden nie gezeigt.
+- Lange Zusammenfassungen werden auf der Brille nicht mehr abgeschnitten: kurze Punkte, darunter die ausführlichen, seitenweise („Seite 1/3 · Wischen = blättern“). Lange Erklärungen bekommen den ganzen Bildschirm.
+- Mehr Platz für lange Gespräche: Zusammenfassung bis 3000 Tokens (vorher 900), Mitschrift bis 48 000 Zeichen an das Modell (vorher 12 000), Übersetzung mit eigener Längengrenze statt der 300 Tokens des Proxys.
+
+
 ## [0.3.1] — 2026-10-13
 
 ### Fixed

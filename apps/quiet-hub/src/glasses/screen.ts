@@ -9,6 +9,11 @@ export interface ScreenView {
   readonly footer: string;
   /** Quiet mode: header and body at brightness 0, footer at 1 (see hub/quiet.ts). */
   readonly dim?: boolean;
+  /**
+   * Split page (Zuhause): present = the body is the list on the left and these
+   * rows fill a second column on the right (state of the selected row).
+   */
+  readonly side?: readonly string[];
 }
 
 /** Rows the body container holds; more are pushed off the display. */

@@ -31,6 +31,8 @@ export interface Settings {
   readonly refreshSeconds: number;
   /** Spoken guidance on a journey ("In 60 metres turn left", "Bus 3 in 2 minutes"). */
   readonly announce: boolean;
+  /** Swap swipe up and down (the glasses report swipes inverted on some firmware); off by default. */
+  readonly invertScroll: boolean;
 }
 
 const KEY = "quietglass.nextstop.v1";
@@ -61,6 +63,7 @@ export function defaultsFor(buildOebbUrl: string | undefined): Settings {
     refreshSeconds: 30,
     // On by default when the build brings a voice server (private build).
     announce: buildTtsUrl() !== "",
+    invertScroll: false,
   };
 }
 
@@ -126,6 +129,7 @@ export function parseSettings(raw: string, defaults: Settings = DEFAULT_SETTINGS
         ? Math.round(value.refreshSeconds)
         : defaults.refreshSeconds,
       announce: typeof value.announce === "boolean" ? value.announce : defaults.announce,
+      invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : defaults.invertScroll,
     };
   } catch {
     return defaults;

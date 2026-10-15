@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { availableCommands, duration, parseStatus, progressBar } from "../src/printer/status";
+import { finishClock, spoolLine } from "../src/printer/status";
 import { ApiError, createClient, createDemoPrinter, validateBridgeUrl } from "../src/printer/client";
 import { parseSettings } from "../src/storage/persist";
 
@@ -13,8 +14,28 @@ describe("bridge status", () => {
     });
     expect(status).toEqual({
       online: true, state: "printing", file: "a b.gcode", progress: 100, layer: 12, layers: 180,
-      minutesLeft: 0, nozzle: { now: 220, target: 220 }, bed: null, speed: 100, message: "", controllable: true,
+      minutesLeft: 0, nozzle: { now: 220, target: 220 }, bed: null, speed: 100, message: "", z: null, spool: null, controllable: true,
     });
+  });
+
+  it("reads the nozzle height and the Spoolman spool", () => {
+    const status = parseStatus({
+      online: true, state: "printing", z: 12.34, controllable: false,
+      spool: { material: "PLA", vendor: "Prusament", name: "Galaxy Black", grams: 412.4, meters: 138.25 },
+    });
+    expect(status).toMatchObject({ z: 12.34, spool: { material: "PLA", vendor: "Prusament", name: "Galaxy Black", grams: 412, meters: 138.3 } });
+    expect(parseStatus({ online: true, state: "printing", spool: {} })).toMatchObject({ spool: null });
+    expect(spoolLine({ material: "PETG", vendor: "", name: "", grams: 80, meters: null })).toBe("PETG · 80 g");
+    expect(spoolLine(null)).toBe("");
+  });
+
+  it("knows when the print will be done", () => {
+    const now = new Date(2026, 9, 13, 21, 10).getTime();
+    expect(finishClock(30, now, "de")).toBe("21:40");
+    expect(finishClock(null, now, "de")).toBeNull();
+    // Past midnight the weekday is added.
+    expect(finishClock(180, now, "de")).toBe("Mi 00:10");
+    expect(finishClock(180, now, "en")).toBe("Wed 00:10");
   });
 
   it("anything unreadable is offline, with a known reason or 'unknown'", () => {

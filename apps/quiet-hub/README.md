@@ -48,32 +48,22 @@ choice, notification behaviour and a concise control reference:
 
 ## Controls (Even QA compliant)
 
-Quiet Hub starts on a real root overview. Every page also has a **native
-contextual menu** (tap, then hold: the glasses OS draws it) with that page's
-actions; the gestures stay as shortcuts. Every action answers with a short line
-in the footer, and every page keeps a one-line gesture hint there.
+Quiet Hub starts on a real root overview. The glasses' native side menu is **off
+for now** (`SIDE_MENU = false`, step log from the real glasses, 15.10.2026: its clicks never
+reach the app and a hold opens the menu instead of reaching the app), so everything is reachable by gesture.
+Every action answers with a short line in the footer, and every page keeps a one-line gesture hint there.
 
 | Input | Glasses (touchpad) | R1 ring |
 | --- | --- | --- |
 | Swipe up/down | select / turn the page of a long answer | same |
-| Tap | open, run, **send** a confirmed voice note, **allow** a card | same |
-| Double tap | back (a running agent: **stop**); a card: **deny**; voice confirm: **discard**; **Overview: Even's native exit dialog** | **page picker** (never exits) |
-| Hold | speak into the open session (max 18 s) | - |
-| Tap + hold | page menu (below) | - |
+| Tap | open, run, **send** a confirmed voice note; risky actions (**stop** the agent, **allow / deny** a card, device / printer actions) are armed by a tap and carried out by a second tap within 4 s | same |
+| 2× (double tap) | back, **only** back (never stops, answers or sends; a voice note is kept); **Overview: Even's native exit dialog** | **page picker** (never exits) |
+| Hold | speak into the open session (max 18 s); on Zuhause: details; on a voice note: arms "discard" (one tap confirms); elsewhere: refresh | - |
 
-Page menus (at most 6 verbs, re-supplied on every rebuild; a page change is the
-only reason to rebuild, everything else is `textContainerUpgrade`):
-
-| Page | Menu |
-| --- | --- |
-| Overview | Open Agent / Home / Printer / Alerts, Refresh, Help |
-| Agent | Stop, New session, Switch agent, To Overview, Help (card pending: Allow, Deny, Help) |
-| Home | Switch device, Refresh, To Overview, Help |
-| Printer | Pause / Resume, Cancel print, Refresh, To Overview, Help |
-| Alerts | Mark all read, To Overview, Help |
-
-Risky actions from the menu (device, printer) still need the confirming tap.
-The **Help** entry shows the control sheet; any gesture closes it.
+Help is the last row of the Overview; any gesture closes it. Risky actions (Stop,
+Allow / Deny, device, printer, discarding a voice note) only arm; the next tap confirms.
+"Quiet while the agent works" and "Mark all read" are set on the phone only.
+The code of the side menu (per-page verbs) is kept and can be switched back on.
 
 - **Double tap on Overview** opens `shutDownPageContainer(1)`, the native
   system exit-confirmation dialog. It never silently exits and never substitutes
@@ -89,7 +79,8 @@ The **Help** entry shows the control sheet; any gesture closes it.
   are one line (`» Bash: npm test`).
 - **Permission card**: who asks, `Tool: Bash`, the command, then Erlauben / Ablehnen and the vLLM's replies
   for this card (a deny reply goes to the agent as its next message);
-  `Wischen · Tippen = senden · 2× zurück` (2× leaves the card waiting).
+  `Tippen = senden · Wischen = wählen · 2× = zurück` - a tap arms the row (`Nochmal tippen = Erlauben`), a second tap
+  sends it; swipe, 2× or 4 s without input disarm (2× leaves the card waiting).
 - Input is read defensively: a missing `eventType` is a CLICK, a missing
   `currentSelectItemIndex` is 0, one swipe (a burst of scroll events) counts
   once (300 ms cooldown), selections live in the app state.
@@ -106,17 +97,19 @@ API a second time.
 | Page | What it shows | Tap action |
 | --- | --- | --- |
 | **Overview** | Online agents with dots (`●` idle, `*` busy, `!` waiting, `○` offline), unread alerts, lights on, printer progress, what needs you | Open the selected page |
-| **Agent** | Agents -> sessions -> session; streaming answer in pages, tool line, permission cards | Open / ask / allow (double tap: deny or stop) |
-| **Zuhause** | Home Assistant devices with state | Switch an allow-listed device |
+| **Agent** | Agents -> sessions -> session; streaming answer in pages, tool line, permission cards | Open / ask / allow (tap arms, second tap confirms) |
+| **Zuhause** | Home Assistant: favourites, then areas (list left, state right); per area "Alle Lichter" / "Alle Rollos", sensors read-only | Switch / run a scene / open an area; hold = light or blind detail |
 | **Drucker** | Job, progress, layer, time left, temperatures | Pause, resume, cancel |
 | **Meldungen** | Finished/waiting/error events from any agent (with the agent id) | Mark as read |
+| **Tagesstart** | Morning briefing: today's calendar, weather + rain nowcast, last night's glucose, car, printer, servers | Reload (swipe = next page) |
 
 The Overview is a real menu: swipe to select and tap to open. Nothing has to
 be set up for it: agents appear by themselves as soon as a relay connects, and an
 empty page says in one line what is missing. The header is a fixed status line:
 `page · connection · unread · busy agents · waiting`. On internal
-pages, swipe selects and tap acts. Home and printer changes are armed by one
-tap and executed by a second tap within four seconds. Double tap always goes
+pages, swipe selects and tap acts. Printer changes are armed by one tap and
+executed by a second tap within four seconds; on Zuhause a tap switches at once,
+only locks, alarm and garage need a second tap (see below). Double tap always goes
 back, except on Overview where it opens Even's native exit dialog.
 
 ## The daemon
@@ -125,6 +118,7 @@ One process, one token. The glasses see these endpoints and nothing else:
 
 ```
 GET  /report                 the whole HubReport (agents + approvals + home + printer + inbox)
+GET  /report?since=<rev>&boot=<id>&wait=25   long-poll: held until the report changes (rev/boot/live in every report)
 GET  /agents                 every agent with online/busy/answer
 POST /agent/ask              {agentId, question, wait?}   (wait:false = answer streams into /report)
 POST /agent/voice?agentId=   WAV body (or JSON base64) -> Whisper -> ask (ask=0: transcript only)
@@ -135,8 +129,13 @@ POST /agent/session/new      {agentId}
 POST /agent/session/select   {agentId,sessionId,title}
 POST /events                 {provider,status,title,detail}  (completion hook)
 POST /events/read            {id}
-POST /home/toggle            {device}                     (Home Assistant, allow-listed)
+POST /home/toggle            {device}                     (Home Assistant, allow-listed; older apps)
+GET  /home                   the Zuhause view (also in /report as `homeView`)
+POST /home/action            {target, action, value?}     (toggle|turn_on|turn_off|brightness|open|close|stop|run)
+POST /home/confirm           {token}                      (second step for lock / alarm / garage)
 POST /printer                {action: pause|resume|cancel} (Moonraker)
+GET  /brief                  Tagesstart (cached ~2 min; ?refresh=1 asks every source again; also in /report as `brief`)
+GET  /brief/appointments     today's appointments only, with coordinates (for OpenGlance; calendar + geocoding, no weather)
 ```
 
 The relays use a few more (`/relay/register`, `/relay/poll`, `/relay/result`,
@@ -147,6 +146,110 @@ agent path is the only one that thinks.
 
 Without `HA_URL`/`HA_TOKEN` and `MOONRAKER_URL` the Home and Printer pages show
 stand-ins that are clearly labelled **DEMO**.
+
+## Tagesstart (0.8.0)
+
+**Deutsch.** Die Seite *Tagesstart* ist das Morgen-Briefing: ein Tippen, alles auf
+einen Blick. Der **Daemon** holt alle Quellen selbst – Adressen und Tokens bleiben
+in seiner Env-Datei, die Brille bekommt nur fertige Werte. Jeder Block ist
+optional (nicht gesetzt = ausgeblendet; nur der Kalender sagt „keine
+Kalenderquelle“), hat ein eigenes Zeitlimit (`BRIEF_TIMEOUT_MS`, Standard 6 s)
+und wird ~2 min zwischengespeichert (`BRIEF_CACHE_MS`). Fällt eine Quelle aus,
+zeigt der Block bis 30 min lang die letzten Werte mit „alt“, danach „nicht
+erreichbar“ – die anderen Blöcke bleiben unberührt.
+
+```
+Termine · 4 heute
+  ganztags · Geburtstag Lena
+  09:00–09:15 · Stand-up
+  11:30–12:15 · Zahnarzt
+Wetter · 9° bedeckt · 6–15° · Regen ab 14:00
+Zucker · 118 mg/dL → · vor 3 min · nur Info
+  Nacht 84–192 · <70: 0 min · >180: 25 min
+Auto · 78 % · 296 km · geladen · zu
+Drucker · druckt 72 % · noch 41 min · esp32_gehaeuse
+Server · alle 3 ok · 1 neues Gerät
+```
+
+| Geste | Tagesstart |
+| --- | --- |
+| Wischen | nächste / vorige Seite (ganze Blöcke, Fußzeile „1/2“) |
+| Tippen / Halten | neu laden (alle Quellen) |
+| 2× | zurück zur Übersicht |
+
+Erreichbar über die fünfte Zeile der Übersicht und die Seitenwahl (Ring). Am Handy: Tab **Tagesstart** mit denselben Blöcken und
+der Einstellung **„Tagesstart als Startseite bis 11:00“** – dann öffnet die App
+vormittags direkt den Tagesstart (auch beim Start aus dem Brillen-Launcher).
+
+| Block | Env (Daemon) | Quelle | Zeigt |
+| --- | --- | --- | --- |
+| Termine | `BRIEF_ICS_URLS` (Komma-Liste, `webcal://` geht) | ICS/iCal-Abo (z. B. „private Adresse“ von Google/iCloud/Nextcloud) | heutige Termine; ganztägig/mehrtägig, TZID, Serien DAILY/WEEKLY (INTERVAL, COUNT, UNTIL, BYDAY), einfache MONTHLY/YEARLY, EXDATE, verschobene Einzeltermine |
+| Termine (Shoot Day) | `BRIEF_SHOOT_URL` (+ `BRIEF_SHOOT_TOKEN`) | Shoot-Day-Server `GET /api/projects` und `/api/customers` | heutige Projekte (Datum `2026-10-14 10:30`, `2026-10-14` oder `14.10.2026 10:30`) als „Kunde – Projekt“ mit Ort, gemischt mit den ICS-Terminen (gleiche Zeit + ähnlicher Titel = einmal) |
+| Wetter | `BRIEF_TZ`; `BRIEF_LAT`/`BRIEF_LON` nur noch als Ausweichort; `BRIEF_GEOCODE_URL` | Open-Meteo (ohne Schlüssel) | **hier** (Handy-Standort, auf ~1 km gerundet, kommt als `?lat=&lon=`; ohne Standort der Ausweichort) – jetzt, Min/Max, „Regen ab 14:00“ – plus je Termin heute mit Ort (max. 3) die Vorhersage **zur Terminstunde am Terminort**: `10:30 Musterdorf 9° · Regen 60%` (Wind ab 30 km/h). Termine < 10 km vom Standort bekommen keine eigene Zeile. Der Ort (ICS `LOCATION`, Shoot-Day-Ort) wird über die Open-Meteo-Ortssuche gefunden (erst ganzer Text, dann Teil nach dem letzten Komma, dann Ort ohne PLZ; nur der Ortstext verlässt den Daemon; 7 Tage gemerkt); eine Vorhersage je Ort, ~10 min gemerkt |
+| Auto | `BRIEF_BYD_URL` (+ `BRIEF_BYD_TOKEN`) | BYD-Bridge `GET /state` (`selfhost/services/byd-bridge`) | Akku %, Reichweite, lädt/geladen, zu/offen |
+| Zucker | `BRIEF_SUGAR_URL` (+ `BRIEF_SUGAR_TOKEN`) | Sugar-Bridge `GET /api/v1/entries/sgv.json` (`selfhost/services/sugar-bridge`) | Wert, Trend, Alter; Nacht 22–07: Min/Max, Minuten <70 / >180 |
+| Drucker | `BRIEF_KLIPPER_URL` (+ `BRIEF_KLIPPER_TOKEN`) | Klipper-Glance-Bridge `GET /api/printer`; ohne: `MOONRAKER_URL` des Daemons | Zustand, Datei, %, Restzeit |
+| Server | `BRIEF_STATUS_URLS` = `Name\|URL,…` (+ `BRIEF_STATUS_TOKEN`) | Status-Glass-Referenzserver `/status` | ok/weg je Rechner, neue Geräte im Heimnetz |
+
+Standort: Die App fragt das Handy beim Laden des Tagesstarts (Berechtigung
+`location`, einmal gefragt; 4 s Zeitlimit, 30 min gemerkt) und sendet nur die auf
+2 Nachkommastellen (~1 km) gerundeten Werte. Der Daemon prüft sie (Zahlen, Bereich;
+sonst `400`), schreibt sie nie ins Zugriffsprotokoll und gibt im Wetterblock
+`place: "here"|"default"` zurück („Wetter hier“ / „Wetter (Standard)“).
+
+Weitere: `BRIEF_TZ` (Tagesgrenzen und Uhrzeiten; Standard = Zeitzone des
+Rechners), `BRIEF_CACHE_MS=120000`, `BRIEF_TIMEOUT_MS=6000`,
+`BRIEF_WEATHER_URL` (eigene Open-Meteo-Instanz), `BRIEF=off` schaltet `/brief`
+ab. Die Bridges erlauben Tailscale-Logins nur über `tailscale serve`; ruft der
+Daemon sie über ihre `https://<host>.<tailnet>.ts.net:<port>`-Adresse auf und
+gehört der Daemon-Rechner nicht demselben Login, den Bridge-Token als
+`BRIEF_*_TOKEN` setzen (nie ins Repo).
+
+> **Zuckerwerte nur zur Information – keine Therapieentscheidungen.** Maßgeblich
+> sind Pumpe, Sensor und deren Alarme.
+
+**Deploy (Daemon-Update).** Der Daemon importiert das neue
+`examples/quiet-hub-brief.mjs` – mit der Selfhost-Unit (läuft aus dem
+Repo-Checkout) bringt es `git pull`, sonst alle `examples/quiet-hub-*.mjs` neben
+`quiet-hub-daemon.mjs` kopieren. Die `BRIEF_*`-Variablen in die Env-Datei des
+Daemons (`.env-hub`, Vorlage `.env-hub.example`) eintragen, dann
+`systemctl --user restart quiet-hub-daemon` und prüfen:
+`curl -s -H "Authorization: Bearer $HUB_TOKEN" http://127.0.0.1:8787/brief | head -c 400`
+(jeder Block `"status":"ok"` oder `"off"`; `"error"` nennt den Grund ohne
+Adresse). Die Startzeile des Daemons listet die aktiven Blöcke (`brief: calendar+weather+…`).
+Die Brillen-App (0.8.0) braucht keine neue Whitelist: sie spricht nur mit dem
+Daemon.
+
+**English.** *Tagesstart* (day start) is a morning briefing collected by the
+daemon (`GET /brief`, same auth as `/report`, cached ~2 min, `?refresh=1`
+forces). Blocks: calendar from ICS URLs, Open-Meteo weather with a rain
+nowcast, glucose from the sugar bridge (last night 22–07: min/max, minutes
+below 70 / above 180 – information only), car from the BYD bridge, printer from
+the Klipper bridge or the daemon's Moonraker, servers from Status Glass
+reference servers. Every block is optional with its own timeout. On the
+glasses swipe pages, tap reloads, double tap goes back; the phone has a
+*Tagesstart* tab and the setting "day start as the start page until 11:00".
+
+### Termine für OpenGlance (`GET /brief/appointments`)
+
+Jeder Termin im Kalenderblock trägt jetzt `startIso` (ISO mit Offset, z. B.
+`2026-10-14T10:30:00+02:00`) und `allDay`; hat er einen Ort, den die
+Ortssuche findet, außerdem `lat`, `lon` und `placeLabel` (gleicher 7-Tage-Speicher
+wie das Wetter am Terminort, eine Anfrage je Ort). `GET /brief/appointments`
+(gleiche Anmeldung wie `/report`) antwortet nur mit
+`{date, at, status, events: [{time, end, title, place, allDay, startIso, lat?, lon?, placeLabel?}]}`
+– aus der letzten Liste, solange sie jünger als 2 min ist, sonst Kalender +
+Ortssuche neu (kein Wetter, keine anderen Blöcke; eine Abfrage zur Zeit). Die
+Ortssuche wartet höchstens 3 s, ein späterer Treffer kommt beim nächsten Mal.
+Koordinaten und Titel stehen in keinem Protokoll (Zugriffsprotokoll: nur Pfad,
+Status, Dauer). Prüfen:
+`curl -s -H "Authorization: Bearer $HUB_TOKEN" http://127.0.0.1:8787/brief/appointments | head -c 400`.
+Deploy wie oben (die `examples/quiet-hub-*.mjs` + Neustart).
+
+**English.** `GET /brief/appointments` returns today's appointments with
+`startIso`, `allDay` and, when the place is found, `lat`/`lon`/`placeLabel`,
+for the OpenGlance navigation app. Calendar + geocoding only, cached 2 min,
+same bearer auth; coordinates are never logged.
 
 ## Agenten verbinden / Connect agents
 
@@ -249,13 +352,15 @@ Every agent has sessions you can see, create and select on the glasses
 | Codex (app-server) | `thread/list` | `thread/start` | `thread/resume` | `turn/interrupt` + process-tree kill |
 | OpenClaw | — | clears the history | — | aborts the request |
 
-Stop is a **double tap** while an agent is running. The daemon answers at once
+Stop is **armed by a tap** while an agent is running and
+carried out by a second tap within 4 s; the footer reads `Nochmal tippen = stoppen`.
+Swipe, 2× and 4 s without input cancel. The double tap never stops (QIS v1). The daemon answers at once
 (`stopped:true` in `/report`, shown as `[gestoppt]`) and the relay confirms
 when the process or turn is really gone (`stopConfirmed`). Process trees are
 ended with `taskkill /T /F /PID` on Windows and by signalling the process group
 (children are started detached) on Linux/macOS. The glasses footer always
-shows the double tap: `2× = zurück`, `2× = stoppen` while running, `2× = Ende`
-on the overview.
+follows QIS v1 (`docs/BEDIENSTANDARD.md`): `Tippen = ... · Wischen = ... · Halten = ... · 2× = zurück`
+(`2× = Ende` on the overview), header `QUIET HUB · state`.
 
 Voice: hold the touchpad on the open session (max 18 s). The G2 microphone
 (16 kHz, 16 bit, mono) becomes a WAV, the daemon transcribes it with the
@@ -306,11 +411,75 @@ HA_TOKEN=<the token>
 HA_DEVICES=light.office=Büro Licht,switch.printer_plug=Drucker Steckdose,sensor.living_temp=Wohnzimmer
 ```
 
-`HA_DEVICES` is the **allow-list**: only those entity ids are shown, and only
-`light`, `switch`, `fan`, `input_boolean`, `automation`, `cover`, `climate`,
-`lock`, `media_player`, `script`, `scene` can be switched (sensors are
-read-only). Switching needs the second tap on the glasses. The token never
+`HA_DEVICES` is the **allow-list** of the old flat device list (older apps):
+only those entity ids are shown, and only `light`, `switch`, `fan`,
+`input_boolean`, `automation`, `cover`, `climate`, `lock`, `media_player`,
+`script`, `scene` can be switched (sensors are read-only). The token never
 leaves the daemon.
+
+### Zuhause page (0.7.0)
+
+**Deutsch.** Die Seite *Zuhause* zeigt links eine Liste – zuerst die
+**Favoriten**, dann die **Räume** – und rechts den Zustand der gewählten Zeile.
+Ein Raum enthält oben „Alle Lichter“ / „Alle Rollos“ (ab zwei Geräten), dann
+Lichter, Schalter, Rollos, Szenen und zuletzt Sensoren (Temperatur, Feuchte,
+Bewegung, Akku – nur Anzeige). Der Daemon holt den Zustand alle paar Sekunden
+von Home Assistant (`HA_POLL_MS`, Standard 5000) und gibt Änderungen über den
+bestehenden Long-Poll von `/report` sofort an die Brille weiter. URL und Token
+bleiben im Daemon; die Brille sieht nur die kuratierte Ansicht.
+
+| Geste | Liste / Raum | Licht-Detail | Rollo-Detail |
+| --- | --- | --- | --- |
+| Wischen | Zeile wählen | heller / dunkler (10 %) | auf / zu |
+| Tippen | schalten, Szene starten, Raum öffnen | an / aus | Stopp |
+| Halten | Licht/Rollo: Detail öffnen (sonst: aktualisieren) | – | – |
+| 2× | Raum → Liste → Übersicht | zurück | zurück |
+
+Schlösser, Alarmanlage und Garagentor/Tor sind **ausgeblendet**, solange
+`HA_SENSITIVE` sie nicht nennt. Eingeschaltet brauchen sie immer zwei Schritte:
+das erste Tippen holt beim Daemon nur einen Bestätigungs-Code (einmalig,
+30 s gültig), die Fußzeile zeigt „Nochmals tippen: Haustür: aufsperren (9s)“,
+erst das zweite Tippen auf dieselbe Zeile führt aus. Wischen oder 2× verwirft.
+
+Daemon-Konfiguration (`.env-hub` bzw. `~/.config/quietglass/quiet-hub-daemon.env`):
+
+```dotenv
+HA_URL=http://homeassistant.local:8123
+HA_TOKEN=<long-lived token>
+# Favourites in this order (entity_id[=label]); empty = HA_DEVICES
+HA_FAVORITES=scene.abend=Abendlicht,light.buero,cover.wohnzimmer,sensor.aussen_temperatur
+# auto = every HA area (default) | off = favourites only | names or ids in this order
+HA_AREAS=Wohnzimmer,Büro,Schlafzimmer
+# never show these
+HA_EXCLUDE=switch.server_power
+# lock, alarm, garage: hidden unless named here; then always two-step
+HA_SENSITIVE=
+HA_POLL_MS=5000
+# HA_HOME=off switches the page off (the old device list stays)
+```
+
+Areas come from one read-only template call (`POST /api/template` with
+`areas()` / `area_entities()`), refreshed every 5 min; if your Home Assistant
+refuses it, only the favourites are shown. Only `light`, `switch`,
+`input_boolean`, `fan`, `cover`, `scene`, `script`, temperature / humidity /
+battery sensors and motion / occupancy / presence binary sensors are ever
+shown – plus `lock`, `alarm_control_panel` and garage/gate covers when
+`HA_SENSITIVE` allows them. Actions are checked against the entity's kind and
+the current view; the glasses can never call another HA service.
+
+The favourites order lives in the daemon config (not on the phone); the phone's
+**Zuhause** tab shows the same list read-only and says where to change it. In
+the demo (`?demo=1`) the page has favourites, three areas and a demo lock.
+
+**Deploy (daemon update).** The daemon imports the new
+`examples/quiet-hub-home.mjs`, so it must sit next to `quiet-hub-daemon.mjs`:
+with the selfhost unit (runs from the repo checkout) a `git pull` brings it,
+otherwise copy the three `examples/quiet-hub-*.mjs` it imports. Add the
+variables above to the daemon env file, then
+`systemctl --user restart quiet-hub-daemon` and check
+`curl -s -H "Authorization: Bearer $HUB_TOKEN" http://127.0.0.1:8787/home | head -c 300`
+(`"configured":true`). The glasses app (0.7.0) falls back to the old device list
+with older daemons.
 
 ### Phone mirror (optional)
 

@@ -4,6 +4,7 @@ import type { RideProgress } from "../ride/tracker";
 import { etaLabel } from "../ride/tracker";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { ft } from "../footer";
 
 /**
  * What the glasses show.
@@ -180,7 +181,7 @@ export function departureBoard(
         t(locale, "g.emptyBoard2"),
         t(locale, "g.emptyBoard3"),
       ],
-      footer: t(locale, "g.footerEmptyBoard"),
+      footer: ft(locale, "exit", { hold: "goal" }),
     };
   }
 
@@ -201,7 +202,7 @@ export function departureBoard(
     body: rows,
     // Saying where the numbers come from is not decoration. Without it a
     // board of pure timetable times is indistinguishable from a live one.
-    footer: t(locale, anyLive ? "g.footerBoardLive" : "g.footerBoardPlanned"),
+    footer: ft(locale, "exit", { tap: "follow" }, t(locale, anyLive ? "g.leadLive" : "g.leadPlanned")),
   };
 }
 
@@ -257,7 +258,7 @@ export function ridingView(
     return {
       header,
       body: ["", fit(t(locale, "g.terminus", { stop: rideStopName(progress.next.stop.name) })), "", t(locale, "g.rideOver")],
-      footer: t(locale, "g.footerRideOver"),
+      footer: ft(locale, "exit", { tap: "back" }),
     };
   }
 
@@ -292,11 +293,11 @@ export function ridingView(
     // Which of the two sources is speaking. On GPS the next stop is measured;
     // on the clock it is an estimate, and after a long hold-up it can be
     // several stops optimistic. The passenger is entitled to know which.
-    footer: progress.basis === "gps"
+    footer: ft(locale, "exit", { tap: "back" }, progress.basis === "gps"
       ? progress.metresToNext === undefined
-        ? t(locale, "g.footerGps")
-        : t(locale, "g.footerGpsDistance", { metres: Math.round(progress.metresToNext) })
-      : t(locale, "g.footerClock"),
+        ? t(locale, "g.leadGps")
+        : t(locale, "g.leadGpsDistance", { metres: Math.round(progress.metresToNext) })
+      : t(locale, "g.leadClock")),
   };
 }
 
@@ -305,7 +306,7 @@ export function errorView(message: string, hint: string, locale: Locale): StopVi
   return {
     header: "NextStop",
     body: ["", ...wrap(message), "", ...wrap(hint)].slice(0, BODY_ROWS),
-    footer: t(locale, "g.footerRetry"),
+    footer: ft(locale, "exit", { tap: "again" }),
   };
 }
 
@@ -314,6 +315,6 @@ export function loadingView(what: string, hint: string, locale: Locale): StopVie
   return {
     header: "NextStop",
     body: ["", ...wrap(what), ...(hint ? ["", ...wrap(hint)] : [])].slice(0, BODY_ROWS),
-    footer: t(locale, "g.footerExit"),
+    footer: ft(locale, "exit"),
   };
 }

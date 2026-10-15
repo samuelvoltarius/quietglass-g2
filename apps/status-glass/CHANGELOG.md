@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.11.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): seine Klicks kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen. Die Seiten tragen kein `menuObject` mehr; der Menücode und der `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Halten in der Übersicht öffnet wieder das Menü der App (Aktionen, „Alle Quellen neu abfragen“ und **Hilfe** als Zeile); 2× in der Hilfe geht zurück ins Menü. In den Details: Halten merkt „gesehen“ vor, ein Tippen bestätigt, alles andere bricht ab (wie bisher).
+
+## [0.11.1] — 2026-10-15
+
+### Behoben
+
+- Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben; jetzt hat jeder Aufruf an die Brille ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s), danach gilt der Aufruf als fehlgeschlagen und die Seite wird beim nächsten Zeichnen neu aufgebaut.
+
+## [0.11.0] — 2026-10-14
+
+Bedienung nach QIS v1.2.
+
+### Geändert
+
+- **Seitenmenü der Brille** (`menuObject`, `menuItemClickEvent`): `Hilfe`, `Aktionen`, `Neu laden`. Die Hilfe ist kein Listeneintrag im Aktionsmenü mehr; 2× in der Hilfe geht dorthin zurück, woher sie geöffnet wurde (Übersicht, Aktionen oder Details). Halten auf der Übersicht öffnet weiter die Aktionen, die Fußzeile sagt jetzt `Halten = Aktionen`.
+- **„Gesehen“ ist vorgemerkt** (Übersicht: Tippen; Details: Halten): erst fragt die Fußzeile `Nochmal tippen = gesehen · Wischen/2× = abbrechen`, ein einzelnes Tippen innerhalb von 4 s markiert. Wischen, 2×, ein zweites Halten oder 4 s ohne Eingabe brechen ab (2× beendet dabei nie die App); das Tippen unmittelbar nach dem Halten (unter 0,4 s) zählt nicht als Bestätigung. Bereits gesehene Probleme lassen sich nicht erneut vormerken.
+- **Keine HTTP-Codes mehr auf der Brille**: ein Serverfehler heißt `Server meldet einen Fehler`, fremder Fehlertext `fehlgeschlagen`. Die Details (`HTTP 503`, Ausnahmetext) zeigt das Handy.
+- **Erster Start = Demo**: ohne Quelle zeigt die App Beispieldaten (Home-Assistant-Szene) und die Zeile `Demo · Verbindung am Handy einrichten`, fragt keine Server ab und schreibt die Beispielquelle nie in den Speicher. Die erste echte Quelle beendet die Demo.
+- Die Brille wird immer nur von einem Zeichenvorgang beschrieben (Anforderungen währenddessen werden zu einem weiteren Durchlauf zusammengefasst); vorher konnte ein schnell abgebrochenes „Nochmal tippen = gesehen“ in der Fußzeile stehen bleiben.
+- Hilfeseite angepasst (Menü der Brille, kein „Aktion: Tippen, dann nochmal“ mehr als eigene Zeile).
+
+## [0.10.0] — 2026-10-14
+
+Bedienung nach dem Quietglass-Bedienstandard (QIS v1).
+
+### Behoben (Sicherheit)
+
+- **2× im Aktionsmenü beendete die App** – jetzt geht 2× immer nur eine Ebene zurück (Menü → Übersicht, Hilfe → Menü, Details → Übersicht); beendet wird nur auf der Übersicht.
+- **Aktionen liefen zu leicht**: Jede Aktion wird erst vorgemerkt (Tippen: „Nochmal tippen = ausführen · Wischen/2× = abbrechen“), ein zweites einzelnes Tippen innerhalb von 4 s führt sie aus. Wischen, 2× oder 4 s ohne Eingabe brechen ab. Halten im Menü macht nichts mehr.
+
+### Geändert
+
+- Halten auf der Übersicht öffnet immer das Menü: Aktionen, „Alle Quellen neu abfragen“ (früher Halten ohne Aktionen) und „Hilfe“ als letzter Eintrag.
+- Neue Hilfeseite mit den Gesten.
+- Kopfzeile `STATUS · Zustand`, Fußzeile immer in der Reihenfolge Tippen → Wischen → Halten → 2× und endend auf `2× = zurück` bzw. `2× = Ende` (englisch Tap/Swipe/Hold/2×, back/exit). Passt eine Fußzeile nicht in die Zeile, entfällt der Wischen-Hinweis.
+- Handy-Tabs: Netz · Brille · Verbindung · Mehr (vorher Quellen → Verbindung). „Doppeltippen“ heißt überall „2×“.
+- `invertScroll` (Handy, Tab „Brille“) gilt unverändert für jede Liste, auch Menü und Details.
+
+## [0.9.0] — 2026-10-14
+
+### Neu
+
+- **Heimnetz-Wächter** (Beispiel-Server `examples/reference-server.mjs`, standardmäßig aus): Mit `STATUS_NETWATCH=1` liest der Server regelmäßig die vorhandene Nachbar-/ARP-Tabelle seines Rechners (`ip neigh`, sonst `/proc/net/arp`) – rein passiv, ohne eigene Pakete. Geräte werden per MAC geführt (zuerst/zuletzt gesehen, IP, Reverse-DNS-Name), bekannte Geräte in einer JSON-Datei (Modus 600, atomar geschrieben, Standard `~/.local/state/quietglass/netwatch.json`). Der erste Lauf gilt als Ausgangsbestand. Docker-, Bridge-, VPN- und Tailscale-Schnittstellen bleiben außen vor.
+- Optionaler leichter Ping-Abgleich des eigenen privaten /24 nur mit zweitem Schalter `STATUS_NETWATCH_PING=1` (aus, nur RFC-1918-Bereiche, höchstens alle 5 min).
+- Status-JSON mit `network` (`total`, `online`, `new`, `devices`); `POST /devices` mit `{"mac", "known"}` markiert ein Gerät als bekannt – mit derselben Anmeldung wie `/status` (Token oder erlaubter Tailscale-Login), ohne jede Anmeldung 403.
+- Brille: neue Geräte erscheinen als Warnzeile („· Spark: Neues Gerät im Netz: android-5f3c“), Halten = gesehen; ein weiteres neues Gerät meldet sich erneut. Detailseite mit „Netz: 23 Geräte · 1 NEU“.
+- Handy: neuer Tab „Netz“ mit der Geräteliste je Rechner (neue zuerst, online/offline) und „als bekannt markieren“. Deutsch und Englisch.
+- Neue Umgebungsvariablen: `STATUS_NETWATCH`, `STATUS_NETWATCH_MS`, `STATUS_NETWATCH_FILE`, `STATUS_NETWATCH_IFACES`, `STATUS_NETWATCH_DNS`, `STATUS_NETWATCH_PING`, `STATUS_NETWATCH_PING_MS` (siehe `docs/PROTOCOL.md`).
+
+## [0.8.2] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Quellen · Brille · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip mit der Zahl der Quellen oben.
+
 ## [0.8.1] — 2026-10-13
 
 ### Fixed

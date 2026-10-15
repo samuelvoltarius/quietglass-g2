@@ -5,7 +5,7 @@ import {
   UPLOAD_TIMEOUT,
 } from "../src/lumen/client";
 import { buildView, questMeta, windowLabel, wrap } from "../src/glasses/view";
-import { EMPTY_DATA, isLocal, maskToken, parseData, validateUrl } from "../src/storage/persist";
+import { EMPTY_DATA, isFirstStart, isLocal, maskToken, parseData, validateUrl } from "../src/storage/persist";
 
 /**
  * Copied from a running LUMEN rather than invented, so the field names here
@@ -294,6 +294,15 @@ describe("talking to LUMEN", () => {
   });
 });
 
+describe("first start (QIS v1.2 no. 7)", () => {
+  it("nothing saved and no server in the build is a first start; anything saved or a built-in server is not", () => {
+    expect(isFirstStart("", "")).toBe(true);
+    expect(isFirstStart("   ", "")).toBe(true);
+    expect(isFirstStart("", "https://lumen.private.test")).toBe(false);
+    expect(isFirstStart('{"baseUrl":"http://127.0.0.1:8077"}', "")).toBe(false);
+  });
+});
+
 describe("the display", () => {
   // Pinned: the glasses follow the device language, these assertions read the English text.
   const idle = { phase: "idle" as const, result: null, error: null, locale: "en" as const };
@@ -307,11 +316,12 @@ describe("the display", () => {
   it("shows the instruction, not just the short name", () => {
     const view = buildView(status, idle);
     expect(view.body.join(" ")).toContain("Muster von oben");
-    expect(view.footer).toContain("tap = photo");
+    expect(view.footer).toBe("Tap = photo · Swipe = help · Hold = quest · 2× = exit");
+    expect(buildView(status, { ...idle, sideMenu: true }).footer).toBe("Tap = photo · Hold = menu · 2× = exit");
   });
 
   it("shows the streak once there is one", () => {
-    expect(buildView(status, idle).footer).toContain("3d");
+    expect(buildView(status, idle).body.join(" ")).toContain("3d");
   });
 
   it("warns up front when a quest wants video, which the glasses cannot supply", () => {
@@ -323,15 +333,15 @@ describe("the display", () => {
     expect(questMeta({ medium: "video", minutes: 30 }, "en")).toContain("camera");
   });
 
-  it("puts the light window in the footer — the reason to stand up now", () => {
-    expect(buildView(status, idle).footer).toContain("golden in 51m");
+  it("keeps the light window on the display (in the body; the footer carries the gestures) — the reason to stand up now", () => {
+    expect(buildView(status, idle).body.at(-1)).toContain("golden in 51m");
   });
 
   it("offers a quest when there is none", () => {
     const without = parseStatus({ kreatur: { licht: 40 } });
     const view = buildView(without, idle);
-    expect(view.body.join(" ")).toContain("Hold = new quest");
-    expect(view.footer).toContain("hold = quest");
+    expect(view.body.join(" ")).toContain("No open quest.");
+    expect(view.footer).toBe("Swipe = help · Hold = quest · 2× = exit");
   });
 
   it("says so while the camera and upload are busy", () => {
@@ -341,9 +351,12 @@ describe("the display", () => {
 
   it("reports the outcome plainly", () => {
     const ok = buildView(status, { ...idle, phase: "result", result: { ok: true, text: "Sent." } });
-    expect(ok.header).toBe("Accepted");
+    expect(ok.header).toBe("LUMEN · Accepted");
     const bad = buildView(status, { ...idle, phase: "result", result: { ok: false, text: "HTTP 500" } });
-    expect(bad.header).toBe("Not accepted");
+    expect(bad.header).toBe("LUMEN · Not accepted");
+    // QIS v1.2 no. 8: no HTTP code on the glasses.
+    expect(bad.body.join(" ")).not.toMatch(/HTTP|500/);
+    expect(bad.body.join(" ")).toContain("LUMEN reported an error");
   });
 
   it("explains a connection problem instead of showing a stale moth", () => {
@@ -377,7 +390,7 @@ describe("the display", () => {
     const view = buildView(bright, idle);
     expect(view.body.length).toBeLessThanOrEqual(7);
     expect(view.body.every((line) => line.length <= 56)).toBe(true);
-    expect(view.body.at(-1)).toContain("FOTO");
+    expect(view.body.join(" ")).toContain("FOTO");
     expect(view.body.join(" ")).toContain("…");
 
     const demo = parseStatus({ kreatur: { licht: 72, zustand: "wach", geste: "circling in the light", streak: 6 }, quest: { id: 1, titel: "Reflected Light", aufgabe: "Photograph a reflection that changes the scene.", medium: "foto", dauer_min: 15 } });

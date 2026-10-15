@@ -34,6 +34,29 @@ export interface PhoneUi {
   readonly refresh: () => void;
 }
 
+/** The page is split into tabs instead of one long column. */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "now", icon: "🩸", key: "p.tabNow" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "link", icon: "🔗", key: "p.tabLink" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.sugarglass.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "now"; } catch { return "now"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 const DRAFT_FIELDS = ["url", "token", "targetLow", "targetHigh", "urgentLow", "low", "high", "stale"] as const;
 const LIMIT_FIELDS = ["targetLow", "targetHigh", "urgentLow", "low", "high"] as const;
 
@@ -43,11 +66,21 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
 
   let notice = "";
   let locale: Locale = ports.locale?.() ?? getLocale();
+  let tab = readTab();
 
   const render = (): void => {
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
     root.innerHTML = template(ports.getSettings(), ports.connection(), ports.newest(), locale, notice, ports.build ?? "");
     notice = "";
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "now";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
     DRAFT_FIELDS.forEach((id, index) => {
       const field = root.querySelector<HTMLInputElement>("#" + id);
       const value = typed[index];
@@ -148,11 +181,17 @@ function template(settings: Settings, connection: PhoneConnection, newest: Readi
   const warnHttp = url && isPlainHttp(url);
   const limits = settings.limits;
 
+  const chip = newest
+    ? `${glucose(newest.mgdl, unit, locale)} ${unitLabel(unit)}`
+    : L(connection.kind === "none" ? "p.chip.none" : connection.kind === "error" ? "p.chip.error" : connection.kind === "loading" ? "p.chip.loading" : connection.kind === "demo" ? "p.chip.demo" : "p.chip.nodata");
+
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>Sugar Glass</h1>
-    <p class="hint">${L("p.lede")}</p>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>Sugar Glass</h1>
+    </div>
+    <span class="chip${newest ? " on" : ""}">${chip}</span>
   </header>
 
   ${notice ? `<p class="notice">${escapeHtml(notice)}</p>` : ""}
@@ -161,16 +200,16 @@ function template(settings: Settings, connection: PhoneConnection, newest: Readi
     <p>${L("p.notice")}</p>
   </section>
 
+  <div class="tab" data-tab="now">
   <section class="card">
     <h2>${L("p.status")}</h2>
     <p id="status" class="big">${line}</p>
     ${connection.kind === "demo" ? `<p class="hint">${L("p.status.demo")}</p>` : ""}
   </section>
 
-  <section class="card">
-    ${languageSelect(locale)}
-  </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
   <section class="card">
     <h2>${L("p.display")}</h2>
     <label for="unit">${L("p.unit")}</label>
@@ -186,6 +225,19 @@ function template(settings: Settings, connection: PhoneConnection, newest: Readi
   </section>
 
   <section class="card">
+    <h2>${L("p.controls")}</h2>
+    <table class="keys">
+      <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
+      <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
+      <tr><td>${L("p.c.hold")}</td><td>${L("p.c.hold.d")}</td></tr>
+      <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
+    </table>
+    <label class="check"><input id="invert" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+  </section>
+  </div>
+
+  <div class="tab" data-tab="link">
+  <section class="card">
     <h2>${L("p.server")}</h2>
     ${shown ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
     <label for="url">${L("p.url")}</label>
@@ -197,17 +249,21 @@ function template(settings: Settings, connection: PhoneConnection, newest: Readi
     <p class="hint">${L("p.tokenNow", { state: maskToken(settings.token, locale) })}</p>
     <button id="save" type="button">${L("p.save")}</button>
     ${settings.token ? `<button id="clear-token" type="button" class="secondary">${L("p.tokenClear")}</button>` : ""}
-    <label class="check"><input id="invert" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+  </section>
+  </div>
+
+  <div class="tab" data-tab="more">
+  <section class="card">
+    ${languageSelect(locale)}
   </section>
 
   <section class="card">
-    <h2>${L("p.controls")}</h2>
-    <table class="keys">
-      <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
-      <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
-      <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
-    </table>
+    <p class="hint">${L("p.lede")}</p>
+    <p class="hint">${L("p.privacy")}${build ? " · " + escapeHtml(build) : ""}</p>
   </section>
+  </div>
 
-  <footer class="hint">${L("p.privacy")}${build ? " · " + escapeHtml(build) : ""}</footer>`;
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${L(key)}</button>`).join("")}
+  </nav>`;
 }

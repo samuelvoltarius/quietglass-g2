@@ -76,4 +76,39 @@ describe("phone page", () => {
     await vi.waitFor(() => expect(dom.root.innerHTML).toContain('id="offset-out">112<'));
     expect(dom.root.innerHTML).toContain('id="criterion-out">80<');
   });
+
+  it("splits the page into tabs with a tab bar", () => {
+    const dom = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => dom.root });
+    vi.stubGlobal("setInterval", () => 0);
+    mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLevel: () => ({ dbfs: null, listening: false }) });
+    const html = dom.root.innerHTML;
+    for (const tab of ["main", "set", "glasses", "more"]) {
+      expect(html).toContain('data-tab="' + tab + '"');
+      expect(html).toContain('data-tab-go="' + tab + '"');
+    }
+    expect(html).toContain('class="tabbar"');
+    // The sliders are in the settings tab, the language switch in the last one.
+    expect(html.indexOf('id="offset"')).toBeGreaterThan(html.indexOf('data-tab="set"'));
+    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
+    // QIS v1.2: Brille comes right before Mehr, and the swipe switch lives there.
+    const order = ["main", "set", "glasses", "more"].map((tab) => html.indexOf('data-tab-go="' + tab + '"'));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(html.indexOf('id="invert"')).toBeGreaterThan(html.indexOf('data-tab="glasses"'));
+    expect(html.indexOf('id="invert"')).toBeLessThan(html.indexOf('data-tab="more"'));
+    expect(html).not.toMatch(/Doppeltipp|Double tap/);
+  });
+
+  it("has a switch for the swipe direction, and it is saved", async () => {
+    const dom = fakeRoot();
+    vi.stubGlobal("document", { getElementById: () => dom.root });
+    vi.stubGlobal("setInterval", () => 0);
+    let store: NoiseData = EMPTY_DATA;
+    mountPhoneUi({ getData: () => store, setData: async (next) => { store = next; }, getLevel: () => ({ dbfs: null, listening: false }) });
+    expect(dom.root.innerHTML).toContain('id="invert"');
+    const box = dom.byId("invert") as FakeElement & { checked?: boolean };
+    box.checked = true;
+    box.fire("change");
+    expect(store.invertScroll).toBe(true);
+  });
 });

@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.9.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks des Menüs kommen auf der Brille nie an, und solange eine Seite ein Menü trägt, öffnet Halten dieses Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein `menuObject` mehr; Code und `menuItemClickEvent`-Behandlung bleiben.
+- Halten = Sitzungsliste öffnen; während der Agent arbeitet: Unterbrechen scharfschalten, ein Tippen bestätigt, alles andere bricht ab.
+- Hilfe ist wieder die letzte Zeile der Sitzungsliste (Halten, Wischen bis „Hilfe“, Tippen); Tippen oder 2× schließt sie. Hilfe- und Handy-Texte beschreiben wieder diese Gesten.
+
+## [0.9.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach gilt der Aufruf als fehlgeschlagen und die Seite wird neu aufgebaut.
+
+## [0.9.0] — 2026-10-14
+
+### Geändert — Bedienstandard QIS v1.2 (docs/BEDIENSTANDARD.md)
+
+- **Seitenmenü der Brille** (Halten → Systemmenü, SDK `menuObject` / `menuItemClickEvent` wie Babel Glass und Quiet Hub): `Hilfe` und `Sitzungen`. Hilfe öffnet die Gestenseite von jedem Bildschirm aus und kehrt dorthin zurück (Tippen oder 2×); `Sitzungen` öffnet die Sitzungsliste. Die Seite trägt das Menü bei jedem Aufbau neu, ein Sprachwechsel am Handy baut sie einmal neu auf (Menü-Beschriftung).
+- **„Hilfe“ ist keine Listenzeile mehr:** die Sitzungsliste enthält nur noch „+ Neue Sitzung“ und die Sitzungen. Halten bleibt wie bisher: Sitzungsliste bzw. Unterbrechen scharfschalten (bestätigen).
+- **Erster Start = Demo:** Ohne Token startet die App mit Beispieldaten (nicht mehr mit „Kein Token“-Fehler). Fußzeile: `Demo · Verbindung am Handy einrichten · 2× = Ende`. Sobald am Handy ein Token eingetragen wird, verbindet die App; wird er gelöscht, kehrt sie zur Demo zurück. `?demo=1` erzwingt die Demo weiterhin.
+- **Handy-Texte:** „Doppeltippen“ heißt jetzt „2×“ (Deutsch und Englisch); die Halten-Beschreibung nennt das Seitenmenü.
+- Tests: Menü auf der Seite (Hilfe, Sitzungen) und in der Sprache, Hilfe über das Menü und Rückkehr, Menü-Hilfe lässt eine scharfe Freigabe verfallen statt sie zu senden, Demo-Fußzeile in beiden Sprachen.
+
+QIS-Stand: v1.2 (Seitenmenü, Demo beim ersten Start, Glossar). 2×/Halten/Freigaben unverändert zu 0.8.0.
+
+## [0.8.0] — 2026-10-14
+
+### Geändert — Bedienstandard QIS v1 (docs/BEDIENSTANDARD.md)
+
+- **Wischen beantwortet keine Freigabe mehr.** Die Freigabe ist eine Liste `Erlauben / Ablehnen`: Wischen bewegt nur den Cursor, Tippen scharfschalten (`Nochmal tippen = Erlauben|Ablehnen · Wischen/2× = abbrechen`), ein zweites einzelnes Tippen innerhalb von 4 s sendet. Wischen, Doppeltippen oder 4 s ohne Eingabe brechen ab (Doppeltippen beendet die App erst, wenn nichts scharf ist). Eine neue Anfrage startet immer auf „Erlauben“, ungescharft. Das Protokoll zum Server ist unverändert (`/permission-response`); „Sitzung“/„immer“-Freigaben gab es in dieser App nicht.
+- **Halten stoppt den Agenten nicht mehr allein:** Halten bei laufendem Agenten schaltet das Unterbrechen scharf (`Nochmal tippen = unterbrechen`), erst das zweite Tippen unterbricht.
+- Kopfzeile `AGENT · Zustand · Sitzung`, Fußzeile in der Reihenfolge Tippen → Wischen → Halten → 2× mit `2× = Ende`/`2× = zurück` (gemeinsamer `footer()`), Englisch Tap/Swipe/Hold/2×. Test: alle Zeilen in Deutsch und Englisch innerhalb der Zeilenbreite.
+- **`invertScroll` wirkt jetzt** (war fest auf „aus“): Schalter „Wischrichtung umkehren“ im neuen Handy-Tab „Brille“.
+- Neu: „Hilfe“ als letzter Eintrag der Sitzungsliste, mit den Gesten.
+- Handy-Tabs: Agent · Vorlesen · Brille · Verbindung · Mehr.
+
+## [0.7.0] — 2026-10-13
+
+### Neu
+
+- **Sitzungsliste auf der Brille** (Halten): neueste zuerst, mit Alter („jetzt“, „5 min“, „2 h“, „3 T“) und `*` für aktiv. Ganz oben steht „+ Neue Sitzung“, wenn der Dienst eine starten kann (Hermes: `sessions.new`; OpenClaw: leert den Gesprächsverlauf in der App). Die Liste öffnet auf der offenen Sitzung, nie auf „+ Neue Sitzung“. Dienste ohne eigene Liste (OpenClaw) sagen das in der Liste offen.
+- **Ganze Antwort am Handy, kurz auf der Brille:** Der Tab „Agent“ zeigt den kompletten Verlauf der offenen Sitzung (Du / Agent / Werkzeug / Fehler), Neuestes unten, live mitlaufend; die Box bleibt unten, außer man scrollt gerade zurück.
+- **Blättern in langen Antworten auf der Brille:** Wischen hoch = ältere Seite, runter = neuere, Tippen = zurück zur neuesten. Fußzeile „Seite 3/5 · ↑ älter · Tippen = neueste“; auf der neuesten Seite zeigt „↑ älter“, dass es mehr gibt. Eine neue Frage springt wieder ans Ende.
+- **Sitzungen am Handy:** Liste zum Antippen (öffnet die Sitzung), „Neue Sitzung“, Umbenennen und „Aus der Liste nehmen“. Kein Dienst kann über sein Protokoll umbenennen oder löschen – deshalb gilt der Name nur auf diesem Handy und „Aus der Liste nehmen“ blendet nur hier aus; beim Agenten bleibt alles erhalten („Ausgeblendete zeigen“ holt sie zurück). Ein Dienst, der es später kann, bekommt es automatisch beim Agenten.
+
+### Unverändert
+
+- Freigaben: Wischen hoch/runter erlaubt/lehnt ab, solange eine Freigabe-Anfrage angezeigt wird – das Blättern nimmt ihr nie die Gesten weg. Halten = unterbrechen (läuft) bzw. Sitzungsliste, Doppeltippen = zurück bzw. Ende.
+
+## [0.6.3] — 2026-10-13
+
+- Handy-Seite in Tabs statt einer langen Spalte: Agent · Verbindung · Vorlesen · Mehr (Tab-Leiste unten, gewählter Tab bleibt; ohne Token startet die Seite auf „Verbindung“). Status-Chip oben zeigt die aktive Sitzung oder „offline“.
+
 ## [0.6.2] — 2026-10-13
 
 ### Fixed

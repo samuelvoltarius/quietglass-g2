@@ -10,6 +10,10 @@ export interface TranscriptEntry {
   readonly speaker?: string;
   readonly language?: string;
   readonly translated?: string;
+  /** 0.5.0: the user's own line translated INTO the conversation language (to read out). */
+  readonly own?: string;
+  /** 0.5.0: the reply suggestion shown after this line of the other person. */
+  readonly reply?: string;
 }
 
 export const TRANSCRIPT_CAP = 1500;
@@ -40,8 +44,29 @@ export function attachTranslation(
   return [...log];
 }
 
-/** "A: text" when a speaker is known, otherwise just the text. */
+/** Sets one field on the newest entry with this text (and time, when given). */
+export function annotateEntry(
+  log: readonly TranscriptEntry[],
+  source: string,
+  patch: Pick<TranscriptEntry, "own" | "reply">,
+  at?: number,
+): TranscriptEntry[] {
+  const wanted = source.normalize("NFC").trim();
+  for (let i = log.length - 1; i >= 0; i--) {
+    const entry = log[i];
+    if (entry && entry.text === wanted && (at === undefined || entry.at === at)) {
+      return [...log.slice(0, i), { ...entry, ...patch }, ...log.slice(i + 1)];
+    }
+  }
+  return [...log];
+}
+
+/** 0.8.0: how the user's own lines ("ME") are named for the language model. */
+export const OWNER_LINE_LABEL = "Ich (Nutzer)";
+
+/** "A: text" when a speaker is known, "Ich (Nutzer): text" for the user's own voice, otherwise just the text. */
 export function speakerLine(entry: Pick<TranscriptEntry, "text" | "speaker">): string {
+  if (entry.speaker === "ME") return OWNER_LINE_LABEL + ": " + entry.text;
   return entry.speaker ? entry.speaker + ": " + entry.text : entry.text;
 }
 

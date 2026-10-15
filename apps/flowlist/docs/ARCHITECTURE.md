@@ -70,8 +70,8 @@ next step in order.
 ## Critical steps
 
 `complete()` on a critical step does not advance. It sets `awaitingConfirm`,
-the view switches to `CONFIRM:` and the footer says `tap again = confirm`. The
-second tap advances; a swipe up cancels.
+the view switches to `CONFIRM:` and the footer says `Tap again = confirm · Swipe/2× = cancel`.
+The second tap advances; a swipe, 2× or 4 s without input cancel (QIS v1).
 
 This is the only two-tap interaction in the app. Everywhere else, one tap.
 

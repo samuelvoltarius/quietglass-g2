@@ -6,6 +6,23 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import { bitmapKey, encodePng, type Bitmap } from "./gfx";
 
+/**
+ * Every call into the glasses is bounded. Draws run one after another, so a
+ * single answer that never comes (a Bluetooth write lost on the way) used to
+ * freeze the display for good on its last page. A call that times out counts
+ * as failed: the draw fails, the page is marked broken and the next draw
+ * rebuilds it.
+ */
+export const PAGE_CALL_MS = 8_000;
+export const TEXT_CALL_MS = 5_000;
+export const IMAGE_CALL_MS = 10_000;
+
+export function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** Where one image container sits on the 576 x 288 display. */
 export interface ImageSlot {
   readonly id: number;
@@ -57,11 +74,11 @@ export class ImageLink {
     const key = bitmapKey(bitmap);
     if (this.shown.get(slot.id) === key) return { ok: true, sent: false };
     try {
-      const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
+      const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({
         containerID: slot.id,
         containerName: slot.name,
         imageData: encodePng(bitmap),
-      }));
+      })), IMAGE_CALL_MS, "image " + slot.name);
       if (result !== ImageRawDataUpdateResult.success) return { ok: false, sent: false, reason: `image:${String(result)}` };
       this.shown.set(slot.id, key);
       this.sentCount += 1;

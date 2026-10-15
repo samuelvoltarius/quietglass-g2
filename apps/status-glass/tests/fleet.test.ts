@@ -89,7 +89,7 @@ describe("fleet overview rows", () => {
     expect(after.state).toBe("warn");
     expect(after.text).toContain("CPU");
     // Seen problems leave the warning line in the header.
-    expect(fleetView([acked], [after], "de", NOW).header).toBe("RECHNER · 0 von 1 ok");
+    expect(fleetView([acked], [after], "de", NOW).header).toBe("STATUS · 0 von 1 ok");
     expect(fleetPulses([before])).toBe(true);
     expect(fleetPulses([after])).toBe(false);
   });
@@ -111,11 +111,11 @@ describe("fleet overview rows", () => {
     const { sources, history } = fleet();
     const view = fleetView(sources, fleetRows(sources, history, 0, "de", NOW), "de", NOW);
     // The worst open problem is the header; the offline machine speaks in its own row.
-    expect(view.header).toMatch(/^! ns1: CPU \d+% \+\d+$/);
+    expect(view.header).toMatch(/^STATUS · ! ns1: CPU \d+% \+\d+$/);
     expect(view.body).toHaveLength(4);
     expect(view.header.length).toBeLessThanOrEqual(56);
     const healthy = fleet().sources.slice(0, 1);
-    expect(fleetView(healthy, fleetRows(healthy, history, 0, "de", NOW), "de", NOW).header).toBe("RECHNER · 1 von 1 ok");
+    expect(fleetView(healthy, fleetRows(healthy, history, 0, "de", NOW), "de", NOW).header).toBe("STATUS · 1 von 1 ok");
   });
 
   it("puts failed services and a full disk into the header, in words", () => {
@@ -124,9 +124,9 @@ describe("fleet overview rows", () => {
       { id: "disk:/data", label: "/data", value: 93, unit: "%", warn: 90, critical: 95 },
     ] };
     const source = applyReport(createSource("s", "Spark"), report, NOW);
-    expect(fleetView([source], fleetRows([source], new MetricHistory(), 0, "de", NOW), "de", NOW).header).toBe("· Spark: 5 Dienste fehlgeschlagen +1");
+    expect(fleetView([source], fleetRows([source], new MetricHistory(), 0, "de", NOW), "de", NOW).header).toBe("STATUS · Spark: 5 Dienste fehlgeschlagen +1");
     const diskOnly = acknowledge(source, "failed");
-    expect(fleetView([diskOnly], [], "en", NOW).header).toBe("· Spark: Disk /data 93% full");
+    expect(fleetView([diskOnly], [], "en", NOW).header).toBe("STATUS · Spark: Disk /data 93% full");
   });
 });
 

@@ -1,6 +1,7 @@
 import type { MetricState } from "../protocol/schema";
 import type { Locale } from "../i18n";
 import { describeIssue, t } from "../messages";
+import { footer } from "./footer";
 import { describeMetric } from "./host";
 import {
   overallState, problems, sourceState, type Problem, type SourceStatus,
@@ -28,6 +29,8 @@ export interface ViewOptions {
   readonly locale?: Locale;
   /** Name of the source whose sparklines are shown; it becomes the header while all is well. */
   readonly focusName?: string;
+  /** First start without a source: the sample data says so in a last row (QIS v1.2 ruling 7). */
+  readonly demo?: boolean;
 }
 
 const DEFAULT_ROWS = 7;
@@ -59,7 +62,7 @@ export function buildView(
     return {
       header: t(locale, "g.title"),
       body: [t(locale, "g.noSources"), t(locale, "g.addOnPhone")],
-      footer: "",
+      footer: footer(locale, {}, "exit"),
     };
   }
 
@@ -67,11 +70,14 @@ export function buildView(
   const overall = overallState(sources, now);
 
   if (list.length === 0) {
-    // Everything healthy: one line, no header, no noise.
+    // Everything healthy: one line and the way to the menu, no noise.
     return {
-      header: options.focusName ? fit(options.focusName, HEADER_WIDTH) : "",
-      body: [countLabel(sources, now, locale)],
-      footer: t(locale, "g.allOk"),
+      header: "STATUS · " + (options.focusName ? fit(options.focusName, HEADER_WIDTH - 9) : t(locale, "g.allOk")),
+      body: [countLabel(sources, now, locale), ...(options.demo ? [t(locale, "g.demo")] : [])],
+      footer: footer(locale, {
+        ...(options.focusName ? { swipe: t(locale, "g.w.source") } : {}),
+        hold: t(locale, "g.w.menu"),
+      }, "exit"),
     };
   }
 
@@ -81,7 +87,9 @@ export function buildView(
   const start = clamp(cursor - Math.floor(rows / 2), 0, Math.max(0, list.length - rows));
   const window = list.slice(start, start + rows);
 
-  const body = window.map((problem, index) => {
+  // In the demo the last row is the hint line, so it never scrolls out of the window.
+  const shown = options.demo ? window.slice(0, Math.max(1, rows - 1)) : window;
+  const body = shown.map((problem, index) => {
     const selected = start + index === cursor;
     const mark = problem.state === "critical" ? "!" : problem.state === "warn" ? "·" : "?";
     const ack = problem.acknowledged ? " " + t(locale, "g.ack") : "";
@@ -89,12 +97,12 @@ export function buildView(
     const head = (selected ? "> " : "  ") + mark + " ";
     return head + fit(problem.sourceName + " " + problemText(problem.metric, locale), LINE_WIDTH - head.length - ack.length) + ack;
   });
+  if (options.demo) body.push(t(locale, "g.demo"));
 
-  const hidden = list.length - window.length;
   return {
-    header: headerFor(overall, list.length, locale),
+    header: fit(headerFor(overall, list.length, locale), HEADER_WIDTH),
     body,
-    footer: (hidden > 0 ? t(locale, "g.more", { count: hidden }) + SEPARATOR : "") + t(locale, "g.tapAck"),
+    footer: footer(locale, { tap: t(locale, "g.w.seen"), swipe: t(locale, "g.w.list"), hold: t(locale, "g.w.menu") }, "exit"),
   };
 }
 

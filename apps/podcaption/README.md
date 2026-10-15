@@ -7,7 +7,7 @@
 > **So startest du:**
 > 1. PodCaption in der Even-App installieren und öffnen.
 > 2. Am Handy unter „Untertitel öffnen“ eine Datei wählen (VTT, SRT, JSON oder Text) – oder Untertitel von der Podcast-Website kopieren und unter „Oder Text einfügen“ einfügen.
-> 3. Auf der Brille **tippen** = abspielen/anhalten, **wischen** = blättern, **doppeltippen** = beenden. Den Ton spielst du wie gewohnt in deiner Podcast-App.
+> 3. Auf der Brille **tippen** = abspielen/anhalten, **wischen** = blättern, **halten** = Hilfe, **2×** = beenden. Den Ton spielst du wie gewohnt in deiner Podcast-App.
 >
 > **Optional (Erweitert):** Untertitel automatisch aus einem RSS-Feed holen. Dafür läuft ein kleines Programm (`examples/podcast-bridge.mjs`) auf deinem Computer, weil die App den Feed sonst nicht lesen darf: der Bridge-Weg ist an `127.0.0.1:8789` gebunden (siehe `app.json`), und nicht jeder Feed erlaubt direkte Abrufe aus Apps (CORS).
 

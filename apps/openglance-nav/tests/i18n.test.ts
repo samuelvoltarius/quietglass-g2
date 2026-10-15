@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { escapeHtml, getLocale, languageSelect, locales, setLocale, tr, type Messages } from "../src/i18n";
 import { messages } from "../src/messages";
+import { LINE_WIDTH, ROW_WIDTH } from "../src/glasses/view";
 
 const sample: Messages = { de: { hi: "Hallo {name}" }, en: { hi: "Hello {name}", only: "English only" } };
 
@@ -48,7 +49,9 @@ describe("the message catalogue", () => {
     for (const locale of locales) {
       for (const [key, text] of Object.entries(messages[locale])) {
         if (!/^(g|err|l|v|mode)\./.test(key)) continue;
-        for (const line of text.split("\n")) expect(line.length, key).toBeLessThanOrEqual(46);
+        // Header and footer lines span the full width (56 characters, ROW_WIDTH); body rows hold 46.
+        const width = /Footer|footer|^g\.h\.|^l\.header|^v\.header|tapReroute|doubleTapExit/.test(key) ? ROW_WIDTH : LINE_WIDTH;
+        for (const line of text.split("\n")) expect(line.length, key).toBeLessThanOrEqual(width);
       }
     }
   });

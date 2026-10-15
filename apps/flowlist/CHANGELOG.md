@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.5.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks im Menü kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein Menü mehr; Menücode und `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Wischen nach oben merkt „Schritt zurück“ vor, Wischen nach unten bei einem optionalen Schritt „Auslassen“; erst das nächste Tippen führt es aus, Wischen, 2× oder 4 s ohne Eingabe brechen ab (ändert also nie still etwas). Bei einer Frage bewegt Wischen weiter nur die Markierung.
+- Halten zeigt wieder die Info zum Schritt, solange man hält; ohne Zusatzinfo (und auf dem leeren und dem Abschluss-Bild) öffnet Halten die Hilfe.
+- Hilfetexte und Fußzeilen der Brille (de/en) und die Hinweise am Handy beschreiben wieder die Gesten statt des Menüs. Die Versionsangabe in „Mehr“ am Handy stimmt wieder (stand noch auf 0.5.0).
+- Tests: Seiten ohne `menuObject`, Wischen merkt Zurück/Auslassen vor und das Tippen führt es aus, Halten öffnet die Hilfe.
+
+## [0.5.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach wird die Seite neu aufgebaut.
+
+## [0.5.0] — 2026-10-14
+
+Bedienung nach QIS v1.2 (Audit 14.10.2026).
+
+### Geändert (QIS v1.2)
+
+- **Seitenmenü der Brille** (`menuObject`, Klicks über `menuItemClickEvent`; Vorlage Babel Glass): `Hilfe`, `Info zum Schritt`, `Schritt zurück`, `Schritt auslassen`. Die Hilfe hängt nicht mehr an Halten (vorher auf Schritten mit Zusatzinfo gar nicht erreichbar).
+- **Wischen bewegt nur noch die Ansicht.** Wischen nach oben macht keinen Schritt mehr rückgängig (die Fortschrittsanzeige konnte durch eine Fehlgeste zurückspringen), Wischen nach unten merkt kein Auslassen mehr vor. Auf einer Frage markieren beide Richtungen weiter die Antwort; sonst tut Wischen nichts außer eine offene Rückfrage abzubrechen.
+- **„Schritt zurück“ ist scharf geschaltet:** der Menüpunkt merkt vor („Nochmal tippen = Schritt zurück · Wischen/2× = abbrechen“, Kopf `FLOWLIST · Zurück?`); ein einzelnes Tippen oder ein zweiter Klick auf denselben Menüpunkt innerhalb von 4 s führt aus, Wischen, 2× oder 4 s ohne Eingabe brechen ab. Beim ersten Schritt und während einer offenen Bestätigung tut der Punkt nichts. Das Rückgängigmachen lässt sich auch auf der „Fertig!“-Seite vormerken.
+- **„Schritt auslassen“** (nur optionale Schritte) liegt im Menü und ist ebenso vorgemerkt; auf anderen Schritten tut der Punkt nichts.
+- **„Info zum Schritt“** zeigt die Zusatzinfo bis zur nächsten Geste; Halten zeigt sie weiter, solange gehalten wird, falls die Brille das Halten an die App durchreicht.
+- Fußzeilen: `Halten = Menü` statt `Halten = Info/Hilfe`; der Wisch-Hinweis steht nur noch auf Fragen („wählen“). Hilfeseite und Handy-Tabelle (Wischen/Halten) beschreiben das neue Verhalten.
+- Sprachwechsel am Handy baut die Brillenseite neu auf, damit das Menü die Sprache trägt.
+- Demo: FlowList braucht keinen Server und liefert Beispiel-Listen am Handy; kein Demo-Hinweis nötig (v1.2 Nr. 7).
+
+## [0.4.0] — 2026-10-14
+
+### Geändert (QIS v1)
+
+- Bedienung nach dem Quietglass-Bedienstandard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- **Sicherheit:** Wischen verändert die Checkliste nicht mehr. Wischen nach unten auf einem optionalen Schritt merkt das Auslassen nur vor („Nochmal tippen = auslassen · Wischen/2× = abbrechen“); erst ein einzelnes Tippen innerhalb von 4 s lässt den Schritt aus. Am Ende fragt Tippen erst nach („Nochmal tippen = neu starten“), statt die fertige Liste sofort zurückzusetzen. Wischen, 2× oder 4 s ohne Eingabe brechen ab.
+- Die bestehende Rückfrage bei wichtigen Schritten (`(!)`) folgt derselben Regel: Wischen (oben wie unten), 2× oder 4 s brechen ab; 2× verlässt die App dabei nicht mehr.
+- Kopfzeile `FLOWLIST · Zustand` (z. B. `FLOWLIST · 3/7`, `FLOWLIST · fertig`); der Abschnittsname steht nicht mehr in der Kopfzeile, die rechte Hälfte gehört dem Fortschrittsbalken. Fußzeilen über den gemeinsamen `footer()`-Helfer in der Reihenfolge Tippen/Wischen/Halten/2× mit `2× = Ende`; passt die Zeile nicht in 56 Zeichen, entfallen zuerst die Zeit, dann der Wisch-Teil.
+- Neue Hilfeseite: Halten öffnet sie, wo es keine Zusatzinfo gibt (Schritt ohne Info, Ende, leere Liste); Tippen, Halten oder 2× schließen sie. Auf Schritten mit Zusatzinfo zeigt Halten weiter die Info.
+- `invertScroll` gilt wie bisher für die Frage-Schritte (Wischrichtung am Handy umkehrbar).
+- Handy-Seite: Tabs `Listen · Neu · Brille · Mehr`. „Mehr“ enthält die Bedienung, Version und Datenschutz (FlowList hat keine Verbindung, daher kein Tab „Verbindung“). „2×“ statt „Doppeltippen“.
+
+## [0.3.2] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Listen · Neu · Brille (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip mit der aktiven Liste oben. Die Sprachwahl steht jetzt unter „Brille“.
+
 ## [0.3.1] — 2026-10-13
 
 ### Fixed

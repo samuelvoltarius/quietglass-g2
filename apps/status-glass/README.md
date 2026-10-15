@@ -12,13 +12,20 @@ eine Zeile. Gibt es ein Problem, steht das Wichtigste ganz oben.
 
 1. Auf der Handy-Seite eine Quelle hinzufügen (Name und Adresse).
 2. Brille aufsetzen: **Tippen** markiert ein Problem als gesehen, **Wischen**
-   blättert, **Halten** öffnet die Aktionen (z. B. Licht aus), **Doppeltippen**
-   beendet die App.
+   blättert, **Halten** öffnet das Menü (Aktionen wie „Licht aus“, neu laden,
+   Hilfe), **2×** beendet die App (im Menü: eine Ebene zurück).
 3. Mit mehreren Rechnern zeigt die Übersicht je Rechner CPU, RAM, die vollste
    Platte und die Temperatur; die schlimmste Warnung (z. B. fehlgeschlagene
    Dienste, Platte über 90 %) steht oben. **Tippen** öffnet die Details eines
    Rechners mit allen Werten und Verlaufskurven, **Wischen** blättert dort,
-   **Halten** markiert seine Probleme als gesehen, **Doppeltippen** führt zurück.
+   **Halten** markiert seine Probleme als gesehen, **2×** führt zurück.
+
+**Heimnetz-Wächter (neu in 0.9):** Startest du den Beispiel-Server mit
+`STATUS_NETWATCH=1`, meldet er die Geräte in deinem eigenen Heimnetz – passiv,
+er liest nur die Nachbartabelle seines Rechners. Die Brille zeigt je Rechner
+„Netz: 23 Geräte · 1 NEU“ und eine Warnzeile, sobald ein unbekanntes Gerät
+auftaucht; auf der Handy-Seite (Tab „Netz“) markierst du es als bekannt.
+Einstellungen: [docs/PROTOCOL.md](docs/PROTOCOL.md#heimnetz-wächter-home-network-watch-off-by-default).
 
 Die App gibt es auf Deutsch und Englisch. Sie folgt der Sprache deines Handys;
 umstellen kannst du das auf der Handy-Seite unter „Sprache“ – die Brille
@@ -111,18 +118,19 @@ something you do deliberately. A stray tap on the dashboard can never trigger
 anything.
 
 ```
-Actions
+STATUS · Actions
 
 > ! home Everything off
     home Kitchen light
     nas  Restart media server
+    Refresh every source
 
-tap = confirm first  ·  hold = back
+Tap = choose · Swipe = list · 2× = back
 ```
 
-Actions the source marks with `confirm` need a **second tap**, shown as
-`CONFIRM:`. Moving the selection cancels a pending confirmation, so the tap
-after a swipe can never run what was highlighted before it.
+Every action is **armed first** (QIS v1): the first tap shows
+`Tap again = run · Swipe/2× = cancel`, a second single tap within 4 seconds
+runs it. A swipe, 2× or the timeout cancels. Nothing else runs an action.
 
 **Sources are read-only by default.** One that lists no actions cannot be told
 to do anything at all.
@@ -163,17 +171,19 @@ against a stand-in Home Assistant, including both refusal paths.
 
 | Gesture | Status screen | Actions screen |
 |---|---|---|
-| **Tap** | Acknowledge the highlighted problem | Run it — or confirm first |
+| **Tap** | Ask to acknowledge the highlighted problem; a second tap within 4 s does it | Arm the action; a second tap within 4 s runs it |
 | **Swipe** | Move through the problem list | Move through the actions |
-| **Hold** | Open the actions screen (or refresh, if none) | Back to status |
-| **Double tap** | Leave Status Glass | Leave Status Glass |
+| **Hold** | Open the menu: actions, refresh, help | — |
+| **2×** | Leave Status Glass (cancels a pending "seen" first) | Back to status (never leaves the app) |
+
+The glasses' side menu (Help · Actions · Refresh) is off (`SIDE_MENU = false`): its clicks do not arrive on the real glasses (step log 15.10.2026), so help and refresh are rows of the actions list.
 
 With two or more sources the status screen is an overview of machines: one row
 each with light, name, CPU line and the key figures (CPU, RAM, fullest disk,
 temperature), the worst unseen warning in the header. There **tap** opens the
 highlighted machine in detail (every value, warnings first, CPU/RAM/GPU or
-temperature sparklines), **swipe** turns its pages, **hold** acknowledges its
-problems and **double tap** goes back to the overview.
+temperature sparklines), **swipe** turns its pages, **hold** asks to acknowledge its
+problems (one tap within 4 s confirms) and **2×** goes back to the overview.
 
 ## Polling and failure
 
@@ -202,6 +212,7 @@ npm test           # 87 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 
 node examples/reference-server.mjs         # a plain source to point it at
+TOKEN=… STATUS_NETWATCH=1 node examples/reference-server.mjs   # plus the home network watch
 node examples/home-assistant-adapter.mjs   # or your own Home Assistant
 ```
 

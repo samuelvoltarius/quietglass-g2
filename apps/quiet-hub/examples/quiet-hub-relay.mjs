@@ -95,6 +95,8 @@ export function createRelay(options) {
   const approveScript = options.approveScript ?? join(HERE, "quiet-hub-approve-mcp.mjs");
   const mcpDir = options.mcpDir ?? tmpdir();
   const pollMs = options.pollTimeoutMs ?? 40_000;
+  // Answer deltas go to the hub at most this often; the glasses long-poll the hub, so this is the word-by-word latency.
+  const streamMs = options.streamMs ?? 250;
   const ctx = {
     hub, token, fetch: fetchImpl, spawn: options.spawnImpl ?? nodeSpawn, WebSocket: options.WebSocket,
     env: options.env, home: options.home, claudeDir: options.claudeDir, killOptions: options.killOptions,
@@ -161,7 +163,7 @@ export function createRelay(options) {
     };
     const emit = (update) => {
       latest = update;
-      const wait = 800 - (Date.now() - lastSent);
+      const wait = streamMs - (Date.now() - lastSent);
       if (wait <= 0) { if (timer) clearTimeout(timer); flush(); }
       else if (!timer) timer = setTimeout(flush, wait);
     };

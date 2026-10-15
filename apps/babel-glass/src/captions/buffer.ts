@@ -95,6 +95,21 @@ export function applyTranslation(
   return buffer;
 }
 
+/** Removes the translation of the most recent committed line matching `text`. */
+export function dropTranslation(buffer: CaptionBuffer, sourceText: string): CaptionBuffer {
+  const source = sourceText.normalize("NFC").trim();
+  for (let i = buffer.lines.length - 1; i >= 0; i--) {
+    const line = buffer.lines[i];
+    if (line && line.text === source) {
+      if (line.translated === undefined) return buffer;
+      const { translated: _dropped, ...rest } = line;
+      void _dropped;
+      return { ...buffer, lines: [...buffer.lines.slice(0, i), rest, ...buffer.lines.slice(i + 1)] };
+    }
+  }
+  return buffer;
+}
+
 export function clearBuffer(): CaptionBuffer {
   return createBuffer();
 }

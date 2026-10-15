@@ -97,6 +97,7 @@ function fakeBridge(glassView: "turns" | "overview") {
     bridge, state,
     ready: () => onEvent !== undefined,
     gesture: (eventType: number) => (resetGestureDedupe(), onEvent?.({ sysEvent: { eventType, eventSource: 1 } })),
+    menu: (itemID: number) => onEvent?.({ menuItemClickEvent: { itemID } }),
     move: (lat: number, lon: number) => onLocation?.({ latitude: lat, longitude: lon }),
     listening: () => onLocation !== undefined,
   };
@@ -192,7 +193,7 @@ describe("what OpenGlance sends to the glasses and the network", () => {
     await boot(fake);
     fake.gesture(TAP);
     await vi.waitFor(() => expect(harness.road).toContain("Card Street"));
-    fake.gesture(1); // swipe: to the map
+    fake.menu(3); // side menu: View: map
     await vi.waitFor(() => expect(fake.state.images).toContain("map-se"));
     const pages = fake.state.pages as { imageObject?: { width: number; height: number }[]; textObject?: { isEventCapture?: number }[] }[];
     // Text page at the start, the turn page, the map.
@@ -206,7 +207,7 @@ describe("what OpenGlance sends to the glasses and the network", () => {
       expect(result.valid, JSON.stringify(result)).toBe(true);
     }
     // Close this app so its pending street fetch does not leak into the next test.
-    fake.gesture(DOUBLE_TAP);
+    fake.gesture(7); // system exit: closes the app (2× while navigating only asks to stop now)
     await vi.waitFor(() => expect(fake.listening()).toBe(false));
   });
 

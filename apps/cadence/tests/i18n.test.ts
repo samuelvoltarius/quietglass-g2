@@ -100,16 +100,17 @@ describe("first run", () => {
 
   it("tells the user on the glasses exactly what to do", () => {
     const view = buildView(createState(), DEFAULT_SETTINGS, { locale: "de" }, 0);
-    expect(view.header).toBe("Cadence");
+    expect(view.header).toBe("CADENCE · bereit");
     expect(view.body).toContain("Tippe einmal, um den Takt zu starten.");
     expect(view.body[1]).toBe("100 BPM  4/4  Takt 1");
-    expect(view.footer).toBe("Pause · Tippen = Start · Wischen = Tempo");
+    expect(view.footer).toBe("Tippen = Start · Halten = Hilfe · 2× = Ende");
   });
 
   it("drops the first-run sentence once the beat runs", () => {
     const view = buildView(start(createState(), 0), DEFAULT_SETTINGS, { locale: "de" }, 0);
     expect(view.body).toHaveLength(2);
     expect(view.footer).toContain("Tippen = Pause");
+    expect(view.header).toBe("CADENCE · läuft");
   });
 
   it("leads the phone page with the next step, in German", () => {

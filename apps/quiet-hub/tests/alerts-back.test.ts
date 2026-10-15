@@ -47,12 +47,14 @@ describe("getting out of an alert (0.6.5)", () => {
   it("a running agent opened from an alert: double tap goes back, it does NOT stop the agent", () => {
     const opened = decide(inboxModel(), "click", T0).model;
     const busy: HubModel = { ...opened, report: { ...opened.report, agents: opened.report.agents.map((a, i) => (i === 1 ? { ...a, busy: true } : a)) } };
-    expect(buildView(busy, "de", T0).footer).toBe("läuft … · 2× zurück · Menü: Stopp");
+    expect(buildView(busy, "de", T0).footer).toBe("Tippen = stoppen · 2× = zurück");
     const back = decide(busy, "doubleClick", T0);
     expect(back.effect).toBeUndefined();
     expect(back.model.screen).toBe("root");
-    // Stop stays reachable through the menu.
-    expect(applyMenu(busy, MENU.stop, T0).effect).toEqual({ kind: "cancel", agentId: busy.report.agents[1]!.id });
+    // Stop stays reachable through the menu - armed first, the next tap stops.
+    const armed = applyMenu(busy, MENU.stop, T0);
+    expect(armed.effect).toBeUndefined();
+    expect(decide(armed.model, "click", T0 + 500).effect).toEqual({ kind: "cancel", agentId: busy.report.agents[1]!.id });
   });
 
   it("without an alert the session still climbs to the session list (unchanged)", () => {
@@ -94,7 +96,9 @@ describe("permission cards with the vLLM's own replies (0.6.5)", () => {
   it("a reply that denies goes to the daemon with its text as note", () => {
     let m = withCard();
     for (let i = 0; i < 3; i++) m = decide(m, "scrollDown", T0).model;
-    expect(decide(m, "click", T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny", note: "Erst Backup machen" });
+    const armed = decide(m, "click", T0);
+    expect(armed.effect).toBeUndefined();
+    expect(decide(armed.model, "click", T0 + 500).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny", note: "Erst Backup machen" });
   });
 
   it("double tap leaves the card waiting and is back at the overview", () => {
@@ -104,8 +108,12 @@ describe("permission cards with the vLLM's own replies (0.6.5)", () => {
     expect(buildView(out.model, "de", T0 + 1).footer).toBe("Freigabe wartet weiter");
   });
 
-  it("the menu still allows or denies directly", () => {
-    expect(applyMenu(withCard(), MENU.deny, T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
-    expect(applyMenu(withCard(), MENU.allow, T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
+  it("the menu picks the row and arms it; the next tap answers (QIS v1)", () => {
+    const deny = applyMenu(withCard(), MENU.deny, T0);
+    expect(deny.effect).toBeUndefined();
+    expect(decide(deny.model, "click", T0 + 500).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
+    const allow = applyMenu(withCard(), MENU.allow, T0);
+    expect(allow.effect).toBeUndefined();
+    expect(decide(allow.model, "click", T0 + 500).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
   });
 });

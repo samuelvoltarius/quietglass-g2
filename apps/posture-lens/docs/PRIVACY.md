@@ -45,6 +45,11 @@ for them.
 IMU samples are processed in memory and never written to storage — only the
 single calibrated reference direction is saved.
 
+The **sensor test** (0.5.0, "More" tab or hold on the glasses) can record 20 s
+of raw samples when you press "Record 20 s". The recording stays in the page's
+memory; it leaves the phone only if you download or copy the CSV yourself, and
+it is gone when the test ends or the app closes.
+
 ## Removing your data
 
 Uninstalling removes the per-app storage, and with it the calibration and

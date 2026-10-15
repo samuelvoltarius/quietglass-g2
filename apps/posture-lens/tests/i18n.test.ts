@@ -107,7 +107,8 @@ describe("first run", () => {
   it("tells the user on the glasses exactly what to do", () => {
     const view = buildView(createMonitor(), DEFAULT_SETTINGS, { locale: "de" });
     expect(view.body.join(" ")).toBe("Setz dich gerade hin und tippe einmal zum Speichern.");
-    expect(view.footer).toBe("Tippen = Haltung speichern");
+    expect(view.header).toBe("POSTURE · neu");
+    expect(view.footer).toBe("Tippen = Haltung speichern · 2× = Ende");
   });
 
   it("confirms a calibration so the quiet display is not mistaken for a fault", () => {

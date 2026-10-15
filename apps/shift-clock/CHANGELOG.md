@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.5.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks aus dem Menü kommen auf der Brille nie an, und Halten öffnet bei einer Seite mit Menü nur das Menü. Die Seiten tragen kein `menuObject` mehr; der Menü-Code und der `menuItemClickEvent`-Handler bleiben für später.
+- Halten zeigt wieder die Hilfe (2× geht zurück); im Projekt-Picker ist „Hilfe“ wieder die letzte Zeile. Ein Halten bei vorgemerktem Stopp bricht den Stopp nur ab. Fußzeilen wieder mit `Halten = Hilfe`.
+
+## [0.5.1] — 2026-10-15
+
+### Behoben
+
+- Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben; jetzt hat jeder Aufruf an die Brille ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s), danach gilt der Aufruf als fehlgeschlagen und die Seite wird beim nächsten Zeichnen neu aufgebaut.
+
+## [0.5.0] — 2026-10-14
+
+### Changed (QIS v1.2)
+
+- Side menu: the glasses' side menu (`menuObject`, `menuItemClickEvent`) carries `Hilfe`. The help is no longer a picker row or the meaning of Hold; Hold does nothing.
+- Footers come from a shared `footer()` helper (`glasses/footer.ts`) instead of hand-built strings: `Tippen = starten · 2× = Ende`, armed `Nochmal tippen = stoppen · Wischen/2× = abbrechen`.
+- Phone: new tab `Brille` (swipe direction moved there), order `Heute · Projekte · Brille · Mehr`. No `Verbindung` tab (no server). Phone texts say `2×` instead of "Doppeltippen" / "Double tap".
+- Unchanged and already conform: stopping is armed (tap, then tap within 4 s); 2× on the start screen asks the exit dialog and never stops the clock.
+
+## [0.4.0] — 2026-10-14
+
+### Changed (QIS v1)
+
+- Conforms to the Quietglass Interaction Standard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Safety: a single tap no longer stops the clock. Tap arms (`Nochmal tippen = stoppen · Wischen/2× = abbrechen`), a second tap within 4 s stops. Swipe, hold, double tap or 4 s without input cancel.
+- Double tap is back one level (picker -> start screen); only on the start screen it leaves the app. It never stops the clock.
+- Header is `SHIFTCLOCK · state`; footer lists Tippen/Wischen/Halten/2× in that order and ends in `2× = zurück` or `2× = Ende`. The day total moved from the footer into the body.
+- Hold opens a help page ("Hilfe"); the project picker has Help as its last row. Swiping in the picker still honours the invert setting.
+
+## [0.3.5] — 2026-10-13
+
+### Changed
+
+- Handy-Seite in Tabs statt einer langen Spalte: Heute · Projekte · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Chip mit laufendem Projekt oben.
+
 ## [0.3.4] — 2026-10-13
 
 ### Fixed

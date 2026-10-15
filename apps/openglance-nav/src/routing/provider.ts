@@ -47,6 +47,9 @@ export interface Route {
   readonly maneuvers: readonly Maneuver[];
   readonly distance: number;
   readonly duration: number;
+  /** From the router's summary when it says so (Valhalla `has_toll`, `has_highway`); absent = unknown. */
+  readonly toll?: boolean;
+  readonly highway?: boolean;
 }
 
 export interface RouteRequest {
@@ -55,7 +58,16 @@ export interface RouteRequest {
   readonly mode: TravelMode;
   /** Stops on the way, in order (at most MAX_STOPS); the route stops at each one. */
   readonly via?: readonly LatLng[];
+  /**
+   * Ask for up to this many other ways besides the best one (Valhalla
+   * `alternates`; car only, and only without stops - the router offers
+   * alternatives for two locations alone).
+   */
+  readonly alternates?: number;
 }
+
+/** Most other ways asked for before a start (the picker shows at most three routes). */
+export const MAX_ALTERNATES = 2;
 
 /** Most stops on the way a route may have. */
 export const MAX_STOPS = 3;
@@ -72,6 +84,8 @@ export interface RouteOutcome {
   readonly error: string | null;
   /** Present whenever `route` is null. */
   readonly code?: RouteErrorCode;
+  /** Other ways the router offered (asked for with `alternates`), best first; absent or empty = none. */
+  readonly alternates?: readonly Route[];
 }
 
 export interface RoutingProvider {
@@ -130,7 +144,7 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
 
   return {
     name: "valhalla",
-    async route({ from, to, mode, via }): Promise<RouteOutcome> {
+    async route({ from, to, mode, via, alternates }): Promise<RouteOutcome> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 15_000);
 
@@ -139,6 +153,9 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
           // Stops are "break" locations (Valhalla's default): one leg each, a real stop.
           locations: [from, ...(via ?? []).slice(0, MAX_STOPS), to].map((point) => ({ lat: point.lat, lon: point.lon })),
           costing: COSTING[mode],
+          ...(alternates && alternates > 0 && mode === "driving" && !(via?.length)
+            ? { alternates: Math.min(MAX_ALTERNATES, Math.floor(alternates)) }
+            : {}),
           directions_options: {
             units: "kilometers",
             ...(config.language ? { language: config.language } : {}),
@@ -199,7 +216,7 @@ export function errorCodeOf(error: unknown): RouteErrorCode {
   return "server";
 }
 
-/** Parses a Valhalla `/route` response into the normalised shape. */
+/** Parses a Valhalla `/route` response into the normalised shape, with any alternates it brought. */
 export function parseValhalla(value: unknown): RouteOutcome {
   if (!value || typeof value !== "object") return { route: null, error: "unreadable response", code: "server" };
   const root = value as Record<string, unknown>;
@@ -208,9 +225,23 @@ export function parseValhalla(value: unknown): RouteOutcome {
     return { route: null, error: String(root["error"]).slice(0, 60), code: "noRoute" };
   }
 
-  const trip = root["trip"] as Record<string, unknown> | undefined;
+  const main = parseTrip(root["trip"]);
+  if ("error" in main) return { route: null, error: main.error, code: "noRoute" };
+  // Valhalla puts the other ways beside the trip: `alternates: [{ trip }, …]`. A broken one is skipped, never guessed.
+  const alternates: Route[] = [];
+  if (Array.isArray(root["alternates"])) {
+    for (const raw of root["alternates"] as unknown[]) {
+      const alt = parseTrip((raw as Record<string, unknown> | null)?.["trip"]);
+      if (!("error" in alt)) alternates.push(alt);
+    }
+  }
+  return { route: main, error: null, ...(alternates.length ? { alternates } : {}) };
+}
+
+function parseTrip(value: unknown): Route | { error: string } {
+  const trip = value as Record<string, unknown> | undefined;
   const legs = Array.isArray(trip?.["legs"]) ? trip["legs"] as unknown[] : null;
-  if (!legs || legs.length === 0) return { route: null, error: "no route found", code: "noRoute" };
+  if (!legs || legs.length === 0) return { error: "no route found" };
 
   const shape: LatLng[] = [];
   const maneuvers: Maneuver[] = [];
@@ -250,18 +281,15 @@ export function parseValhalla(value: unknown): RouteOutcome {
   }
 
   const summary = trip?.["summary"] as Record<string, unknown> | undefined;
-  if (shape.length === 0 || maneuvers.length === 0) {
-    return { route: null, error: "route had no usable geometry", code: "noRoute" };
-  }
+  if (shape.length === 0 || maneuvers.length === 0) return { error: "route had no usable geometry" };
 
   return {
-    route: {
-      shape,
-      maneuvers,
-      distance: numberOr(summary?.["length"], 0) * 1000,
-      duration: numberOr(summary?.["time"], 0),
-    },
-    error: null,
+    shape,
+    maneuvers,
+    distance: numberOr(summary?.["length"], 0) * 1000,
+    duration: numberOr(summary?.["time"], 0),
+    ...(typeof summary?.["has_toll"] === "boolean" ? { toll: summary["has_toll"] } : {}),
+    ...(typeof summary?.["has_highway"] === "boolean" ? { highway: summary["has_highway"] } : {}),
   };
 }
 

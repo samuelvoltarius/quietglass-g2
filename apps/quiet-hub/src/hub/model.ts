@@ -1,20 +1,28 @@
 /**
  * Quiet Hub state machine and views.
  *
+ * Follows the Quietglass Interaction Standard (QIS v1, docs/BEDIENSTANDARD.md).
  * The root page is a conventional menu: swipe selects and tap opens. Inside a
- * page, swipe selects and tap acts; risky home/printer actions require a
- * second tap. Double tap goes back one level, except on root where Even
- * requires the native exit dialog. The agent page is three levels:
+ * page, swipe selects and tap acts. Double tap ONLY goes back one level (on
+ * root it opens Even's native exit dialog); it never stops, answers or sends.
+ * Everything that stops, answers or switches something risky is ARMED first:
+ * a tap arms (footer: "Nochmal tippen = <Aktion>"), a second tap within
+ * CONFIRM_MS carries it out, swipe / 2x / the timeout cancel. That covers
+ * stopping a running agent (tap while it works, or the menu entry), allow /
+ * deny / vLLM replies on a permission card, and the home / printer actions.
+ * The agent page is three levels:
  *   agents (list) -> sessions of that agent -> the open session (ask).
- * Double tap climbs ask -> sessions -> agents -> overview; while an agent is
- * running, double tap in the open session is a real STOP first. A session
- * opened from an alert remembers that: there double tap always goes straight
- * back to the overview (one level, never a stop; the menu still has Stop).
- * Hold-to-talk speaks into the selected session; the transcript is shown and
- * needs a tap to be sent (2x discards). A pending permission card takes over
- * the agent page: swipe picks allow / deny / a vLLM reply, tap sends it,
- * double tap goes back to the overview without deciding. While recording,
- * double tap discards the recording, so no state can trap the wearer.
+ * Double tap climbs ask -> sessions -> agents -> overview. A session opened
+ * from an alert remembers that: there double tap goes straight back to the
+ * overview. Hold-to-talk speaks into the selected session; the transcript is
+ * shown and needs a tap to be sent. QIS v1.2 #2: 2x on the recording or the
+ * transcript goes back one level and KEEPS the voice note (it comes back when
+ * that conversation is opened again); discarding is the armed menu entry
+ * "Verwerfen" (menu arms, the next tap or a second menu click discards). Without the
+ * side menu (SIDE_MENU = false) a hold on the voice note arms the discard and one tap confirms.
+ * A pending permission card takes over the agent page: swipe picks allow /
+ * deny / a vLLM reply, tap arms it, a second tap sends it, double tap goes back
+ * to the overview without deciding. No state can trap the wearer.
  *
  * Every page also has a native contextual menu (tap + hold, drawn by the glasses
  * OS) with the page's actions; gestures stay as shortcuts. The R1 ring double
@@ -27,10 +35,28 @@ import { tr, type Locale } from "../i18n";
 import { messages } from "../messages";
 import type { AgentEvent, AgentInfo, Approval, ApprovalOption, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot, SessionInfo } from "../api/types";
 import { normalizeReport } from "../api/normalize";
+import {
+  applyHomeAction, areaEntries, canDetail, clampZuhause, detailChoices, entityLabel, moveDetail, homeViewOf, initialZuhause, listEntries, listRows,
+  selectedEntity, sideRows, stateText, tapAction, viewSummary, type ZuhauseState, type ZuhauseView,
+} from "./zuhause";
+import type { Brief, HomeAction, HomeEntity } from "../api/types";
+import { briefBlocks, briefFooter, briefHeader, briefPages, briefSummary, type BriefLoad } from "./brief";
+import { armedFooter, footer, type FooterEnd, type FooterParts } from "../glasses/footer";
 
-export type Screen = "root" | "agent" | "home" | "printer" | "inbox";
-export const SCREENS: readonly Screen[] = ["root", "agent", "home", "printer", "inbox"];
-const ROOT_ITEMS: readonly Exclude<Screen, "root">[] = ["agent", "home", "printer", "inbox"];
+export type Screen = "root" | "agent" | "home" | "printer" | "inbox" | "brief";
+export const SCREENS: readonly Screen[] = ["root", "agent", "home", "printer", "inbox", "brief"];
+/**
+ * The glasses' side menu (menuObject, QIS v1.2). Off: its clicks never reach the app and, while a page carries it,
+ * a hold opens it instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages
+ * carry no menu, hold does what it did before (speak, details, refresh; on a voice note: arm the discard) and the
+ * overview has its help row again. The menu code below stays so it can be switched back on.
+ */
+export const SIDE_MENU = false;
+
+/** A row of the overview menu: a page, or the help overlay (last row while there is no side menu). */
+export type RootItem = Exclude<Screen, "root"> | "help";
+/** Rows of the overview menu, in row order (new rows go last: older saved selections stay valid). */
+export const ROOT_ITEMS: readonly RootItem[] = SIDE_MENU ? ["agent", "home", "printer", "inbox", "brief"] : ["agent", "home", "printer", "inbox", "brief", "help"];
 
 /** How long a confirming double tap stays armed. */
 export const CONFIRM_MS = 4000;
@@ -45,10 +71,16 @@ const VOICE_ROWS = 5;
 
 export type HubGesture = "click" | "doubleClick" | "scrollUp" | "scrollDown" | "longPress" | "longPressRelease" | "ringDoubleClick";
 
-/** Voice note in flight: transcribing, or transcript waiting for the wearer's tap. */
+/**
+ * Voice note in flight: transcribing, or transcript waiting for the wearer's tap.
+ * `parked`: 2x went back and kept it; it owns the screen again in that agent's conversation.
+ */
 export type PendingVoice =
-  | { readonly state: "transcribing"; readonly agentId: string }
-  | { readonly state: "confirm"; readonly agentId: string; readonly text: string; readonly scroll?: number };
+  | { readonly state: "transcribing"; readonly agentId: string; readonly parked?: boolean }
+  | { readonly state: "confirm"; readonly agentId: string; readonly text: string; readonly scroll?: number; readonly parked?: boolean };
+
+/** Arm id of the explicit "discard voice note" action. */
+const DISCARD_VOICE = "voice:discard";
 
 /** Why the hub cannot be used right now; null = the last report succeeded. */
 export interface LinkStatus {
@@ -75,6 +107,8 @@ export interface HubModel {
   readonly message: { readonly text: string; readonly until: number } | null;
   /** True while the microphone is recording a voice note. */
   readonly recording: boolean;
+  /** Live transcript of the running recording (live STT); empty/absent when there is none. */
+  readonly liveText?: string;
   /** How many chat rows the open conversation is scrolled up from its newest line (0 = bottom). */
   readonly chatScroll?: number;
   /** Until when the face smiles because an answer just arrived (epoch ms). */
@@ -106,6 +140,38 @@ export interface HubModel {
   readonly quietWhileWorking?: boolean;
   /** Until when a gesture or an alert keeps the display awake although the agent works (epoch ms). */
   readonly wakeUntil?: number;
+  /** Zuhause page: level (list / area / detail), selections and a pending sensitive confirm. */
+  readonly zh?: ZuhauseState;
+  /** Tagesstart: the newest briefing (from /brief or the report), its page and how loading went. */
+  readonly brief?: Brief | null;
+  readonly briefPage?: number;
+  readonly briefLoad?: BriefLoad;
+  /** First start without a server: demo data and the hint line "Demo · Verbindung am Handy einrichten" (QIS v1.2 #7). */
+  readonly setupHint?: boolean;
+}
+
+/** The voice note owns the screen: not parked, or parked and its conversation is open again. */
+export function voiceOwns(model: HubModel): boolean {
+  const voice = model.voice;
+  if (voice === null || model.help || model.picker !== null) return false;
+  if (voice.parked !== true) return true;
+  return model.screen === "agent" && model.agentView === "ask" && pendingApproval(model.report) === undefined && selectedAgent(model)?.id === voice.agentId;
+}
+
+/**
+ * One level back from the agent page without an effect (2x on a recording or a voice note):
+ * conversation -> its sessions (alert: overview), sessions -> agent list -> overview.
+ */
+function backFromAgent(model: HubModel): HubModel {
+  const agent = selectedAgent(model);
+  if (model.screen !== "agent") return { ...model, confirm: null };
+  if (model.agentView === "ask") {
+    // Without a loaded session list (opened from an alert or the menu) the overview is the honest level.
+    if (model.origin === "inbox" || agent === undefined || model.sessions?.agentId !== agent.id) return backToOverview(model);
+    return { ...model, agentView: "sessions", sessionIndex: 1, confirm: null, chatScroll: 0 };
+  }
+  if (model.agentView === "sessions" && model.report.agents.length > 1) return { ...model, agentView: "list", confirm: null };
+  return backToOverview(model);
 }
 
 export interface SessionsState {
@@ -133,9 +199,15 @@ export type Effect =
   /** Mark an event read and open its agent in the session the event came from. */
   | { readonly kind: "openEvent"; readonly id: string; readonly agentId: string; readonly sessionId: string | null }
   | { readonly kind: "toggle"; readonly device: string }
+  /** Zuhause (daemon 0.7.0+): one action on an entity or group; a sensitive one returns a confirm token. */
+  | { readonly kind: "homeAction"; readonly target: string; readonly action: HomeAction; readonly value?: number }
+  /** Second step of a lock / alarm / garage action. */
+  | { readonly kind: "homeConfirm"; readonly token: string }
   | { readonly kind: "printer"; readonly action: "pause" | "resume" | "cancel" }
   /** The glasses menu switched "quiet while the agent works": main persists it in the settings. */
-  | { readonly kind: "quietSetting"; readonly on: boolean };
+  | { readonly kind: "quietSetting"; readonly on: boolean }
+  /** Tagesstart: fetch the briefing (refresh = the daemon asks every source again). */
+  | { readonly kind: "brief"; readonly refresh: boolean };
 
 export function createModel(report: HubReport): HubModel {
   return {
@@ -177,7 +249,28 @@ export function mergeReport(model: HubModel, next: HubReport): HubModel {
     agentIndex,
     answerKey: key,
     answerPage: fresh ? 0 : Math.min(model.answerPage, pages),
+    zh: clampZuhause(model.zh ?? initialZuhause(), homeViewOf(report)),
+    ...briefFrom(model, report.brief),
   };
+}
+
+/** The report's copy of the briefing replaces the shown one only when it is newer. */
+function briefFrom(model: HubModel, next: Brief | null | undefined): Partial<HubModel> {
+  if (next === null || next === undefined || typeof next.at !== "number") return {};
+  if (model.brief !== null && model.brief !== undefined && model.brief.at >= next.at) return {};
+  return { brief: next, briefLoad: "ready" };
+}
+
+/** Answer of GET /brief (or why there is none); the page keeps its last data when a refresh fails. */
+export function withBrief(model: HubModel, brief: Brief | null, load: BriefLoad, locale: Locale = "de", now = Date.now()): HubModel {
+  if (brief !== null) {
+    const pages = briefPages(briefBlocks(brief, "ready", locale, now)).length;
+    return { ...model, brief, briefLoad: "ready", briefPage: Math.min(model.briefPage ?? 0, pages - 1) };
+  }
+  if (model.brief !== null && model.brief !== undefined && load === "error") {
+    return model.screen === "brief" ? say({ ...model, briefLoad: "ready" }, tr(messages, locale, "brief.failed"), now) : model;
+  }
+  return { ...model, briefLoad: load };
 }
 
 /** Result of a session list request; stale answers for another agent are ignored. */
@@ -263,6 +356,13 @@ function openScreen(model: HubModel, target: Screen, now: number, locale: Locale
     message: announce ? { text: tr(messages, locale, "ack.opened", { page: tr(messages, locale, `screen.${target}`) }), until: now + MESSAGE_MS } : null,
   };
   if (target === "root") return { model: { ...base, agentView: model.agentView } };
+  // Zuhause opens on its list, the list selection kept.
+  if (target === "home") return { model: { ...base, zh: { ...initialZuhause(), index: model.zh?.index ?? 0 } } };
+  // Tagesstart opens on its first page and asks the daemon (it answers from its cache when fresh).
+  if (target === "brief") {
+    const has = model.brief !== null && model.brief !== undefined;
+    return { model: { ...base, briefPage: 0, briefLoad: has ? "ready" : "loading" }, effect: { kind: "brief", refresh: false } };
+  }
   const only = report.agents[0];
   // One agent: skip straight to its session page.
   if (target === "agent" && report.agents.length === 1 && only !== undefined) return openSessions({ ...base, agentIndex: 0 }, only);
@@ -320,7 +420,7 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (gesture === "longPressRelease") {
     if (model.screen === "agent" && model.recording) {
       const agentId = model.recordAgent ?? selectedAgent(model)?.id;
-      const next = { ...model, recording: false, recordAgent: null };
+      const next = { ...model, recording: false, recordAgent: null, liveText: "" };
       if (agentId === undefined) return { model: next };
       return { model: { ...next, voice: { state: "transcribing", agentId } }, effect: { kind: "recordStop", agentId } };
     }
@@ -343,26 +443,42 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
 
   // While recording nothing else may happen — a stray swipe during dictation
   // must not switch pages or fire a question. The way out is always open:
-  // tap ends the recording, double tap discards it.
+  // tap ends the recording; double tap ends it too and goes back one level,
+  // keeping what was said (QIS v1.2 #2: never discarded by 2x).
   if (model.recording) {
+    const agentId = model.recordAgent ?? selectedAgent(model)?.id;
+    const next = { ...model, recording: false, recordAgent: null, liveText: "" };
     if (gesture === "click") {
-      const agentId = model.recordAgent ?? selectedAgent(model)?.id;
-      const next = { ...model, recording: false, recordAgent: null };
       return agentId === undefined ? { model: next } : { model: { ...next, voice: { state: "transcribing", agentId } }, effect: { kind: "recordStop", agentId } };
     }
     if (gesture === "doubleClick" || gesture === "ringDoubleClick") {
+      if (agentId === undefined) return { model: next, effect: { kind: "recordAbort" } };
       return {
-        model: say({ ...model, recording: false, recordAgent: null }, t("voice.cancelled"), now),
-        effect: { kind: "recordAbort" },
+        model: say(backFromAgent({ ...next, voice: { state: "transcribing", agentId, parked: true } }), t("voice.kept"), now),
+        effect: { kind: "recordStop", agentId },
       };
     }
     return { model };
   }
 
+  if (model.help) return { model: { ...model, help: false } };
+
   // A voice note being transcribed or waiting for confirmation owns the screen:
-  // tap sends the transcript, double tap throws it away.
-  if (model.voice !== null) {
-    if (gesture === "doubleClick" || gesture === "ringDoubleClick") return { model: say({ ...model, voice: null }, t("voice.discarded"), now) };
+  // tap sends the transcript; double tap goes back and keeps it; discarding is the
+  // armed menu entry (then the next tap discards instead of sending).
+  if (model.voice !== null && voiceOwns(model)) {
+    const discardArmed = model.confirm !== null && model.confirm.until > now && model.confirm.what === DISCARD_VOICE;
+    if (gesture === "doubleClick" || gesture === "ringDoubleClick") {
+      // 2x first cancels an armed discard (QIS v1), otherwise it goes back with the note kept.
+      if (discardArmed) return { model: { ...model, confirm: null } };
+      return { model: say(backFromAgent({ ...model, confirm: null, voice: { ...model.voice, parked: true } }), t("voice.kept"), now) };
+    }
+    if (gesture === "click" && discardArmed) return { model: say({ ...model, confirm: null, voice: null }, t("voice.discarded"), now) };
+    // Without the side menu: hold arms the discard (the footer says so), one tap confirms, anything else cancels.
+    if (gesture === "longPress" && !SIDE_MENU) {
+      if (discardArmed) return { model: { ...model, confirm: null } };
+      return { model: { ...model, message: null, confirm: { what: DISCARD_VOICE, label: t("confirm.discard"), until: now + CONFIRM_MS } } };
+    }
     if (gesture === "click" && model.voice.state === "confirm") {
       const { agentId, text } = model.voice;
       const agent = report.agents.find((entry) => entry.id === agentId);
@@ -376,12 +492,11 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
     if ((gesture === "scrollUp" || gesture === "scrollDown") && model.voice.state === "confirm") {
       const max = Math.max(0, wrap(model.voice.text).length - VOICE_ROWS);
       const scroll = Math.min(max, Math.max(0, (model.voice.scroll ?? 0) + (gesture === "scrollUp" ? -1 : 1)));
-      return { model: { ...model, voice: { ...model.voice, scroll } } };
+      return { model: { ...model, confirm: null, voice: { ...model.voice, scroll } } };
     }
+    if (gesture === "scrollUp" || gesture === "scrollDown") return { model: { ...model, confirm: null } };
     return { model };
   }
-
-  if (model.help) return { model: { ...model, help: false } };
 
   // Page picker (R1 ring double tap).
   if (gesture === "ringDoubleClick" && model.picker === null) {
@@ -411,10 +526,25 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
     if (gesture === "click") {
       const choice = choices[index] ?? choices[0];
       if (choice === undefined) return { model };
-      return { model: say({ ...model, cardIndex: 0 }, t(choice.decision === "allow" ? "ack.allowed" : "ack.denied"), now), effect: approveEffect(card, choice) };
+      // QIS v1: answering for the wearer is armed first; the second tap on the same row sends it.
+      const what = `approve:${card.id}:${index}`;
+      const armed = model.confirm;
+      if (armed !== null && armed.until > now && armed.what === what) {
+        return { model: say({ ...model, confirm: null, cardIndex: 0 }, t(choice.decision === "allow" ? "ack.allowed" : "ack.denied"), now), effect: approveEffect(card, choice) };
+      }
+      return { model: { ...model, message: null, confirm: { what, label: choice.label, until: now + CONFIRM_MS } } };
     }
     if (gesture === "doubleClick") return { model: say(backToOverview(model), t("approval.later"), now) };
     return { model };
+  }
+
+  if (model.screen === "home") {
+    const handled = decideHome(model, gesture, now, locale);
+    if (handled !== null) return handled;
+  }
+  if (model.screen === "brief") {
+    const handled = decideBrief(model, gesture, now, locale);
+    if (handled !== null) return handled;
   }
 
   if (gesture === "longPress") {
@@ -422,10 +552,12 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       const agent = selectedAgent(model);
       if (agent === undefined || !agent.online || agent.busy) {
         const key = agent !== undefined && agent.online ? "agent.busy" : "agent.offline";
-        return { model: say(model, t(key), now) };
+        return { model: say({ ...model, confirm: null }, t(key), now) };
       }
+      // A kept voice note is never overwritten by a new recording: send or discard it first.
+      if (model.voice !== null) return { model: say({ ...model, confirm: null }, t("voice.waiting"), now) };
       return {
-        model: { ...model, confirm: null, message: null, recording: true, recordAgent: agent.id },
+        model: { ...model, confirm: null, message: null, recording: true, recordAgent: agent.id, liveText: "" },
         effect: { kind: "recordStart" },
       };
     }
@@ -464,6 +596,7 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (gesture === "click") {
     if (model.screen === "root") {
       const target = ROOT_ITEMS[model.rootSelected] ?? "agent";
+      if (target === "help") return { model: { ...model, help: true, message: null } };
       return openScreen(model, target, now, locale, false);
     }
     if (model.screen === "agent") {
@@ -474,9 +607,10 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
         return openSessions({ ...model, message: null }, agent);
       }
       if (model.agentView === "sessions") return chooseSession(model, agent, now, locale);
+      // A running agent: tap arms the stop, the second tap carries it out (double tap never stops).
+      if (agent.busy) return armStop(model, agent, now, locale);
       // Scrolled into the history: a tap jumps back to the newest line and the suggestions.
       if ((model.chatScroll ?? 0) > 0) return { model: { ...model, chatScroll: 0 } };
-      if (agent.busy) return { model: say(model, t("agent.busy"), now) };
       if (!agent.online) return { model: say(model, t("agent.offline"), now) };
       const question = agentItems(agent, report.agent.questions)[model.questionIndex];
       if (question === undefined) return { model: say(model, t("ack.nothing"), now) };
@@ -553,14 +687,166 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (model.screen === "root") return { model, effect: { kind: "exit" } };
   if (model.screen === "agent") {
     const agent = selectedAgent(model);
-    // Opened from an alert: one double tap is back at the overview, never a stop.
+    // Opened from an alert: one double tap is back at the overview.
     if (model.agentView === "ask" && model.origin === "inbox") return { model: backToOverview(model) };
-    // A running agent: double tap is a real stop. Idle: climb one level.
-    if (agent !== undefined && agent.busy && model.agentView === "ask") return stopAgent(model, agent, now, locale);
+    // Climb one level, running or not: double tap never stops the agent (QIS v1).
     if (model.agentView === "ask" && agent !== undefined) return openSessions({ ...model, message: null }, agent);
     if (model.agentView === "sessions" && report.agents.length > 1) return { model: { ...model, agentView: "list", message: null } };
   }
   return { model: { ...model, screen: "root", confirm: null, message: null } };
+}
+
+// ---- Zuhause --------------------------------------------------------------------
+
+function zhOf(model: HubModel): ZuhauseState {
+  return model.zh ?? initialZuhause();
+}
+
+/** Applies the optimistic result of an action to the report's view. */
+function withHomeView(model: HubModel, view: ZuhauseView): HubModel {
+  return view.legacy === true ? model : { ...model, report: { ...model.report, homeView: view } };
+}
+
+/** One action on an entity: optimistic state now, the daemon call as effect (old daemons: /home/toggle). */
+function homeAct(model: HubModel, view: ZuhauseView, entity: HomeEntity, action: HomeAction, now: number, locale: Locale, value?: number): { model: HubModel; effect: Effect } {
+  const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  const label = entityLabel(entity, locale);
+  if (view.legacy === true) {
+    const flipped = { ...entity, on: !entity.on };
+    return { model: say({ ...model, confirm: null }, t("zh.sent", { label, state: stateText(flipped, locale) }), now), effect: { kind: "toggle", device: entity.id } };
+  }
+  const next = applyHomeAction(view, entity.id, action, value);
+  const after = next.entities[entity.id] ?? entity;
+  const text = action === "brightness" && (value ?? 0) > 0 ? t("zh.dim", { label, n: value ?? 0 })
+    : action === "stop" ? t("zh.stopped", { label })
+      : action === "run" ? `${label} »`
+        : t("zh.sent", { label, state: stateText(after, locale) });
+  const effect: Effect = value === undefined ? { kind: "homeAction", target: entity.id, action } : { kind: "homeAction", target: entity.id, action, value };
+  return { model: say(withHomeView({ ...model, confirm: null }, next), text, now), effect };
+}
+
+/** The daemon answered a sensitive action with a token: the next tap on the same row confirms it. */
+export function withHomePending(model: HubModel, target: string, confirm: { token: string; label: string; expiresInMs: number }, now: number): HubModel {
+  // QIS v1: the second tap has CONFIRM_MS, however long the daemon would keep the code.
+  const until = now + Math.max(1000, Math.min(confirm.expiresInMs, CONFIRM_MS));
+  return {
+    ...model,
+    message: null,
+    confirm: { what: `home:${target}`, label: confirm.label, until },
+    zh: { ...zhOf(model), pending: { token: confirm.token, target, until } },
+  };
+}
+
+/** Taps, swipes, holds and double taps on the Zuhause page; null = the generic handling applies. */
+function decideHome(model: HubModel, gesture: HubGesture, now: number, locale: Locale): { model: HubModel; effect?: Effect } | null {
+  const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  const view = homeViewOf(model.report);
+  if (view === null || (view.legacy === true && view.favorites.length === 0)) return null;
+  const zh = zhOf(model);
+  const step = gesture === "scrollUp" ? -1 : 1;
+  const clearPending = (m: HubModel): HubModel => ({ ...m, confirm: null, zh: { ...zhOf(m), pending: null } });
+
+  // Detail (QIS v1.2 #5): swipe only moves to the next light / cover; tap opens the choice list,
+  // where swipe moves, tap runs the chosen entry and 2x closes it without doing anything.
+  if (zh.level === "detail") {
+    const entity = zh.detailId === null ? undefined : view.entities[zh.detailId];
+    const open = typeof zh.choice === "number";
+    if (gesture === "doubleClick") {
+      if (open) return { model: { ...model, message: null, zh: { ...zh, choice: null } } };
+      return { model: { ...model, message: null, zh: { ...zh, level: zh.areaId !== null ? "area" : "list", detailId: null, choice: null } } };
+    }
+    if (entity === undefined) return { model: { ...model, zh: { ...zh, level: "list", detailId: null, choice: null } } };
+    if (gesture === "scrollUp" || gesture === "scrollDown") {
+      if (open) {
+        const n = detailChoices(entity, locale).length;
+        return { model: { ...model, confirm: null, zh: { ...zh, choice: ((zh.choice ?? 0) + step + n) % n } } };
+      }
+      return { model: { ...model, confirm: null, message: null, zh: moveDetail(zh, view, step) } };
+    }
+    if (gesture === "click") {
+      if (!open) return { model: { ...model, message: null, zh: { ...zh, choice: 0 } } };
+      const choices = detailChoices(entity, locale);
+      // The list can shrink while open ("An" goes once the light reports a level): stay on its last row.
+      const choice = choices[Math.min(zh.choice ?? 0, choices.length - 1)];
+      const closed: HubModel = { ...model, zh: { ...zh, choice: null } };
+      if (choice === undefined || !entity.available) return { model: say(closed, t("zh.unavailable"), now) };
+      return homeAct(closed, view, entity, choice.action, now, locale, choice.value);
+    }
+    if (gesture === "longPress") return { model };
+    return null;
+  }
+
+  if (gesture === "scrollUp" || gesture === "scrollDown") {
+    const base = clearPending(model);
+    if (zh.level === "area") {
+      const n = areaEntries(view, zh.areaId).length;
+      return { model: { ...base, zh: { ...zhOf(base), areaIndex: n === 0 ? 0 : ((zh.areaIndex + step) % n + n) % n } } };
+    }
+    const n = listEntries(view).length;
+    return { model: { ...base, zh: { ...zhOf(base), index: n === 0 ? 0 : ((zh.index + step) % n + n) % n } } };
+  }
+
+  if (gesture === "doubleClick") {
+    if (zh.level === "area") return { model: { ...clearPending(model), message: null, zh: { ...zh, pending: null, level: "list", areaId: null, areaIndex: 0 } } };
+    return { model: { ...clearPending(model), screen: "root", message: null } };
+  }
+
+  if (gesture === "click") {
+    if (zh.level === "list") {
+      const entry = listEntries(view)[zh.index];
+      if (entry === undefined) return { model: say(model, t("ack.nothing"), now) };
+      if (entry.type === "area") return { model: { ...clearPending(model), message: null, zh: { ...zh, pending: null, level: "area", areaId: entry.id, areaIndex: 0 } } };
+    }
+    const entity = selectedEntity(zh, view);
+    if (entity === undefined) return { model: say(model, t("ack.nothing"), now) };
+    const action = tapAction(entity);
+    if (action === null || !entity.available) return { model: say(model, t(entity.available ? "zh.noAction" : "zh.unavailable"), now) };
+    if (entity.sensitive === true && view.legacy !== true) {
+      const pending = zh.pending;
+      if (pending !== null && pending.target === entity.id && pending.until > now) {
+        return {
+          model: say(clearPending(model), t("zh.confirmed", { label: model.confirm?.label ?? entityLabel(entity, locale) }), now),
+          effect: { kind: "homeConfirm", token: pending.token },
+        };
+      }
+      // First tap: the daemon only hands out a token; nothing moves yet.
+      return { model: say(clearPending(model), t("zh.asking"), now), effect: { kind: "homeAction", target: entity.id, action } };
+    }
+    return homeAct(model, view, entity, action, now, locale);
+  }
+
+  if (gesture === "longPress") {
+    const entity = selectedEntity(zh, view);
+    if (entity !== undefined && canDetail(entity) && view.legacy !== true) {
+      return { model: { ...clearPending(model), message: null, zh: { ...zh, pending: null, level: "detail", detailId: entity.id, choice: null } } };
+    }
+    return null;
+  }
+  return null;
+}
+
+// ---- Tagesstart -----------------------------------------------------------------
+
+/** Pages of the briefing as the glasses show it right now. */
+export function briefPageRows(model: HubModel, locale: Locale, now: number): string[][] {
+  return briefPages(briefBlocks(model.brief, model.briefLoad ?? "loading", locale, now));
+}
+
+/** Swipe pages through the blocks, tap (or hold) reloads, double tap goes back (generic). */
+function decideBrief(model: HubModel, gesture: HubGesture, now: number, locale: Locale): { model: HubModel; effect?: Effect } | null {
+  if (gesture === "scrollUp" || gesture === "scrollDown") {
+    const pages = briefPageRows(model, locale, now).length;
+    const page = Math.max(0, Math.min(pages - 1, (model.briefPage ?? 0) + (gesture === "scrollUp" ? -1 : 1)));
+    return { model: { ...model, confirm: null, briefPage: page } };
+  }
+  if (gesture === "click" || gesture === "longPress") {
+    const has = model.brief !== null && model.brief !== undefined;
+    return {
+      model: say({ ...model, confirm: null, briefLoad: has ? "ready" : "loading" }, tr(messages, locale, "brief.refreshing"), now),
+      effect: { kind: "brief", refresh: true },
+    };
+  }
+  return null;
 }
 
 /** The overview, the cursor on a waiting card ("Agent") or on "Meldungen" while unread alerts are left. */
@@ -591,6 +877,14 @@ function approveEffect(card: Approval, choice: CardChoice): Effect {
     : { kind: "approve", cardId: card.id, decision: choice.decision, note: choice.note };
 }
 
+/** First tap arms the stop (footer: "Nochmal tippen = stoppen"), a second one within CONFIRM_MS stops. */
+function armStop(model: HubModel, agent: AgentInfo, now: number, locale: Locale): { model: HubModel; effect?: Effect } {
+  const what = `stop:${agent.id}`;
+  const armed = model.confirm;
+  if (armed !== null && armed.until > now && armed.what === what) return stopAgent({ ...model, confirm: null }, agent, now, locale);
+  return { model: { ...model, message: null, confirm: { what, label: tr(messages, locale, "confirm.stop"), until: now + CONFIRM_MS } } };
+}
+
 function stopAgent(model: HubModel, agent: AgentInfo, now: number, locale: Locale): { model: HubModel; effect: Effect } {
   return {
     model: say(withReport(model, patchAgent(model.report, agent.id, { busy: false, activity: "", stopped: true })), tr(messages, locale, "ack.stopped"), now),
@@ -612,9 +906,9 @@ export function pickerEntries(model: HubModel, locale: Locale): PickerEntry[] {
 // ---- native contextual menu -----------------------------------------------
 
 export const MENU = {
-  agent: 1, home: 2, printer: 3, inbox: 4, help: 5, refresh: 6, overview: 7,
+  agent: 1, home: 2, printer: 3, inbox: 4, help: 5, refresh: 6, overview: 7, brief: 8, briefRefresh: 50,
   stop: 10, newSession: 11, switchAgent: 12, allow: 13, deny: 14, quiet: 15,
-  toggle: 20, pauseResume: 30, cancelPrint: 31, markAll: 40,
+  toggle: 20, detail: 21, pauseResume: 30, cancelPrint: 31, markAll: 40, discardVoice: 60,
 } as const;
 
 export interface MenuItemSpec { readonly id: number; readonly label: string }
@@ -625,18 +919,25 @@ export interface MenuSpec {
 }
 
 /** Actions of the current page. At most 6, verb labels, ids non-zero. */
-export function menuFor(model: HubModel, locale: Locale): MenuSpec {
+export function menuFor(model: HubModel, locale: Locale, enabled: boolean = SIDE_MENU): MenuSpec {
+  if (!enabled) return { key: "none", items: [] };
   const item = (id: number, key: string): MenuItemSpec => ({ id, label: tr(messages, locale, key) });
   const card = model.screen === "agent" && pendingApproval(model.report) !== undefined;
   let items: MenuItemSpec[];
+  // A voice note on screen: only the explicit (armed) discard and help.
+  if (model.voice !== null && voiceOwns(model)) {
+    return { key: `${locale}:voice`, items: [item(MENU.discardVoice, "menu.discardVoice"), item(MENU.help, "menu.help")] };
+  }
   if (model.screen === "root") {
-    items = [item(MENU.agent, "menu.agent"), item(MENU.home, "menu.home"), item(MENU.printer, "menu.printer"), item(MENU.inbox, "menu.inbox"), item(MENU.refresh, "menu.refresh"), item(MENU.help, "menu.help")];
+    items = [item(MENU.agent, "menu.agent"), item(MENU.home, "menu.home"), item(MENU.printer, "menu.printer"), item(MENU.inbox, "menu.inbox"), item(MENU.brief, "menu.brief"), item(MENU.help, "menu.help")];
   } else if (model.screen === "agent") {
     items = card
       ? [item(MENU.allow, "menu.allow"), item(MENU.deny, "menu.deny"), item(MENU.help, "menu.help")]
       : [item(MENU.stop, "menu.stop"), item(MENU.newSession, "menu.newSession"), item(MENU.switchAgent, "menu.switchAgent"), item(MENU.quiet, "menu.quiet"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
   } else if (model.screen === "home") {
-    items = [item(MENU.toggle, "menu.toggle"), item(MENU.refresh, "menu.refresh"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
+    items = [item(MENU.toggle, "menu.toggle"), item(MENU.detail, "menu.detail"), item(MENU.refresh, "menu.refresh"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
+  } else if (model.screen === "brief") {
+    items = [item(MENU.briefRefresh, "menu.briefRefresh"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
   } else if (model.screen === "printer") {
     items = [item(MENU.pauseResume, "menu.pauseResume"), item(MENU.cancelPrint, "menu.cancelPrint"), item(MENU.refresh, "menu.refresh"), item(MENU.overview, "menu.overview"), item(MENU.help, "menu.help")];
   } else {
@@ -648,7 +949,16 @@ export function menuFor(model: HubModel, locale: Locale): MenuSpec {
 /** A menu item was chosen on the glasses. Menu clicks arrive regardless of the capture container. */
 export function applyMenu(model: HubModel, itemId: number, now: number, locale: Locale = "de"): { model: HubModel; effect?: Effect } {
   const t = (key: string): string => tr(messages, locale, key);
-  if (model.recording || model.voice !== null) return { model: say(model, t("ack.busyVoice"), now) };
+  if (model.recording) return { model: say(model, t("ack.busyVoice"), now) };
+  if (model.voice !== null && voiceOwns(model)) {
+    if (itemId === MENU.help) return { model: { ...model, help: true, picker: null } };
+    if (itemId !== MENU.discardVoice) return { model: say(model, t("ack.busyVoice"), now) };
+    // QIS v1.2 #3: the first click arms ("Nochmal tippen = verwerfen"); the next tap or a second click within CONFIRM_MS discards.
+    const armed = model.confirm;
+    if (armed !== null && armed.until > now && armed.what === DISCARD_VOICE) return { model: say({ ...model, confirm: null, voice: null }, t("voice.discarded"), now) };
+    return { model: { ...model, message: null, confirm: { what: DISCARD_VOICE, label: t("confirm.discard"), until: now + CONFIRM_MS } } };
+  }
+  if (itemId === MENU.discardVoice) return { model: say(model, t("ack.nothing"), now) };
   const base: HubModel = { ...model, help: false, picker: null };
   const report = base.report;
   switch (itemId) {
@@ -659,17 +969,22 @@ export function applyMenu(model: HubModel, itemId: number, now: number, locale: 
     case MENU.home: return openScreen(base, "home", now, locale, true);
     case MENU.printer: return openScreen(base, "printer", now, locale, true);
     case MENU.inbox: return openScreen(base, "inbox", now, locale, true);
+    case MENU.brief: return openScreen(base, "brief", now, locale, true);
+    case MENU.briefRefresh: return decide({ ...base, screen: "brief" }, "click", now, locale);
     case MENU.allow:
     case MENU.deny: {
       const card = base.screen === "agent" ? pendingApproval(report) : undefined;
       if (card === undefined) return { model: say(base, t("ack.nothing"), now) };
-      const decision = itemId === MENU.allow ? "allow" : "deny";
-      return { model: say({ ...base, cardIndex: 0 }, t(decision === "allow" ? "ack.allowed" : "ack.denied"), now), effect: { kind: "approve", cardId: card.id, decision } };
+      // The menu only picks the row and arms it; the answer leaves with the next tap (QIS v1).
+      const index = itemId === MENU.allow ? 0 : 1;
+      const choice = cardChoices(card, locale)[index];
+      return { model: { ...base, cardIndex: index, message: null, confirm: { what: `approve:${card.id}:${index}`, label: choice?.label ?? "", until: now + CONFIRM_MS } } };
     }
     case MENU.stop: {
       const agent = selectedAgent(base);
       if (agent === undefined || !agent.busy) return { model: say(base, t("ack.noRun"), now) };
-      return stopAgent(base, agent, now, locale);
+      // Arm only; the next tap on the open session stops (QIS v1).
+      return armStop({ ...base, screen: "agent", agentView: "ask", chatScroll: 0 }, agent, now, locale);
     }
     case MENU.newSession: {
       const agent = selectedAgent(base);
@@ -685,6 +1000,12 @@ export function applyMenu(model: HubModel, itemId: number, now: number, locale: 
       if (report.agents.length < 2) return { model: say(base, t("ack.oneAgent"), now) };
       return { model: { ...base, screen: "agent", agentView: "list", message: null } };
     case MENU.toggle: return decide(base, "click", now, locale);
+    case MENU.detail: {
+      if (base.screen !== "home") return { model };
+      const out = decide(base, "longPress", now, locale);
+      // Nothing to dim or move here: say so instead of the refresh a hold would be.
+      return out.effect?.kind === "refresh" ? { model: say(base, t("zh.noAction"), now) } : out;
+    }
     case MENU.pauseResume:
     case MENU.cancelPrint: {
       if (report.printer.job === null) return { model: say(base, t("ack.noJob"), now) };
@@ -705,7 +1026,21 @@ export function applyMenu(model: HubModel, itemId: number, now: number, locale: 
 export function withVoiceHeard(model: HubModel, agentId: string, text: string, alreadyAsked: boolean, now: number, locale: Locale = "de"): HubModel {
   if (model.voice === null || model.voice.state !== "transcribing" || model.voice.agentId !== agentId) return model;
   if (alreadyAsked) return say({ ...model, voice: null }, tr(messages, locale, "voice.sent", { text: fit(text, 30) }), now);
-  return { ...model, voice: { state: "confirm", agentId, text }, message: null };
+  const parked = model.voice.parked === true;
+  // Parked: the wearer is elsewhere; the transcript waits in that conversation (no footer takeover).
+  return { ...model, voice: parked ? { state: "confirm", agentId, text, parked: true } : { state: "confirm", agentId, text }, ...(parked ? {} : { message: null }) };
+}
+
+/** The live recogniser heard more while the wearer still holds: shown on the listening page. */
+export function withLiveText(model: HubModel, text: string): HubModel {
+  if (!model.recording || (model.liveText ?? "") === text) return model;
+  return { ...model, liveText: text };
+}
+
+/** Rows of the listening page: the newest words of the live transcript (tail when it is longer than the page). */
+export function liveRows(text: string, rows: number): string[] {
+  const lines = wrap(text);
+  return lines.slice(Math.max(0, lines.length - rows));
 }
 
 /** The voice note failed or came out empty. */
@@ -855,7 +1190,7 @@ function printerSummary(printer: PrinterSnapshot, locale: Locale): string {
   return tr(messages, locale, `printer.state.${printer.state}`);
 }
 
-function rootRows(report: HubReport, selected: number, locale: Locale, now: number): string[] {
+function rootRows(report: HubReport, selected: number, locale: Locale, now: number, brief: Brief | null | undefined = report.brief, setupHint = false): string[] {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const waiting = waitingAgents(report);
   const online = report.agents.filter((agent) => agent.online).length;
@@ -863,22 +1198,27 @@ function rootRows(report: HubReport, selected: number, locale: Locale, now: numb
   const extra = (busy > 0 ? t("root.busyN", { n: busy }) : "") + (report.approvals.length > 0 ? t("root.waitN", { n: report.approvals.length }) : "");
   const dots = report.agents.slice(0, 8).map((agent) => agentDot(agent, waiting)).join("");
   const agentRow = report.agents.length === 0 ? t("root.agentNone") : t("root.agent", { dots, online, total: report.agents.length, extra });
+  const homeView = report.homeView !== undefined && report.home.demo !== true ? report.homeView : null;
   const homeRow = report.home.demo === true ? t("root.homeNotConfigured")
-    : report.home.devices.length === 0 ? t("root.homeNone")
-      : t("root.homeLights", { lights: homeSummary(report.home, locale), count: report.home.devices.length });
+    : homeView !== null && Object.keys(homeView.entities).length > 0 ? t("root.homeLights", viewSummary(homeView, locale))
+      : report.home.devices.length === 0 ? t("root.homeNone")
+        : t("root.homeLights", { lights: homeSummary(report.home, locale), count: report.home.devices.length });
   const printerRow = report.printer.demo === true ? t("root.printerNotConfigured") : t("root.printer", { state: printerSummary(report.printer, locale) });
-  const menu = [agentRow, homeRow, printerRow, t("root.inbox", { count: unreadCount(report.inbox) })].map((row, index) => marked(row, index === selected));
+  const briefRow = t("root.brief", { summary: briefSummary(brief, locale, now) });
+  // The rows follow ROOT_ITEMS; help is the last row while there is no side menu.
+  const menu = [agentRow, homeRow, printerRow, t("root.inbox", { count: unreadCount(report.inbox) }), briefRow, ...(SIDE_MENU ? [] : [t("root.help")])].map((row, index) => marked(row, index === selected));
 
-  // Up to three lines about what needs attention right now.
+  // What needs attention right now (two lines below the five rows; the agent row counts the busy ones).
   const notes: string[] = [];
+  if (setupHint) notes.push("  " + t("root.demoHint"));
   for (const card of report.approvals.slice(0, 2)) notes.push(fit("  " + t("root.waits", { agent: card.agentId, what: card.title })));
+  const alert = report.inbox.events.find((event) => !event.read && (event.status === "error" || (event.status === "waiting" && report.approvals.length === 0)));
+  if (alert !== undefined) notes.push(fit("  " + t("root.alert", { provider: alert.provider, title: alert.title })));
   for (const agent of report.agents.filter((entry) => entry.busy && !waiting.has(entry.id))) {
     notes.push(fit("  " + t("root.working", { agent: agent.label, what: busyShort(agent, locale, now) })));
   }
-  const alert = report.inbox.events.find((event) => !event.read && (event.status === "error" || (event.status === "waiting" && report.approvals.length === 0)));
-  if (alert !== undefined) notes.push(fit("  " + t("root.alert", { provider: alert.provider, title: alert.title })));
   if (notes.length === 0) notes.push("  " + (report.agents.length === 0 ? t("root.hintNoAgents") : t("root.hintQuiet")));
-  return [...menu, ...notes.slice(0, 3).map((note) => fit(note))];
+  return [...menu, ...notes.slice(0, 7 - menu.length).map((note) => fit(note))];
 }
 
 function eventMark(event: AgentEvent, locale: Locale): string {
@@ -906,8 +1246,11 @@ function inboxRows(inbox: InboxSnapshot, locale: Locale): string[] {
 export function statusLine(model: HubModel, locale: Locale): string {
   const report = model.report;
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
+  const zh = model.screen === "home" ? zhOf(model) : null;
+  const area = zh !== null && zh.level !== "list" ? homeViewOf(report)?.areas.find((entry) => entry.id === zh.areaId)?.name : undefined;
   const parts = [
-    t(`screen.${model.screen}`),
+    "QUIET HUB",
+    ...(model.screen === "root" ? [] : [area !== undefined ? `${t("screen.home")} · ${fit(area, 14)}` : t(`screen.${model.screen}`)]),
     model.link !== null ? t(`link.short.${model.link.problem}`) : t(`link.short.${report.connection}`),
     t("status.new", { n: unreadCount(report.inbox) }),
     t("status.busy", { n: report.agents.filter((agent) => agent.busy).length }),
@@ -929,29 +1272,54 @@ function linkRows(link: LinkStatus, locale: Locale): string[] {
   return rows;
 }
 
+/** QIS v1 help: the four gestures in footer order (Tippen, Wischen, Halten, 2×), the menu and what the app needs. */
 function helpRows(locale: Locale): string[] {
-  return ["help.title", "help.swipe", "help.tap", "help.double", "help.hold", "help.menu", "help.ring"].map((key) => tr(messages, locale, key));
+  return ["help.title", "help.tap", "help.swipe", "help.hold", "help.double", "help.menu", "help.needs"].map((key) => tr(messages, locale, key));
+}
+
+/** Gestures a footer names, as message keys of the actions ("f.open"). */
+interface FooterKeys { readonly tap?: string; readonly swipe?: string; readonly hold?: string }
+
+/** Footer that is only a hint and the way out (nothing to tap here). */
+function footer_(locale: Locale, end: FooterEnd, lead: string): string {
+  return footer(locale, {}, end, lead);
+}
+
+/** Footer through the shared QIS builder: fixed order, `2× = zurück|Ende` last, always one row wide. */
+function ft(locale: Locale, keys: FooterKeys, end: FooterEnd = "back", lead = ""): string {
+  const parts: { tap?: string; swipe?: string; hold?: string } = {};
+  if (keys.tap !== undefined) parts.tap = tr(messages, locale, keys.tap);
+  if (keys.swipe !== undefined) parts.swipe = tr(messages, locale, keys.swipe);
+  if (keys.hold !== undefined) parts.hold = tr(messages, locale, keys.hold);
+  return footer(locale, parts as FooterParts, end, lead);
 }
 
 export function buildView(model: HubModel, locale: Locale, now: number): ScreenView {
   const report = model.report;
-  const askAgent = model.screen === "agent" && model.agentView === "ask" && report.approvals.length === 0 && model.voice === null && !model.recording && !model.help && model.picker === null ? selectedAgent(model) : undefined;
-  const header = askAgent !== undefined ? chatHeader(askAgent, locale, now) : statusLine(model, locale);
+  const voiceShown = model.voice !== null && voiceOwns(model);
+  const askAgent = model.screen === "agent" && model.agentView === "ask" && report.approvals.length === 0 && !voiceShown && !model.recording && !model.help && model.picker === null ? selectedAgent(model) : undefined;
+  const briefShown = model.screen === "brief" && !model.help && model.picker === null && !voiceShown && !model.recording && !linkBlocks(model.link);
+  const header = askAgent !== undefined ? chatHeader(askAgent, locale, now) : briefShown ? briefHeader(model.brief, locale, now) : statusLine(model, locale);
 
   let body: readonly string[];
   let footer: string;
-  const voiceAgent = model.voice === null ? undefined : report.agents.find((agent) => agent.id === model.voice?.agentId);
+  // The Zuhause page is a split page (list left, state right) whatever overlay shows; an overlay leaves the column empty.
+  let side: readonly string[] | undefined = model.screen === "home" ? [] : undefined;
+  const voiceAgent = !voiceShown ? undefined : report.agents.find((agent) => agent.id === model.voice?.agentId);
   if (model.help) {
     body = helpRows(locale);
-    footer = tr(messages, locale, "help.footer");
+    footer = ft(locale, { tap: "f.close" });
   } else if (model.picker !== null) {
     const entries = pickerEntries(model, locale);
     body = [tr(messages, locale, "picker.title"), ...windowed(entries.map((entry, i) => marked(entry.label, i === model.picker)), model.picker, 6)];
-    footer = tr(messages, locale, "picker.help");
+    footer = ft(locale, { tap: "f.open", swipe: "f.select" });
   } else if (model.recording) {
-    body = ["", tr(messages, locale, "voice.recording"), tr(messages, locale, "voice.recordingHint")];
+    const live = model.liveText ?? "";
+    body = live === ""
+      ? ["", tr(messages, locale, "voice.recording"), tr(messages, locale, "voice.recordingHint")]
+      : [tr(messages, locale, "voice.live"), ...liveRows(live, 6)];
     footer = tr(messages, locale, "agent.record");
-  } else if (model.voice !== null) {
+  } else if (model.voice !== null && voiceShown) {
     const name = fit(`${voiceAgent?.online === false ? "○" : "●"} ${voiceAgent?.label ?? model.voice.agentId}`);
     if (model.voice.state === "transcribing") {
       body = [name, "", tr(messages, locale, "voice.processing")];
@@ -961,53 +1329,71 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       const from = Math.min(model.voice.scroll ?? 0, Math.max(0, lines.length - VOICE_ROWS));
       const more = lines.length > VOICE_ROWS ? ` ${from + 1}-${Math.min(lines.length, from + VOICE_ROWS)}/${lines.length}` : "";
       body = [name, `${tr(messages, locale, "voice.understood")}${more}`, ...lines.slice(from, from + VOICE_ROWS)];
-      footer = tr(messages, locale, "voice.confirmHelp");
+      footer = ft(locale, SIDE_MENU ? { tap: "f.send" } : { tap: "f.send", hold: "f.discard" });
     }
   } else if (linkBlocks(model.link) && model.link !== null) {
     body = linkRows(model.link, locale);
-    footer = tr(messages, locale, model.link.problem === "missing" || model.link.problem === "insecure" ? "link.footerMissing" : "link.footerRetry");
+    const end: FooterEnd = model.screen === "root" ? "exit" : "back";
+    footer = model.link.problem === "missing" || model.link.problem === "insecure"
+      ? footer_(locale, end, tr(messages, locale, "f.scanQr"))
+      : ft(locale, { tap: "f.again" }, end);
   } else if (model.screen === "root") {
-    body = rootRows(report, model.rootSelected, locale, now);
-    footer = tr(messages, locale, "root.help");
+    body = rootRows(report, model.rootSelected, locale, now, model.brief ?? report.brief, model.setupHint === true);
+    footer = ft(locale, { tap: "f.open", swipe: "f.select" }, "exit");
   } else if (model.screen === "agent") {
     const card = pendingApproval(report);
     const agent = selectedAgent(model);
     if (card !== undefined) {
       body = approvalRows(card, report.approvals.length, model.cardIndex ?? 0, locale);
-      footer = tr(messages, locale, "approval.hint");
+      footer = ft(locale, { tap: "f.send", swipe: "f.select" });
     } else if (model.agentView === "list") {
       body = agentListRows(model, locale, now);
-      footer = tr(messages, locale, "agent.list");
+      footer = ft(locale, { tap: "f.sessions", swipe: "f.select" });
     } else if (model.agentView === "sessions") {
       body = sessionRows(model, locale);
-      footer = tr(messages, locale, "sessions.help");
+      footer = ft(locale, { tap: "f.open", swipe: "f.select" });
     } else {
       body = agent === undefined ? [tr(messages, locale, "agent.none")] : chatRows(model, agent, locale);
-      footer = tr(messages, locale, agent?.busy === true ? (model.origin === "inbox" ? "agent.runningBack" : "agent.running")
-        : agent?.stopped === true ? "agent.stoppedHelp"
-          : (model.chatScroll ?? 0) > 0 ? "chat.scrolledHelp" : "chat.help");
+      footer = agent?.busy === true ? ft(locale, { tap: "f.stop" })
+        : (model.chatScroll ?? 0) > 0 ? ft(locale, { tap: "f.newest", swipe: "f.scroll" })
+          : ft(locale, { tap: "f.send", swipe: "f.select", hold: "f.speak" });
     }
   } else if (model.screen === "home") {
-    body = homeRows(report.home, locale);
-    footer = tr(messages, locale, "home.select");
+    const view = homeViewOf(report);
+    if (view === null || (view.legacy === true && view.favorites.length === 0)) {
+      body = homeRows(report.home, locale);
+      footer = ft(locale, { tap: "f.switch", swipe: "f.select" });
+    } else {
+      const zh = zhOf(model);
+      body = listRows(zh, view, locale);
+      side = sideRows(zh, view, locale);
+      const detail = zh.level === "detail" && zh.detailId !== null ? view.entities[zh.detailId] : undefined;
+      footer = detail === undefined ? ft(locale, { tap: "f.switch", swipe: "f.select", hold: "f.detail" })
+        : typeof zh.choice === "number" ? ft(locale, { tap: "f.run", swipe: "f.select" })
+          : ft(locale, { tap: "f.choose", swipe: "f.device" });
+    }
+  } else if (model.screen === "brief") {
+    const pages = briefPageRows(model, locale, now);
+    const page = Math.max(0, Math.min(model.briefPage ?? 0, pages.length - 1));
+    body = pages[page] ?? [];
+    footer = briefFooter(page, pages.length, locale);
   } else if (model.screen === "printer") {
     body = printerRows(report.printer, locale);
-    footer = tr(messages, locale, "printer.select");
+    footer = ft(locale, { tap: "f.action", swipe: "f.select" });
   } else {
     body = inboxRows(report.inbox, locale);
-    footer = tr(messages, locale, "inbox.help");
+    footer = ft(locale, { tap: "f.open", swipe: "f.select" });
   }
 
   if (model.confirm !== null && model.confirm.until > now) {
-    const left = Math.ceil((model.confirm.until - now) / 1000);
-    footer = `${tr(messages, locale, "confirm.label", { label: model.confirm.label })} ${tr(messages, locale, "confirm.countdown", { left })}`;
-  } else if (model.message !== null && model.message.until > now && model.voice === null && !model.recording) {
+    footer = armedFooter(locale, model.confirm.label);
+  } else if (model.message !== null && model.message.until > now && !voiceShown && !model.recording) {
     footer = model.message.text;
   }
   // Recording wins over everything: the user must always see that the mic is on.
   if (model.recording) footer = tr(messages, locale, "agent.record");
 
-  return { header, body: body.slice(0, 7), footer: fit(footer) };
+  return { header, body: body.slice(0, 7), footer: fit(footer), ...(side === undefined ? {} : { side }) };
 }
 
 /** What stands in for an empty question list: suggestions on their way, none, or no saved questions. */
@@ -1062,7 +1448,7 @@ function chatHeader(agent: AgentInfo, locale: Locale, now: number): string {
   const doing = agent.busy
     ? workingLine(agent, locale, now).replace(/^» /, "")
     : `${agent.online ? "●" : "○"} ${agent.label}${title ? ` · ${title}` : ""}`;
-  return `${fit(doing, 40)} · ${clock}`;
+  return fit(`QUIET HUB · ${fit(doing, 30)} · ${clock}`);
 }
 
 /** The whole conversation as rows, oldest first; the steps while it works, the suggestions at its end. */

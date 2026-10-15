@@ -1,5 +1,6 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { ft } from "../footer";
 import { bigScene, minutesNumber } from "../glasses/board";
 import { rideStopName } from "../glasses/view";
 import { clock, departureOf, firstTransit, type Journey, type WalkLeg } from "./journey";
@@ -29,7 +30,7 @@ export function planScene(journeys: readonly Journey[], selected: number, now: D
     .filter((_, i) => i !== index)
     .slice(0, 2)
     .map((journey) => journeyRow(journey, false, now, locale).trim());
-  const footer = `${index + 1}/${shown.length} · ${t(locale, "r.footerPlansBig")}`;
+  const footer = ft(locale, "back", { tap: "go", swipe: "select" }, `${index + 1}/${shown.length}`);
 
   if (!transit) {
     const minutes = Math.max(1, Math.round((chosen.end.getTime() - chosen.start.getTime()) / 60000));

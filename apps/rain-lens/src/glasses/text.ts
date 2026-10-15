@@ -1,8 +1,26 @@
-import { CreateStartUpPageContainer, ImageContainerProperty, ImageRawDataUpdate, ImageRawDataUpdateResult, RebuildPageContainer, StartUpPageCreateResult, TextContainerProperty, TextContainerUpgrade, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { CreateStartUpPageContainer, ImageContainerProperty, ImageRawDataUpdate, ImageRawDataUpdateResult, MenuContainerProperty, MenuItemProperty, RebuildPageContainer, StartUpPageCreateResult, TextContainerProperty, TextContainerUpgrade, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { CHART } from "../weather/chart";
 import { ICONS } from "../weather/icons";
 import { RADAR_TILES } from "../radar/layout";
 import type { ImageTarget } from "./lane";
+import { tileSlots } from "../screen/sender";
+
+/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec {
+  /** Changes exactly when the glasses need a different menu (=> one rebuild). */
+  readonly key: string;
+  readonly items: readonly MenuItemSpec[];
+}
+/** The side menu every page of the app carries (weather, radar, cockpit); set before a page is built. */
+let pageMenu: MenuSpec | null = null;
+export function setPageMenu(menu: MenuSpec | null): void { pageMenu = menu; }
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel and Quiet Hub. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({ menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })) });
+}
+const withMenu = (): { menuObject?: MenuContainerProperty } => { const menuObject = buildMenu(pageMenu); return menuObject === undefined ? {} : { menuObject }; };
 
 /**
  * One fixed layout for every view: header, four body rows beside the icon
@@ -25,6 +43,7 @@ const contents = (view: TextView): string[] => [view.header, view.body.join("\n"
 function page(view: TextView): CreateStartUpPageContainer {
   const content = contents(view);
   return new CreateStartUpPageContainer({
+    ...withMenu(),
     containerTotalNum: parts.length + 2,
     textObject: parts.map((part, index) => new TextContainerProperty({
       containerID: part.id, containerName: part.name, xPosition: part.x, yPosition: part.y, width: part.width, height: part.height,
@@ -34,9 +53,25 @@ function page(view: TextView): CreateStartUpPageContainer {
   });
 }
 
+/**
+ * Every call into the glasses is bounded. Draws run one after another, so one
+ * answer that never comes (a Bluetooth write lost on the way) used to freeze
+ * the display for good on its last page. A call that times out counts as
+ * failed: the caller marks the page broken and the next draw rebuilds it.
+ */
+export const PAGE_CALL_MS = 8_000;
+export const TEXT_CALL_MS = 5_000;
+export const IMAGE_CALL_MS = 10_000;
+
+function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** One image write; the lane decides when. */
 export async function sendImage(bridge: EvenAppBridge, target: ImageTarget, imageData: Uint8Array): Promise<boolean> {
-  const result = await bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: target.id, containerName: target.name, imageData }));
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: target.id, containerName: target.name, imageData })), IMAGE_CALL_MS, "image " + target.name);
   return result === ImageRawDataUpdateResult.success;
 }
 
@@ -47,19 +82,19 @@ async function installPage(bridge: EvenAppBridge, next: CreateStartUpPageContain
   sentLength.clear();
   if (started.has(bridge)) {
     try {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...next }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...next })), PAGE_CALL_MS, "rebuild");
       return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
     } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
   }
   try {
     // Measured on real glasses: the first page needs one rebuild call before the creation
     // (it registers input); the result is ignored.
-    await bridge.rebuildPageContainer(new RebuildPageContainer({ ...next }));
+    await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...next })), PAGE_CALL_MS, "rebuild");
   } catch {
     // Expected to fail before the first page.
   }
   try {
-    const result = await bridge.createStartUpPageContainer(next);
+    const result = await bounded(bridge.createStartUpPageContainer(next), PAGE_CALL_MS, "create page");
     if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
     return { ok: false, reason: `create:${String(result)}` };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
@@ -93,7 +128,7 @@ export async function updateTextPage(bridge: EvenAppBridge, view: TextView, prev
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index];
       if (!part || content[index] === before[index]) continue;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, ...guarded(part.id, content[index] ?? "") }));
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, ...guarded(part.id, content[index] ?? "") })), TEXT_CALL_MS, "text " + part.name);
     }
     return { ok: true };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
@@ -116,6 +151,7 @@ const radarContents = (view: RadarView): string[] => [view.header, view.note, vi
 function radarPage(view: RadarView): CreateStartUpPageContainer {
   const content = radarContents(view);
   return new CreateStartUpPageContainer({
+    ...withMenu(),
     containerTotalNum: radarParts.length + RADAR_TILES.length,
     textObject: radarParts.map((part, index) => new TextContainerProperty({
       containerID: part.id, containerName: part.name, xPosition: part.x, yPosition: part.y, width: part.width, height: part.height,
@@ -136,8 +172,28 @@ export async function updateRadarText(bridge: EvenAppBridge, view: RadarView, pr
     for (let index = 0; index < radarParts.length; index += 1) {
       const part = radarParts[index];
       if (!part || content[index] === before[index]) continue;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, ...guarded(part.id, content[index] ?? "") }));
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: part.id, containerName: part.name, ...guarded(part.id, content[index] ?? "") })), TEXT_CALL_MS, "text " + part.name);
     }
     return { ok: true };
   } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
+}
+
+/**
+ * The cockpit page: the whole display is four image tiles (2 x 2, drawn by
+ * src/cockpit), plus one empty text container under them that owns the
+ * input (a page needs one container capturing events).
+ */
+export const COCKPIT_TILES = tileSlots(21, "cockpit");
+
+function cockpitPage(): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer({
+    ...withMenu(),
+    containerTotalNum: 1 + COCKPIT_TILES.length,
+    textObject: [new TextContainerProperty({ containerID: 20, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: 576, height: 288, paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " " })],
+    imageObject: COCKPIT_TILES.map((image, index) => new ImageContainerProperty({ containerID: image.id, containerName: image.name, xPosition: image.x, yPosition: image.y, width: image.width, height: image.height, zOrderIndex: index + 2 })),
+  });
+}
+
+export async function createCockpitPage(bridge: EvenAppBridge): Promise<RenderResult> {
+  return installPage(bridge, cockpitPage());
 }

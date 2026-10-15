@@ -7,7 +7,8 @@
  * or the English screenshots would show German content.
  */
 import type { Locale } from "../i18n";
-import type { AgentInfo, HubApi, HubReport, SessionInfo } from "./types";
+import type { AgentInfo, Brief, HomeEntity, HomeView, HubApi, HubReport, SessionInfo } from "./types";
+import { applyHomeAction } from "../hub/zuhause";
 
 interface DemoDevice {
   readonly id: string;
@@ -64,6 +65,42 @@ const STRINGS: Record<Locale, DemoStrings> = {
   },
 };
 
+/** The "Zuhause" view of the demo: favourites, three areas with groups, sensors and a lock (two-step). */
+export function demoHomeView(locale: Locale = "de"): HomeView {
+  const de = locale === "de";
+  const n = (value: number, unit: string): string => `${String(value).replace(".", de ? "," : ".")} ${unit}`;
+  const list: HomeEntity[] = [
+    { id: "scene.abend", name: de ? "Abendlicht" : "Evening light", kind: "scene", state: "scening", on: false, available: true },
+    { id: "light.buero", name: de ? "Büro Decke" : "Office ceiling", kind: "light", state: "on", on: true, available: true, brightness: 60 },
+    { id: "lock.haustuer", name: de ? "Haustür" : "Front door", kind: "lock", state: "locked", on: false, available: true, sensitive: true },
+    { id: "sensor.aussen", name: de ? "Außen" : "Outside", kind: "sensor", state: "8.5", on: false, available: true, sensorClass: "temperature", value: n(8.5, "°C") },
+    { id: "light.wz_decke", name: de ? "Decke" : "Ceiling", kind: "light", state: "on", on: true, available: true, brightness: 80 },
+    { id: "light.wz_lampe", name: de ? "Stehlampe" : "Floor lamp", kind: "light", state: "off", on: false, available: true, brightness: 0 },
+    { id: "light.wz_regal", name: de ? "Regal" : "Shelf", kind: "light", state: "off", on: false, available: true, brightness: 0 },
+    { id: "cover.wz_links", name: de ? "Rollo links" : "Blind left", kind: "cover", state: "open", on: true, available: true, position: 100 },
+    { id: "cover.wz_rechts", name: de ? "Rollo rechts" : "Blind right", kind: "cover", state: "closed", on: false, available: true, position: 0 },
+    { id: "sensor.wz_temp", name: de ? "Temperatur" : "Temperature", kind: "sensor", state: "21.5", on: false, available: true, sensorClass: "temperature", value: n(21.5, "°C") },
+    { id: "sensor.wz_hum", name: de ? "Feuchte" : "Humidity", kind: "sensor", state: "48", on: false, available: true, sensorClass: "humidity", value: "48 %" },
+    { id: "binary_sensor.wz_motion", name: de ? "Bewegung" : "Motion", kind: "motion", state: "on", on: true, available: true },
+    { id: "switch.drucker", name: de ? "Drucker" : "Printer", kind: "switch", state: "on", on: true, available: true },
+    { id: "sensor.buero_batt", name: de ? "Fensterkontakt Akku" : "Window sensor battery", kind: "sensor", state: "14", on: false, available: true, sensorClass: "battery", value: "14 %" },
+    { id: "light.sz", name: de ? "Nachtlicht" : "Night light", kind: "light", state: "off", on: false, available: true, brightness: 0 },
+    { id: "cover.sz", name: de ? "Rollo" : "Blind", kind: "cover", state: "closed", on: false, available: true, position: 0 },
+    { id: "group:wohnzimmer:light", name: "*lights", kind: "light", state: "1/3", on: true, available: true, group: true, members: ["light.wz_decke", "light.wz_lampe", "light.wz_regal"] },
+    { id: "group:wohnzimmer:cover", name: "*covers", kind: "cover", state: "1/2", on: true, available: true, group: true, members: ["cover.wz_links", "cover.wz_rechts"] },
+  ];
+  return {
+    favorites: ["scene.abend", "light.buero", "lock.haustuer", "sensor.aussen"],
+    areas: [
+      { id: "wohnzimmer", name: de ? "Wohnzimmer" : "Living room", entities: ["group:wohnzimmer:light", "group:wohnzimmer:cover", "light.wz_decke", "light.wz_lampe", "light.wz_regal", "cover.wz_links", "cover.wz_rechts", "sensor.wz_temp", "sensor.wz_hum", "binary_sensor.wz_motion"] },
+      { id: "buero", name: de ? "Büro" : "Office", entities: ["light.buero", "switch.drucker", "sensor.buero_batt"] },
+      { id: "schlafzimmer", name: de ? "Schlafzimmer" : "Bedroom", entities: ["light.sz", "cover.sz"] },
+    ],
+    entities: Object.fromEntries(list.map((entity) => [entity.id, entity])),
+    sensitive: true,
+  };
+}
+
 function demoAgents(strings: DemoStrings): AgentInfo[] {
   const base = { error: null, activity: "", lastQuestion: null, suggestions: [] as string[], busy: false };
   return [
@@ -99,12 +136,14 @@ export function demoReport(locale: Locale = "de", scene: DemoScene = "default"):
   }
   if (scene === "long") {
     const text = de
-      ? "Das Release 0.5.0 bringt eine klarere Übersicht mit Statuszeile, ein natives Kontextmenü pro Seite, die Sitzungsauswahl für jeden Agenten und eine Bestätigung nach der Spracheingabe. Lange Antworten werden in Seiten geteilt: wischen blättert, am Ende folgen die Fragen. Werkzeugaufrufe erscheinen als eine Zeile. Freigaben zeigen Werkzeug und Befehl und werden mit Tippen erlaubt oder mit Doppeltippen abgelehnt. Der Ring öffnet mit Doppeltippen die Seitenwahl."
-      : "Release 0.5.0 brings a clearer overview with a status line, a native contextual menu per page, a session picker for every agent and a confirmation after voice input. Long answers are split into pages: swiping turns the page, the questions follow at the end. Tool calls show as one line. Approvals show tool and command and are allowed with a tap or denied with a double tap. The ring opens the page picker with a double tap.";
+      ? "Das Release 0.5.0 bringt eine klarere Übersicht mit Statuszeile, ein natives Kontextmenü pro Seite, die Sitzungsauswahl für jeden Agenten und eine Bestätigung nach der Spracheingabe. Lange Antworten werden in Seiten geteilt: wischen blättert, am Ende folgen die Fragen. Werkzeugaufrufe erscheinen als eine Zeile. Freigaben zeigen Werkzeug und Befehl und werden in einer Liste gewählt und mit zweitem Tippen gesendet. Der Ring öffnet mit 2× die Seitenwahl."
+      : "Release 0.5.0 brings a clearer overview with a status line, a native contextual menu per page, a session picker for every agent and a confirmation after voice input. Long answers are split into pages: swiping turns the page, the questions follow at the end. Tool calls show as one line. Approvals show tool and command and are chosen in a list and sent with a second tap. The ring opens the page picker with 2×.";
     return { ...report, agents: patchAgent("hermes-spark", { answer: text, lastQuestion: de ? "Was ist neu?" : "What is new?" }) };
   }
   if (scene === "empty") {
-    return { ...report, agents: [], agent: { ...report.agent, provider: "Hermes", suggestions: [] }, home: { selected: 0, devices: [] }, printer: { ...report.printer, job: null, state: "ready", progress: 0 }, inbox: { selected: 0, events: [] } };
+    const { homeView: _none, ...rest } = report;
+    void _none;
+    return { ...rest, agents: [], agent: { ...report.agent, provider: "Hermes", suggestions: [] }, home: { selected: 0, devices: [] }, printer: { ...report.printer, job: null, state: "ready", progress: 0 }, inbox: { selected: 0, events: [] } };
   }
   if (scene === "alerts") {
     const mk = (id: string, provider: string, status: "done" | "waiting" | "error", title: string, detail: string | null, read: boolean) => ({ id, provider, status, title, detail, createdAt: new Date(0).toISOString(), read, agentId: provider, sessionId: `s-${id}` });
@@ -115,6 +154,34 @@ export function demoReport(locale: Locale = "de", scene: DemoScene = "default"):
     ] } };
   }
   return report;
+}
+
+/** A morning briefing with every block filled (clock times relative to `now`, so it always looks current). */
+export function demoBrief(locale: Locale = "de", now = Date.now()): Brief {
+  const de = locale === "de";
+  const at = (h: number, m = 0): number => { const d = new Date(now); d.setHours(h, m, 0, 0); return d.getTime(); };
+  const hhmm = (ms: number): string => new Date(ms).toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
+  const event = (title: string, h: number, m: number, minutes: number) => ({ title, allDay: false, startMs: at(h, m), endMs: at(h, m) + minutes * 60_000, start: hhmm(at(h, m)), end: hhmm(at(h, m) + minutes * 60_000) });
+  const day = new Date(now);
+  return {
+    at: now,
+    date: `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`,
+    calendar: {
+      status: "ok",
+      total: 4,
+      events: [
+        { title: de ? "Geburtstag Lena" : "Lena's birthday", allDay: true, startMs: at(0), endMs: at(23, 59), start: "", end: "" },
+        event(de ? "Stand-up" : "Stand-up", 9, 0, 15),
+        event(de ? "Zahnarzt" : "Dentist", 11, 30, 45),
+        event(de ? "Probe Band" : "Band rehearsal", 19, 0, 120),
+      ],
+    },
+    weather: { status: "ok", place: "here", appts: [{ time: "10:30", label: "Musterdorf", tempC: 9, code: 61, pop: 60, mm: 0.8, windKmh: 12 }], tempC: 9, code: 3, minC: 6, maxC: 15, rain: { kind: "later", from: "14:00", until: "16:30", mm: 2.4 } },
+    sugar: { status: "ok", current: { mgdl: 118, direction: "Flat", ageMin: 3 }, night: { min: 84, max: 192, belowMin: 0, aboveMin: 25, count: 108 }, low: 70, high: 180 },
+    car: { status: "ok", soc: 78, rangeKm: 296, charging: false, chargeDone: true, etaMin: null, locked: true },
+    printer: { status: "ok", state: "printing", file: "esp32_gehaeuse", progress: 72, minutesLeft: 41 },
+    servers: { status: "ok", machines: [{ name: "Pi", ok: true, newDevices: 0 }, { name: "NAS", ok: true, newDevices: 1 }, { name: "Spark", ok: true, newDevices: 0 }], down: 0, newDevices: 1 },
+  };
 }
 
 function baseDemoReport(locale: Locale): HubReport {
@@ -136,6 +203,8 @@ function baseDemoReport(locale: Locale): HubReport {
       selected: 0,
       devices: strings.devices,
     },
+    homeView: demoHomeView(locale),
+    brief: demoBrief(locale),
     printer: {
       job: "esp32_gehaeuse.stl",
       state: "printing",
@@ -168,6 +237,7 @@ function baseDemoReport(locale: Locale): HubReport {
 export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default", finishAfterMs: number | null = null): HubApi {
   const strings = STRINGS[locale];
   let report = demoReport(locale, scene);
+  let pendingConfirm: { token: string; target: string } | null = null;
   // `?finish=<s>`: the busy demo agents finish on their own (quiet mode screenshots).
   const finishAt = finishAfterMs === null ? null : Date.now() + finishAfterMs;
   const answerFor = (agentId: string, answer: string, question: string): void => {
@@ -177,6 +247,11 @@ export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default
     };
   };
   return {
+    brief: async () => {
+      const next = demoBrief(locale);
+      report = { ...report, brief: next };
+      return next;
+    },
     report: async () => {
       if (finishAt !== null && Date.now() >= finishAt) {
         for (const agent of report.agents.filter((entry) => entry.busy)) answerFor(agent.id, strings.fallback, agent.lastQuestion ?? "");
@@ -222,6 +297,27 @@ export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default
           ),
         },
       };
+    },
+    homeAction: async (target, action, value) => {
+      const view = report.homeView;
+      const entity = view?.entities[target];
+      if (view === undefined || entity === undefined) return { ok: false };
+      // Like the daemon: a lock first hands out a token, the second tap moves it.
+      if (entity.sensitive === true) {
+        const token = `demo-${target}-${Date.now()}`;
+        pendingConfirm = { token, target };
+        return { ok: true, confirm: { token, label: `${entity.name}: ${entity.on ? (locale === "de" ? "zusperren" : "lock") : (locale === "de" ? "aufsperren" : "unlock")}`, expiresInMs: 30_000 } };
+      }
+      report = { ...report, homeView: applyHomeAction(view, target, action, value) };
+      return { ok: true };
+    },
+    homeConfirm: async (token) => {
+      const view = report.homeView;
+      if (pendingConfirm?.token !== token || view === undefined) return;
+      const entity = view.entities[pendingConfirm.target];
+      pendingConfirm = null;
+      if (entity === undefined) return;
+      report = { ...report, homeView: { ...view, entities: { ...view.entities, [entity.id]: { ...entity, on: !entity.on, state: entity.on ? "locked" : "unlocked" } } } };
     },
     printer: async (action) => {
       report = {

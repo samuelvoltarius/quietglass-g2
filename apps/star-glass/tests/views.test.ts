@@ -64,21 +64,21 @@ describe("every page fits its rows in both languages", () => {
   });
 });
 
-describe("the four pages", () => {
+describe("the pages", () => {
   it("overview: target, filter, frame, countdown, camera and guiding", async () => {
     const view = buildView(state(await demo()));
     expect(view.layout).toBe("overview");
-    expect(view.header).toBe("ÜBERSICHT · läuft");
+    expect(view.header).toBe("STARGLASS · ÜBERSICHT · läuft");
     expect(view.body.slice(0, 3)).toEqual(["M 31 Andromeda", "Ha · 180 s · Bild 23/60", "noch 1:05 · Smart Exposure"]);
     expect(view.body[4]).toBe('Kamera -10,0 °C · Guiding 0,52"');
     expect(view.body[5]).toBe("Flip in 41 min · Höhe 64°");
-    expect(view.footer).toBe("1/4 · Wischen = Seite · Tippen = steuern · 2× = Ende");
+    expect(view.footer).toBe("1/5 · Tippen = steuern · Halten = Hilfe · 2× = Ende");
   });
 
   it("an alert takes the header on every page", async () => {
     for (const page of PAGES) {
-      expect(buildView(state(await demo("lost"), { page })).header).toBe("! Guiding verloren");
-      expect(buildView(state(await demo("flip"), { page, locale: "en" })).header).toBe("Meridian flip in 6 min");
+      expect(buildView(state(await demo("lost"), { page })).header).toBe("STARGLASS · ! Guiding verloren");
+      expect(buildView(state(await demo("flip"), { page, locale: "en" })).header).toBe("STARGLASS · Meridian flip in 6 min");
     }
     expect(buildView(state(worst)).header).toBe("! Fehler: PLATESOLVE-WITH-LONG-NAME (+1)");
   });
@@ -107,7 +107,8 @@ describe("the four pages", () => {
     const s = await demo();
     const view = buildView(state(s, { screen: "control", armed: "stop" }));
     expect(view.body[0]).toBe("> Sequenz anhalten");
-    expect(view.body).toContain("Nochmal tippen = ANHALTEN bestätigen");
+    expect(view.footer).toBe("Nochmal tippen = anhalten · Wischen/2× = abbrechen");
+    expect(view.header).toBe("STARGLASS · Anhalten?");
   });
 });
 

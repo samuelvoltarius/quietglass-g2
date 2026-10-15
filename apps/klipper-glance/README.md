@@ -10,15 +10,18 @@
 > weiterdrucken oder abbrechen – jeder Befehl braucht zwei Tipper. Die App
 > folgt der Handy-Sprache (Deutsch/Englisch).
 >
+> **Ausführliche Einrichtung (Bridge, Dienst, Tailscale, 3D-Ansicht):** [docs/SETUP.md](docs/SETUP.md) · *Full setup guide in English there too.*
+>
 > **In 3 Schritten loslegen**
 > 1. Auf einem Rechner im Drucker-Netz: `node examples/klipper-bridge.mjs`
 >    starten und über https erreichbar machen (z. B. `tailscale serve 8898`).
 > 2. In der Even-App bei Klipper Glance die https-Adresse eintragen.
 > 3. Auf der Brille: **tippen** öffnet die Steuerung (falls erlaubt),
->    **doppeltippen** fragt, ob die App beendet werden soll.
+>    **2×** fragt, ob die App beendet werden soll, **Halten** öffnet die Hilfe.
 
-Use `?demo=1` on the development URL for a simulated printer (labelled `DEMO`,
-no bridge needed).
+Without a bridge address the app starts on its own in a simulated printer
+(labelled `DEMO`, hint line `Demo · set up the connection on the phone`); `?demo=1` on
+the development URL forces it.
 
 ---
 
@@ -32,8 +35,19 @@ bracket_v3
 Layer 76/180 · 2 h 19 min left
 Nozzle 219/220 °C · bed 60/60 °C
 Speed 100 %
-tap = control · 2× = close
+Tap = control · Swipe = model · 2× = exit
 ```
+
+While printing, the progress ring on the left is replaced by the slicer's
+preview picture of the part when the file has one (OrcaSlicer, PrusaSlicer,
+Cura and SuperSlicer embed it): the printed share lights up from the bottom,
+layer by layer, the rest stays faint. Without a preview the ring stays.
+
+**Swipe** opens the layer view: the print as a 3D picture across the whole
+display, built from the G-code by the bridge — printed layers lit, the current
+layer brightest, the layers still to come as a faint outline. Swipe rotates it,
+tap reloads, 2× goes back. The HUD also shows the finish time and, with
+Spoolman connected to Moonraker, the active spool (material, vendor, grams left).
 
 When the last reading is older than 15 s, the header says `stale 30 s`, so old
 numbers are never mistaken for live ones. When the printer is off, the glasses
@@ -49,15 +63,17 @@ printer is printing or paused:
 | Pause · Cancel print · Back | Resume · Cancel print · Back |
 
 **Every command needs a second, confirming tap.** The first tap only arms it
-(*"Tap again = CANCEL the print"*). Swiping drops the armed command, so the tap
-after a swipe can never run what was highlighted before, and an armed command
-lapses after six seconds. Cancel is always last in the list.
+(*"Tap again = cancel print · Swipe/2× = cancel"*). A swipe or 2× only drops the armed
+command (the highlight stays where it was), so the tap after a swipe can never run
+what was highlighted before, and an armed command lapses after four seconds.
+Cancel is always last in the list.
 
 | Gesture | HUD | Control screen |
 |---|---|---|
 | Tap | open control (or refresh, when control is off) | arm, then confirm |
-| Swipe | – | choose (drops a pending confirmation) |
-| Double tap | **leave the app** (the system asks first) | back to the HUD |
+| Swipe | look at the layer model | move the row (cancels a pending confirmation instead) |
+| Hold | opens the **Help** (the gestures) | – |
+| 2× | **leave the app** (the system asks first) | cancels a pending confirmation, else back to the HUD |
 
 ## Setup
 

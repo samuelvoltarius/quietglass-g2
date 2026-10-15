@@ -27,6 +27,7 @@ A source answers an HTTP `GET` with this JSON:
 | `name` | string | no | Shown on the glasses. Falls back to the configured name. |
 | `metrics` | array | **yes** | The readings. May be empty. |
 | `timestamp` | number | no | Producer's time in ms. |
+| `network` | object | no | Devices of the home network (see [Network](#network-optional)). |
 
 ### Metric
 
@@ -44,6 +45,28 @@ A source answers an HTTP `GET` with this JSON:
 
 A metric needs **either** `value` **or** `state`. One with neither is dropped
 and reported as a warning.
+
+## Network (optional)
+
+A source that watches its home network adds:
+
+```json
+"network": {
+  "total": 23, "online": 21, "new": 1,
+  "devices": [
+    { "mac": "de:ad:be:ef:00:42", "ip": "10.0.0.142", "name": "android-5f3c",
+      "online": true, "known": false, "new": true,
+      "firstSeen": 1760000000000, "lastSeen": 1760000900000 }
+  ]
+}
+```
+
+`new` means first seen in the last 24 hours and not marked as known. The app
+shows "Netz: 23 Geräte · 1 NEU" per machine, raises a warning line on the
+glasses while a device is new, and lists the devices on the phone. "Mark as
+known" posts `{"mac": "...", "known": true}` to `<url>/devices` (the status URL
+with its last segment replaced) with the source's token. Devices without a
+valid MAC are dropped; at most 512 are read.
 
 ## Rules
 
@@ -172,4 +195,36 @@ It reports, each only where the machine can tell:
 
 Slow sources (nvidia-smi, systemctl, Docker, Tailscale, disks) are sampled in
 the background every 15 s, so `/status` answers from memory in milliseconds.
-No addresses, tokens or environment values are ever reported.
+No addresses, tokens or environment values are ever reported — except the
+devices of the home network, and only with `STATUS_NETWATCH=1`.
+
+### Heimnetz-Wächter (home network watch, off by default)
+
+The reference server can also tell you which devices are on your **own** home
+network. It is off unless you set `STATUS_NETWATCH=1`, and it is **passive**:
+it reads the neighbour table the machine already keeps (`ip neigh`, else
+`/proc/net/arp`) and sends no packet of its own. Devices are tracked by MAC
+address (first and last seen, last IPv4 address, reverse DNS name where the
+local resolver knows one) and kept in a JSON file (mode 600, written
+atomically). The first reading is the baseline: everything already there counts
+as known, so switching it on does not raise twenty alerts.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STATUS_NETWATCH` | off | `1` switches the watch on |
+| `STATUS_NETWATCH_MS` | `60000` | how often the neighbour table is read (at least 10 s) |
+| `STATUS_NETWATCH_FILE` | `~/.local/state/quietglass/netwatch.json` | the device book (`$XDG_STATE_HOME` honoured) |
+| `STATUS_NETWATCH_IFACES` | all real ones | comma list of interfaces; by default loopback, Docker, bridges, VPNs and Tailscale are left out |
+| `STATUS_NETWATCH_DNS` | on | `0` = no reverse DNS lookups |
+| `STATUS_NETWATCH_PING` | off | `1` = additionally ping each address of this machine's own private /24 once, so quiet devices show up; RFC 1918 ranges only, never a public network |
+| `STATUS_NETWATCH_PING_MS` | `1800000` | interval of that ping refresh (at least 5 min) |
+
+`/status` then carries a `network` block (see below). `POST /devices` with
+`{"mac": "aa:bb:cc:dd:ee:ff", "known": true}` marks a device as known; it needs
+the same login as `/status` (the `TOKEN`, or an allowed Tailscale login) and is
+refused with a 403 on a server that has neither.
+
+```bash
+TOKEN=<random secret> STATUS_NETWATCH=1 node examples/reference-server.mjs
+```
+

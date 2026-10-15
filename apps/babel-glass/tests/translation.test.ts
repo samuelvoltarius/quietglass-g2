@@ -36,7 +36,8 @@ describe("OpenAI-compatible translator", () => {
     const body = JSON.parse(String(seenInit?.body));
     expect(body.model).toBe("qwen2.5-7b-instruct");
     expect(body.temperature).toBeLessThanOrEqual(0.2);
-    expect(body.stream).toBe(false);
+    expect(body.stream).toBe(true);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(256);
     expect(body.messages[0].role).toBe("system");
     expect(body.messages[0].content).toContain("from Belarusian (be) to German (de)");
     expect(body.messages[0].content).toContain("Output only the German translation");

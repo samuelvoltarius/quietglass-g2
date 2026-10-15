@@ -95,6 +95,11 @@ describe("pages", () => {
     prompter: { lines: [], pos: 0, speed: 0.4, playing: false },
     schedule: { sheet: sheet("07:30", ["08:00", "12:00", "18:00"]), scroll: 0 },
     pack: { items: [], cursor: 0, missing: false },
+    customerMode: false,
+    customers: { list: [], cursor: 0, pending: null },
+    projects: { customer: null, list: [], cursor: 0, active: "" },
+    brief: { data: null, page: 0 },
+    board: { boards: [], board: 0, cursor: 0, picking: false },
     ...patch,
   });
   const view = buildView(state());

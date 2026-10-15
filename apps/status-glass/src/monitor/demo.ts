@@ -1,4 +1,4 @@
-import type { SourceReport } from "../protocol/schema";
+import type { NetDevice, NetworkInfo, SourceReport } from "../protocol/schema";
 
 /** Readings of the NAS demo, step 0..11 (oldest first), per scene. */
 export function demoNasReport(scene: string | null, step: number): SourceReport {
@@ -72,4 +72,21 @@ export function demoFleetReport(machine: DemoMachine, step: number): SourceRepor
       { id: "uptime", label: "Up", value: 345, unit: "h" },
     ],
   };
+}
+
+/** A home network of 23 devices, one of them new, for the fleet demo (made-up 10.x addresses). */
+export function demoNetwork(now: number): NetworkInfo {
+  const names = ["router", "nas", "drucker", "tv-wohnzimmer", "pixel-7", "ipad", "pi5", "spark", "sonos-kueche", "hue-bridge"];
+  const devices: NetDevice[] = Array.from({ length: 22 }, (_, i) => ({
+    mac: "aa:bb:cc:00:00:" + (i + 1).toString(16).padStart(2, "0"),
+    ip: `10.0.0.${i + 1}`,
+    ...(names[i] ? { name: names[i]! } : {}),
+    online: i < 19,
+    known: true,
+    new: false,
+    firstSeen: now - 40 * 86_400_000,
+    lastSeen: i < 19 ? now : now - 3 * 3_600_000,
+  }));
+  devices.unshift({ mac: "de:ad:be:ef:00:42", ip: "10.0.0.142", name: "android-5f3c", online: true, known: false, new: true, firstSeen: now - 25 * 60_000, lastSeen: now });
+  return { total: devices.length, online: devices.filter((d) => d.online).length, new: 1, devices };
 }

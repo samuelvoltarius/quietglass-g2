@@ -129,25 +129,25 @@ describe("glasses text budget", () => {
     });
   }
 
-  it("keeps the light window and the gesture hint in a normal German footer", () => {
+  it("keeps the light window in the German body and the gestures in the footer", () => {
     const view = buildView(status({ streak: 3, window: { art: "golden", in_minuten: 51 }, quest: { medium: "foto", dauer_min: 30 } }), { phase: "idle", result: null, error: null, locale: "de" });
-    expect(view.footer).toContain("Gold in 51 min");
-    expect(view.footer).toContain("Tippen = Foto");
+    expect(view.body.at(-1)).toContain("Gold in 51 min");
+    expect(view.footer).toBe("Tippen = Foto · Halten = Quest · 2× = Ende");
   });
 
   it("speaks German on the glasses, with the app name untouched", () => {
     const de = { phase: "idle" as const, result: null, error: null, locale: "de" as const };
     const failed = buildView(null, { ...de, error: "LUMEN unreachable" });
-    expect(failed.header).toBe("Lumen Glass");
+    expect(failed.header).toBe("LUMEN · Fehler");
     expect(failed.body[0]).toBe("LUMEN nicht erreichbar");
     expect(failed.body).toContain("Prüf die Adresse in der Handy-App.");
     expect(failed.footer).toBe("Tippen = nochmal · 2× = Ende");
-    expect(buildView(null, de).header).toBe("Lumen Glass");
-    expect(buildView(null, { ...de, error: "HTTP 500" }).body[0]).toBe("HTTP 500");
+    expect(buildView(null, de).header).toBe("LUMEN · verbinde");
+    expect(buildView(null, { ...de, error: "HTTP 500" }).body[0]).toBe("LUMEN meldet einen Fehler");
     expect(windowLabel("golden", 135, "de")).toBe("Gold in 2 h 15 min");
     expect(windowLabel("blau", 0, "de")).toBe("Blau jetzt");
     const ok = buildView(status(), { ...de, phase: "result", result: { ok: true, text: "" } });
-    expect(ok.header).toBe("Angenommen");
+    expect(ok.header).toBe("LUMEN · Angenommen");
     expect(ok.body.join(" ")).toContain("Gesendet.");
   });
 });
@@ -155,14 +155,17 @@ describe("glasses text budget", () => {
 describe("phone page", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it("puts the language choice on top and speaks German", () => {
+  it("offers the language choice, speaks German and is split into tabs", () => {
     let html = "";
-    const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null };
+    const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root });
     vi.stubGlobal("setInterval", () => 0);
     mountPhoneUi({ getData: () => ({ ...EMPTY_DATA, token: "abcdef" }), setData: async () => undefined, shoot: () => undefined, getStatus: () => null, getLocale: () => "de" });
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf('id="language"')).toBeLessThan(html.indexOf("Nicht verbunden"));
+    expect(html).toContain('id="language"');
+    expect(html).toContain('class="tabbar"');
+    expect(html).toContain('data-tab-go="more"');
+    expect(html).toContain(">Mehr<");
     expect(html).toContain("Speichern");
     expect(html).toContain("angemeldet");
     expect(html).not.toContain("abcdef");
@@ -174,7 +177,7 @@ describe("phone page", () => {
 
 it("offers name and password when not signed in, never a stored password", () => {
   let html = "";
-  const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null };
+  const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
   vi.stubGlobal("document", { getElementById: () => root });
   vi.stubGlobal("setInterval", () => 0);
   mountPhoneUi({ getData: () => ({ ...EMPTY_DATA }), setData: async () => undefined, shoot: () => undefined, getStatus: () => null, getLocale: () => "de" });
@@ -204,6 +207,7 @@ describe("switching language on the phone", () => {
     const root = {
       set innerHTML(value: string) { html = value; }, get innerHTML() { return html; },
       querySelector: (selector: string) => (selector === "#language" ? select : null),
+      querySelectorAll: () => [],
     };
     vi.stubGlobal("document", { getElementById: () => root, documentElement: { lang: "" } });
 
@@ -215,7 +219,7 @@ describe("switching language on the phone", () => {
       if (id === 3) glasses.footer = content ?? "";
     };
     harness.bridge = {
-      getLocalStorage: async () => "",
+      getLocalStorage: async (key: string) => (key === "quietglass.lumenglass.v1" ? JSON.stringify({ baseUrl: "http://lumen.test:8077", invertScroll: false }) : ""),
       setLocalStorage: async () => true,
       rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
         for (const part of page.textObject ?? []) show(part.containerID, part.content);
@@ -245,7 +249,7 @@ describe("switching language on the phone", () => {
     onLanguage?.({ target: select });
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(glasses.header).toBe("Lumen Glass");
+    expect(glasses.header).toBe("LUMEN · Fehler");
     expect(glasses.body).toContain("LUMEN nicht erreichbar");
     expect(glasses.body).toContain("Prüf die Adresse in der Handy-App.");
     expect(glasses.footer).toBe("Tippen = nochmal · 2× = Ende");
@@ -265,7 +269,7 @@ describe("phone sign-in", () => {
       checked: false,
       addEventListener: (_type: string, handler: () => void) => { handlers.set(id, handler); },
     });
-    const root = { innerHTML: "", querySelector: (selector: string) => element(selector.replace("#", "")) };
+    const root = { innerHTML: "", querySelector: (selector: string) => element(selector.replace("#", "")), querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root });
     vi.stubGlobal("setInterval", () => 0);
     let data: import("../src/storage/persist").LumenData = { ...EMPTY_DATA, baseUrl: "http://127.0.0.1:8077" };

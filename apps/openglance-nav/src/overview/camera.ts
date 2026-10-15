@@ -28,6 +28,8 @@ export const MAP_TILES = [
 
 /** The black plate behind the text on the top left, so it reads against any road. */
 export const PLATE = { width: 232, height: 40 } as const;
+/** The plate on the bottom left for the speed line ("!57! | 50 km/h"), drawn only while it is shown. */
+export const SPEED_PLATE = { width: 200, height: 40 } as const;
 
 /** Where the car is drawn: bottom centre, leaving the road ahead the room above. */
 export const MARKER_AT: PixelPoint = { x: MAP_WIDTH / 2, y: 218 };

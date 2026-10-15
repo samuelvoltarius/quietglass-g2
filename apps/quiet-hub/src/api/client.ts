@@ -4,11 +4,22 @@
  * All three backends sit behind this single origin: the daemon adapts
  * the agents (local and via relays), Home Assistant and Moonraker, holds the
  * tokens, and the glasses see only `/report`, `/agent/*`, `/events/read`,
- * `/home/toggle`, `/printer`. No cloud, no
+ * `/home/toggle`, `/home/action`, `/home/confirm`, `/printer`, `/brief`. No cloud, no
  * API keys on the device.
  */
 import { normalizeReport } from "./normalize";
-import type { HubApi, HubReport, SessionList } from "./types";
+import { briefPath } from "../hub/place";
+import type { Brief, HomeActionResult, HubApi, HubReport, ReportCursor, SessionList } from "./types";
+
+/** How long the client waits for a voice upload: 90 s, plus half the audio length for long dictations (16 kHz s16le). */
+export function voiceTimeoutMs(wavBytes: number): number {
+  return 90_000 + Math.round(Math.max(0, wavBytes - 44) / 32 / 2);
+}
+
+/** Query of a long-poll request; the daemon holds it at most `waitS` seconds. */
+export function longPollPath(cursor: ReportCursor, waitS: number): string {
+  return `/report?since=${encodeURIComponent(String(cursor.rev))}&boot=${encodeURIComponent(cursor.boot)}&wait=${Math.max(1, Math.min(25, Math.round(waitS)))}`;
+}
 
 export type ApiErrorKind = "network" | "timeout" | "http";
 
@@ -59,12 +70,12 @@ export function createClient(options: ClientOptions): HubApi {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? 8000;
 
-  const call = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const call = async <T>(path: string, init?: RequestInit, limitMs?: number): Promise<T> => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (options.token !== undefined && options.token !== "") headers.Authorization = `Bearer ${options.token}`;
     let response: Response;
     const controller = new AbortController();
-    const limit = path.startsWith("/agent/voice") ? Math.max(timeoutMs, 30_000) : timeoutMs;
+    const limit = limitMs ?? (path.startsWith("/agent/voice") ? Math.max(timeoutMs, 90_000) : timeoutMs);
     const timer = setTimeout(() => controller.abort(), limit);
     try {
       response = await fetchImpl(`${base}${path}`, { ...init, signal: controller.signal, headers: { ...headers, ...(init?.headers ?? {}) } });
@@ -80,6 +91,8 @@ export function createClient(options: ClientOptions): HubApi {
 
   return {
     report: async () => normalizeReport(await call<HubReport>("/report")),
+    // Held by the daemon up to waitS; give it 10 s more before calling it a timeout.
+    reportAfter: async (cursor, waitS) => normalizeReport(await call<HubReport>(longPollPath(cursor, waitS), undefined, Math.max(timeoutMs, waitS * 1000 + 10_000))),
     ask: async (question, agentId) => {
       await call("/agent/ask", { method: "POST", body: JSON.stringify({ question, agentId, wait: false }) });
     },
@@ -90,7 +103,7 @@ export function createClient(options: ClientOptions): HubApi {
         method: "POST",
         headers: { "Content-Type": "audio/wav" },
         body: new Blob([wav.slice().buffer], { type: "audio/wav" }),
-      });
+      }, Math.max(timeoutMs, voiceTimeoutMs(wav.length)));
     },
     approve: async (cardId, decision, note) => {
       await call("/agent/approve", { method: "POST", body: JSON.stringify(note ? { cardId, decision, note } : { cardId, decision }) });
@@ -111,6 +124,15 @@ export function createClient(options: ClientOptions): HubApi {
     printer: async (action) => {
       await call("/printer", { method: "POST", body: JSON.stringify({ action }) });
     },
+    homeAction: async (target, action, value) => {
+      const result = await call<{ ok?: boolean; confirm?: HomeActionResult["confirm"] }>("/home/action", { method: "POST", body: JSON.stringify(value === undefined ? { target, action } : { target, action, value }) });
+      return result.confirm !== undefined ? { ok: true, confirm: result.confirm } : { ok: true };
+    },
+    homeConfirm: async (token) => {
+      await call("/home/confirm", { method: "POST", body: JSON.stringify({ token }) });
+    },
+    // Collecting every source may take a few seconds on the daemon (each has its own timeout).
+    brief: async (refresh = false, place = null) => call<Brief>(briefPath(refresh, place), undefined, Math.max(timeoutMs, 15_000)),
     readEvent: async (id, open) => {
       await call("/events/read", { method: "POST", body: JSON.stringify(open === true ? { id, open: true } : { id }) });
     },

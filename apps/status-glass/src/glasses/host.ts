@@ -1,7 +1,7 @@
 import type { Locale } from "../i18n";
 import { describeIssue, t } from "../messages";
 import { formatMetric, metricState, type Metric, type SourceReport } from "../protocol/schema";
-import { problems, type SourceStatus } from "../monitor/dashboard";
+import { NET_NEW_PREFIX, problems, type SourceStatus } from "../monitor/dashboard";
 import { LINE_WIDTH, fit } from "./view";
 
 /**
@@ -72,11 +72,29 @@ export function compactLine(report: SourceReport | null, locale: Locale): string
 }
 
 /**
+ * "Netz: 23 Geräte · 1 NEU" (or "· 21 online" when nothing is new); null when
+ * the source does not watch its home network.
+ */
+export function networkLine(report: SourceReport | null, locale: Locale): string | null {
+  const network = report?.network;
+  if (!network) return null;
+  return network.new > 0
+    ? t(locale, "g.netLineNew", { total: network.total, count: network.new })
+    : t(locale, "g.netLine", { total: network.total, online: network.online });
+}
+
+/**
  * The words for a metric that is not healthy. The reference server's own ids
  * get a sentence in the chosen language; everything else keeps its label.
  */
 export function describeMetric(metric: Metric, locale: Locale): string {
   const value = typeof metric.value === "number" ? metric.value : undefined;
+  if (metric.id.startsWith(NET_NEW_PREFIX)) {
+    const count = Math.round(value ?? 1);
+    return count === 1 && metric.detail
+      ? t(locale, "g.netNewOne", { name: metric.detail })
+      : t(locale, "g.netNewMany", { count });
+  }
   if (metric.id === "failed" && value !== undefined) {
     if (value === 0) return t(locale, "g.noFailed");
     return Math.round(value) === 1 ? t(locale, "g.failedUnit") : t(locale, "g.failedUnits", { count: Math.round(value) });
@@ -179,6 +197,9 @@ export function detailLines(source: SourceStatus, locale: Locale, now: number): 
   const docker = find(report, "docker");
   if (valued(docker) && metricState(docker) === "ok") add(t(locale, "g.docker", { count: Math.round(docker.value) }));
   flush();
+
+  const home = networkLine(report, locale);
+  if (home) lines.push(fit(home, width));
 
   const failed = find(report, "failed");
   if (valued(failed) && failed.value === 0) add(t(locale, "g.noFailed"));

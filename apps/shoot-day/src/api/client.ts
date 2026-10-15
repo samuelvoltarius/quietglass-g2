@@ -1,6 +1,6 @@
 import {
-  parseCallSheet, parseEquipment, parsePrompter, parseShotList, parseTake, parseTakes,
-  type CallSheet, type Equipment, type ShotList, type Take, type TakeStatus,
+  parseBrief, parseCallSheet, parseCustomerProjects, parseCustomers, parseEquipment, parsePrompter, parseShotList, parseStoryboards, parseTake, parseTakes,
+  type Brief, type CallSheet, type CustomerItem, type CustomerList, type CustomerProjects, type Equipment, type ShotList, type Storyboard, type Take, type TakeStatus,
 } from "./types";
 
 /**
@@ -24,12 +24,23 @@ export interface ShootDayApi {
   takes(): Promise<Take[]>;
   addTake(take: NewTake): Promise<Take>;
   setTakeNote(scene: string, shot: string, n: number, note: string): Promise<void>;
+  /** Removes one logged take (QIS v1.2: the undo of the single-tap OK). Needs a server that knows `POST /api/take/delete`. */
+  deleteTake(scene: string, shot: string, n: number): Promise<void>;
   prompter(): Promise<string>;
   callSheet(): Promise<CallSheet>;
   equipment(): Promise<Equipment>;
   setPacked(name: string, packed: boolean): Promise<void>;
   /** WAV in, recognised text out. `language` is a hint ("de", "en"). */
   transcribe(wav: ArrayBuffer, language: string): Promise<string>;
+  /** Customers sorted by name (a server before 0.5.0 answers 404 → ApiError "http"). */
+  customers(): Promise<CustomerList>;
+  customer(id: string): Promise<CustomerProjects>;
+  createCustomer(name: string): Promise<CustomerItem>;
+  brief(customerId: string): Promise<Brief>;
+  /** Makes a project the one the glasses (and the take log) work on. */
+  activate(projectId: string): Promise<void>;
+  storyboards(): Promise<Storyboard[]>;
+  setSceneDone(storyboardId: string, index: number, done: boolean): Promise<void>;
 }
 
 export type ApiErrorCode = "timeout" | "unreachable" | "auth" | "http" | "bad-reply";
@@ -93,6 +104,7 @@ export function createClient(options: ClientOptions): ShootDayApi {
       return saved;
     },
     setTakeNote: async (scene, shot, n, note) => { await post("/api/take/note", { scene, shot, n, note }); },
+    deleteTake: async (scene, shot, n) => { await post("/api/take/delete", { scene, shot, n }); },
     prompter: async () => parsePrompter(await request("/api/prompter")),
     callSheet: async () => parseCallSheet(await request("/api/dispo")),
     equipment: async () => parseEquipment(await request("/api/equipment")),
@@ -106,6 +118,21 @@ export function createClient(options: ClientOptions): ShootDayApi {
       const text = (reply as { text?: unknown } | null)?.text;
       return typeof text === "string" ? text.slice(0, 500) : "";
     },
+    customers: async () => parseCustomers(await request("/api/customers")),
+    customer: async (id) => {
+      const parsed = parseCustomerProjects(await request("/api/customers/" + encodeURIComponent(id)));
+      if (!parsed) throw new ApiError("bad-reply");
+      return parsed;
+    },
+    createCustomer: async (name) => {
+      const parsed = parseCustomers({ customers: [await post("/api/customers", { name })] }).customers[0];
+      if (!parsed) throw new ApiError("bad-reply");
+      return parsed;
+    },
+    brief: async (id) => parseBrief(await request("/api/customers/" + encodeURIComponent(id) + "/brief", {}, options.sttTimeoutMs ?? STT_TIMEOUT_MS)),
+    activate: async (projectId) => { await post("/api/active", { id: projectId }); },
+    storyboards: async () => parseStoryboards(await request("/api/storyboard")),
+    setSceneDone: async (storyboard, index, done) => { await post("/api/storyboard/scene", { storyboard, index, done }); },
   };
 }
 

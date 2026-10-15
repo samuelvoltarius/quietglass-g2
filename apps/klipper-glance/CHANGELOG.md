@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.5.3] — 2026-10-15
+
+### Behoben (auf echter Brille gesehen)
+
+- **Modell-Seite ohne Modell:** In der Mitte stand Buchstabensalat („M u M RUC“) – die Pixelschrift der Kacheln kennt nur Ziffern. Jetzt ein leerer Rahmen; „kein Modell“ steht wie bisher in der Kopfzeile.
+- **Ohne Modell führt Wischen zurück zur Übersicht** (wie 2×), statt nichts Sichtbares zu drehen. Mit Modell dreht Wischen es weiterhin.
+
+## [0.5.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks im Menü kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein Menü mehr; Menücode und `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Halten öffnet auf dem Druckbild wieder die Hilfe; Tippen, Halten oder 2× schließen sie (2× verlässt die App dort nie). Die Fußzeilen der Druckbild-, Lade-, Offline- und Fehleransicht nennen wieder „Halten = Hilfe“ (Wischen = Modell fällt bei schmaler Zeile zuerst weg).
+- Hilfetexte der Brille (de/en) und die Hinweise am Handy beschreiben wieder die Gesten statt des Menüs. Drucker steuern (Pause, weiter, abbrechen) lief schon vorher über Tippen und ist unverändert; ein Befehl braucht weiter zwei Tipper.
+- Die Versionsangabe in „Mehr“ am Handy stimmt wieder (stand noch auf 0.5.0).
+- Tests: Seiten ohne `menuObject`, Halten öffnet die Hilfe und Tippen/Halten/2× schließen sie, Fußzeilen mit und ohne Menü.
+
+## [0.5.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach wird die Seite neu aufgebaut.
+
+## [0.5.0] — 2026-10-14
+
+### Geändert — Bedienstandard QIS v1.2 (docs/BEDIENSTANDARD.md)
+
+- **Seitenmenü der Brille** (Halten → Systemmenü, SDK `menuObject` / `menuItemClickEvent` wie Babel Glass und Quiet Hub): `Hilfe`. Die App hat keine eigenen Einstellungen auf der Brille, deshalb nur dieser Eintrag. Hilfe verwirft eine offen stehende Rückfrage (nichts bleibt dahinter scharf); Tippen oder 2× schließen die Seite. Die Seite trägt das Menü bei jedem Aufbau neu, ein Sprachwechsel baut sie einmal neu auf.
+- **Halten öffnet keine Hilfe mehr** und steht in keiner Fußzeile mehr; auf dem Druckbild tut es nichts. Pause/Weiter/Druck abbrechen bleiben zweistufig (4 s, Wischen/2× brechen ab) – unverändert.
+- **Glossar:** die Rückfrage heißt jetzt „Nochmal tippen = Druck abbrechen · 2× = abbrechen“ (vorher „Druck stoppen“). „abbrechen“ ist damit sowohl der Name der Aktion als auch das Wort für das Verwerfen der Rückfrage – wie im Standard; bei langer Zeile entfällt „Wischen/“.
+- **Erster Start = Demo (wahr gemacht):** Ohne Bridge-Adresse läuft jetzt wirklich der simulierte Drucker (Kopfzeile mit `DEMO`, letzte Zeile `Demo · Verbindung am Handy einrichten`), statt eines leeren Einrichtungs-Bildschirms. Wird am Handy eine Adresse eingetragen, wechselt die App auf den echten Drucker; ohne Adresse zurück in die Demo. Der Hilfetext „Braucht: Bridge im Netz (ohne sie läuft die Demo)“ stimmt damit. `?demo=1` erzwingt die Demo weiterhin.
+- **Keine HTTP-Codes auf der Brille:** „Serverfehler“ statt „Fehler (HTTP 503)“. Das Handy (Tab „Drucker“) zeigt `Serverfehler (503)`.
+- Handy: Gestentabelle nennt das Seitenmenü bei Halten.
+- Tests: Menü mit „Hilfe“ auf der Seite, Halten allein öffnet nichts, Menü-Hilfe verwirft eine offene Rückfrage, kein „Halten = Hilfe“ in irgendeiner Fußzeile, „stoppen“ taucht nicht mehr auf, Demo-Hinweis in beiden Sprachen, keine Statuszahl auf der Brille.
+
+QIS-Stand: v1.2.
+
+## [0.4.0] — 2026-10-14
+
+### Geändert (QIS v1)
+
+- Bedienung nach dem Quietglass-Bedienstandard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- **Sicherheit:** Pause, Weiter und Druck abbrechen waren schon zweistufig; jetzt strenger nach Standard: die Rückfrage verfällt nach 4 s (vorher 6 s), und Wischen oder 2× brechen sie nur ab – die Markierung bleibt stehen, 2× verlässt dabei auch den Steuern-Bildschirm nicht mehr. Erst ein einzelnes Tippen auf dieselbe Zeile führt aus.
+- Fußzeile der Rückfrage: „Nochmal tippen = Pause · Wischen/2× = abbrechen“ (Druck abbrechen: „… = Druck stoppen …“).
+- Wischen auf dem Druckbild öffnet weiter das Schichtmodell und dreht es dort – das ist nur eine Ansicht, nichts wird gesendet oder verändert.
+- Kopfzeilen `KLIPPER · Zustand` auf allen Seiten (Einrichtung, Steuern, Modell, Hilfe), Fußzeilen über den gemeinsamen `footer()`-Helfer in der Reihenfolge Tippen/Wischen/Halten/2× mit `2× = Ende` bzw. `2× = zurück`; passt die Zeile nicht in 56 Zeichen, entfällt zuerst der Wisch-Teil.
+- Neue Hilfeseite: Halten auf dem Druckbild öffnet sie (die App hat keine Liste); Tippen, Halten oder 2× schließen sie.
+- `invertScroll` gilt wie bisher für Steuern und Schichtmodell (Handy-Tab „Brille“).
+- Handy-Seite: Tabs `Drucker · Brille · Verbindung · Mehr` („Verbindung“ heißt jetzt der frühere Tab „Bridge“, Wischrichtung und Sprache stehen unter „Brille“, Bedienung, Version und Datenschutz unter „Mehr“). „2×“ statt „Doppeltippen“.
+
+## [0.3.0] — 2026-10-13
+
+### Neu
+
+- Schicht-Viewer: Wischen öffnet ein 3D-Bild des Drucks über die ganze Breite (aus dem G-Code, von der Bridge in Schichten zerlegt). Gedruckte Schichten leuchten, die aktuelle Schicht am hellsten, die kommenden als blasser Umriss. Wischen dreht die Ansicht in 30°-Schritten, Tippen lädt neu, Doppeltippen zurück.
+- Fertig-Uhrzeit: „Tempo 100 % · fertig 23:40“ (am nächsten Tag mit Wochentag).
+- Spoolman: aktive Spule unter den Temperaturen, z. B. „PLA · Prusament · 412 g“ (über Moonrakers Spoolman-Anbindung, nur lesend).
+- Bridge: `GET /api/printer/model?file=…` (G-Code wird einmal gestreamt gelesen, auf 40 000 Linien ausgedünnt; 202 solange er vorbereitet wird), Status mit `z` (Düsenhöhe) und `spool`.
+
+## [0.2.3] — 2026-10-13
+
+### Neu
+
+- Vorschaubild statt Ring: Hat die Druckdatei ein Slicer-Vorschaubild (OrcaSlicer, PrusaSlicer, Cura …), zeigt die Brille links das Modell. Der schon gedruckte Teil leuchtet von unten nach oben (nach Schicht), der Rest bleibt blass; darunter Prozent und Balken. Ohne Vorschaubild bleibt der Ring.
+- Bridge: `GET /api/printer/thumb?file=…` liefert das Vorschaubild (PNG, größtes bis 400 px) aus den Moonraker-Metadaten; ältere Bridges ohne den Endpunkt zeigen einfach den Ring.
+
+## [0.2.2] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Drucker · Bridge · Brille (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip mit dem Verbindungszustand oben. Sprachwahl und Datenschutz stehen jetzt unter „Bridge“, „Scroll umkehren“ unter „Brille“.
+
 ## [0.2.1] — 2026-10-13
 
 ### Added

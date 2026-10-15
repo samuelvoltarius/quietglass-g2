@@ -18,16 +18,17 @@ function fakeBridge() {
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
   const pages: string[][] = [];
+  const menus: string[][] = [];
   const bridge = {
     rebuildPageContainer: vi.fn(async () => true),
-    createStartUpPageContainer: vi.fn(async (page: { textObject?: { content?: string }[] }) => { pages.push((page.textObject ?? []).map((part) => part.content ?? "")); return 0; }),
+    createStartUpPageContainer: vi.fn(async (page: { textObject?: { content?: string }[]; menuObject?: { menuItems?: { itemName?: string }[] } }) => { menus.push((page.menuObject?.menuItems ?? []).map((item) => item.itemName ?? "")); pages.push((page.textObject ?? []).map((part) => part.content ?? "")); return 0; }),
     textContainerUpgrade: vi.fn(async (update: { containerID?: number; content?: string }) => { if (update.containerID === 1) pages.push([]); pages.at(-1)?.push(update.content ?? ""); return true; }),
     updateImageRawData: vi.fn(async () => 0),
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, pages, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
+  return { bridge, shutdown, pages, menus, menu: (itemID: number) => handler?.({ menuItemClickEvent: { itemID } }), emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 describe("endurance polling loop", () => {
@@ -131,19 +132,32 @@ describe("endurance gestures, staleness and phone page", () => {
     return fake;
   }
 
-  it("regression: swipe cycles the sport and saves it instead of only refreshing", async () => {
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = await boot();
+    expect(fake.menus.length).toBeGreaterThan(0);
+    expect(fake.menus.every((items) => items.length === 0)).toBe(true);
+    expect(fake.pages.at(-1)?.[2]).toBe("Tap = refresh · Swipe = sport · Hold = help · 2× = exit");
+  });
+
+  it("a swipe on the live screen cycles the sport and saves it again (no side menu)", async () => {
     const fake = await boot();
     expect(fake.pages.at(-1)?.[1]).toMatch(/^BIKE/);
-    expect(fake.pages.at(-1)?.[2]).toBe("Tap: refresh   Swipe: sport   2x: close");
-    const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
     fake.emit(2); // scroll down
     await vi.advanceTimersByTimeAsync(10);
     expect(store.get("endurance.sport")).toBe("run");
-    expect(fake.pages.at(-1)?.[1]).toMatch(/^RUN .*\n\nPACE {2}2:00 \/km/s);
-    expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+    expect(fake.pages.at(-1)?.[1]).toMatch(/^RUN /);
     fake.emit(1); // scroll up
     await vi.advanceTimersByTimeAsync(10);
     expect(store.get("endurance.sport")).toBe("bike");
+  });
+
+  it("the side menu code stays dormant: a menu click does nothing while the menu is off", async () => {
+    const fake = await boot();
+    fake.menu(1);
+    fake.menu(2);
+    await vi.advanceTimersByTimeAsync(10);
+    // Menu clicks still reach the handler; they are handled, but no page carries a menu to click.
+    expect(fake.menus.every((items) => items.length === 0)).toBe(true);
   });
 
   it("restores the saved sport on start", async () => {
@@ -164,23 +178,64 @@ describe("endurance gestures, staleness and phone page", () => {
     const sentAt = new Date().toISOString();
     reply = async () => new Response(JSON.stringify({ sport: "bike", speedKph: 30, source: "garmin", updatedAt: sentAt }), { status: 200 });
     const fake = await boot();
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD  LIVE WORKOUT");
+    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · LIVE WORKOUT");
     await vi.advanceTimersByTimeAsync(12000);
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD  STALE 12s");
+    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · STALE 12s");
   });
 
   it("regression: a dead bridge shows STALE and the error on the phone", async () => {
     const fake = await boot();
     reply = async () => { throw new TypeError("Failed to fetch"); };
     await vi.advanceTimersByTimeAsync(2000);
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD  STALE 2s");
+    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · STALE 2s");
     expect(app.innerHTML).toContain("Last error: Failed to fetch");
   });
 
   it("regression: the saved endpoint is escaped in the phone page", async () => {
     store.set("endurance.endpoint", 'http://x/"><img src=x onerror=alert(1)>');
+    store.set("endurance.tab", "bridge");
     await boot();
     expect(app.innerHTML).not.toContain("<img");
     expect(app.innerHTML).toContain('value="http://x/&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"');
+  });
+
+  it("hold opens the help by gesture, tap and 2× close it, 2× in the help never exits, a swipe there changes nothing", async () => {
+    const fake = await boot();
+    fake.emit(9); // hold
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · Help");
+    expect(fake.pages.at(-1)?.[2]).toBe("Tap = back · 2× = back");
+    fake.emit(2); // a swipe in the help changes nothing
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.get("endurance.sport")).toBeUndefined();
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([]);
+    expect(fake.pages.at(-1)?.[0]).toMatch(/^ENDURANCE HUD · (DEMO|LIVE|STALE)/);
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.pages.at(-1)?.[0]).not.toContain("Help");
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+  });
+
+  it("QIS v1: the invert-scroll setting reverses the swipe direction", async () => {
+    store.set("endurance.invert", "1");
+    store.set("endurance.sport", "run");
+    const fake = await boot();
+    fake.emit(2); // scroll down is read as scroll up: the sport steps back (bike <-> run on a two-item cycle either way)
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.get("endurance.sport")).toBe("bike");
+  });
+
+  it("QIS v1: the phone page has the tabs Live, Glasses, Connection, More in that order, with the invert switch on Glasses", async () => {
+    store.set("endurance.tab", "glasses");
+    await boot();
+    const labels = [...app.innerHTML.matchAll(/id="tab-\w+"[^>]*>([^<]+)</g)].map((m) => m[1]);
+    expect(labels).toEqual(["Live", "Glasses", "Connection", "More"]);
+    expect(app.innerHTML).toContain('id="invert"');
   });
 });

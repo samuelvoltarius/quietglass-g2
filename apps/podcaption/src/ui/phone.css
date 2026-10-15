@@ -110,3 +110,19 @@ footer.hint { text-align: center; padding: 8px 0 24px; }
 /* Beginner pass: the next-step sentence and the advanced drawer. */
 .next { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: var(--soft); border-left: 3px solid var(--accent); font-weight: 600; }
 details.advanced summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+
+/* ---- Tabs: Untertitel · Brille · Verbindung · Mehr (QIS v1) ---- */
+body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+}
+.tabbar button {
+  all: unset; cursor: pointer; text-align: center;
+  padding: 10px 0; border-radius: 10px; font-size: 13px; color: var(--muted);
+}
+.tabbar button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }

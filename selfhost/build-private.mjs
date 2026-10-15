@@ -56,11 +56,11 @@ const APPS = {
     }),
   },
   "openglance-nav": {
-    summary: "own Valhalla routing + street names, charging stations, voice destination, server voice (optional)",
+    summary: "own Valhalla routing + street names, charging stations, voice destination, server voice, routes synced with the PC planner (optional)",
     required: ["valhalla"],
-    optional: ["whisper", "tts", "chargers"],
+    optional: ["whisper", "tts", "chargers", "routes", "byd", "traffic"],
     plan: (s) => ({
-      origins: [s.valhalla, s.whisper, s.tts, s.chargers].filter(Boolean),
+      origins: [s.valhalla, s.whisper, s.tts, s.chargers, s.routes, s.babelWs && wss(s.babelWs), s.byd, s.traffic].filter(Boolean),
       env: {
         VITE_ROUTER_URL: s.valhalla,
         // Street names along the route come from the same Valhalla (trace_attributes).
@@ -68,8 +68,22 @@ const APPS = {
         ...(s.whisper ? { VITE_STT_URL: s.whisper } : {}),
         ...(s.tts ? { VITE_TTS_URL: s.tts } : {}),
         ...(s.chargers ? { VITE_CHARGERS_URL: s.chargers } : {}),
+        // Saved routes shared with the PC planner page that the route store serves.
+        ...(s.routes ? { VITE_ROUTES_URL: s.routes } : {}),
+        // Live speech-to-text (words appear while speaking) on the same server Babel uses.
+        ...(s.babelWs ? { VITE_LIVE_STT_URL: wss(s.babelWs) } : {}),
+        // Car speed and battery at arrival from the byd-bridge (read only).
+        ...(s.byd ? { VITE_BYD_URL: s.byd } : {}),
+        // Jams, closures and detours from the own glass-traffic service (TomTom key stays on the server).
+        ...(s.traffic ? { VITE_TRAFFIC_URL: s.traffic } : {}),
       },
     }),
+  },
+  "byd-glass": {
+    summary: "your byd-bridge (car state; climate/lock only with double confirmation, only while the car is off)",
+    required: ["byd"],
+    optional: [],
+    plan: (s) => ({ origins: [s.byd], env: { VITE_BYD_URL: s.byd } }),
   },
   "babel-glass": {
     summary: "live captions (Whisper WebSocket) and translation (LLM proxy)",
@@ -167,9 +181,12 @@ function loadConfig(file) {
     sugar: one("sugar"),
     valhalla: one("valhalla"),
     chargers: one("chargers"),
+    routes: one("routes"),
     tts: one("tts"),
     lumen: one("lumen"),
     xaventra: one("xaventra"),
+    byd: one("byd"),
+    traffic: one("traffic"),
     agents: list("agent-glass").map((u, i) => origin(u, `services.agent-glass[${i}]`)),
     status,
   };

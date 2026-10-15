@@ -21,23 +21,24 @@ const withLine = (text: string) => applyTranscript(createBuffer(), { text, final
 describe("not listening", () => {
   it("says so and never implies it is capturing", () => {
     const view = buildView(createBuffer(), { ...base, listening: false });
-    expect(view.body[0]).toBe("Not listening.");
-    expect(view.footer).not.toContain("MIC");
+    // 0.8.1: stopped, the start screen is the customer list (the old "Not listening" fallback was unreachable).
+    expect(view.header).toBe("BABEL · pick customer");
+    expect(view.header + view.footer).not.toContain("MIC");
   });
 
   it("names the mock provider when one is in use", () => {
-    expect(buildView(createBuffer(), { ...base, listening: false, mock: true }).footer)
-      .toContain("mock");
+    expect(buildView(createBuffer(), { ...base, listening: false, mock: true }).header)
+      .toContain("MOCK");
   });
 });
 
 describe("listening", () => {
   it("always shows the microphone indicator", () => {
-    expect(buildView(createBuffer(), base).footer).toContain("MIC");
+    expect(buildView(createBuffer(), base).header).toContain("● MIC");
   });
 
   it("marks a mock provider so output is never mistaken for real", () => {
-    expect(buildView(withLine("hi"), { ...base, mock: true }).footer).toContain("MOCK");
+    expect(buildView(withLine("hi"), { ...base, mock: true }).header).toContain("MOCK");
   });
 
   it("shows captions", () => {
@@ -50,13 +51,13 @@ describe("listening", () => {
 
   it("surfaces a connection problem rather than looking idle", () => {
     const view = buildView(withLine("x"), { ...base, status: "reconnecting" });
-    expect(view.footer).toContain("reconnecting");
+    expect(view.header).toContain("reconnecting");
   });
 
   it("marks that the user is reading history", () => {
     let buffer = createBuffer();
     for (let i = 0; i < 20; i++) buffer = applyTranscript(buffer, { text: "l" + i, final: true }, i);
-    expect(buildView(buffer, { ...base, offset: 10 }).footer).toContain("history");
+    expect(buildView(buffer, { ...base, offset: 10 }).header).toContain("history");
   });
 });
 
@@ -192,10 +193,10 @@ describe("Cyrillic originals and German translations on the glasses", () => {
     expect(buildView(withLine(text), base).body).toEqual([text]);
   });
 
-  it("surfaces a translation failure in the footer", () => {
+  it("surfaces a translation failure next to the microphone indicator in the header", () => {
     const view = buildView(withLine("Привет"), { ...base, translating: true, translateError: "HTTP 400" });
-    expect(view.footer).toContain("translate: HTTP 400");
-    expect(view.footer).toContain("MIC");
+    expect(view.header).toContain("translate: HTTP 400");
+    expect(view.header).toContain("MIC");
   });
 });
 

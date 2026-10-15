@@ -4,8 +4,9 @@
 
 Xaventra HUD spricht nur mit dem Xaventra-Server, den du selbst einträgst und
 betreibst. Fragen, Status und Antworten liegen dort, nicht bei uns. Das Mikrofon
-läuft nur, solange du hältst, höchstens 15 Sekunden, mit der Anzeige **● MIC**;
-die Aufnahme geht nur an deinen Server und wird von der App nicht gespeichert.
+läuft nur, solange du hältst, höchstens 2 Minuten, mit der Anzeige **● MIC**;
+die Aufnahme geht nur an deinen Server (und in privaten Builds live an deine eigene
+Spracherkennung, damit der Text schon beim Sprechen erscheint) und wird von der App nicht gespeichert.
 Adresse und Token bleiben auf deinem Handy. Kein Konto, kein Tracking.
 
 ## Short version
@@ -18,12 +19,12 @@ while you hold, goes only to that server, and is not stored by the app.
 | Permission (`app.json`) | Why | Used for nothing else |
 |---|---|---|
 | `network` (`http://*`, `https://*`) | Read the status feed and open questions from **your** Xaventra server, send your yes/no answers and your recordings to it | No other host is contacted. The wildcard exists only because the address is yours to choose. Without an address nothing is sent. |
-| `g2-microphone` | Optional voice control | Only while you hold the temple pad, at most 15 s, always shown as **● MIC**. Never on launch, never in the background. |
+| `g2-microphone` | Optional voice control | Only while you hold the temple pad, at most 2 min, always shown as **● MIC**. Never on launch, never in the background. |
 
 ## The microphone
 
 - Opens only on your gesture: hold. Release (or tap) ends it.
-- Closes automatically after 15 seconds, and when you leave the app.
+- Closes automatically after 2 minutes, and when you leave the app.
 - While open, the glasses show **● MIC**; this cannot be switched off.
 - The recording is held in memory, sent once to your server's `/hud/voice`, and
   dropped. A cancelled recording (double tap) is never sent.

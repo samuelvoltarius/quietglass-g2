@@ -25,7 +25,8 @@ export interface FoundPlace {
   readonly at: LatLng;
 }
 
-export type SearchErrorCode = "short" | "empty" | "offline" | "timeout" | "busy" | "server";
+/** "shortLink": a pasted maps.app.goo.gl link (see gmaps.ts), never from the search server. */
+export type SearchErrorCode = "short" | "empty" | "offline" | "timeout" | "busy" | "server" | "shortLink";
 
 export interface SearchOutcome {
   readonly places: readonly FoundPlace[];
@@ -112,7 +113,8 @@ export function createGeocoder(config: GeocoderConfig): Geocoder {
 
       await gate.ready();
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 10_000);
+      // 20 s: the public Photon answered in 13-15 s on the road (15.10.).
+      const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 20_000);
       try {
         const response = await doFetch(url, { signal: controller.signal });
         if (!response.ok) {

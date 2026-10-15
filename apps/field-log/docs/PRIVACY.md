@@ -26,7 +26,7 @@ FieldLog opens the microphone **only when you tap to dictate**. Never on
 launch, never continuously. While it is open the glasses show **● MIC**, and
 that indicator is not configurable.
 
-Recording stops on your second tap, after 30 seconds at the latest, or when you
+Recording stops on your second tap, after 10 minutes at the latest (a safety cap), or when you
 leave the app — the microphone is open for the length of one spoken entry, not
 for the length of the walk. The recording is held in memory only until it has
 been sent, and dropped right after.
@@ -34,7 +34,7 @@ been sent, and dropped right after.
 ## The camera
 
 The glasses have no camera. Photos come from the phone's own camera through the
-SDK's picker, which you trigger by holding the temple pad. Nothing is captured
+SDK's picker, which you trigger from the glasses (hold the temple pad). Nothing is captured
 without that action.
 
 ## What is stored

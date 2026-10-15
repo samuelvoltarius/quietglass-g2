@@ -218,14 +218,14 @@ describe("German output stays exactly as reviewed", () => {
         "  4 min ~  REX 1  Wien Westbahnhof über L… · 3",
         "  15 min +3  Railjet Xpress 563  Wien H… · 10A",
       ],
-      footer: "Tippen = folgen · Halten = Ziel · ● live",
+      footer: "● live · Tippen = folgen · 2× = Ende",
     });
     expect(departureBoard(STOP, [], null, "de")).toEqual({
       header: "Salzburg Mirabellplatz",
       body: ["", "Keine Abfahrten in der nächsten Stunde.", "", "Betriebsschluss, oder diese Haltestelle", "wird gerade nicht bedient."],
-      footer: "Halten = Ziel · Menü = andere Haltestelle",
+      footer: "Halten = Ziel · 2× = Ende",
     });
-    expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("Tippen = folgen · Halten = Ziel · Fahrplan");
+    expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("Fahrplan · Tippen = folgen · 2× = Ende");
   });
 
   it("pins the ride", () => {
@@ -234,17 +234,17 @@ describe("German output stays exactly as reviewed", () => {
     expect(ridingView(trackRide(simple, at, null)!, at, simple.line, simple.headsign, "de")).toEqual({
       header: "O-Bus 6 → Itzling West",
       body: ["> Halt 3 · gleich", "  Halt 4 · 2 min", "  Halt 5 · 3 min", "  Halt 6 · 4 min", "  Halt 7 · 5 min", "", "noch 6 Stationen · Ziel 7 min"],
-      footer: "nach Fahrplan geschätzt · Tippen = zurück",
+      footer: "nach Fahrplan · Tippen = zurück · 2× = Ende",
     });
     const gps = ridingView(trackRide(simple, at, { lat: 47.8 + 2.7 * 0.0045, lon: 13.04 })!, at, "O-Bus 6", "Itzling", "de");
-    expect(gps.footer).toBe("GPS · 150 m · Tippen = zurück");
+    expect(gps.footer).toBe("GPS · 150 m · Tippen = zurück · 2× = Ende");
     const two = ride(3);
     expect(ridingView(trackRide(two, minutes(0.2), null)!, minutes(0.2), "1", "X", "de").body.at(-1)).toBe("noch 1 Station · Ziel 2 min");
     expect(ridingView(trackRide(two, minutes(1.9), null)!, minutes(1.9), "1", "X", "de").body.at(-1)).toBe("letzte Station");
     expect(ridingView(trackRide(two, minutes(99), null)!, minutes(99), "1", "X", "de")).toEqual({
       header: "1 → X",
       body: ["", "Endstation Halt 2.", "", "Die Fahrt ist zu Ende."],
-      footer: "Tippen = zurück zur Haltestelle",
+      footer: "Tippen = zurück · 2× = Ende",
     });
     const cancelled = ride(3, { cancelFirst: true });
     expect(ridingView(trackRide(cancelled, minutes(-3), null)!, minutes(-3), "1", "X", "de").body[0]).toBe("> Halt 0 · fällt aus");
@@ -264,7 +264,7 @@ describe("German output stays exactly as reviewed", () => {
     expect(errorView(text.noStops, noStopsHint("motis", "de"), "de")).toEqual({
       header: "NextStop",
       body: ["", "Keine Haltestelle in der Nähe", "", "Hier sind keine Fahrplandaten hinterlegt. In", "Österreich: am Handy ÖBB wählen."],
-      footer: "Tippen = nochmal versuchen",
+      footer: "Tippen = nochmal · 2× = Ende",
     });
     expect(validateUrl("ftp://x", "de").error).toBe("Adresse muss mit http:// oder https:// beginnen.");
   });
@@ -279,6 +279,7 @@ describe("German output stays exactly as reviewed", () => {
         if (!elements.has(selector)) elements.set(selector, { textContent: "", value: "", hidden: false, addEventListener: () => undefined });
         return elements.get(selector);
       },
+      querySelectorAll: () => [],
     };
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => root });
@@ -291,10 +292,12 @@ describe("German output stays exactly as reviewed", () => {
     expect(elements.get("#next")?.textContent).toBe(nextStep(true, 2, "de"));
     expect(nextStep(true, 2, "de")).toBe("Fertig. Auf der Brille: wischen = Abfahrt wählen, tippen = mitfahren.");
     expect(elements.get("#backend-hint")?.textContent).toBe(
-      "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe „Erweitert“ unten.",
+      "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe Tab „Mehr“.",
     );
+    expect(html).toContain('<nav class="tabbar"');
+    expect(html).toContain("</span>Haltestellen</button>");
     expect(html).toContain('<option value="motis">Überall – Fahrplan (funktioniert sofort)</option>');
-    expect(html).toContain("<strong>Tippen</strong> — Bus verfolgen: wann er kommt, dann der nächste Halt; nochmal tippen = zurück<br />");
+    expect(html).toContain("<strong>Tippen</strong> — Bus verfolgen: wann er kommt, dann der nächste Halt; zum Beenden der Fahrt zweimal einzeln tippen<br />");
     expect(html).toContain('<label for="refresh">Abfahrten neu laden alle <span id="refresh-value"></span> s</label>');
     expect(html).toContain('Fahrplandaten: <a href="https://transitous.org/sources/" target="_blank" rel="noopener">Transitous und seine Quellen</a> (u. a. OpenStreetMap) · Echtzeit Österreich: ÖBB');
     vi.useRealTimers();
@@ -329,6 +332,7 @@ class FakeRoot {
     if (!element) { element = new FakeElement(); this.#elements.set(selector, element); }
     return element;
   }
+  querySelectorAll(): FakeElement[] { return []; }
 }
 
 describe("switching the language on the phone", () => {
@@ -393,7 +397,7 @@ describe("switching the language on the phone", () => {
     language.fire("change");
 
     await vi.waitFor(() => expect(glasses.body).toContain("Allow location in the Even app."));
-    expect(glasses.footer).toBe("2× = close");
+    expect(glasses.footer).toBe("2× = exit");
     expect(root.innerHTML).toContain("Where do the departures come from?");
     expect(root.innerHTML).toContain('<option value="en" selected>');
     expect(root.innerHTML).not.toContain("Woher");

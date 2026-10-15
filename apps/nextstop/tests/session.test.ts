@@ -131,7 +131,7 @@ describe("NextStop after a restart and in the background", () => {
   it("carries on with the guide that was running", async () => {
     const fake = fakeBridge({ [SESSION_KEY]: encodeSession(session(Date.now())) });
     await boot(fake);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Schritt 1\/2 · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/2 · /));
   });
 
   it("switches GPS off when left through the system and on again on return", async () => {

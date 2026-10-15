@@ -2,6 +2,7 @@ import { heldSeconds, uprightShare, type PostureMonitor, type PostureSettings } 
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { fitView } from "./fit";
+import { armedFooter, armedMenuFooter, footer } from "./footer";
 
 /**
  * What the glasses show.
@@ -26,8 +27,15 @@ export interface ViewOptions {
   readonly justCalibrated?: boolean;
   /** The glasses refused IMU reporting: nothing can be measured until the app is reopened. */
   readonly sensorOff?: boolean;
-  /** A gesture that would overwrite something is armed: the footer says what doing it again does. */
+  /**
+   * Something is armed (QIS v1): `calibrate` = overwriting the saved posture (a second tap does it),
+   * `reset` = clearing today's tally from the side menu (the same menu entry again does it).
+   */
   readonly confirm?: "calibrate" | "reset" | null;
+  /** A short note instead of the state in the header ("Tally cleared") for a few seconds. */
+  readonly note?: string | null;
+  /** The hold opens the app's own menu (no side menu): the footer names it. */
+  readonly holdMenu?: boolean;
 }
 
 export function buildView(
@@ -38,10 +46,15 @@ export function buildView(
 ): PostureView {
   const view = composeView(monitor, settings, options, now);
   // An armed overwrite always says so in the footer, whatever the state shows.
-  const confirm = options.confirm && !options.sensorOff
-    ? t(options.locale ?? "en", options.confirm === "calibrate" ? "g.confirmCalibrate" : "g.confirmReset")
+  const locale = options.locale ?? "en";
+  if (options.confirm === "reset" && !options.sensorOff) {
+    return fitView({ ...view, header: head(locale, t(locale, "g.sResetAsk")), footer: armedMenuFooter(locale, t(locale, "g.a.clear")) });
+  }
+  const confirm = options.confirm === "calibrate" && !options.sensorOff
+    ? armedFooter(locale, t(locale, "g.a.resave"))
     : null;
-  return fitView(confirm ? { ...view, footer: confirm } : view);
+  const noted = options.note && !options.sensorOff ? { ...view, header: head(locale, options.note) } : view;
+  return fitView(confirm ? { ...noted, footer: confirm } : noted);
 }
 
 /** The view before the safety cut; tests check it never needs one. */
@@ -55,9 +68,9 @@ export function composeView(
   // Without the sensor nothing else on screen would be true; say what to do instead.
   if (options.sensorOff) {
     return {
-      header: t(locale, "g.title"),
+      header: head(locale, t(locale, "g.sSensorOff")),
       body: [t(locale, "g.sensorOff1"), t(locale, "g.sensorOff2"), t(locale, "g.sensorOff3")],
-      footer: t(locale, "g.sensorOffFooter"),
+      footer: footer(locale, {}, "exit"),
     };
   }
 
@@ -65,56 +78,67 @@ export function composeView(
     case "uncalibrated":
       // First run: one sentence saying exactly what to do next.
       return {
-        header: t(locale, "g.title"),
+        header: head(locale, t(locale, "g.sFirst")),
         body: [t(locale, "g.first1"), t(locale, "g.first2")],
-        footer: t(locale, "g.firstFooter"),
+        footer: footer(locale, { tap: t(locale, "g.w.save"), ...(options.holdMenu ? { hold: t(locale, "g.w.menu") } : {}) }, "exit"),
       };
 
     case "good":
       return {
-        header: "",
+        header: head(locale, options.justCalibrated ? t(locale, "g.sSaved") : quietState(monitor, locale)),
         body: options.justCalibrated
           ? [t(locale, "g.saved1"), t(locale, "g.saved2")]
           : options.showAngleWhenGood && monitor.angle !== null
             ? [formatAngle(monitor.angle, locale)]
             : [],
-        footer: quietFooter(monitor, locale),
+        footer: gestureFooter(locale, options.holdMenu),
       };
 
     case "leaning": {
       const held = heldSeconds(monitor, now) ?? 0;
       const remaining = Math.max(0, settings.sustainSeconds - held);
       return {
-        header: "",
-        body: [formatAngle(monitor.angle, locale)],
         // Counting down is information, not nagging: it says a warning is
         // coming and gives the user the chance to pre-empt it.
-        footer: remaining > 0
+        header: head(locale, remaining > 0
           ? t(locale, "g.leaningIn", { time: formatDuration(remaining, locale) })
-          : t(locale, "g.leaning"),
+          : t(locale, "g.leaning")),
+        body: [formatAngle(monitor.angle, locale)],
+        footer: gestureFooter(locale, options.holdMenu),
       };
     }
 
     case "warned":
       return {
-        header: t(locale, "g.warnHeader"),
+        header: head(locale, t(locale, "g.warnHeader")),
         body: [
           formatAngle(monitor.angle, locale),
           t(locale, "g.held", { time: formatDuration(heldSeconds(monitor, now) ?? 0, locale) }),
+          t(locale, "g.straighten"),
         ],
-        footer: t(locale, "g.warnFooter"),
+        footer: gestureFooter(locale, options.holdMenu),
       };
 
     default:
-      return { header: t(locale, "g.title"), body: [], footer: "" };
+      return { header: head(locale, t(locale, "g.sFirst")), body: [], footer: gestureFooter(locale, options.holdMenu) };
   }
 }
 
-/** One quiet line: the share of time upright, nothing else. */
-function quietFooter(monitor: PostureMonitor, locale: Locale): string {
+/** `POSTURE · state` - the header of every posture screen (QIS v1). */
+function head(locale: Locale, state: string): string {
+  return `${t(locale, "g.title")} · ${state}`;
+}
+
+/** The quiet state: the share of time upright, nothing else. */
+function quietState(monitor: PostureMonitor, locale: Locale): string {
   const share = uprightShare(monitor);
   if (share === null) return t(locale, "g.tracking");
   return t(locale, "g.upright", { pct: Math.round(share * 100) });
+}
+
+/** What the gestures do on the posture screen. A swipe does nothing here, so it is not listed. */
+function gestureFooter(locale: Locale, holdMenu = false): string {
+  return footer(locale, { tap: t(locale, "g.w.resave"), ...(holdMenu ? { hold: t(locale, "g.w.menu") } : {}) }, "exit");
 }
 
 export function formatAngle(angle: number | null, locale: Locale = "en"): string {

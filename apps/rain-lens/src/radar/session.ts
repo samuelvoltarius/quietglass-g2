@@ -1,5 +1,7 @@
 import type { ImageLane } from "../glasses/lane";
 import { encodePng } from "../glasses/pixel";
+import { footer as qisFooter } from "../glasses/footer";
+import type { Locale } from "../i18n";
 import { clock, fit } from "../rain/model";
 import { baseMapFor } from "./basemap";
 import { bitmapKey, composeFrame, splitTiles } from "./frame";
@@ -27,6 +29,7 @@ export const LOAD_TIMEOUT_MS = 30_000;
 /** Place names longer than this are cut in the header. */
 const PLACE_WIDTH = 18;
 const FULL_WIDTH = 56;
+const APP = "RAINLENS";
 
 export type RadarStatus = "idle" | "loading" | "ready" | "noLocation" | "error";
 
@@ -63,6 +66,10 @@ export interface RadarSession {
   requestImages(lane: ImageLane): void;
   /** Frame on screen, for tests. */
   frameIndex(): number;
+  /** Loads if nothing fresh is there, without starting the loop (the cockpit plays its own). */
+  prepare(): void;
+  /** What is loaded, or null. */
+  data(): RadarData | null;
 }
 
 export function createRadarSession(deps: RadarDeps): RadarSession {
@@ -135,13 +142,20 @@ export function createRadarSession(deps: RadarDeps): RadarSession {
     },
     stop() { running = false; stopTimer(); },
     reload() { begin(true); },
+    prepare() { begin(false); },
+    data: () => (status === "ready" ? data : null),
     frameIndex: () => (data ? frameAt(tick, data.frames.length) : 0),
     text() {
       const title = deps.t("radar");
-      const footer = fit(`${deps.t("radarCredit")} · ${deps.t("radarControls")}`, FULL_WIDTH);
+      // QIS v1: the credit stays; a full-screen picture keeps the footer short (swipe, then hold, drop first).
+      const footer = qisFooter(deps.locale() as Locale, { tap: deps.t("fRefresh"), swipe: deps.t("fView"), hold: deps.t("fHelp") }, "exit", deps.t("radarCredit"));
       const position = data?.position ?? deps.position();
       const place = placeLabel(position);
-      const head = (rest: string): string => fit([title, place, rest].filter(Boolean).join("  "), FULL_WIDTH);
+      // `RAINLENS · RADAR  place  time dots`; the place goes first when the row would be too wide.
+      const head = (rest: string): string => {
+        const row = (withPlace: boolean): string => `${APP} · ${[title, withPlace ? place : "", rest].filter(Boolean).join("  ")}`;
+        return fit(Array.from(row(true)).length <= FULL_WIDTH ? row(true) : row(false), FULL_WIDTH);
+      };
       if (status === "ready" && data && data.frames.length > 0) {
         const index = frameAt(tick, data.frames.length);
         const frame = data.frames[index]!;
@@ -150,10 +164,10 @@ export function createRadarSession(deps: RadarDeps): RadarSession {
         return { header: head(`${clock(new Date(frame.time * 1000).toISOString(), deps.locale())}  ${dots}${sample}`), note: "", footer };
       }
       // With a place the map is on screen: the state goes into the header, the middle stays free.
-      if (position && status === "error") return { header: fit(`${title}  ${deps.t("radarErrorShort")}`, FULL_WIDTH), note: "", footer };
+      if (position && status === "error") return { header: fit(`${APP} · ${title}  ${deps.t("radarErrorShort")}`, FULL_WIDTH), note: "", footer };
       if (position && status !== "noLocation") return { header: head(deps.t("radarLoadingShort")), note: "", footer };
       const note = deps.locating?.() ? deps.t("radarLocating") : status === "error" ? deps.t("radarError") : status === "loading" ? deps.t("radarLoading") : deps.t("radarNoLocation");
-      return { header: fit(title, FULL_WIDTH), note, footer };
+      return { header: fit(`${APP} · ${title}`, FULL_WIDTH), note, footer };
     },
     requestImages(lane) {
       if (status === "ready" && data) {

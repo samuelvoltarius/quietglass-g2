@@ -3,16 +3,20 @@ import { createClient, toApiError, type SugarApi } from "./ns/client";
 import { createDemo, DEMO_SCENES, type DemoScene } from "./ns/demo";
 import { EMPTY_TREATMENTS, type PumpStatus, type Reading, type Treatments } from "./ns/model";
 import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
-import { gestureFromEvent, type Gesture } from "./input/gestures";
-import { installPage, updatePage } from "./glasses/render";
+import { t } from "./messages";
+import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
+import { installPage, setPageMenu, updatePage, type MenuSpec } from "./glasses/render";
 import { bitmapKey } from "./glasses/gfx";
 import { ICON_STEP_MS } from "./glasses/charts";
-import { PAGES, buildFrames, buildView, errorReason, type Connection, type Frames, type Layout, type Page, type PageView, type ViewState } from "./glasses/views";
+import { PAGES, SIDE_MENU, buildFrames, buildView, errorReason, type Connection, type Frames, type Layout, type Page, type PageView, type ViewState } from "./glasses/views";
 import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings } from "./storage/persist";
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.1.0";
+export const BUILD = "0.3.2";
+
+/** QIS v1.2: ids of the glasses side menu (Hold opens it). */
+export const MENU = { help: 1, refresh: 2, swipe: 3 } as const;
 
 const params = new URLSearchParams(globalThis.location?.search ?? "");
 const DEMO = params.get("demo") === "1";
@@ -42,25 +46,42 @@ async function boot(): Promise<void> {
   let treatments: Treatments = EMPTY_TREATMENTS;
   let treatmentsAt = 0;
   let page: Page = PAGES[START_PAGE] ?? "glucose";
+  /** The help page is open (side menu); only 2× does anything there (back). */
+  let helpOpen = false;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let polling = false;
   let generation = 0;
   let ready = false;
+  /** First start without a server address: the values are a demo and the glasses say how to set up the real thing. */
+  let demoStart = false;
 
   const viewState = (): ViewState => ({
     locale, demo: DEMO, connection,
     data: readings ? { readings, pump, treatments } : null,
-    page, unit: settings.unit, limits: settings.limits,
+    page, help: helpOpen, unit: settings.unit, limits: settings.limits,
     now: Date.now(),
+    ...(demoStart ? { demoHint: true } : {}),
   });
 
   let lastView: PageView | null = null;
   let lastLayout: Layout | null = null;
   let lastKey = "";
+  /** Key of the side menu the page on the glasses carries; a different one needs a rebuild. */
+  let pageMenuKey = "";
   let pageReady = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
+
+  /** Off while its clicks do not arrive on the real glasses (SIDE_MENU, step log 15.10.2026): the pages carry no menu. QIS v1.2: Hold opens the side menu: Hilfe, Neu laden and the swipe direction (its label names the state, so a change rebuilds the page once). */
+  const menuSpec = (): MenuSpec => SIDE_MENU ? ({
+    key: `${locale}:${settings.invertScroll ? 1 : 0}`,
+    items: [
+      { id: MENU.help, label: t(locale, "m.help") },
+      { id: MENU.refresh, label: t(locale, "m.refresh") },
+      { id: MENU.swipe, label: t(locale, settings.invertScroll ? "m.swipeInverted" : "m.swipeNormal") },
+    ],
+  }) : { key: "none", items: [] };
 
   const frameKey = (f: Frames): string => [f.icon, f.value, f.curve].map((b) => (b ? bitmapKey(b) : "-")).join("|");
 
@@ -71,11 +92,13 @@ async function boot(): Promise<void> {
     const key = frameKey(frames);
     const same = lastView && view.layout === lastView.layout && view.header === lastView.header && view.footer === lastView.footer
       && view.body.join("\n") === lastView.body.join("\n");
-    if (pageReady && same && key === lastKey) return;
-    const result = !pageReady || view.layout !== lastLayout
+    const menu = menuSpec();
+    if (pageReady && same && key === lastKey && menu.key === pageMenuKey) return;
+    setPageMenu(menu);
+    const result = !pageReady || view.layout !== lastLayout || menu.key !== pageMenuKey
       ? await installPage(bridge, view, frames)
       : await updatePage(bridge, view, frames, lastView);
-    if (result.ok) { pageReady = true; lastView = view; lastLayout = view.layout; lastKey = key; return; }
+    if (result.ok) { pageReady = true; lastView = view; lastLayout = view.layout; lastKey = key; pageMenuKey = menu.key; return; }
     pageReady = false;
     lastView = null;
     console.warn("[sugarglass] draw failed:", result.reason);
@@ -100,7 +123,7 @@ async function boot(): Promise<void> {
   let refreshPhone: () => void = () => undefined;
   let phoneSignature = "";
   const updatePhone = (force = false): void => {
-    const signature = JSON.stringify([phoneConnection(), readings?.[0]?.at ?? null, Math.floor(Date.now() / 60_000), locale, settings.unit]);
+    const signature = JSON.stringify([phoneConnection(), readings?.[0]?.at ?? null, Math.floor(Date.now() / 60_000), locale, settings.unit, settings.invertScroll]);
     if (!force && signature === phoneSignature) return;
     const active = (globalThis.document as Document | undefined)?.activeElement as HTMLElement | null | undefined;
     if (!force && active?.matches?.("#app input, #app select")) return;
@@ -108,12 +131,12 @@ async function boot(): Promise<void> {
     refreshPhone();
   };
   const phoneConnection = (): PhoneConnection => {
-    if (DEMO) return { kind: "demo" };
+    if (DEMO || demoStart) return { kind: "demo" };
     switch (connection.kind) {
       case "setup": return { kind: "none" };
       case "loading": return { kind: "loading" };
       case "ok": return { kind: "ok" };
-      case "error": return { kind: "error", reason: errorReason(locale, connection.code, connection.status) };
+      case "error": return { kind: "error", reason: errorReason(locale, connection.code, connection.status, true) };
     }
   };
 
@@ -153,9 +176,11 @@ async function boot(): Promise<void> {
   };
 
   const makeApi = (): SugarApi | null => {
+    demoStart = false;
     if (DEMO) return createDemo(Date.now, SCENE);
     const url = effectiveUrl(settings);
-    if (!url) return null;
+    // QIS v1.2 no. 7: without an address the app starts in demo mode instead of an empty setup page.
+    if (!url) { demoStart = true; return createDemo(Date.now, SCENE); }
     return createClient({ baseUrl: url, ...(settings.token ? { token: settings.token } : {}) });
   };
 
@@ -180,7 +205,18 @@ async function boot(): Promise<void> {
   };
 
   const onGesture = (gesture: Gesture): void => {
+    // QIS v1: the help page is read-only; 2× goes back to the page it came from.
+    if (helpOpen) {
+      if (gesture === "doubleClick") { helpOpen = false; void draw(); }
+      return;
+    }
     switch (gesture) {
+      // Without a working side menu (SIDE_MENU): a hold opens the help.
+      case "longPress":
+        if (SIDE_MENU) return;
+        helpOpen = true;
+        void draw();
+        return;
       case "scrollDown":
       case "scrollUp": {
         const index = (PAGES.indexOf(page) + (gesture === "scrollDown" ? 1 : -1) + PAGES.length) % PAGES.length;
@@ -200,8 +236,27 @@ async function boot(): Promise<void> {
     }
   };
 
+  /** An item of the glasses side menu: help, refresh and the swipe direction never ride on a gesture. */
+  const onMenu = (itemId: number): void => {
+    switch (itemId) {
+      case MENU.help: helpOpen = true; void draw(); break;
+      case MENU.refresh: treatmentsAt = 0; void poll(); break;
+      case MENU.swipe: {
+        const next = { ...settings, invertScroll: !settings.invertScroll };
+        settings = next;
+        void saveSettings(bridge, next).catch(() => undefined);
+        updatePhone();
+        void draw();
+        break;
+      }
+      default: break;
+    }
+  };
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) { if (ready) onMenu(menuId); return; }
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
     // Before the first page exists only "leave" means anything.

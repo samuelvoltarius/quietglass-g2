@@ -120,6 +120,8 @@ export interface RadarFrame {
   readonly tiles: readonly [Bitmap, Bitmap, Bitmap, Bitmap];
   /** Fingerprints of the pieces; unchanged pieces are not sent again. */
   readonly keys: readonly [string, string, string, string];
+  /** The raw radar levels of this frame, so another view (the cockpit) can draw its own window. */
+  readonly lookup?: (tx: number, ty: number) => TileLevels;
 }
 
 export interface RadarData {
@@ -159,7 +161,7 @@ export function composeData(position: Position, frames: readonly { time: number;
     position, loadedAt: now, locale, ...(synthetic ? { synthetic: true } : {}),
     frames: frames.map((frame) => {
       const tiles = splitTiles(composeFrame(position, frame.lookup, zoom, base));
-      return { time: frame.time, tiles, keys: [bitmapKey(tiles[0]), bitmapKey(tiles[1]), bitmapKey(tiles[2]), bitmapKey(tiles[3])] };
+      return { time: frame.time, tiles, keys: [bitmapKey(tiles[0]), bitmapKey(tiles[1]), bitmapKey(tiles[2]), bitmapKey(tiles[3])], lookup: frame.lookup };
     }),
   };
 }

@@ -31,6 +31,7 @@ class FakeRoot {
     if (!element) { element = new FakeElement(); this.#elements.set(selector, element); }
     return element;
   }
+  querySelectorAll(): FakeElement[] { return []; }
 }
 
 describe("the phone settings page", () => {

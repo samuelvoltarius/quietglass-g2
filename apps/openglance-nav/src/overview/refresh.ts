@@ -24,6 +24,8 @@ export interface MapFrame {
   readonly at: number;
   /** Bumped when charging stations to mark arrive; absent when none are shown. */
   readonly chargers?: number;
+  /** The speed plate is drawn; absent when not. */
+  readonly speedPlate?: boolean;
 }
 
 /** The car and the map orientation update at most this often. */
@@ -43,6 +45,7 @@ export function needsMapImage(
   if (!sent) return true;
   if (sent.route !== next.route || sent.streets !== next.streets || sent.maneuver !== next.maneuver || sent.range !== next.range) return true;
   if ((sent.chargers ?? -1) !== (next.chargers ?? -1)) return true;
+  if ((sent.speedPlate ?? false) !== (next.speedPlate ?? false)) return true;
   if ((sent.bearing === null) !== (next.bearing === null)) return true;
   if ((sent.position === null) !== (next.position === null)) return true;
   if (next.at - sent.at < minIntervalMs) return false;

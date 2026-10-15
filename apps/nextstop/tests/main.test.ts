@@ -187,7 +187,7 @@ describe("nextstop lifecycle", () => {
     fake.gesture(0); // tap: follow the selected bus
     // The glasses answer the tap at once, before the network has (0.3.7 showed the unchanged board).
     await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
-    expect(fake.state.footer).toBe("Tippen = zurück zur Tafel");
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tippen = abbrechen · 2× = Ende"));
     await vi.waitFor(() => expect(pending).toHaveLength(2));
     const at = (minutes: number): string => new Date(Date.now() + minutes * 60000).toISOString();
     pending[1]?.reply({
@@ -205,7 +205,10 @@ describe("nextstop lifecycle", () => {
     await vi.waitFor(() => expect(fake.state.body).toMatch(/^\d\d:\d\d · ~ Fahrplan · Alpha Platz\nBus ist gleich da$/), { timeout: 3000 });
 
     resetGestureDedupe(); // a person's second tap comes seconds later
-    fake.gesture(0); // tap again: back to the board, at once, with the departures already held
+    fake.gesture(0); // QIS v1: the first tap on a running ride only arms
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
+    resetGestureDedupe();
+    fake.gesture(0); // the second tap: back to the board, at once, with the departures already held
     await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
     await vi.waitFor(() => expect(pending).toHaveLength(3));
     pending[2]?.reply(stopTimes("Alpha-Ziel"));
@@ -243,11 +246,11 @@ describe("nextstop lifecycle", () => {
     resetGestureDedupe();
     fake.gesture(0); // the ride has not answered: back anyway
     await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
-    expect(fake.state.footer).toContain("Tippen = verfolgen");
+    expect(fake.state.footer).toContain("Tippen = folgen");
 
     pending[1]?.reply({ legs: [] }); // the ride's answer, too late
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(fake.state.footer).toContain("Tippen = verfolgen");
+    expect(fake.state.footer).toContain("Tippen = folgen");
     fake.gesture(3);
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });

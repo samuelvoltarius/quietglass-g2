@@ -11,7 +11,7 @@
 > 1. FieldLog installieren und auf der Brille öffnen.
 > 2. Tipp an die Brille – ein Rundgang startet (mit Datum als Name).
 > 3. Nochmal tippen, mit Wischen eine Schnellnotiz wählen („Beschädigt“, „Fehlt“ …),
->    tippen zum Speichern. Halten macht ein Foto. Am Handy kannst du Notizen auch
+>    tippen zum Speichern. Halten macht ein Foto (ohne Rundgang: Hilfe). Am Handy kannst du Notizen auch
 >    eintippen, Bereiche setzen und den Bericht exportieren.
 >
 > **Tabelle (CSV):** Neben dem CSV-Knopf wählst du das Format. „Für Excel (DE/AT)“
@@ -45,16 +45,16 @@ Works out of the box, with no server:
 2. **Tap** — the quick-note list opens (*OK, Damaged, Missing, Dirty, Not working,
    Check later, See photo* — edit the list on the phone). **Swipe** to choose,
    **tap** to save. The last row is *Cancel*.
-3. **Hold** to attach a photo from the phone camera. With no entry yet, the
-   photo becomes an entry of its own.
+3. **Hold** takes a photo with the phone camera and attaches it. With no entry yet, the
+   photo becomes an entry of its own. With no inspection open, a hold opens the help.
 4. On the phone you can also **type** a note, set the area, and export.
 
 With a speech server set up (Advanced, optional), tap dictates instead:
-**tap** to speak, **tap** to stop (at most 30 s), **tap** to keep the transcript or
-**swipe twice** to discard it.
+**tap** to speak, **tap** to stop (safety cap 10 min), then choose *Keep*,
+*Keep + photo* or *Discard* with a swipe and tap. *Discard* is armed first: a second single tap
+within 4 s discards the text.
 
-Severity (`note` · `minor` · `major`) is set with a swipe and applies to the
-next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
+Severity (`note` · `minor` · `major`) is chosen with a swipe on the resting screen (the last stop is *Help*) and applies to the next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
 entry inherits the current one, so the report groups itself.
 
 ## Every transcript is confirmed
@@ -63,8 +63,9 @@ Speech recognition is imperfect, and an inspection report is a document someone
 acts on: a wrong entry can become a wrong invoice or a missed fault.
 
 So FieldLog never files a transcript silently. It shows what it heard and waits.
-Keeping is one tap; discarding takes a second swipe within 4 s, so one stray
-swipe cannot throw away what was just said.
+Keeping is one tap on *Keep*; discarding is the explicit choice *Discard* plus
+two single taps within 4 s. A swipe only moves between the three choices (QIS
+v1.2), so a stray swipe cannot throw away what was just said.
 
 ## Your own recogniser (optional, advanced)
 
@@ -85,10 +86,23 @@ preview.
 Until 0.4 FieldLog streamed audio over its own WebSocket protocol; a stored
 `ws://`/`wss://` address is dropped on update.
 
+**Live text (private builds, optional).** A build made with
+`VITE_LIVE_STT_URL=wss://… npm run build` also streams the audio to a live
+recogniser (JSON `start` frame, raw 16 kHz s16le PCM, `{"type":"stop"}`; replies
+`partial`/`final`, the Babel Glass protocol), so the words appear on the glasses
+while you speak. The live text is only a preview: every audio block is still
+kept on the phone. If the socket does not open within 3 s or drops, nothing
+reconnects — the recording carries on, and on stop the kept audio goes to the
+Whisper server above (after a drop only what the live text had not committed).
+One upload carries at most about 30 s; a longer recording that has to go this
+way sends its last 30 s and the review screen says so. The server gets 20 s plus
+1 s per 10 s of audio, at most 120 s. The public build has no live address and
+behaves exactly as described above.
+
 ## Photos
 
 The glasses have no camera. FieldLog uses the SDK's phone-camera picker, which
-is user-initiated by design — holding the temple pad opens the camera on your
+is user-initiated by design — holding on the resting screen (or choosing *Keep + photo* under review) opens the camera on your
 phone, and the photo attaches to the entry you just made.
 
 ## Export
@@ -139,10 +153,10 @@ Major: 1 · Minor: 2 · Notes: 0
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start an inspection · open quick notes · save the highlighted note (with a server: dictate · stop · keep) |
-| **Swipe** | Change the type of the next entry · move in the quick-note list · discard a transcript |
-| **Hold** | Attach a photo from the phone camera |
-| **Double tap** | Leave — stops the microphone |
+| **Tap** | Start an inspection · open quick notes · save the highlighted note · (with a server: dictate · finish · keep) |
+| **Swipe** | Only moves: type of the next entry (note · minor · major · *Help*), quick-note list, *Keep*/*Keep + photo*/*Discard*. Never deletes or discards anything |
+| **Hold** | Photo with the phone camera (with no inspection: opens the help; under *Keep this?*: jumps to *Keep + photo*) |
+| **2×** | Back one level (quick notes, help); at the resting screen leave FieldLog. Does nothing while recording or under *Keep this?* |
 
 ## Language
 

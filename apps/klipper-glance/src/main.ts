@@ -2,15 +2,20 @@ import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hu
 import { createClient, createDemoPrinter, toApiError, type PrinterApi } from "./printer/client";
 import type { Command, PrinterStatus } from "./printer/status";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
-import { gestureFromEvent, type Gesture } from "./input/gestures";
+import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
 import { t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, rebuildPage, updatePage } from "./glasses/render";
+import { createPage, rebuildPage, updatePage, type MenuSpec } from "./glasses/render";
 import type { ScreenView } from "./glasses/screen";
 import {
   buildPrintView, buildView, controlRows, errorReason, layoutFor, type Connection, type Layout, type PrintView, type ViewState,
 } from "./glasses/views";
 import { curveFrame, ringFrame } from "./glasses/charts";
+import { demoPreview, previewFrame, type GrayImage } from "./glasses/preview";
+import { decodeThumbnail } from "./glasses/thumb-decode";
+import {
+  currentLayerIndex, demoLayerModel, layerFrame, messageFrame, parseLayerModel, tiles, type LayerModel,
+} from "./glasses/layers";
 import { bitmapKey } from "./glasses/gfx";
 import { TempHistory, demoTempSamples } from "./printer/history";
 import { effectiveUrl, loadSettings, saveSettings, type Settings } from "./storage/persist";
@@ -21,10 +26,24 @@ const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") 
 /** `?demo=1&pct=73` starts the demo print at 73 % (for the simulator). */
 const DEMO_PERCENT = Number(new URLSearchParams(globalThis.location?.search ?? "").get("pct"));
 
+/**
+ * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses, and while a page
+ * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it the hold
+ * opens the help again.
+ */
+export const SIDE_MENU = false;
+/** Side menu id (QIS v1.2): Hilfe. The app has no settings of its own on the glasses. */
+export const MENU_HELP = 1;
+export function sideMenu(locale: Locale): MenuSpec {
+  return { items: SIDE_MENU ? [{ id: MENU_HELP, label: t(locale, "g.menu.help") }] : [] };
+}
+
 /** How often the bridge is asked. */
 const POLL_MS = 5_000;
-/** A pending confirmation lapses after this; a forgotten armed cancel must not wait for a stray tap. */
-const ARM_MS = 6_000;
+/** A pending confirmation lapses after this; a forgotten armed cancel must not wait for a stray tap (QIS v1: 4 s). */
+const ARM_MS = 4_000;
+/** A tap this soon after the help opened is the end of the menu click itself and does not close it. */
+const HELP_GUARD_MS = 400;
 /** A feedback line stays this long. */
 const MESSAGE_MS = 5_000;
 
@@ -33,19 +52,27 @@ async function boot(): Promise<void> {
   let settings: Settings = await loadSettings(bridge);
   let locale: Locale = await resolveLocale(bridge);
 
-  const makeApi = (): PrinterApi | null => {
-    if (DEMO) return createDemoPrinter(Date.now, Number.isFinite(DEMO_PERCENT) && DEMO_PERCENT > 0 ? DEMO_PERCENT : 42);
+  /** QIS v1.2 #7: without a bridge address the app shows the demo printer; `?demo=1` forces it. */
+  const makeApi = (): PrinterApi => {
     const url = effectiveUrl(settings);
-    if (!url) return null;
+    if (DEMO || !url) return createDemoPrinter(Date.now, Number.isFinite(DEMO_PERCENT) && DEMO_PERCENT > 0 ? DEMO_PERCENT : 42);
     return createClient({ baseUrl: url, ...(settings.token ? { token: settings.token } : {}) });
   };
-  let api = makeApi();
+  let api: PrinterApi = makeApi();
+  const isDemo = (): boolean => api.demo;
 
   let closed = false;
-  let connection: Connection = api ? { kind: "loading" } : { kind: "setup" };
+  let connection: Connection = { kind: "loading" };
   let status: PrinterStatus | null = null;
   let receivedAt = 0;
-  let screen: "hud" | "control" = "hud";
+  let screen: "hud" | "control" | "model" | "help" = "hud";
+  let helpOpenedAt = 0;
+  /** Layer view: the model of the file being printed, and the view angle. */
+  let layerModel: LayerModel | null = null;
+  let layerFile = "";
+  let layerState: "none" | "preparing" | "ready" | "failed" = "none";
+  let layerLoading = false;
+  let viewAngle = 35;
   let cursor = 0;
   let armed: Command | null = null;
   let armTimer: ReturnType<typeof setTimeout> | undefined;
@@ -58,6 +85,9 @@ async function boot(): Promise<void> {
   let backgrounded = false;
   /** Bumped when the bridge changes: replies for the old one are dropped. */
   let generation = 0;
+  /** The slicer preview of the file being printed; null shows the ring instead. */
+  let preview: GrayImage | null = null;
+  let previewFile = "";
 
   const say = (text: string): void => {
     message = text;
@@ -72,7 +102,8 @@ async function boot(): Promise<void> {
 
   const viewState = (): ViewState => ({
     locale,
-    demo: DEMO,
+    demo: isDemo(),
+    sideMenu: SIDE_MENU,
     connection,
     status,
     ageSeconds: receivedAt ? (Date.now() - receivedAt) / 1000 : 0,
@@ -81,10 +112,12 @@ async function boot(): Promise<void> {
     armed,
     sending,
     message,
+    now: Date.now(),
+    model: layerState,
   });
 
   const temps = new TempHistory();
-  if (DEMO) for (const sample of demoTempSamples(Date.now())) temps.add(sample.t, { now: sample.now, target: sample.target });
+  if (isDemo()) for (const sample of demoTempSamples(Date.now())) temps.add(sample.t, { now: sample.now, target: sample.target });
   let lastView: ScreenView | PrintView | null = null;
   let lastLayout: Layout = "plain";
   let lastFrames = "";
@@ -99,16 +132,20 @@ async function boot(): Promise<void> {
     const layout = layoutFor(state);
     const view = layout === "print" ? buildPrintView(state) : buildView(state);
     const percent = state.status?.online ? state.status.progress : 0;
-    const frames = { ring: ringFrame(percent), curve: curveFrame(temps.samples()) };
-    const key = layout === "print" ? bitmapKey(frames.ring) + "|" + bitmapKey(frames.curve) : "";
+    const online = state.status?.online ? state.status : null;
+    const heightShare = online?.layers && online.layer != null ? online.layer / online.layers : null;
+    const frames = { ring: preview ? previewFrame(preview, percent, heightShare) : ringFrame(percent), curve: curveFrame(temps.samples()), tiles: modelTiles(layout) };
+    const key = layout === "print"
+      ? bitmapKey(frames.ring) + "|" + bitmapKey(frames.curve)
+      : layout === "model" ? (frames.tiles ?? []).map(bitmapKey).join("|") : "";
     if (pageReady && layout === lastLayout && sameView(lastView, view) && key === lastFrames) return;
     let result;
     if (!pageReady) {
       // After the first creation a page is only rebuilt: a second create would be refused as invalid.
-      result = created ? await rebuildPage(bridge, view, layout, frames) : await createPage(bridge, view, layout, frames);
+      result = created ? await rebuildPage(bridge, view, layout, frames, sideMenu(locale)) : await createPage(bridge, view, layout, frames, sideMenu(locale));
       if (result.ok) created = true;
     } else if (layout !== lastLayout) {
-      result = await rebuildPage(bridge, view, layout, frames);
+      result = await rebuildPage(bridge, view, layout, frames, sideMenu(locale));
     } else {
       result = await updatePage(bridge, view, layout, frames, lastView);
     }
@@ -116,6 +153,39 @@ async function boot(): Promise<void> {
     pageReady = false;
     lastView = null;
     console.warn("[klipperglance] draw failed:", result.reason);
+  };
+
+  /** The four tiles of the layer view (model layout only). */
+  function modelTiles(layout: Layout): ReturnType<typeof tiles> | undefined {
+    if (layout !== "model") return undefined;
+    const online = status?.online ? status : null;
+    if (layerModel && online) {
+      const index = currentLayerIndex(layerModel, { z: online.z, layer: online.layer, layers: online.layers, progress: online.progress });
+      return tiles(layerFrame(layerModel, index, viewAngle));
+    }
+    return tiles(messageFrame(t(locale, layerState === "preparing" ? "g.model.wait" : "g.model.missing")));
+  }
+
+  /** Fetches the layer model once per file; while the bridge prepares it, the next poll asks again. */
+  const loadLayers = async (client: PrinterApi, file: string): Promise<void> => {
+    if (layerLoading || !file) return;
+    if (file === layerFile && (layerState === "ready" || layerState === "failed" || layerState === "none")) return;
+    if (file !== layerFile) { layerFile = file; layerModel = null; layerState = "none"; }
+    if (client.demo) { layerModel = demoLayerModel(); layerState = "ready"; return; }
+    if (!client.layers) return;
+    layerLoading = true;
+    const startedIn = generation;
+    try {
+      const reply = await client.layers(file);
+      if (closed || generation !== startedIn || layerFile !== file) return;
+      if (reply === "preparing") { layerState = "preparing"; return; }
+      const parsed = reply === null ? null : parseLayerModel(reply);
+      layerModel = parsed;
+      layerState = parsed ? "ready" : reply === null ? "none" : "failed";
+    } finally {
+      layerLoading = false;
+    }
+    void draw();
   };
 
   /** One draw at a time; requests made meanwhile collapse into one redraw. */
@@ -150,12 +220,12 @@ async function boot(): Promise<void> {
   };
 
   const phoneConnection = (): PhoneConnection => {
-    if (DEMO) return { kind: "demo" };
+    if (isDemo()) return { kind: "demo" };
     switch (connection.kind) {
       case "setup": return { kind: "none" };
       case "loading": return { kind: "loading" };
       case "ok": return { kind: "ok" };
-      case "error": return { kind: "error", reason: errorReason(locale, connection.code, connection.status) };
+      case "error": return { kind: "error", reason: errorReason(locale, connection.code, connection.status, true) };
     }
   };
 
@@ -166,10 +236,26 @@ async function boot(): Promise<void> {
     cursor = Math.min(cursor, rows.length - 1);
   };
 
+  /** Fetches the preview once per print file, in the background; failure just keeps the ring. */
+  const loadPreview = (client: PrinterApi, file: string, startedIn: number): void => {
+    if (file === previewFile) return;
+    previewFile = file;
+    preview = null;
+    if (!file) return;
+    if (client.demo) { preview = demoPreview(); return; }
+    void (async () => {
+      const bytes = await client.thumbnail?.(file);
+      const image = bytes ? await decodeThumbnail(bytes) : null;
+      if (closed || generation !== startedIn || previewFile !== file || !image) return;
+      preview = image;
+      await draw();
+    })();
+  };
+
   /** One poll at a time; a reply for a bridge that was replaced meanwhile is dropped. */
   const poll = async (): Promise<void> => {
     const client = api;
-    if (polling || closed || backgrounded || !client) return;
+    if (polling || closed || backgrounded) return;
     polling = true;
     const startedIn = generation;
     try {
@@ -177,9 +263,10 @@ async function boot(): Promise<void> {
       if (closed || generation !== startedIn) return;
       status = next;
       receivedAt = Date.now();
-      if (next.online && !DEMO) temps.add(receivedAt, next.nozzle);
-      else if (next.online) temps.add(receivedAt, next.nozzle);
+      if (next.online) temps.add(receivedAt, next.nozzle);
       connection = { kind: "ok" };
+      if (next.online) loadPreview(client, next.file, startedIn);
+      if (next.online && screen === "model") void loadLayers(client, next.file);
     } catch (error) {
       if (closed || generation !== startedIn) return;
       const problem = toApiError(error);
@@ -194,7 +281,7 @@ async function boot(): Promise<void> {
 
   const send = async (command: Command): Promise<void> => {
     const client = api;
-    if (!client || sending) return;
+    if (sending) return;
     disarm();
     sending = true;
     await draw();
@@ -219,7 +306,6 @@ async function boot(): Promise<void> {
 
   const startPolling = (): void => {
     clearInterval(pollTimer);
-    if (!api) return;
     void poll();
     pollTimer = setInterval(() => { void poll(); }, POLL_MS);
   };
@@ -254,18 +340,70 @@ async function boot(): Promise<void> {
       case "doubleClick":
         requestExit();
         return;
+      case "longPress":
+        // Without a side menu the hold opens the help (the HUD has no list to put it in).
+        if (SIDE_MENU) return;
+        screen = "help";
+        helpOpenedAt = Date.now();
+        break;
+      case "scrollUp":
+      case "scrollDown":
+        // A swipe opens the layer view while a printer is online (a view only: nothing is sent or changed).
+        if (!status?.online) return;
+        screen = "model";
+        if (status.file !== layerFile || layerState === "preparing" || layerState === "none") {
+          if (status.file !== layerFile) { layerModel = null; layerState = "none"; }
+          void loadLayers(api, status.file);
+        }
+        break;
       default:
         return;
     }
     void draw();
   };
 
-  const onControl = (gesture: Gesture): void => {
-    const rows = controlRows(status);
+  const onModel = (gesture: Gesture): void => {
     switch (gesture) {
       case "scrollUp":
       case "scrollDown":
-        // Moving cancels a pending confirmation, so the next tap can never run what was highlighted before.
+        // Nothing to turn without a model: the swipe goes back to the overview, like 2×.
+        if (layerState !== "ready") { screen = "hud"; break; }
+        viewAngle = (viewAngle + (gesture === "scrollDown" ? 30 : -30) + 360) % 360;
+        break;
+      case "click":
+        if (status?.online && layerState !== "ready") { layerState = "none"; layerFile = ""; void loadLayers(api, status.file); }
+        void poll();
+        return;
+      case "doubleClick":
+        screen = "hud";
+        break;
+      default:
+        return;
+    }
+    void draw();
+  };
+
+  /** Help is a subpage: tap or 2× go back (so does a hold without a side menu); swipes change nothing. */
+  const onHelp = (gesture: Gesture): void => {
+    const justOpened = Date.now() - helpOpenedAt < HELP_GUARD_MS;
+    if (gesture === "doubleClick" || (!SIDE_MENU && gesture === "longPress") || (gesture === "click" && !justOpened)) {
+      screen = "hud";
+      void draw();
+    }
+  };
+
+  const onControl = (gesture: Gesture): void => {
+    const rows = controlRows(status);
+    // Armed: a swipe, 2× or hold only cancels the question (QIS v1) and stays on this screen, so the
+    // next tap can never run what was highlighted before; only a single tap on the same row carries it out.
+    if (armed !== null && (gesture === "scrollUp" || gesture === "scrollDown" || gesture === "doubleClick" || gesture === "longPress")) {
+      disarm();
+      void draw();
+      return;
+    }
+    switch (gesture) {
+      case "scrollUp":
+      case "scrollDown":
         disarm();
         cursor = Math.max(0, Math.min(rows.length - 1, cursor + (gesture === "scrollDown" ? 1 : -1)));
         break;
@@ -312,11 +450,24 @@ async function boot(): Promise<void> {
     if (lifecycle === "foreground") { comeBack(); return; }
     if (lifecycle === "background") { goBackground(); return; }
     if (lifecycle === "exit") { goBackground(); shutDown(); return; }
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      if (menuId === MENU_HELP && !backgrounded) {
+        // Help covers anything armed: the confirmation lapses, nothing is sent.
+        disarm();
+        screen = "help";
+        helpOpenedAt = Date.now();
+        void draw();
+      }
+      return;
+    }
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
     if (backgrounded) { comeBack(); return; }
-    if (screen === "control") onControl(parsed.gesture);
+    if (screen === "help") onHelp(parsed.gesture);
+    else if (screen === "control") onControl(parsed.gesture);
+    else if (screen === "model") onModel(parsed.gesture);
     else onHud(parsed.gesture);
   });
 
@@ -339,13 +490,20 @@ async function boot(): Promise<void> {
       settings = next;
       if (changed) {
         generation++;
+        layerFile = "";
+        layerModel = null;
+        layerState = "none";
+        if (screen === "model") screen = "hud";
+        previewFile = "";
+        preview = null;
         api = makeApi();
         status = null;
         receivedAt = 0;
         temps.clear();
+        if (isDemo()) for (const sample of demoTempSamples(Date.now())) temps.add(sample.t, { now: sample.now, target: sample.target });
         screen = "hud";
         disarm();
-        connection = api ? { kind: "loading" } : { kind: "setup" };
+        connection = { kind: "loading" };
         startPolling();
       }
       await draw();
@@ -356,6 +514,8 @@ async function boot(): Promise<void> {
     onLocaleChange: (next) => {
       locale = next;
       rememberLocale(bridge, next);
+      // The menu label follows the language: one rebuild.
+      if (SIDE_MENU) { pageReady = false; lastView = null; }
       void draw();
     },
   });

@@ -5,6 +5,7 @@ import type { MetricHistory, SparkSeries } from "../monitor/history";
 import { formatMetric } from "../protocol/schema";
 import { DIM, FULL, MID, createBitmap, drawText, fillRect, line, strokeRect, type Bitmap } from "./gfx";
 import { PULSE_MS } from "./charts";
+import { footer } from "./footer";
 import { LINE_WIDTH, fit, problemText, type StatusView } from "./view";
 import { compactLine } from "./host";
 
@@ -114,13 +115,13 @@ export function fleetView(
   if (open.length > 0) {
     const worst = open[0]!;
     const more = open.length > 1 ? " " + t(locale, "g.fleetMore", { count: open.length - 1 }) : "";
-    const mark = worst.state === "critical" ? "! " : "· ";
+    const mark = worst.state === "critical" ? "STATUS · ! " : "STATUS · ";
     header = mark + fit(worst.sourceName + ": " + problemText(worst.metric, locale), LINE_WIDTH - mark.length - more.length) + more;
   }
   return {
     header: fit(header, LINE_WIDTH),
     body: rows.map((row) => row.text),
-    footer: t(locale, sources.some((s) => (s.report?.actions?.length ?? 0) > 0) ? "g.fleetFooterActions" : "g.fleetFooter"),
+    footer: footer(locale, { tap: t(locale, "g.w.details"), swipe: t(locale, "g.w.machine"), hold: t(locale, "g.w.menu") }, "exit"),
   };
 }
 

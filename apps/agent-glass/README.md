@@ -6,10 +6,14 @@
 
 > **Auf Deutsch, kurz:** Agent Glass zeigt dir auf der Brille, was dein
 > Coding-Agent (Claude/Codex über Even Terminal, Hermes oder OpenClaw) gerade
-> tut. Fragt er nach einer Freigabe, erscheint die Frage im Blickfeld:
-> nach oben wischen erlaubt, nach unten wischen lehnt ab. Auf Wunsch liest das
+> tut. Fragt er nach einer Freigabe, erscheint die Frage im Blickfeld als
+> Liste *Erlauben / Ablehnen*: Wischen bewegt nur den Cursor, Tippen wählt,
+> ein zweites Tippen innerhalb von 4 s sendet (Bedienstandard QIS v1;
+> Wischen, 2× oder 4 s ohne Eingabe brechen ab). Auf Wunsch liest das
 > Handy die Antworten über Kopfhörer vor. Die App spricht Deutsch oder
 > Englisch, je nach Handy-Sprache (umstellbar oben auf der Handy-Seite).
+> Halten öffnet die Sitzungsliste (mit Alter und „+ Neue Sitzung“); lange
+> Antworten blätterst du mit Wischen, die ganze Antwort steht live am Handy.
 
 Agent Glass connects the Even G2 to Even Terminal, the existing Hermes
 EvenHub bridge, or the existing OpenClaw gateway. It streams the active agent
@@ -63,6 +67,46 @@ up = allow · down = deny
 Neither answer uses a plain tap, so an accidental touch cannot approve a
 command.
 
+### Short on the glasses, in full on the phone
+
+The glasses keep the current answer condensed: the newest part while the agent
+types, and a long answer can be paged one screen at a time (swipe up = older,
+swipe down = newer, tap = back to the newest). The footer says where you are,
+e.g. `AGENT · page 3/5 · <title>`, with `Tap = newest` in the footer. The **Agent** tab on the phone shows
+the whole conversation of the open session (you / agent / tool / error),
+newest at the bottom, updating live.
+
+### Sessions
+
+Hold opens the session list: newest first, with the age (`now`, `5 min`,
+`2 h`, `3 d`) and `*` for an active session. When the backend can start one,
+`+ New session` is the first row; the list opens on the session that is
+already open, never on `+ New session`.
+
+```text
+AGENT · Sessions (2)
+
+  + New session
+> Hermes work · 5 min *
+  Older work · 2 h
+  Help
+
+Tap = open · Swipe · 2× = back
+```
+
+| Backend | List | New session | Rename / remove |
+|---|---|---|---|
+| Even Terminal | yes | no (Even Terminal starts them) | on this phone only |
+| Hermes bridge | `sessions.list` | `sessions.new` | on this phone only |
+| OpenClaw | none: one conversation in the app, said so on the list | clears the in-app history | — |
+
+None of the existing protocols can rename or delete a session, so the phone
+does it honestly on its side: a name given there applies on this phone only,
+and **Remove from list** hides the session here while the agent keeps it
+(**Show hidden** brings it back). Agent Glass never deletes anything on the
+agent's machine. A backend that adds a real rename or delete call gets it used
+automatically (`renameSession` / `deleteSession` in `src/sessions/manage.ts`).
+
 ## Important limitations
 
 Even Terminal can read existing Claude Code sessions from disk, but it can
@@ -84,12 +128,16 @@ allow/deny control.
 
 | Gesture | Action |
 |---|---|
-| **Swipe up** | Allow a tool request in a controllable session |
-| **Swipe down** | Deny a tool request |
-| **Hold** | Interrupt a running agent, otherwise open the session list |
-| **Swipe** in session list | Select a session |
-| **Tap** | Open a session, retry after an error, or replay the last spoken answer |
-| **Double tap** | Exit Agent Glass |
+| **Tap** on a permission request | Arms the entry the cursor is on in the list *Allow / Deny*; a **second single tap within 4 s** sends it |
+| **Swipe** on a permission request | Moves the cursor (Allow, Deny). It never sends anything and cancels an armed answer |
+| **Hold** | Open the session list; while the agent works it only *arms* the interrupt, a tap confirms |
+| **Swipe** in session list | Select a session or `+ New session` |
+| **Help** | Last row of the session list: open it with a hold, swipe down to `Help`, tap. Tap or 2× closes it. (The glasses side menu is off: its clicks do not reach the app on the real glasses.) |
+| **Swipe up / down** on a long answer | Older / newer screen of the answer |
+| **Tap** | Open the selected entry, retry after an error, jump back to the newest screen, or replay the last spoken answer |
+| **2×** | Cancels an armed answer or interrupt; otherwise back from the session list / help to the open session; on the main screen exit Agent Glass |
+
+Phone tab *Glasses* has "Reverse swipe direction" (`invertScroll`); it applies to every list and to the answer list.
 
 ## Spoken output
 
@@ -194,7 +242,8 @@ npm run pack
 
 Open `http://127.0.0.1:5202/?demo=1` for an isolated, in-memory demo. Demo
 mode does not read stored sessions, connect to Even Terminal, or expose a
-token. Use this mode for screenshots and documentation.
+token. Use this mode for screenshots and documentation. Without a token the
+app starts in this demo on its own (footer: `Demo · set up the connection on the phone`).
 
 For a development-only live connection, a pairing URL may be passed as a
 URL-encoded `pair` parameter. Never use that form in screenshots or public
@@ -213,10 +262,11 @@ One exception is unavoidable: the browser's `EventSource` cannot send an
 its query string. That URL is built inside the WebView and is never logged or
 shown, but a proxy in front of Even Terminal may log it.
 
-A swipe only answers the permission request that is on the display: it is
-ignored for the first moment after a request appears, while an answer is still
-being sent, while an error screen covers the request, and for a request that a
-reconnecting stream delivers again after it was answered.
+An answer is only sent for the permission request that is on the display, and
+only by a second single tap on the armed entry: it is ignored for the first
+moment after a request appears, while an answer is still being sent, while an
+error screen covers the request, and for a request that a reconnecting stream
+delivers again after it was answered. A swipe never answers.
 
 ### Network whitelist
 

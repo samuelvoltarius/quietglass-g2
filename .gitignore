@@ -37,3 +37,14 @@ selfhost/services/whisper/models/
 
 # Private notes with infrastructure details (never commit)
 *-PRIVAT.md
+
+# private build script with tailnet addresses
+*-PRIVAT.sh
+
+# Babel Glass own memory (babel-llm-proxy), private conversation summaries
+selfhost/services/babel-llm-proxy/babel-memory.json*
+release-test/
+release-store/
+
+# private letterhead for paperwork drafts (Shoot Day), never commit
+brand-PRIVAT/

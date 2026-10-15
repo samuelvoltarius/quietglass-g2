@@ -1,6 +1,6 @@
 import { createBitmap, drawText, textWidth, type Bitmap } from "../glasses/bitmap";
 import { drawLabel, GLYPH_HEIGHT, labelText, labelWidth } from "./label-font";
-import { ANCHOR, MAP, SCREEN_HEIGHT, SCREEN_WIDTH } from "./layout";
+import { RADAR_AREA, SCREEN_HEIGHT, SCREEN_WIDTH, type MapArea } from "./layout";
 import { BORDERS, COAST, LAKES, MAP_ZOOM, PLACES, RIVERS } from "./map-data";
 import { RADAR_ZOOM, metersPerPixel, worldPixel, type Position } from "./tiles";
 
@@ -100,17 +100,17 @@ export function mapName(place: Place, locale: string): string | null {
 }
 
 /** Screen position of a world pixel at the map zoom, for a map centred on `position` at `zoom`. */
-function projector(position: Position, zoom: number): (wx: number, wy: number) => [number, number] {
+function projector(position: Position, zoom: number, area: MapArea): (wx: number, wy: number) => [number, number] {
   const center = worldPixel(position, zoom);
   const scale = 2 ** (zoom - MAP_ZOOM);
-  const offsetX = MAP.x + ANCHOR.x - center.x; const offsetY = MAP.y + ANCHOR.y - center.y;
+  const offsetX = area.x + area.anchorX - center.x; const offsetY = area.y + area.anchorY - center.y;
   return (wx, wy) => [wx * scale + offsetX, wy * scale + offsetY];
 }
 
-const inMap = (x: number, y: number): boolean => x >= MAP.x && x < MAP.x + MAP.width && y >= MAP.y && y < MAP.y + MAP.height;
+const inMap = (x: number, y: number, area: MapArea): boolean => x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height;
 
 /** Draws a polyline pixel by pixel; `dash` = [on, off] keeps its rhythm across the corners. */
-function stroke(target: Uint8Array, line: Polyline, project: (wx: number, wy: number) => [number, number], level: number, dash?: readonly [number, number]): void {
+function stroke(target: Uint8Array, line: Polyline, project: (wx: number, wy: number) => [number, number], level: number, area: MapArea, dash?: readonly [number, number]): void {
   let step = 0;
   for (let at = 0; at + 3 < line.points.length; at += 2) {
     const [x0, y0] = project(line.points[at]!, line.points[at + 1]!);
@@ -121,32 +121,32 @@ function stroke(target: Uint8Array, line: Polyline, project: (wx: number, wy: nu
       step += 1;
       if (!on) continue;
       const x = Math.round(x0 + ((x1 - x0) * i) / steps); const y = Math.round(y0 + ((y1 - y0) * i) / steps);
-      if (inMap(x, y)) target[y * SCREEN_WIDTH + x] = Math.max(target[y * SCREEN_WIDTH + x]!, level);
+      if (inMap(x, y, area)) target[y * SCREEN_WIDTH + x] = Math.max(target[y * SCREEN_WIDTH + x]!, level);
     }
   }
 }
 
-function strokeAll(target: Uint8Array, lines: readonly Polyline[], position: Position, zoom: number, level: number, dash?: readonly [number, number]): void {
-  const project = projector(position, zoom);
+function strokeAll(target: Uint8Array, lines: readonly Polyline[], position: Position, zoom: number, level: number, area: MapArea, dash?: readonly [number, number]): void {
+  const project = projector(position, zoom, area);
   const [left, top] = project(0, 0); const scale = 2 ** (zoom - MAP_ZOOM);
   // Only lines whose box touches the map area (in world pixels at the data zoom).
-  const minX = (MAP.x - left) / scale - 1; const maxX = (MAP.x + MAP.width - left) / scale + 1;
-  const minY = (MAP.y - top) / scale - 1; const maxY = (MAP.y + MAP.height - top) / scale + 1;
-  for (const line of lines) if (line.maxX >= minX && line.minX <= maxX && line.maxY >= minY && line.minY <= maxY) stroke(target, line, project, level, dash);
+  const minX = (area.x - left) / scale - 1; const maxX = (area.x + area.width - left) / scale + 1;
+  const minY = (area.y - top) / scale - 1; const maxY = (area.y + area.height - top) / scale + 1;
+  for (const line of lines) if (line.maxX >= minX && line.minX <= maxX && line.maxY >= minY && line.minY <= maxY) stroke(target, line, project, level, area, dash);
 }
 
 /** A dotted circle clipped to the map area. */
-function ring(target: Uint8Array, cx: number, cy: number, radius: number, level: number): void {
+function ring(target: Uint8Array, cx: number, cy: number, radius: number, level: number, area: MapArea): void {
   const steps = Math.max(24, Math.round(radius * 1.2));
   for (let step = 0; step < steps; step += 1) {
     if (step % 3 === 2) continue;
     const angle = (step / steps) * Math.PI * 2;
     const x = Math.round(cx + Math.cos(angle) * radius); const y = Math.round(cy + Math.sin(angle) * radius);
-    if (inMap(x, y)) target[y * SCREEN_WIDTH + x] = level;
+    if (inMap(x, y, area)) target[y * SCREEN_WIDTH + x] = level;
   }
 }
 
-interface Box { x: number; y: number; width: number; height: number }
+export interface Box { x: number; y: number; width: number; height: number }
 const overlaps = (a: Box, b: Box): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
 /** Rough distance in km between two places given as world pixels at the data zoom. */
@@ -170,9 +170,9 @@ export function nearestPlace(position: Position, maxKm = NEAREST_MAX_KM): Place 
  * and below its dot; a name that would touch another name, a dot, the cross,
  * a ring label or the edge of the map is left out together with its dot.
  */
-export function placeLabels(position: Position, zoom: number, locale: string, blocked: readonly Box[] = []): LabelBox[] {
-  const project = projector(position, zoom);
-  const cx = MAP.x + ANCHOR.x; const cy = MAP.y + ANCHOR.y;
+export function placeLabels(position: Position, zoom: number, locale: string, blocked: readonly Box[] = [], area: MapArea = RADAR_AREA): LabelBox[] {
+  const project = projector(position, zoom, area);
+  const cx = area.x + area.anchorX; const cy = area.y + area.anchorY;
   const taken: Box[] = [{ x: cx - 13, y: cy - 13, width: 27, height: 27 }, ...blocked];
   const labels: LabelBox[] = [];
   const GAP = 2;
@@ -180,7 +180,7 @@ export function placeLabels(position: Position, zoom: number, locale: string, bl
     if (labels.length >= MAX_LABELS) break;
     const [fx, fy] = project(place.x, place.y);
     const x = Math.round(fx); const y = Math.round(fy);
-    if (x < MAP.x + 3 || x > MAP.x + MAP.width - 4 || y < MAP.y + 3 || y > MAP.y + MAP.height - 4) continue;
+    if (x < area.x + 3 || x > area.x + area.width - 4 || y < area.y + 3 || y > area.y + area.height - 4) continue;
     const text = mapName(place, locale);
     if (!text) continue;
     const width = labelWidth(text);
@@ -192,7 +192,7 @@ export function placeLabels(position: Position, zoom: number, locale: string, bl
       { x: x - Math.floor(width / 2), y: y - 4 - GLYPH_HEIGHT, width, height: GLYPH_HEIGHT },
       { x: x - Math.floor(width / 2), y: y + 4, width, height: GLYPH_HEIGHT },
     ];
-    const fits = options.find((box) => box.x >= MAP.x + 1 && box.x + box.width <= MAP.x + MAP.width - 1 && box.y >= MAP.y + 1 && box.y + box.height <= MAP.y + MAP.height - 1
+    const fits = options.find((box) => box.x >= area.x + 1 && box.x + box.width <= area.x + area.width - 1 && box.y >= area.y + 1 && box.y + box.height <= area.y + area.height - 1
       && !taken.some((other) => overlaps({ x: box.x - GAP, y: box.y - GAP, width: box.width + GAP * 2, height: box.height + GAP * 2 }, other)));
     if (!fits) continue;
     taken.push(dot, { x: fits.x - 1, y: fits.y - 1, width: fits.width + 2, height: fits.height + 2 });
@@ -202,31 +202,41 @@ export function placeLabels(position: Position, zoom: number, locale: string, bl
 }
 
 /** Draws the base map for a place (no cache; see `baseMapFor`). */
-export function drawBaseMap(position: Position, zoom = RADAR_ZOOM, locale = "de"): BaseMap {
+export interface MapOptions {
+  /** Where the map goes on the canvas (default: the radar page's area). */
+  readonly area?: MapArea;
+  /** Range rings in km (default RING_KM); [] draws none. */
+  readonly rings?: readonly number[];
+  /** Boxes no place name may cover (the caller's own overlays). */
+  readonly blocked?: readonly Box[];
+}
+
+export function drawBaseMap(position: Position, zoom = RADAR_ZOOM, locale = "de", options: MapOptions = {}): BaseMap {
+  const area = options.area ?? RADAR_AREA;
   const { borders, coast, lakes, rivers } = data();
   const lines = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT);
-  strokeAll(lines, rivers, position, zoom, LEVEL.river);
-  strokeAll(lines, lakes, position, zoom, LEVEL.lake);
-  strokeAll(lines, coast, position, zoom, LEVEL.coast);
-  strokeAll(lines, borders, position, zoom, LEVEL.border, [2, 2]);
+  strokeAll(lines, rivers, position, zoom, LEVEL.river, area);
+  strokeAll(lines, lakes, position, zoom, LEVEL.lake, area);
+  strokeAll(lines, coast, position, zoom, LEVEL.coast, area);
+  strokeAll(lines, borders, position, zoom, LEVEL.border, area, [2, 2]);
 
   // Range rings for scale, with their label at the upper right.
-  const cx = MAP.x + ANCHOR.x; const cy = MAP.y + ANCHOR.y;
+  const cx = area.x + area.anchorX; const cy = area.y + area.anchorY;
   const perPixel = metersPerPixel(position.latitude, zoom);
-  const ringLabels: Box[] = [];
+  const ringLabels: Box[] = [...(options.blocked ?? [])];
   const ringBitmap: Bitmap = { width: SCREEN_WIDTH, height: SCREEN_HEIGHT, pixels: lines };
-  for (const km of RING_KM) {
+  for (const km of options.rings ?? RING_KM) {
     const radius = (km * 1000) / perPixel;
-    ring(lines, cx, cy, radius, LEVEL.ring);
+    ring(lines, cx, cy, radius, LEVEL.ring, area);
     const label = `${km} KM`;
     const labelX = Math.round(cx + radius * Math.SQRT1_2 + 3); const labelY = Math.round(cy - radius * Math.SQRT1_2 - 5);
-    if (labelX + textWidth(label, 1) < MAP.x + MAP.width && labelY > MAP.y && labelY + 5 < MAP.y + MAP.height) {
+    if (labelX + textWidth(label, 1) < area.x + area.width && labelY > area.y && labelY + 5 < area.y + area.height) {
       drawText(ringBitmap, label, labelX, labelY, 1, LEVEL.ringLabel);
       ringLabels.push({ x: labelX - 2, y: labelY - 2, width: textWidth(label, 1) + 4, height: 9 });
     }
   }
 
-  const labels = placeLabels(position, zoom, locale, ringLabels);
+  const labels = placeLabels(position, zoom, locale, ringLabels, area);
   const overlay = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT).fill(TRANSPARENT);
   const ink = createBitmap(SCREEN_WIDTH, SCREEN_HEIGHT);
   for (const label of labels) {
@@ -234,7 +244,7 @@ export function drawBaseMap(position: Position, zoom = RADAR_ZOOM, locale = "de"
     drawLabel(ink, label.name, label.x, label.y, LEVEL.label);
   }
   // Black halo one pixel around everything inked, then the ink itself.
-  for (let y = MAP.y; y < MAP.y + MAP.height; y += 1) for (let x = MAP.x; x < MAP.x + MAP.width; x += 1) {
+  for (let y = area.y; y < area.y + area.height; y += 1) for (let x = area.x; x < area.x + area.width; x += 1) {
     const level = ink.pixels[y * SCREEN_WIDTH + x]!;
     if (level > 0) { overlay[y * SCREEN_WIDTH + x] = level; continue; }
     let near = false;
@@ -243,19 +253,27 @@ export function drawBaseMap(position: Position, zoom = RADAR_ZOOM, locale = "de"
   }
 
   const nearest = nearestPlace(position);
-  return { key: mapKey(position, zoom, locale), lines, overlay, labels, nearest: nearest ? placeName(nearest, locale) : null };
+  return { key: mapKey(position, zoom, locale, options), lines, overlay, labels, nearest: nearest ? placeName(nearest, locale) : null };
 }
 
 /** Same key = same picture: the place rounded to whole map pixels, the zoom and the language. */
-export function mapKey(position: Position, zoom: number, locale: string): string {
+export function mapKey(position: Position, zoom: number, locale: string, options: MapOptions = {}): string {
   const at = worldPixel(position, zoom);
-  return `${zoom}/${Math.round(at.x)}/${Math.round(at.y)}/${locale}`;
+  const base = `${zoom}/${Math.round(at.x)}/${Math.round(at.y)}/${locale}`;
+  if (!options.area && !options.rings && !options.blocked) return base;
+  const area = options.area ?? RADAR_AREA;
+  return `${base}/${area.x},${area.y},${area.width},${area.height},${area.anchorX},${area.anchorY}/${(options.rings ?? RING_KM).join(",")}/${(options.blocked ?? []).map((b) => `${b.x},${b.y},${b.width},${b.height}`).join(";")}`;
 }
 
-let last: BaseMap | null = null;
-/** The base map for this place, drawn only when place, zoom or language changed. */
-export function baseMapFor(position: Position, zoom = RADAR_ZOOM, locale = "de"): BaseMap {
-  const key = mapKey(position, zoom, locale);
-  if (last?.key !== key) last = drawBaseMap(position, zoom, locale);
-  return last;
+/** The last two base maps (the radar page and the cockpit each keep theirs while you swipe between them). */
+const recent: BaseMap[] = [];
+/** The base map for this place, drawn only when place, zoom, language or area changed. */
+export function baseMapFor(position: Position, zoom = RADAR_ZOOM, locale = "de", options: MapOptions = {}): BaseMap {
+  const key = mapKey(position, zoom, locale, options);
+  const hit = recent.find((map) => map.key === key);
+  if (hit) return hit;
+  const drawn = drawBaseMap(position, zoom, locale, options);
+  recent.unshift(drawn);
+  recent.length = Math.min(recent.length, 2);
+  return drawn;
 }

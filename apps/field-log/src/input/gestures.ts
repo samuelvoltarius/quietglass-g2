@@ -82,12 +82,16 @@ export function gestureFromEvent(event: unknown, options: GestureOptions = {}): 
   if (!event || typeof event !== "object") return null;
   const record = event as Record<string, unknown>;
 
-  const payload =
-    pickRecord(record, "textEvent") ??
-    pickRecord(record, "listEvent") ??
-    pickRecord(record, "sysEvent") ??
-    null;
-  if (!payload) return null;
+  const payloads = ["textEvent", "listEvent", "sysEvent"]
+    .map((key) => pickRecord(record, key))
+    .filter((value): value is Record<string, unknown> => value !== null);
+  if (payloads.length === 0) return null;
+
+  // The glasses may deliver one physical gesture on several payloads at once
+  // (e.g. an empty textEvent next to a sysEvent that says DOUBLE_CLICK). An
+  // explicit event code always beats an absent one, otherwise the double tap
+  // would be read as a tap and "back" would never fire.
+  const payload = payloads.find((item) => readNumberField(item, "eventType", "event_type", "type") !== undefined) ?? payloads[0]!;
 
   // proto3 omits any field that holds its default value, and CLICK_EVENT is 0.
   // A container event therefore arrives with NO eventType at all when the user
@@ -156,4 +160,18 @@ function readNumberField(record: Record<string, unknown>, ...keys: string[]): nu
     }
   }
   return undefined;
+}
+
+/**
+ * Item chosen in the glasses' side menu (the native contextual menu a hold
+ * opens, next to Close and Brightness). Menu clicks come in a
+ * `menuItemClickEvent` of their own and never through the capture container
+ * (QIS v1.2; same reading as Babel Glass and Quiet Hub). Zero is reserved for "no item".
+ */
+export function menuItemIdFromEvent(event: unknown): number | null {
+  if (!event || typeof event !== "object") return null;
+  const payload = pickRecord(event as Record<string, unknown>, "menuItemClickEvent");
+  if (payload === null) return null;
+  const id = readNumberField(payload, "itemID", "itemId", "Item_ID", "item_id");
+  return id !== undefined && id > 0 ? id : null;
 }

@@ -1,5 +1,7 @@
 import type { Locale } from "../i18n";
-import { chatCompletionsUrl, describeError, readChatContent } from "../translate/provider";
+import { chatCompletionsUrl } from "../translate/provider";
+import { streamChat } from "../llm/stream";
+import { partialJsonString } from "../llm/partial-json";
 import { speakerLine, transcriptForLlm, type TranscriptEntry } from "./transcript";
 
 /**
@@ -14,6 +16,8 @@ export interface Summary {
   readonly short: string[];
   /** The detailed version for the phone, one point per line. */
   readonly long: string[];
+  /** Abmachungen / agreements (who does what by when), kept in Babel's own memory. Absent = none. */
+  readonly agreements?: string[];
 }
 
 export interface Insight {
@@ -27,9 +31,21 @@ export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok
 
 export interface CompanionLlm {
   readonly name: string;
-  summarize(log: readonly TranscriptEntry[], locale: Locale): Promise<Result<Summary>>;
-  /** null = nothing worth explaining in the newest lines. */
-  explain(recent: readonly TranscriptEntry[], known: readonly string[], locale: Locale): Promise<Result<Insight | null>>;
+  /** `onProgress` (optional) receives the summary so far while it is being written. */
+  /** `extra`: text appended after the transcript (the tip cards shown during the conversation). */
+  summarize(log: readonly TranscriptEntry[], locale: Locale, onProgress?: (partial: Summary) => void, extra?: string): Promise<Result<Summary>>;
+  /**
+   * null = nothing worth explaining in the newest lines. `onProgress` gets the
+   * explanation while it is written, once its term is complete.
+   */
+  explain(
+    recent: readonly TranscriptEntry[],
+    known: readonly string[],
+    locale: Locale,
+    onProgress?: (partial: Insight) => void,
+    /** Hits from Babel's own memory for the current topic, already formatted ("Notizen des Nutzers"). */
+    notes?: string,
+  ): Promise<Result<Insight | null>>;
 }
 
 export interface CompanionLlmConfig {
@@ -37,9 +53,23 @@ export interface CompanionLlmConfig {
   readonly model: string;
   readonly apiKey?: string;
   readonly fetchImpl?: typeof fetch;
+  /** Hard cap for one summary (prompt processing + writing). */
   readonly summaryTimeoutMs?: number;
   readonly explainTimeoutMs?: number;
 }
+
+/**
+ * Output budgets. A detailed summary of a long conversation is easily 1500
+ * tokens of German; the old 900 cut it off mid-JSON. Explanations are short
+ * by prompt, the cap only stops a runaway answer.
+ */
+export const SUMMARY_MAX_TOKENS = 3000;
+export const EXPLAIN_MAX_TOKENS = 320;
+/**
+ * Transcript characters sent for a summary (~16k tokens): far below the
+ * 64k context of the Spark model, and the newest part is kept when cut.
+ */
+export const SUMMARY_TRANSCRIPT_CHARS = 48_000;
 
 export function summaryPrompt(locale: Locale): string {
   return locale === "de"
@@ -48,7 +78,8 @@ export function summaryPrompt(locale: Locale): string {
         "Die Mitschrift stammt aus automatischer Spracherkennung und kann Hörfehler enthalten; A:, B: … sind Sprecher.",
         "Antworte NUR mit JSON:",
         '{"kurz":"höchstens 3 sehr kurze Zeilen, getrennt durch \\n, je höchstens 45 Zeichen",',
-        '"lang":"ausführliche Zusammenfassung: Thema, wichtigste Punkte, Entscheidungen, offene Fragen, Aufgaben (wer, was, wann); jede Zeile beginnt mit - , getrennt durch \\n"}',
+        '"lang":"ausführliche Zusammenfassung: Thema, wichtigste Punkte, Entscheidungen, offene Fragen, Aufgaben (wer, was, wann); jede Zeile beginnt mit - , getrennt durch \\n",',
+        '"abmachungen":"nur feste Abmachungen/Zusagen (wer, was, bis wann), getrennt durch \\n; leer, wenn es keine gab"}',
         "Nichts erfinden, kein Markdown.",
       ].join(" ")
     : [
@@ -56,12 +87,36 @@ export function summaryPrompt(locale: Locale): string {
         "The transcript comes from automatic speech recognition and may contain errors; A:, B: … are speakers.",
         "Reply ONLY with JSON:",
         '{"kurz":"at most 3 very short lines separated by \\n, each at most 45 characters",',
-        '"lang":"detailed summary: topic, main points, decisions, open questions, tasks (who, what, when); every line starts with - , separated by \\n"}',
+        '"lang":"detailed summary: topic, main points, decisions, open questions, tasks (who, what, when); every line starts with - , separated by \\n",',
+        '"abmachungen":"only firm agreements/commitments (who, what, by when), separated by \\n; empty if there were none"}',
         "Do not invent anything, no Markdown.",
       ].join(" ");
 }
 
-export function explainPrompt(locale: Locale, known: readonly string[]): string {
+/**
+ * With notes (Babel's own memory, 0.4.0) the model may also point out a past
+ * note that concretely fits the newest line. With nothing to say it answers
+ * exactly "-", which shows nothing.
+ */
+export function explainPrompt(locale: Locale, known: readonly string[], withNotes = false): string {
+  const base = explainBase(locale, known);
+  if (!withNotes) return base;
+  return base + " " + (locale === "de"
+    ? [
+        "Unter „Notizen des Nutzers“ stehen frühere Gespräche und Notizen.",
+        "Passt eine davon KONKRET zur letzten Zeile (gleiche Person, gleiches Thema, eine frühere Abmachung),",
+        'darfst du statt einer Erklärung daran erinnern: {"begriff":"Notiz: Stichwort","info":"was damals war oder vereinbart wurde"}.',
+        "Nur vage ähnlich zählt nicht. Ist weder etwas zu erklären noch eine Notiz konkret passend, antworte genau -",
+      ].join(" ")
+    : [
+        "Under \"Notizen des Nutzers\" (the user's notes) are earlier conversations and notes.",
+        "If one fits the last line CONCRETELY (same person, same topic, an earlier agreement),",
+        'you may remind of it instead of explaining: {"begriff":"Note: keyword","info":"what was said or agreed then"}.',
+        "Merely similar does not count. If there is nothing to explain and no note fits concretely, answer exactly -",
+      ].join(" "));
+}
+
+function explainBase(locale: Locale, known: readonly string[]): string {
   const already = known.length ? known.slice(-12).join(", ") : "";
   return locale === "de"
     ? [
@@ -105,7 +160,15 @@ export function parseSummary(content: string): Summary | null {
     const short = typeof json["kurz"] === "string" ? lines(json["kurz"]) : [];
     const long = typeof json["lang"] === "string" ? lines(json["lang"]) : [];
     if (short.length || long.length) {
-      return { short: (short.length ? short : long).slice(0, 3), long: long.length ? long : short };
+      const raw = json["abmachungen"];
+      const agreements = typeof raw === "string" ? lines(raw)
+        : Array.isArray(raw) ? raw.filter((a): a is string => typeof a === "string").flatMap(lines)
+        : [];
+      return {
+        short: (short.length ? short : long).slice(0, 3),
+        long: long.length ? long : short,
+        ...(agreements.length ? { agreements: agreements.slice(0, 20) } : {}),
+      };
     }
   }
   // Not JSON: use the text as it is, the first lines for the glasses.
@@ -114,6 +177,8 @@ export function parseSummary(content: string): Summary | null {
 }
 
 export function parseInsight(content: string): Insight | null {
+  // "-" = nothing worth showing (what the memory-aware prompt asks for).
+  if (content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() === "-") return null;
   const json = extractJson(content);
   if (!json || json["keine"] === true) return null;
   const term = typeof json["begriff"] === "string" ? json["begriff"].trim() : "";
@@ -122,56 +187,96 @@ export function parseInsight(content: string): Insight | null {
   return { term: term.slice(0, 60), info: info.slice(0, 280) };
 }
 
+/** Removes reasoning and a leading code fence, for reading a growing answer. */
+function growingText(content: string): string {
+  return content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^\s*```[a-z]*\s*/i, "");
+}
+
+/** The summary while it is still being written (JSON fields read as they grow). */
+export function partialSummary(content: string): Summary | null {
+  const text = growingText(content);
+  const short = partialJsonString(text, "kurz");
+  const long = partialJsonString(text, "lang");
+  if (short || long) {
+    const s = short ? lines(short.value) : [];
+    const l = long ? lines(long.value) : [];
+    return s.length || l.length ? { short: s.slice(0, 3), long: l } : null;
+  }
+  // Still in "{", or a model that answers in plain lines.
+  const trimmed = text.trimStart();
+  if (trimmed === "" || trimmed.startsWith("{")) return null;
+  const plain = lines(trimmed);
+  return plain.length ? { short: plain.slice(0, 3), long: plain } : null;
+}
+
+/** The explanation while it is written: only once the term is complete. */
+export function partialInsight(content: string): Insight | null {
+  const text = growingText(content);
+  const term = partialJsonString(text, "begriff");
+  if (!term?.complete || !term.value.trim()) return null;
+  const info = partialJsonString(text, "info");
+  if (!info || !info.value.trim()) return null;
+  return { term: term.value.trim().slice(0, 60), info: info.value.trim().slice(0, 280) };
+}
+
 export function createCompanionLlm(config: CompanionLlmConfig): CompanionLlm {
-  const doFetch = config.fetchImpl ?? fetch;
   const endpoint = chatCompletionsUrl(config.url);
 
-  const chat = async (system: string, user: string, maxTokens: number, timeoutMs: number): Promise<Result<string>> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await doFetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(config.apiKey ? { Authorization: "Bearer " + config.apiKey } : {}),
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: config.model,
-          temperature: 0.2,
-          stream: false,
-          max_tokens: maxTokens,
-          // Qwen-style reasoning off: answers must be quick and plain.
-          chat_template_kwargs: { enable_thinking: false },
-          messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        }),
-      });
-      if (!response.ok) return { ok: false, error: "HTTP " + response.status };
-      let value: unknown;
-      try { value = JSON.parse(await response.text()); } catch { return { ok: false, error: "unreadable response" }; }
-      const content = value && typeof value === "object" ? readChatContent(value as Record<string, unknown>) : null;
-      return content === null ? { ok: false, error: "unreadable response" } : { ok: true, value: content };
-    } catch (error) {
-      return { ok: false, error: describeError(error) };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
+  const chat = (
+    system: string,
+    user: string,
+    maxTokens: number,
+    timing: { readonly firstTokenMs: number; readonly idleMs: number; readonly totalMs: number },
+    onText?: (visible: string) => void,
+  ): Promise<Result<string>> =>
+    streamChat({
+      endpoint,
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+      ...(onText ? { onText } : {}),
+      body: {
+        model: config.model,
+        temperature: 0.2,
+        max_tokens: maxTokens,
+        // Qwen-style reasoning off: answers must be quick and plain.
+        chat_template_kwargs: { enable_thinking: false },
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      },
+      ...timing,
+    }).then((result) => (result.ok ? { ok: true as const, value: result.text } : result));
 
   return {
     name: "openai",
-    async summarize(log, locale) {
+    async summarize(log, locale, onProgress, extra) {
       if (log.length === 0) return { ok: false, error: "empty" };
-      const reply = await chat(summaryPrompt(locale), transcriptForLlm(log), 900, config.summaryTimeoutMs ?? 55_000);
+      const total = config.summaryTimeoutMs ?? 240_000;
+      const reply = await chat(
+        summaryPrompt(locale),
+        transcriptForLlm(log, SUMMARY_TRANSCRIPT_CHARS) + (extra ?? ""),
+        SUMMARY_MAX_TOKENS,
+        // A long transcript takes a while before the first word; then it flows.
+        { firstTokenMs: Math.min(total, 90_000), idleMs: 30_000, totalMs: total },
+        onProgress ? (visible) => { const partial = partialSummary(visible); if (partial) onProgress(partial); } : undefined,
+      );
       if (!reply.ok) return reply;
       const summary = parseSummary(reply.value);
       return summary ? { ok: true, value: summary } : { ok: false, error: "empty response" };
     },
-    async explain(recent, known, locale) {
+    async explain(recent, known, locale, onProgress, notes) {
       if (recent.length === 0) return { ok: true, value: null };
-      const user = recent.map(speakerLine).join("\n");
-      const reply = await chat(explainPrompt(locale, known), user, 160, config.explainTimeoutMs ?? 12_000);
+      const conversation = recent.map(speakerLine).join("\n");
+      const withNotes = Boolean(notes?.trim());
+      const user = withNotes
+        ? "Notizen des Nutzers:\n" + notes!.trim() + "\n\n" + (locale === "de" ? "Gespräch:\n" : "Conversation:\n") + conversation
+        : conversation;
+      const wait = config.explainTimeoutMs ?? 12_000;
+      const reply = await chat(
+        explainPrompt(locale, known, withNotes),
+        user,
+        EXPLAIN_MAX_TOKENS,
+        { firstTokenMs: wait, idleMs: Math.min(wait, 8_000), totalMs: wait * 2 },
+        onProgress ? (visible) => { const partial = partialInsight(visible); if (partial) onProgress(partial); } : undefined,
+      );
       if (!reply.ok) return reply;
       return { ok: true, value: parseInsight(reply.value) };
     },

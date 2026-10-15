@@ -19,7 +19,7 @@ const nodeProcess = (globalThis as unknown as {
 
 interface MenuItem { itemName?: string; itemID?: number }
 
-function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude: number; longitude: number } | null } = {}) {
+function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude: number; longitude: number } | null; confirmExit?: boolean } = {}) {
   let onEvent: ((event: unknown) => void) | undefined;
   const state = {
     shutdowns: 0, header: "", body: "", footer: "",
@@ -71,7 +71,7 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
     startAppLocationUpdates: async () => true,
     stopAppLocationUpdates: async () => true,
     getAppLocation: async () => (options.fix === undefined ? null : options.fix),
-    shutDownPageContainer: async () => { state.shutdowns += 1; return true; },
+    shutDownPageContainer: async () => { state.shutdowns += 1; return options.confirmExit ?? true; },
     onAppLocationChanged: () => () => undefined,
     onEvenHubEvent: (callback: (event: unknown) => void) => { onEvent = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
@@ -87,6 +87,7 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
 const CLICK = 0;
 const UP = 1;
 const DOWN = 2;
+const HOLD = 9;
 const DOUBLE = 3;
 
 describe("the route pages", () => {
@@ -125,14 +126,14 @@ describe("the route pages", () => {
     // The board: O-Bus 3 big (pictures), the next ones as rows.
     await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
     expect(fake.state.kind).toBe("board");
-    expect(fake.state.footer).toBe("1/4 · Tippen = verfolgen · Halten = Ziel");
-    // The first page carries the native menu with the way to the route pages.
-    expect(fake.state.menus[0]).toEqual(["Route planen", "Andere Haltestelle", "Neu laden"]);
+    expect(fake.state.footer).toBe("1/4 · Tippen = folgen · Halten = Ziel · 2× = Ende");
+    // No page carries the native menu while its clicks do not arrive on the real glasses (step log 15.10.).
+    expect(fake.state.menus[0]).toEqual([]);
 
-    fake.menu(1); // Route planen
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\? · \d\d:\d\d$/));
+    fake.menu(1); // Route planen (a menu click is still understood; the way by gesture is the hold: say the destination)
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\? · \d\d:\d\d$/));
     expect(fake.state.body.split("\n")).toEqual(["> Jetzt: Getreidegasse 10", "  Heim", "  Arbeit", "  Hauptbahnhof"]);
-    expect(fake.state.menus.at(-1)).toEqual(["Abfahrten"]);
+    expect(fake.state.menus.at(-1)).toEqual([]);
     // One rebuild before the single creation (it registers input on the glasses), one for the new menu.
     expect(fake.state.creates).toBe(1);
     expect(fake.state.rebuilds).toBe(2);
@@ -147,7 +148,7 @@ describe("the route pages", () => {
     expect(fake.state.body.split("\n")[0]).toMatch(/^Ab .+ · \d+ min zu Fuß$/);
     expect(fake.state.body.split("\n")[1]).toMatch(/^in \d+ min · O-Bus 10 · an \d\d:\d\d$/);
     expect(fake.state.body.split("\n")).toHaveLength(3);
-    expect(fake.state.menus.at(-1)).toEqual(["Ziele", "Neu suchen", "Abfahrten"]);
+    expect(fake.state.menus.at(-1)).toEqual([]);
 
     fake.gesture(DOWN); // select the second connection
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/4 · /));
@@ -156,8 +157,8 @@ describe("the route pages", () => {
     // The walk to the stop: as soon as its route is in, the big arrow page with "Dann: ..." beneath.
     await vi.waitFor(() => expect(fake.state.kind).toBe("walk"), { timeout: 5000 });
     expect(fake.state.body).toMatch(/^Dann: O-Bus 10 Richtung .+ · in \d+ min$/);
-    expect(fake.state.footer).toMatch(/^Schritt 1\/\d/);
-    expect(fake.state.menus.at(-1)).toEqual(["Nächster Schritt", "Vorheriger Schritt", "Begleitung beenden"]);
+    expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr) · Tippen = weiter · 2× = Ende$/);
+    expect(fake.state.menus.at(-1)).toEqual([]);
     // Arrow, distance and the two street halves, sent once each for the first fix.
     const walkPictures = new Set(["arrow", "distance", "street-left", "street-right"]);
     await vi.waitFor(() => expect(fake.state.images.map((entry) => entry.split(":")[0]).filter((name) => walkPictures.has(name ?? "")).slice(0, 4)).toEqual(["arrow", "distance", "street-left", "street-right"]));
@@ -172,16 +173,21 @@ describe("the route pages", () => {
     fake.menu(6);
     await vi.waitFor(() => expect(fake.state.kind).toBe("wait"));
 
-    // One double tap only asks; the second one leaves.
-    fake.gesture(DOUBLE);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal doppeltippen = Begleitung beenden"));
+    // QIS v1: ending the guide is armed by a hold (no side menu), then needs a second single tap.
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
     expect(fake.state.kind).toBe("wait");
-    fake.gesture(DOUBLE);
+    fake.gesture(UP); // a swipe only cancels: the guide runs on
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/\d+ · /));
+    expect(fake.state.kind).toBe("wait");
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
+    fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/4 · Tippen = los/));
     expect(fake.state.kind).toBe("board");
 
     fake.gesture(DOUBLE); // connections -> goals
-    await vi.waitFor(() => expect(fake.state.header).toMatch(/^Wohin\? · /));
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\? · /));
     fake.gesture(DOUBLE); // goals -> departures
     await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
     expect(fake.state.shutdowns).toBe(0);
@@ -190,12 +196,62 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
   });
 
+  it("a hold in the guide only asks; a swipe, 2× or a second hold cancel, the next single tap ends it (no side menu)", async () => {
+    for (const cancel of [UP, DOWN, DOUBLE, HOLD]) {
+      const fake = fakeBridge({ confirmExit: false });
+      await boot(fake, "?demo=1&lang=de&scene=guide");
+      await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+      fake.gesture(HOLD);
+      await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
+      fake.gesture(cancel);
+      await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/\d+ · /), { timeout: 2000 });
+      expect(fake.state.shutdowns, "event " + cancel).toBe(0);
+    }
+    const fake = fakeBridge();
+    await boot(fake, "?demo=1&lang=de&scene=guide");
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
+    fake.gesture(CLICK); // the second single tap ends the guide
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
+    expect(fake.state.menus.every((items) => items.length === 0)).toBe(true);
+  });
+
   it("leaves the guide at once from the menu", async () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de&scene=guide");
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Schritt 1\//));
-    fake.menu(8);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    fake.menu(8); // arms only
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
+    fake.gesture(CLICK); // the second single tap ends the guide
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
+  });
+
+  it("a 2x never ends the running guide: it asks the system to exit, and the guide stays when the passenger stays", async () => {
+    const fake = fakeBridge({ confirmExit: false });
+    await boot(fake, "?demo=1&lang=de&scene=guide");
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    fake.menu(8); // armed ...
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
+    fake.gesture(DOUBLE); // ... 2x only cancels
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    expect(fake.state.shutdowns).toBe(0);
+    fake.gesture(DOUBLE); // not armed: the system exit dialog, which the passenger can decline
+    await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
+    expect(fake.state.footer).toMatch(/^1\/\d+ · /);
+    fake.gesture(CLICK); // still a guide: a tap steps, it does not end
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/\d+ · /));
+  });
+
+  it("a stale arm is gone after 4 s: the next tap only steps", async () => {
+    const fake = fakeBridge();
+    await boot(fake, "?demo=1&lang=de&scene=guide");
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    fake.menu(8);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /), { timeout: 6000 });
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/\d+ · /));
   });
 
   it("says what is missing when there is no location, instead of searching", async () => {
@@ -208,7 +264,7 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.body).toBe("> Heim"));
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
-    expect(fake.state.footer).toBe("Tippen = nochmal versuchen");
+    expect(fake.state.footer).toBe("Tippen = nochmal · 2× = zurück");
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -237,7 +293,7 @@ describe("the route pages", () => {
     expect(plan.searchParams.get("fromPlace")).toBe("47.8095,13.055");
     expect(plan.searchParams.get("toPlace")).toBe("47.796,13.016");
     await vi.waitFor(() => expect(fake.state.body).toBe("Bitte gleich nochmal versuchen."));
-    expect(fake.state.footer).toBe("Tippen = nochmal versuchen");
+    expect(fake.state.footer).toBe("Tippen = nochmal · 2× = zurück");
     expect(new Set(urls.map((url) => new URL(url).origin))).toEqual(new Set(["https://api.transitous.org"]));
   });
 });

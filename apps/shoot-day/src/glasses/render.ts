@@ -1,5 +1,10 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -7,9 +12,13 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { ScreenView } from "./screen";
+import { SIDE_MENU } from "./views";
 import { createBitmap, type Bitmap } from "./gfx";
-import { ImageLink, imageContainer, type ImageSlot } from "./images";
+import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, type ImageSlot } from "./images";
+
+export { PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, bounded };
 import { BAR_HEIGHT, BAR_WIDTH, ICON_HEIGHT, ICON_WIDTH } from "./charts";
+import { tileSlots, type TileSlot } from "../screen/sender";
 
 /**
  * Renders a view onto the G2.
@@ -68,9 +77,33 @@ export interface RenderResult {
 
 const link = new ImageLink();
 
+/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec { readonly items: readonly MenuItemSpec[] }
+
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel Glass. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (!SIDE_MENU || menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({
+    menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })),
+  });
+}
+
+/**
+ * The menu every page (plain, schedule, light) is built with: a rebuild without it would clear it.
+ * Set by the app once (and again when the language changes).
+ */
+let pageMenu: MenuSpec | null = null;
+export function setPageMenu(menu: MenuSpec | null): void { pageMenu = menu; }
+const menuPart = (): { menuObject?: MenuContainerProperty } => {
+  const menuObject = buildMenu(pageMenu);
+  return menuObject === undefined ? {} : { menuObject };
+};
+
 function pageParts(view: ScreenView, layout: Layout) {
   const images = layout === "schedule" ? [SIGN, BAR] : [SIGN];
   return {
+    ...menuPart(),
     containerTotalNum: 3 + images.length,
     imageObject: images.map(imageContainer),
     textObject: [
@@ -113,25 +146,35 @@ function text(spec: ContainerSpec, content: string, zOrderIndex: number, capture
 const started = new WeakSet<EvenAppBridge>();
 
 async function installPage(bridge: EvenAppBridge, view: ScreenView, layout: Layout, frames: Frames): Promise<RenderResult> {
-  const page = buildPage(view, layout);
+  const installed = await installRaw(bridge, buildPage(view, layout));
+  if (!installed.ok) return installed;
+  try {
+    return await pushImages(bridge, layout, frames);
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/** Creates (first time) or rebuilds the page; no pictures yet. */
+async function installRaw(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
   link.reset();
   try {
     if (!started.has(bridge)) {
       try {
-        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       } catch {
         // Expected on current firmware; the creation below is the real path.
       }
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
       started.add(bridge);
     } else {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       // A refused rebuild leaves the old page in place.
       if (!ok) return { ok: false, reason: "rebuild refused" };
     }
-    return pushImages(bridge, layout, frames);
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
@@ -139,6 +182,39 @@ async function installPage(bridge: EvenAppBridge, view: ScreenView, layout: Layo
 
 export const createPage = installPage;
 export const rebuildPage = installPage;
+
+/**
+ * The Light page: the whole display is four 288 x 144 image tiles (2 x 2,
+ * drawn by src/sun/compose.ts and sent by the full-screen kit's tile sender),
+ * plus one empty text container under them that owns the input (a page needs
+ * exactly one container capturing events).
+ */
+export const LIGHT_TILES = tileSlots(21, "light");
+
+export function buildLightPage(): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer({
+    ...menuPart(),
+    containerTotalNum: 1 + LIGHT_TILES.length,
+    textObject: [new TextContainerProperty({
+      containerID: 20, containerName: "light-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+      paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+    })],
+    imageObject: LIGHT_TILES.map((tile, index) => new ImageContainerProperty({
+      containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+    })),
+  });
+}
+
+/** Puts the (empty) Light page up; the caller resets its tile sender and pushes the frame. */
+export function installLightPage(bridge: EvenAppBridge): Promise<RenderResult> {
+  return installRaw(bridge, buildLightPage());
+}
+
+/** One tile write for the tile sender; true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, png: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData: png })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
@@ -182,11 +258,11 @@ export async function updatePage(
   try {
     for (const [spec, content, before] of updates) {
       if (before !== undefined && before === content) continue;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
-      }));
+      })), TEXT_CALL_MS, "text " + spec.name);
     }
     return await pushImages(bridge, layout, frames);
   } catch (error) {

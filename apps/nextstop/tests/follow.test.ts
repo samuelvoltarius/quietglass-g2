@@ -123,7 +123,7 @@ describe("the board page: one thing big, little text", () => {
       "16 min · Bus 150 · Salzburg Hbf",
     ].map((row) => (row.length > 50 ? row.slice(0, 49) + "…" : row)));
     expect(scene.view.body.length).toBeLessThanOrEqual(BOARD_ROWS);
-    expect(scene.view.footer).toBe("2/4 · Tippen = verfolgen · Halten = Ziel");
+    expect(scene.view.footer).toBe("2/4 · Tippen = folgen · Halten = Ziel · 2× = Ende");
   });
 
   it("keeps only where a bus goes, not the way it takes", () => {
@@ -150,7 +150,7 @@ describe("the board page: one thing big, little text", () => {
       followLoadingScene(chosen, NOW, "de"),
       followScene(chosen, coming, NOW, "de", 0),
       followScene(chosen, riding, NOW, "de", 0),
-      messageScene("ÖBB nicht erreichbar", "Prüfe das Internet am Handy und tippe nochmal.", "Tippen = nochmal versuchen", "!"),
+      messageScene("ÖBB nicht erreichbar", "Prüfe das Internet am Handy und tippe nochmal.", "Tippen = nochmal · 2× = Ende", "!"),
     ];
     for (const scene of scenes) {
       expect(scene.kind).toBe("board");
@@ -163,7 +163,7 @@ describe("the board page: one thing big, little text", () => {
   it("answers the tap with the picked bus while its stops load", () => {
     const scene = followLoadingScene(departure(), NOW, "de");
     expect(scene.view.body).toEqual(["Fahrt wird geladen …"]);
-    expect(scene.view.footer).toBe("Tippen = zurück zur Tafel");
+    expect(scene.view.footer).toBe("Tippen = abbrechen · 2× = Ende");
     expect(scene.images[2]!.key).toBe("strip:Bus 150 → Bad Ischl");
   });
 
@@ -191,7 +191,7 @@ describe("the board page: one thing big, little text", () => {
       "danach Sterneckstraße · 2 min",
       "bis Gnigl Bahnhst · " + clockOf(at(4)) + " · 3 Stationen",
     ]);
-    expect(scene.view.footer).toBe("GPS · Tippen = zurück zur Tafel");
+    expect(scene.view.footer).toBe("GPS · Tippen = Fahrt abbrechen · 2× = Ende");
   });
 
   it("riding out of town: the names stay whole", () => {

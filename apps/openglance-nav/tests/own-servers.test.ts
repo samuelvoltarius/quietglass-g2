@@ -55,7 +55,7 @@ describe("street names from your own routing server (trace_attributes)", () => {
     expect((await source(400).load(north(1), "driving")).error).toBe("server");
     expect((await source(200).load(north(1), "driving")).error).toBe("invalid");
     expect((await source(new TypeError("offline")).load(north(1), "driving")).error).toBe("offline");
-    expect(await createRouteStreetSource({ url: "" }).load(north(1), "driving")).toEqual({ streets: [], error: null });
+    expect(await createRouteStreetSource({ url: "" }).load(north(1), "driving")).toEqual({ streets: [], limits: [], error: null });
   });
 });
 

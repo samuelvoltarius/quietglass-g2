@@ -24,6 +24,12 @@ export function createDemoApi(locale: Locale, scene: string | null = null): Xave
     if (scene === "offline") throw new ApiError("unreachable");
     return { version: "demo-" + cards.length, status, cards };
   };
+  const reply = (transcript: string) => ({
+    transcript,
+    action: "message" as const,
+    cardId: "",
+    reply: de ? "Der Drucker prüft gerade die Düse. Danach wartet eine Frage auf dich." : "The printer is checking the nozzle. A question for you follows.",
+  });
   return {
     demo: true,
     feed: (since, signal) => new Promise((resolve, reject) => {
@@ -37,11 +43,7 @@ export function createDemoApi(locale: Locale, scene: string | null = null): Xave
       cards = cards.filter((entry) => entry.id !== cardId);
       return { message: de ? "Erledigt." : "Done." };
     },
-    voice: async () => ({
-      transcript: de ? "Wie ist der Stand?" : "What is the status?",
-      action: "message",
-      cardId: "",
-      reply: de ? "Der Drucker prüft gerade die Düse. Danach wartet eine Frage auf dich." : "The printer is checking the nozzle. A question for you follows.",
-    }),
+    voice: async () => reply(de ? "Wie ist der Stand?" : "What is the status?"),
+    ask: async (text: string) => reply(text),
   };
 }

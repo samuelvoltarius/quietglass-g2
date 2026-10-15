@@ -130,7 +130,9 @@ describe("glasses copy fits the display", () => {
       const view = buildView(empty, startRun(empty), { locale });
       expect(view.headline).toBe(t(locale, "g.empty.1"));
       expect(view.body.length).toBeGreaterThanOrEqual(1);
-      expect(view.footer).toBe(t(locale, "g.empty.footer"));
+      expect(view.footer).toBe(locale === "de" ? "Halten = Hilfe · 2× = Ende" : "Hold = help · 2× = exit");
+      const withMenu = buildView(empty, startRun(empty), { locale, sideMenu: true });
+      expect(withMenu.footer).toBe(locale === "de" ? "Halten = Menü · 2× = Ende" : "Hold = menu · 2× = exit");
     });
   }
 
@@ -146,12 +148,12 @@ describe("glasses copy fits the display", () => {
     expect(view.body[0]).toBe("WICHTIG – nochmal tippen:");
     expect(view.footer).toContain("Nochmal tippen = bestätigen");
     const optional = complete(list, armed, "done", 0);
-    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("Tippen = erledigt · ↓ = auslassen · ↑ = zurück  ·  0:00");
+    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("0:00 · Tippen = erledigt · Halten = Hilfe · 2× = Ende");
     const done = skip(list, optional, 65_000);
     const finished = buildView(list, done, { locale: "de" }, 65_000);
     expect(finished.headline).toBe("Fertig!");
     expect(finished.body).toContain("1 von 1 erledigt");
-    expect(finished.footer).toBe("Tippen = neu starten · 2× = Ende");
+    expect(finished.footer).toBe("Tippen = neu starten · Halten = Hilfe · 2× = Ende");
   });
 });
 
@@ -193,14 +195,17 @@ describe("first run", () => {
     expect(restored.lists[0]).toBe(removed.lists[0]);
   });
 
-  it("starts a finished list again on a tap", () => {
+  it("starts a finished list again only on the second tap", () => {
     const list = sampleChecklists("en")[0]!;
     let state = startRun(list, 0);
     while (state.currentId) {
       const step = currentStep(list, state)!;
       state = step.kind === "optional" ? skip(list, state) : complete(list, complete(list, state));
     }
-    const again = dispatch(list, state, "click").state;
+    const asked = dispatch(list, state, "click");
+    expect(asked.state).toBe(state);
+    expect(asked.effects).toEqual([{ kind: "arm", action: "restart" }]);
+    const again = dispatch(list, state, "click", "restart").state;
     expect(again.currentId).toBe(list.steps[0]!.id);
     expect(again.status).toEqual({});
   });

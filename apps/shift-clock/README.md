@@ -10,7 +10,7 @@
 > **In 3 Schritten loslegen**
 > 1. ShiftClock installieren und auf der Brille öffnen.
 > 2. Das Projekt „Arbeit“ ist schon angelegt – tipp an die Brille, die Zeit läuft.
-> 3. Nochmal tippen stoppt. Weitere Projekte (Kunden, Aufträge) legst du am Handy
+> 3. Zum Stoppen tippen und innerhalb von 4 s nochmal tippen (ein einzelner Tipper stoppt nie). Weitere Projekte (Kunden, Aufträge) legst du am Handy
 >    an; dann wählst du mit Wischen und startest mit Tippen.
 >
 > Verlassen (doppeltippen) stoppt die Zeit **nicht**. Links auf der Brille füllt
@@ -49,7 +49,7 @@ On glasses it is one gesture, and the elapsed time is already in front of you.
   5 ├┤◀
     ██   target 8 h · 3:45 to go
   0 ██
-        today 4:15  ·  tap = stop
+        Tap = stop  ·  2× = exit
 ```
 
 ![Day bar states](docs/graphic-preview.png)
@@ -91,9 +91,12 @@ new one's start time are the same number.
 
 | Gesture | Stopped | Running |
 |---|---|---|
-| **Tap** | Start the only project · or open the picker, then start | Stop |
-| **Swipe** | Move through the projects (last row: *Cancel*) | — |
-| **Double tap** | Leave (clock keeps running) | Leave (clock keeps running) |
+| **Tap** | Start the only project · or open the picker, then start | Arm the stop, then tap again within 4 s to stop |
+| **Swipe** | Move through the projects (last row: *Cancel*) | Cancels a pending stop |
+| **Hold** | *Help* (in the picker: the last row *Help*) | *Help* · cancels a pending stop instead |
+
+(The glasses' own side menu is off for now, `SIDE_MENU = false`: its clicks do not arrive on the real glasses.)
+| **2×** | Back one level; at the start screen: leave (clock keeps running) | Leave (clock keeps running); cancels a pending stop instead |
 
 The picker opens on your **most recently used project**, which is nearly always
 the one you want again. With just one project there is no picker: the tap

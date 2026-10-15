@@ -1,0 +1,555 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.4 2390de5a",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-13T22:22:19Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 648692306,
+  "lat": 47.7236313,
+  "lon": 12.9833084,
+  "tags": {
+    "ele": "1430",
+    "name": "Kühstein",
+    "natural": "peak",
+    "source": "Yahoo"
+  }
+},
+{
+  "type": "node",
+  "id": 2371545734,
+  "lat": 47.7475571,
+  "lon": 12.9854202,
+  "tags": {
+    "ele": "597",
+    "name": "Krüzersberg",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 3202648821,
+  "lat": 47.7597948,
+  "lon": 12.9594458,
+  "tags": {
+    "ele": "542",
+    "name": "Wartberg",
+    "natural": "peak",
+    "wikidata": "Q21863856"
+  }
+},
+{
+  "type": "node",
+  "id": 2370485119,
+  "lat": 47.7551674,
+  "lon": 12.9912257,
+  "tags": {
+    "ele": "502",
+    "name": "Großgmainberg",
+    "natural": "peak",
+    "wikidata": "Q21875105"
+  }
+},
+{
+  "type": "node",
+  "id": 2370485107,
+  "lat": 47.7600930,
+  "lon": 12.9945264,
+  "tags": {
+    "ele": "470",
+    "name": "Kleingmainberg",
+    "natural": "peak",
+    "wikidata": "Q21875104"
+  }
+},
+{
+  "type": "node",
+  "id": 2119792086,
+  "lat": 47.7180172,
+  "lon": 13.0047490,
+  "tags": {
+    "ele": "1853",
+    "man_made": "cross",
+    "name": "Salzburger Hochthron",
+    "natural": "peak",
+    "ref:avf": "1130",
+    "summit:cross": "yes",
+    "summit:register": "no",
+    "wikidata": "Q18615505",
+    "wikipedia": "de:Salzburger Hochthron"
+  }
+},
+{
+  "type": "node",
+  "id": 2119790098,
+  "lat": 47.7224087,
+  "lon": 13.0087374,
+  "tags": {
+    "ele": "1805",
+    "name": "Geiereck",
+    "natural": "peak",
+    "ref:avf": "1110",
+    "wikidata": "Q21870968"
+  }
+},
+{
+  "type": "node",
+  "id": 13732430376,
+  "lat": 47.7229226,
+  "lon": 13.0172516,
+  "tags": {
+    "ele": "1468",
+    "name": "Kleines Geiereck",
+    "natural": "peak",
+    "source:ele": "Laserscan",
+    "source:name": "FJLA;https://bibliothek.alpenverein.de/webOPAC/01_Alpenvereins-Publikationen/01_AV-Jahrbuch/AV_Jahrbuch_011.1880-web.pdf;https://www.parmenides-ansichtskarten.com/collections/0-sbg-flachgau/products/kopie-von-ak-untersberg-geiereck-1"
+  }
+},
+{
+  "type": "node",
+  "id": 7047217017,
+  "lat": 47.7252641,
+  "lon": 13.0222610,
+  "tags": {
+    "ele": "1268",
+    "name": "Leonhardspitze",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 911186934,
+  "lat": 47.7158736,
+  "lon": 13.0287424,
+  "tags": {
+    "ele": "998",
+    "name": "Kienbergkopf",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 7318210390,
+  "lat": 47.7102994,
+  "lon": 13.0570364,
+  "tags": {
+    "ele": "710",
+    "name": "Gutratberg",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 1763161370,
+  "lat": 47.7235630,
+  "lon": 13.1195383,
+  "tags": {
+    "ele": "776",
+    "name": "Eberstein",
+    "natural": "peak",
+    "wikidata": "Q21873879"
+  }
+},
+{
+  "type": "node",
+  "id": 7047217002,
+  "lat": 47.7303880,
+  "lon": 13.0085496,
+  "tags": {
+    "ele": "1400",
+    "name": "Bierfasselkopf",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 4764898091,
+  "lat": 47.7348773,
+  "lon": 13.0225481,
+  "tags": {
+    "alt_name": "Gemeindeberg",
+    "ele": "995",
+    "name": "Gemainberg",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 2701450614,
+  "lat": 47.7391471,
+  "lon": 13.0304265,
+  "tags": {
+    "alt_name": "Gosslei",
+    "direction": "315-180",
+    "ele": "574",
+    "name": "Gossenleieraussicht",
+    "natural": "peak",
+    "tourism": "viewpoint"
+  }
+},
+{
+  "type": "node",
+  "id": 4861181764,
+  "lat": 47.7267981,
+  "lon": 13.0535442,
+  "tags": {
+    "ele": "541",
+    "name": "Goisberg",
+    "natural": "peak",
+    "summit:cross": "no",
+    "summit:register": "no"
+  }
+},
+{
+  "type": "node",
+  "id": 4620285824,
+  "lat": 47.7588682,
+  "lon": 13.0661752,
+  "tags": {
+    "ele": "515",
+    "name": "Hellbrunner Berg",
+    "natural": "peak",
+    "source:ele": "Laser-Geländemodell Land Salzburg",
+    "wikidata": "Q876484"
+  }
+},
+{
+  "type": "node",
+  "id": 5589973652,
+  "lat": 47.7669277,
+  "lon": 13.0576292,
+  "tags": {
+    "ele": "470",
+    "name": "Morzger Hügel",
+    "natural": "peak",
+    "wikidata": "Q1948790"
+  }
+},
+{
+  "type": "node",
+  "id": 3344432794,
+  "lat": 47.7599066,
+  "lon": 13.1009371,
+  "tags": {
+    "ele": "778",
+    "name": "Hengstberg",
+    "natural": "peak",
+    "wikidata": "Q1345883"
+  }
+},
+{
+  "type": "node",
+  "id": 600193821,
+  "lat": 47.7948772,
+  "lon": 13.0362762,
+  "tags": {
+    "ele": "511",
+    "name": "Rainberg",
+    "natural": "peak",
+    "wikidata": "Q1651678"
+  }
+},
+{
+  "type": "node",
+  "id": 1213636388,
+  "lat": 47.7936935,
+  "lon": 13.0402815,
+  "tags": {
+    "ele": "505",
+    "name": "Richterhöhe",
+    "natural": "peak",
+    "wikidata": "Q2151297",
+    "wikipedia": "de:Richterhöhe"
+  }
+},
+{
+  "type": "node",
+  "id": 1607558059,
+  "lat": 47.7965345,
+  "lon": 13.0404177,
+  "tags": {
+    "ele": "508",
+    "name": "Karolinenhöhe",
+    "natural": "peak",
+    "wikidata": "Q15823114",
+    "wikipedia": "de:Karolinenhöhe (Salzburg)"
+  }
+},
+{
+  "type": "node",
+  "id": 1213636389,
+  "lat": 47.8020664,
+  "lon": 13.0366954,
+  "tags": {
+    "ele": "483",
+    "name": "Mönchsberg Nord",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 770013250,
+  "lat": 47.7948951,
+  "lon": 13.0470836,
+  "tags": {
+    "ele": "548",
+    "name": "Festungsberg",
+    "natural": "peak",
+    "wikidata": "Q1409030",
+    "wikimedia_commons": "File:Festungsberg_Salzburg,_Sommer_2008.jpg",
+    "wikipedia": "de:Festungsberg"
+  }
+},
+{
+  "type": "node",
+  "id": 1575961148,
+  "lat": 47.8051498,
+  "lon": 13.0579585,
+  "tags": {
+    "ele": "640",
+    "name": "Kapuzinerberg",
+    "name:de": "Kapuzinerberg",
+    "name:uk": "Капуцинерберг",
+    "natural": "peak",
+    "wikidata": "Q873917",
+    "wikipedia": "de:Kapuzinerberg"
+  }
+},
+{
+  "type": "node",
+  "id": 2482972328,
+  "lat": 47.7990348,
+  "lon": 13.0573673,
+  "tags": {
+    "ele": "455",
+    "name": "Bürglstein",
+    "natural": "peak",
+    "wikidata": "Q1021578"
+  }
+},
+{
+  "type": "node",
+  "id": 2908808801,
+  "lat": 47.8095142,
+  "lon": 13.0856370,
+  "tags": {
+    "ele": "712",
+    "name": "Kühberg",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 130200550,
+  "lat": 47.7516774,
+  "lon": 13.1268638,
+  "tags": {
+    "ele": "1059",
+    "name": "Mühlstein",
+    "natural": "peak",
+    "summit:cross": "yes",
+    "summit:register": "no",
+    "wikidata": "Q1958645"
+  }
+},
+{
+  "type": "node",
+  "id": 2017816403,
+  "lat": 47.7341367,
+  "lon": 13.1404245,
+  "tags": {
+    "ele": "804",
+    "name": "Raucheck",
+    "natural": "peak",
+    "wikidata": "Q134931062",
+    "wikimedia_commons": "Category:Raucheck, Puch bei Hallein"
+  }
+},
+{
+  "type": "node",
+  "id": 337084760,
+  "lat": 47.7603530,
+  "lon": 13.1565787,
+  "tags": {
+    "ele": "1334",
+    "name": "Schwarzenberg",
+    "natural": "peak",
+    "prominence": "668",
+    "wikidata": "Q2253810"
+  }
+},
+{
+  "type": "node",
+  "id": 26862902,
+  "lat": 47.8051182,
+  "lon": 13.1127222,
+  "tags": {
+    "ele": "1287",
+    "name": "Gaisberg",
+    "natural": "peak",
+    "source:ele": "Laserscan Geländemodell auf https://www.salzburg.gv.at",
+    "summit:cross": "yes",
+    "summit:register": "no",
+    "wikidata": "Q688441",
+    "wikipedia": "de:Gaisberg (Salzburg)"
+  }
+},
+{
+  "type": "node",
+  "id": 1721733900,
+  "lat": 47.7879659,
+  "lon": 13.1432707,
+  "tags": {
+    "ele": "1158",
+    "name": "Gurlspitze",
+    "natural": "peak",
+    "summit:cross": "yes",
+    "wikidata": "Q1555233"
+  }
+},
+{
+  "type": "node",
+  "id": 2429148043,
+  "lat": 47.7995406,
+  "lon": 13.1381619,
+  "tags": {
+    "ele": "902",
+    "name": "Klausberg",
+    "natural": "peak",
+    "wikidata": "Q133477651"
+  }
+},
+{
+  "type": "node",
+  "id": 884356227,
+  "lat": 47.8157436,
+  "lon": 13.1199119,
+  "tags": {
+    "ele": "1043",
+    "name": "Nockstein",
+    "natural": "peak",
+    "source": "estimated",
+    "summit:cross": "yes",
+    "summit:register": "yes",
+    "wikidata": "Q1995215"
+  }
+},
+{
+  "type": "node",
+  "id": 2540220502,
+  "lat": 47.8312099,
+  "lon": 13.1078145,
+  "tags": {
+    "ele": "901",
+    "name": "Heuberg",
+    "natural": "peak",
+    "wikidata": "Q76958394",
+    "wikipedia": "de:Heuberg (Salzburg)"
+  }
+},
+{
+  "type": "node",
+  "id": 3195565509,
+  "lat": 47.7847853,
+  "lon": 13.1622114,
+  "tags": {
+    "ele": "982",
+    "name": "Pitrachspitze",
+    "natural": "peak",
+    "source": "basemap.at",
+    "wikidata": "Q134235672"
+  }
+},
+{
+  "type": "node",
+  "id": 3195566864,
+  "lat": 47.7795445,
+  "lon": 13.1712560,
+  "tags": {
+    "ele": "839",
+    "name": "Reischauspitze",
+    "natural": "peak",
+    "source": "basemap.at"
+  }
+},
+{
+  "type": "node",
+  "id": 5155075149,
+  "lat": 47.8022307,
+  "lon": 13.1828696,
+  "tags": {
+    "alt_name": "Schroffenauberg",
+    "ele": "789",
+    "name": "Plötz",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 8325210403,
+  "lat": 47.8550975,
+  "lon": 13.0087562,
+  "tags": {
+    "ele": "453",
+    "name": "Muntigler Hügel",
+    "natural": "peak"
+  }
+},
+{
+  "type": "node",
+  "id": 2540248165,
+  "lat": 47.8374994,
+  "lon": 13.0443007,
+  "tags": {
+    "ele": "549",
+    "name": "Plainberg",
+    "natural": "peak",
+    "wikidata": "Q1785452",
+    "wikimedia_commons": "Category:Plainberg",
+    "wikipedia": "de:Plainberg"
+  }
+},
+{
+  "type": "node",
+  "id": 11470051575,
+  "lat": 47.8560607,
+  "lon": 13.0341877,
+  "tags": {
+    "ele": "676",
+    "name": "Hochgitzen",
+    "natural": "peak",
+    "wikidata": "Q21871796"
+  }
+},
+{
+  "type": "node",
+  "id": 1323473493,
+  "lat": 47.8681090,
+  "lon": 13.0363667,
+  "tags": {
+    "ele": "588",
+    "name": "Sandkuchl",
+    "natural": "peak",
+    "old_name": "Sonnenkogel",
+    "tourism": "viewpoint",
+    "wikidata": "Q21875068"
+  }
+},
+{
+  "type": "node",
+  "id": 10708992637,
+  "lat": 47.8432931,
+  "lon": 13.1352657,
+  "tags": {
+    "ele": "802",
+    "name": "Eugendorfer Berg",
+    "natural": "peak"
+  }
+}
+
+  ]
+}

@@ -1,4 +1,4 @@
-import { selectedAgent, type HubModel } from "../hub/model";
+import { selectedAgent, voiceOwns, type HubModel } from "../hub/model";
 import type { PixelIcon } from "./pixel";
 import { mascotFrame, type Mood } from "./mascot";
 
@@ -13,7 +13,7 @@ const INBOX = ["######", "#....#", "#....#", "#.##.#", "######", "......"];
 export function moodFor(model: HubModel, now: number): Mood {
   if (model.link !== null) return "asleep";
   if (model.report.approvals.length > 0) return "waiting";
-  if (model.recording || model.voice !== null) return "listening";
+  if (model.recording || voiceOwns(model)) return "listening";
   const agent = selectedAgent(model);
   if (model.screen === "agent" && agent?.error !== null && agent?.error !== undefined && !agent.busy) return "error";
   if ((model.cheerUntil ?? 0) > now) return "happy";

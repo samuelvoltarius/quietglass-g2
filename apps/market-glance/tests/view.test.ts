@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BODY_ROWS, LINE_WIDTH, PAGE_SIZE, glassesView, modeLabel, positionLines, type FeedStatus } from "../src/glasses/view";
 import { demoPositions, type Position } from "../src/markets/model";
 
-const labels = { mode: "LIVE", title: "POSITIONS", empty: "No open positions", controls: "Tap: refresh" };
+const labels = { mode: "LIVE", title: "POSITIONS", empty: "No open positions", controls: "Tap = reload" };
 function pos(over: Partial<Position> = {}): Position {
   return { provider: "polymarket", title: "Rain tomorrow?", outcome: "YES", quantity: 1, currentValue: 1, pnl: 1, price: 0.5, ...over };
 }
@@ -11,8 +11,8 @@ const many = Array.from({ length: 6 }, (_, i) => pos({ title: `Market ${i}` }));
 describe("glasses view", () => {
   it("shows mode in the header and controls in the footer", () => {
     const view = glassesView(demoPositions(), 0, labels);
-    expect(view.header).toBe("MARKET GLANCE  LIVE");
-    expect(view.footer).toBe("Tap: refresh");
+    expect(view.header).toBe("MARKET GLANCE · LIVE");
+    expect(view.footer).toBe("Tap = reload");
   });
   it("regression: the body never exceeds the rows the container can show", () => {
     // Four positions used to produce 10 rows in a 7-row container, clipping the last P/L lines.
@@ -30,6 +30,15 @@ describe("glasses view", () => {
   });
   it("shows the empty message when there are no positions", () => {
     expect(glassesView([], 0, labels).body).toEqual(["POSITIONS", "", "No open positions"]);
+  });
+  it("without a side menu the Hilfe row follows the positions; with no `help` label there is none", () => {
+    const withHelp = { ...labels, help: "Help", helpControls: "Tap = open" };
+    expect(glassesView(many, many.length, withHelp).body.join(" ")).toContain("> Help");
+    expect(glassesView(many, many.length, withHelp).footer).toBe("Tap = open");
+  });
+  it("QIS v1.2: no Hilfe row without a `help` label; the demo hint takes the blank row under the title", () => {
+    expect(glassesView(many, 0, labels).body.join("\n")).not.toMatch(/Help/);
+    expect(glassesView(demoPositions(), 0, { ...labels, demoHint: "Demo · set up the connection on the phone" }).body.slice(0, 2)).toEqual(["POSITIONS", "Demo · set up the connection on the phone"]);
   });
   it("tags providers K and P", () => {
     expect(positionLines(pos({ provider: "kalshi" }), false)[0]).toBe("  K Rain tomorrow?");
@@ -61,7 +70,7 @@ describe("header mode", () => {
     expect(modeLabel(live({ errors: [{ provider: "polymarket", message: "HTTP 500" }] }), now, words)).toBe("LIVE  P ERR");
   });
   it("fits the header within the line width in the longest case", () => {
-    const longest = `MARKET GLANCE  ${modeLabel(live({ updatedAt: now - 3_600_000 * 99, errors: [{ provider: "polymarket", message: "" }, { provider: "kalshi", message: "" }, { provider: "x", message: "" }] }), now, { ...words, stale: "DESACTUALIZADO" })}`;
+    const longest = `MARKET GLANCE · ${modeLabel(live({ updatedAt: now - 3_600_000 * 99, errors: [{ provider: "polymarket", message: "" }, { provider: "kalshi", message: "" }, { provider: "x", message: "" }] }), now, { ...words, stale: "DESACTUALIZADO" })}`;
     expect(longest.length).toBeLessThanOrEqual(LINE_WIDTH);
   });
 });

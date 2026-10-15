@@ -7,7 +7,11 @@ offen ist, zeigt die Brille **● MIC**. Der Ton geht ausschließlich an den
 Spracherkennungs-Server, den du selbst einträgst, fertige Sätze an den
 Übersetzungs-Server deiner Wahl. Ohne Server läuft ein Demo-Modus, bei dem kein
 Ton das Handy verlässt. Ton und Mitschrift werden nie gespeichert; gespeichert
-sind nur deine Einstellungen. Kein Konto, kein Tracking. Deinstallieren löscht
+sind nur deine Einstellungen. Ab 0.4.0 hat Babel ein **eigenes Gedächtnis**
+(abschaltbar): Nach einer Zusammenfassung landen Datum, Titel, Zusammenfassung
+und Abmachungen in einer Datei auf **deinem** Server (babel-llm-proxy, nur für
+dich lesbar), dazu Notizen, die du am Handy eintippst. Babel liest und schreibt
+nur dieses eigene Gedächtnis, keinen anderen Speicher. Kein Konto, kein Tracking. Deinstallieren löscht
 alles.
 
 ## Short version
@@ -51,7 +55,10 @@ per-app storage on the phone, so it survives the phone lock and a restart of
 the app. It never leaves the phone. Switching the option off deletes the stored
 copy.
 
-Holding the temple pad twice (the second hold within 4 seconds) clears the
+While captions run, holding the temple pad asks your language model for a
+word you are missing (Wortfinder): the last ~20 seconds of the transcript go
+to that server, nothing is stored. When captions are stopped, holding the
+temple pad twice (the second hold within 4 seconds) clears the
 transcript, including a stored copy; so does "Clear transcript" on the phone.
 
 ## What is stored
@@ -62,6 +69,16 @@ transcript, including a stored copy; so does "Clear transcript" on the phone.
 | Tokens / API keys | same | Only to that server |
 | Languages, mode, display options | same | No |
 | Last transcript and summary — only with "keep the last transcript" on | same, under `quietglass.babelglass.conversation.v1` | No |
+
+**Own memory (0.4.0, on by default, switch: "Own memory" on the phone):** after
+a summary, its date, title, summary and agreements are sent to
+`/memory` on the babel-llm-proxy — the same server as your language model —
+and kept there in one JSON file readable only by its owner (mode 600, at most
+500 entries). Notes typed on the phone go there too. During a conversation the
+newest lines are used to search that memory, and the best three hits go into
+the explanation prompt. Everything can be listed, exported, deleted one by one
+or all at once on the phone (tab "Memory"). Babel Glass reads and writes no
+other memory or knowledge store.
 
 Finished captions are sent to the translation server you select
 (LibreTranslate-compatible or an OpenAI-compatible LLM server) and nowhere

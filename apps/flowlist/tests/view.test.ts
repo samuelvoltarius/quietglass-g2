@@ -16,7 +16,8 @@ describe("empty state", () => {
     const empty = list();
     const view = buildView(empty, startRun(empty));
     expect(view.body.join(" ")).toContain("on your phone");
-    expect(view.footer).toContain("2× = close");
+    expect(view.footer).toBe("Hold = help · 2× = exit");
+    expect(buildView(empty, startRun(empty), { sideMenu: true }).footer).toBe("Hold = menu · 2× = exit");
   });
 });
 
@@ -29,9 +30,9 @@ describe("running view", () => {
     expect(view.header).toContain("1/3");
   });
 
-  it("uses the section as the header when the step has one", () => {
+  it("names the app and the position in the header, whatever the section is called (QIS v1)", () => {
     const sectioned = list(step("a", { section: "Camera" }));
-    expect(buildView(sectioned, startRun(sectioned)).header).toContain("Camera");
+    expect(buildView(sectioned, startRun(sectioned)).header).toBe("FLOWLIST · 1/1");
   });
 
   it("previews the next step when asked", () => {
@@ -61,7 +62,8 @@ describe("critical steps", () => {
     const state = complete(critical, startRun(critical));
     const view = buildView(critical, state);
     expect(view.body[0]).toBe("CONFIRM:");
-    expect(view.footer).toContain("tap again = confirm");
+    expect(view.header).toBe("FLOWLIST · Confirm?");
+    expect(view.footer).toBe("Tap again = confirm · Swipe/2× = cancel");
   });
 });
 
@@ -84,14 +86,29 @@ describe("choice steps", () => {
   });
 
   it("explains the swipe meaning for a choice", () => {
-    expect(buildView(branching, startRun(branching)).footer).toContain("swipe = choose");
+    expect(buildView(branching, startRun(branching)).footer).toContain("Swipe = choose");
   });
 });
 
 describe("optional steps", () => {
-  it("advertises that skipping is allowed", () => {
+  it("without a side menu the footer offers back/skip on the swipe and help on the hold", () => {
     const optional = list(step("a", { kind: "optional" }));
-    expect(buildView(optional, startRun(optional)).footer).toContain("skip");
+    const footer = buildView(optional, startRun(optional)).footer;
+    expect(footer).toContain("Swipe = back/skip");
+    expect(footer).toContain("Hold = help");
+  });
+
+  it("with a side menu the footer points at the menu for help, going back and skipping (QIS v1.2)", () => {
+    const optional = list(step("a", { kind: "optional" }));
+    const footer = buildView(optional, startRun(optional), { sideMenu: true }).footer;
+    expect(footer).toContain("Hold = menu");
+    expect(footer).not.toContain("Swipe");
+  });
+
+  it("an armed step back asks for a second tap", () => {
+    const view = buildView(simple, startRun(simple), { armed: "back" });
+    expect(view.footer).toBe("Tap again = step back · Swipe/2× = cancel");
+    expect(view.header).toBe("FLOWLIST · Back?");
   });
 });
 
@@ -111,7 +128,7 @@ describe("finished view", () => {
 
   it("offers the way out", () => {
     const one = list(step("a"));
-    expect(buildView(one, complete(one, startRun(one))).footer).toContain("2× = close");
+    expect(buildView(one, complete(one, startRun(one))).footer).toContain("2× = exit");
   });
 });
 

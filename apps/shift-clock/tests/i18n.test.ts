@@ -101,20 +101,22 @@ describe("glasses copy fits the display", () => {
     expect(none.body).toEqual(["Noch kein Projekt.", "Tippen = Projekt „Arbeit“ anlegen,", "oder am Handy eines anlegen."]);
     expect(none.footer).toBe("Tippen = anlegen · 2× = Ende");
     const one = buildView(STOPPED, [], { projects: ["Arbeit"], locale: "de" }, 0);
-    expect(one.body).toEqual(["Zeiterfassung gestoppt.", "Projekt: Arbeit"]);
-    expect(one.footer).toBe("heute 0:00 · Tippen = starten · 2× = Ende");
+    expect(one.body).toEqual(["Zeiterfassung gestoppt.", "Projekt: Arbeit", "heute 0:00"]);
+    expect(one.header).toBe("SHIFTCLOCK · gestoppt");
+    expect(one.footer).toBe("Tippen = starten · 2× = Ende");
     const many = buildView(STOPPED, [], { projects: ["A", "B"], locale: "de" }, 0);
-    expect(many.footer).toBe("heute 0:00 · Tippen = Projekt wählen");
+    expect(many.footer).toBe("Tippen = Projekt wählen · 2× = Ende");
     const picker = buildView(STOPPED, [], { projects: ["A", "B"], selecting: CANCEL, locale: "de" }, 0);
-    expect(picker.header).toBe("Welches Projekt starten?");
+    expect(picker.header).toBe("SHIFTCLOCK · Projekt wählen");
     expect(picker.body).toEqual(["  A", "  B", "> Abbrechen"]);
+    expect(picker.footer).toBe("Tippen = starten · Wischen = wählen · 2× = zurück");
     const running = buildView(startProject(STOPPED, "Arbeit", 0, ids()).state, [], { projects: ["Arbeit"], locale: "de" }, 65_000);
-    expect(running.footer).toContain("Tippen = stopp");
+    expect(running.footer).toBe("Tippen = stoppen · 2× = Ende");
   });
 
   it("a running clock is shown even after its project was removed", () => {
     const running = buildView(startProject(STOPPED, "Gone", 0, ids()).state, [], { projects: [] }, 65_000);
-    expect(running.header).toBe("Gone");
+    expect(running.header).toBe("SHIFTCLOCK · Gone");
     expect(running.footer).toContain("Tap = stop");
   });
 });
@@ -137,14 +139,14 @@ describe("daily target on the glasses", () => {
   it("speaks German about the target", () => {
     const running = startProject(STOPPED, "Arbeit", 0, ids()).state;
     const view = buildView(running, [], { projects: ["Arbeit"], locale: "de", targetHours: 7.5 }, 3_600_000);
-    expect(view.body).toEqual(["1:00:00", "", "Tagesziel 7,5 h · noch 6:30:00"]);
+    expect(view.body).toEqual(["1:00:00", "heute 1:00:00", "", "Tagesziel 7,5 h · noch 6:30:00"]);
     const done = buildView(running, [], { projects: ["Arbeit"], locale: "de", targetHours: 0.5 }, 3_600_000);
-    expect(done.body[2]).toBe("Tagesziel 0,5 h erreicht");
+    expect(done.body[3]).toBe("Tagesziel 0,5 h erreicht");
   });
 
   it("shows nothing extra without a target", () => {
     const view = buildView(STOPPED, [], { projects: ["A", "B"], locale: "en", targetHours: null }, 0);
-    expect(view.body).toEqual(["stopped"]);
+    expect(view.body).toEqual(["stopped", "today 0:00"]);
   });
 });
 
@@ -168,5 +170,57 @@ describe("CSV", () => {
     expect(header).toBe("Datum,Projekt,Beginn,Ende,Sekunden,Stunden");
     expect(row).toMatch(/^2026-03-10,Küche,\d{4}-\d{2}-\d{2}T[\d:.]+Z,\d{4}-\d{2}-\d{2}T[\d:.]+Z,5400,1\.50$/);
     expect(toCsv([entry]).split("\n")[0]).toBe("date,project,start,end,seconds,hours");
+  });
+});
+
+describe("QIS v1 layout", () => {
+  const states = (locale: "de" | "en") => {
+    const running = startProject(STOPPED, "Arbeit", 0, ids()).state;
+    const base = { projects: ["A", "B"], locale } as const;
+    return [
+      buildView(STOPPED, [], { projects: [], locale }, 0),
+      buildView(STOPPED, [], { projects: ["A"], locale }, 0),
+      buildView(STOPPED, [], base, 0),
+      buildView(STOPPED, [], { ...base, selecting: "A" }, 0),
+      buildView(running, [], base, 0),
+      buildView(running, [], { ...base, armed: true }, 0),
+      buildView(STOPPED, [], { ...base, help: true }, 0),
+    ];
+  };
+
+  for (const locale of locales) {
+    it(`${locale}: header is APPNAME · state, footer keeps the gesture order and ends in back/exit, all within the row`, () => {
+      const order = locale === "de" ? ["Tippen", "Wischen", "Halten", "2×"] : ["Tap", "Swipe", "Hold", "2×"];
+      for (const view of states(locale)) {
+        expect(view.header.startsWith("SHIFTCLOCK · "), view.header).toBe(true);
+        expect(view.header.length).toBeLessThanOrEqual(HEADER_WIDTH);
+        expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
+        expect(view.footer).toMatch(locale === "de" ? /2× = (zurück|Ende)$|abbrechen$/ : /2× = (back|exit)$|cancel$/);
+        // Gestures that appear in the footer appear in the fixed order.
+        const positions = order.map((word) => view.footer.indexOf(word)).filter((i) => i >= 0);
+        expect(positions, view.footer).toEqual([...positions].sort((a, b) => a - b));
+        expect(view.footer).not.toMatch(/2x|Tap\b.*Wisch|Wisch\b(?!en)/);
+      }
+    });
+  }
+
+  it("uses the glossary: German has no Tap or Wisch, never 2x", () => {
+    const german = Object.entries(messages.de).filter(([k]) => k.startsWith("g.")).map(([, v]) => v).join("\n");
+    expect(german).not.toMatch(/\bTap\b|\bWisch\b|\b2x\b|Doppeltipp/);
+  });
+});
+
+describe("QIS v1.2", () => {
+  it("builds the footer with the helper: armed names the action", () => {
+    const running = startProject(STOPPED, "A", 0, ids()).state;
+    expect(buildView(running, [], { projects: ["A"], locale: "de", armed: true }, 0).footer).toBe("Nochmal tippen = stoppen · Wischen/2× = abbrechen");
+    expect(buildView(running, [], { projects: ["A"], locale: "en", armed: true }, 0).footer).toBe("Tap again = stop · Swipe/2× = cancel");
+  });
+
+  it("the phone says 2× and never Doppeltippen / Double tap", () => {
+    expect(messages.de["p.key.double"]).toBe("2×");
+    expect(messages.en["p.key.double"]).toBe("2×");
+    expect(Object.values(messages.de).join(" ")).not.toMatch(/Doppeltipp/);
+    expect(Object.values(messages.en).join(" ")).not.toMatch(/Double tap/);
   });
 });

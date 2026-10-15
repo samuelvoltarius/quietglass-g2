@@ -3,6 +3,44 @@
 All notable changes to Market Glance are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks im Menü kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein Menü mehr; der Menücode und der `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Hilfe ist wieder die letzte Listenzeile („Hilfe"): wischen bis dorthin, Tippen öffnet sie, Tippen oder 2× schließt sie. In der Liste lädt Tippen wie bisher neu; Halten bleibt ohne Funktion (die App zeigt nur an).
+- Hilfetexte der Brille (alle fünf Sprachen) und Fußzeile auf der Hilfe-Zeile („Tippen = öffnen") beschreiben wieder die Gesten statt des Menüs.
+- Tests: Seiten ohne `menuObject`, Hilfe per Tippen auf die Hilfe-Zeile, Halten tut nichts.
+
+## [0.4.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach wird die Seite neu aufgebaut.
+
+## [0.4.0] — 2026-10-14
+
+### Changed (QIS v1.2, `docs/BEDIENSTANDARD.md`)
+
+- **Side menu on the glasses** (hold, then the system menu; SDK `menuObject` / `menuItemClickEvent`, as in Babel Glass and Quiet Hub): `Hilfe` / `Help` / `Aide` / `Ayuda` / `Aiuto`. The app has no settings of its own on the glasses, so that is the only entry. The page carries the menu on every build; a language change rebuilds the page once so the label follows.
+- **Help is no longer the last list row.** The list holds only the positions; a tap always reloads (it used to open the help when the cursor sat on that row). The help page is opened from the menu; tap or 2× close it, 2× in the help still never leaves the app. The help text for Hold now says it opens the glasses menu.
+- **Demo hint:** while the data is the demo, the blank row under the title reads `Demo · Verbindung am Handy einrichten` (also in en/fr/es/it); the app already started in demo before, now it says how to leave it. Live data shows no hint.
+- Still display-only: nothing on the glasses stops, deletes, sends or answers.
+- Tests: menu on the page and in the right language, hold alone opens nothing, menu opens the help, no help row in any list state, the demo hint (all five languages inside the row width).
+
+QIS status: v1.2.
+
+## [0.3.0] — 2026-10-14
+
+### Changed (QIS v1)
+
+- Conforms to the Quietglass Interaction Standard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Safety: the app is display-only and has no gesture that stops, deletes, sends or answers. A tap reloads, a swipe only moves the selection, a double tap only goes back (help -> list) and leaves the app only from the list.
+- Header is `MARKET GLANCE · state`; the footer comes from a shared `footer()` helper in the order Tippen/Wischen/Halten/2× and ends in `2× = Ende` or `2× = zurück` (swipe part dropped first when the row is too wide). Glossary: `2×`, no "Tap"/"Wisch" in German.
+- Help page: `Hilfe` is the last list entry and lists the four gestures plus what the app needs.
+- Swipe direction: new switch "Wischrichtung umkehren" on the phone (`invertScroll`, off by default, stored in the SDK store) is honoured by the list.
+- Phone tabs in the fixed order Positionen · Brille · Verbindung · Mehr (language and swipe direction under Brille, bridge address under Verbindung).
+
 ## [0.2.1] — 2026-10-13
 
 ### Fixed

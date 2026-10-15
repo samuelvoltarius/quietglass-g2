@@ -14,16 +14,19 @@ describe("uncalibrated", () => {
   it("asks the user to set their upright pose", () => {
     const view = buildView(createMonitor(), fast);
     expect(view.body.join(" ")).toContain("Sit up straight and tap once");
-    expect(view.footer).toContain("save posture");
+    expect(view.header).toBe("POSTURE · new");
+    expect(view.footer).toBe("Tap = save posture · 2× = exit");
   });
 });
 
 describe("good posture stays out of the way", () => {
-  it("shows no header and no body at all", () => {
+  it("shows a one-word header, no body and only the gestures in the footer", () => {
     const m = calibrate(createMonitor(), UPRIGHT, 0);
     const view = buildView(m, fast, {}, 1000);
-    expect(view.header).toBe("");
+    expect(view.header).toBe("POSTURE · tracking");
     expect(view.body).toEqual([]);
+    // A swipe does nothing on this screen, so the footer does not list it.
+    expect(view.footer).toBe("Tap = save again · 2× = exit");
   });
 
   it("shows the angle only when explicitly asked", () => {
@@ -35,7 +38,7 @@ describe("good posture stays out of the way", () => {
   it("reports the upright share once time has been tracked", () => {
     let m = calibrate(createMonitor(), UPRIGHT, 0);
     m = addSample(m, UPRIGHT, fast, 10_000);
-    expect(buildView(m, fast, {}, 10_000).footer).toContain("100% upright");
+    expect(buildView(m, fast, {}, 10_000).header).toBe("POSTURE · 100% upright");
   });
 });
 
@@ -45,7 +48,7 @@ describe("leaning", () => {
     m = addSample(m, TILTED, fast, 1000);
     const view = buildView(m, fast, {}, 4000);
     expect(view.body[0]).toContain("45°");
-    expect(view.footer).toContain("to warning");
+    expect(view.header).toContain("to warning");
   });
 });
 
@@ -56,8 +59,8 @@ describe("warned", () => {
     m = addSample(m, TILTED, fast, 12_000);
 
     const view = buildView(m, fast, {}, 12_000);
-    expect(view.header).toBe("HEAD FORWARD");
-    expect(view.footer).toContain("straighten up");
+    expect(view.header).toBe("POSTURE · HEAD FORWARD");
+    expect(view.body.join(" ")).toContain("Straighten up");
     expect(view.body.join(" ")).toContain("held");
   });
 });

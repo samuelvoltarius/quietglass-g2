@@ -87,6 +87,6 @@ describe("settings", () => {
     expect(buildUrl(undefined)).toBe("");
     expect(effectiveUrl(parseSettings(""), "https://built.example")).toBe("https://built.example");
     expect(effectiveUrl(parseSettings(JSON.stringify({ bridgeUrl: "https://mine.example" })), "https://built.example")).toBe("https://mine.example");
-    expect(parseSettings("{oops")).toEqual({ bridgeUrl: "", invertScroll: false });
+    expect(parseSettings("{oops")).toEqual({ bridgeUrl: "", invertScroll: false, weather: { enabled: true, thresholds: { cloud: 60, rainProb: 40, dewSpread: 2, wind: 30 } } });
   });
 });

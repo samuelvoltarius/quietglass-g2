@@ -75,6 +75,11 @@ export function createDemoNina(now: () => number = Date.now, scene: DemoScene = 
         events: scene === "done" ? [{ name: "SEQUENCE-FINISHED", ageSeconds: 95 }] : scene === "lost" ? [{ name: "GUIDER-STOP", ageSeconds: 40 }] : [],
         preview: "demo-" + String(frame - 1),
         controllable: true,
+        weather: {
+          connected: true, name: "Demo AAG CloudWatcher", cloudCover: 15, rainRate: 0, humidity: 72, dewPoint: 2.1,
+          temperature: 6.8, windSpeed: 9, windGust: 16, skyQuality: 20.9,
+        },
+        safety: { connected: true, safe: true },
       });
     },
     preview: async (key) => encodePng(starField(Number(key.replace(/\D/g, "")) || 1)),

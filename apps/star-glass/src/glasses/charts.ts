@@ -231,3 +231,97 @@ export function starField(seed: number, width = PREVIEW_WIDTH, height = PREVIEW_
   }
   return b;
 }
+
+// ---- cloud timeline (weather page) ---------------------------------------------
+
+/** The cloud chart beside the weather text. */
+export const CLOUD_CHART_WIDTH = 288;
+export const CLOUD_CHART_HEIGHT = 144;
+
+export interface CloudChartSpec {
+  /** Cloud cover in percent, evenly spaced from now to `hours` ahead; null = unknown. */
+  readonly clouds: ReadonlyArray<number | null>;
+  /** Chance of rain in percent on the same samples (drawn as a strip at the bottom). */
+  readonly rain: ReadonlyArray<number | null>;
+  /** Cloud limit in percent (dotted line). */
+  readonly threshold: number;
+  readonly rainThreshold: number;
+  /** Hours the samples span. */
+  readonly hours: number;
+  /** Local hour of day at the left edge, with fraction (21.5 = 21:30), for the hour labels. */
+  readonly startHour: number;
+  /** Cloud cover now, as the big number (station or forecast). */
+  readonly now: number | null;
+}
+
+/**
+ * Cloud cover over the next hours: an area that is bright where it is cloudy
+ * beyond the limit and dim below it, the limit as a dotted line, the chance of
+ * rain as a strip underneath, labels every three hours. Pure: same input,
+ * same bitmap (the caller quantises "now" so it changes every 10 minutes at most).
+ */
+export function cloudChart(spec: CloudChartSpec, width = CLOUD_CHART_WIDTH, height = CLOUD_CHART_HEIGHT): Bitmap {
+  const b = createBitmap(width, height);
+  drawText(b, "WOLKEN", 2, 2, 2, MID);
+  const big = spec.now === null ? "--" : `${Math.round(spec.now)}%`;
+  drawText(b, big, width - 4 - textWidth(big, 2), 2, 2, FULL);
+
+  const left = 4;
+  const right = width - 5;
+  const top = 22;
+  const bottom = 108;
+  const y = (pct: number): number => Math.round(bottom - (Math.max(0, Math.min(100, pct)) / 100) * (bottom - top));
+  fillRect(b, left, bottom + 1, right - left + 1, 1, DIM);
+  const ty = y(spec.threshold);
+  for (let x = left; x <= right; x += 5) fillRect(b, x, ty, 2, 1, MID);
+
+  const sample = (list: ReadonlyArray<number | null>, x: number): number | null => {
+    if (list.length === 0) return null;
+    const pos = ((x - left) / (right - left)) * (list.length - 1);
+    const i = Math.floor(pos);
+    const a = list[i] ?? null;
+    const c = list[Math.min(list.length - 1, i + 1)] ?? null;
+    if (a === null || c === null) return a ?? c;
+    return a + (c - a) * (pos - i);
+  };
+
+  let any = false;
+  let prevY: number | null = null;
+  for (let x = left; x <= right; x += 1) {
+    const v = sample(spec.clouds, x);
+    if (v === null) { prevY = null; continue; }
+    any = true;
+    const top = y(v);
+    const cloudy = v >= spec.threshold;
+    // Area: dotted when below the limit, solid when cloudy.
+    for (let py = top; py <= bottom; py += 1) {
+      if (cloudy ? true : (x + py) % 3 === 0) setPixel(b, x, py, cloudy ? MID : DIM);
+    }
+    if (prevY !== null) line(b, x - 1, prevY, x, top, FULL, 2);
+    prevY = top;
+  }
+  if (!any) for (let x = left; x <= right; x += 6) fillRect(b, x, Math.round((top + bottom) / 2), 3, 1, DIM);
+
+  // Rain strip.
+  const ry = bottom + 4;
+  for (let x = left; x <= right; x += 1) {
+    const r = sample(spec.rain, x);
+    if (r === null || r < 10) continue;
+    const h = r >= spec.rainThreshold ? 6 : 3;
+    fillRect(b, x, ry + 6 - h, 1, h, r >= spec.rainThreshold ? FULL : DIM);
+  }
+
+  // Hour labels every three hours, at local full hours.
+  const ly = height - 15;
+  const first = Math.ceil(spec.startHour);
+  for (let h = first; h <= spec.startHour + spec.hours; h += 1) {
+    const hour = ((h % 24) + 24) % 24;
+    if (hour % 3 !== 0) continue;
+    const x = left + ((h - spec.startHour) / spec.hours) * (right - left);
+    fillRect(b, Math.round(x), bottom + 1, 1, 3, MID);
+    const label = String(hour).padStart(2, "0");
+    const lx = Math.round(Math.max(0, Math.min(width - textWidth(label, 2), x - textWidth(label, 2) / 2)));
+    drawText(b, label, lx, ly, 2, MID);
+  }
+  return b;
+}

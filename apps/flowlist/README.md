@@ -14,9 +14,10 @@
 > 3. Eigene Liste: am Handy einen Schritt pro Zeile mit „- “ davor schreiben und
 >    auf „Checkliste hinzufügen“ tippen, dann oben auswählen.
 >
-> Wischen nach oben = zurück · nach unten = optionalen Schritt auslassen ·
-> halten = Zusatzinfo · doppeltippen = beenden. Am Ende startet ein Tippen die
-> Liste neu.
+> Wischen = bei einer Frage Antwort markieren, sonst ↑ Schritt zurück / ↓ Optionales
+> auslassen (erst vormerken, dann nochmal tippen) · Halten = Info zum Schritt, sonst
+> Hilfe · 2× = beenden.
+> Am Ende fragt ein Tippen nach, ob die Liste neu startet (nochmal tippen).
 
 One step at a time, in your field of view, advanced with a single tap. For when
 both hands are busy: cooking, wiring, packing, servicing, inspecting.
@@ -65,8 +66,8 @@ lane: a slow transfer never holds up the step text.
 |---|---|
 | **Critical steps ask twice** | A step marked `(!)` requires a second tap. It is the only place in the app that costs two taps — and only where getting it wrong is expensive. |
 | **Branching** | A step can offer choices that jump elsewhere in the list. Going *back* returns where you actually came from, not to the previous line. |
-| **Optional steps** | Marked steps can be skipped with a swipe; they do not count against your progress. |
-| **Detail on demand** | Hold to read a step's fine print, release to hide it. Nothing is committed by looking. |
+| **Optional steps** | Marked steps can be skipped: a swipe down asks, a second tap skips (a swipe, 2× or 4 s cancel); they do not count against your progress. |
+| **Detail on demand** | Holding shows a step's fine print while held. Nothing is committed by looking. |
 | **Shareable packs** | Export any checklist as a JSON pack and send it to anyone. No account, no server. |
 
 ## Controls
@@ -74,11 +75,10 @@ lane: a slow transfer never holds up the step text.
 | Gesture | Effect |
 |---|---|
 | **Tap** | Step done · confirm a critical step · take the highlighted branch |
-| **Swipe up** | Back one step |
-| **Swipe down** | Skip (optional steps only) |
-| **Hold** | Show the step's detail while held |
-| **Double tap** | Leave FlowList |
-| **Tap on the summary** | Start the same list again |
+| **Swipe** | Moves the highlight on a question. Otherwise up = ask to go a step back, down = ask to skip an optional step; nothing happens until you tap again (swipe / 2× / 4 s = cancel) |
+| **Hold** | Shows the step's extra info while held; on a step without extra info (and on the empty and finished screens) it opens the help |
+| **2×** | Leave FlowList (cancels an open question first; in the help: back) |
+| **Tap on the summary** | Ask to start the same list again; tap again = start over |
 
 On a branching step **both swipes move between the options**. The **R1 ring**
 works exactly like the temple pads.

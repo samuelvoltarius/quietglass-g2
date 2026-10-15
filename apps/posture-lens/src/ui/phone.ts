@@ -3,6 +3,7 @@ import type { PostureSettings } from "../posture/monitor";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
 import { formatDuration } from "../glasses/view";
+import { sensorPanelHtml, updateSensorPanel, wireSensorPanel, type SensorPorts } from "./sensor-panel";
 
 /**
  * The phone companion: thresholds and calibration management. The glasses only
@@ -18,23 +19,85 @@ export interface PhoneUiPorts {
   readonly setLocale?: (locale: Locale) => void;
   /** True when the glasses refused motion data, so the page can say what to do. */
   readonly getSensorOff?: () => boolean;
+  /** The raw-value sensor test in the "More" tab; absent = no panel. */
+  readonly sensor?: SensorPorts;
 }
 
-export function mountPhoneUi(ports: PhoneUiPorts): void {
-  const root = document.getElementById("app");
-  if (!root) return;
+/** Live numbers on the phone: at most five updates a second, like the glasses. */
+const SENSOR_REFRESH_MS = 200;
 
+export interface PhoneUi {
+  /** Redraws the page, e.g. after the glasses switched the sensor test or a recording ended. */
+  readonly refresh: () => void;
+}
+
+/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "main", icon: "🧍", key: "p.tabMain" },
+  { id: "warn", icon: "🔔", key: "p.tabWarn" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.posture-lens.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "main"; } catch { return "main"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
+/** Applies the active tab after a redraw and wires the tab bar. */
+function bindTabs(root: HTMLElement, current: string, change: (next: string) => void): void {
+  applyTab(root, current);
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = button.dataset["tabGo"] ?? "main";
+      change(next);
+      try { localStorage.setItem(TAB_KEY, next); } catch { /* private mode */ }
+      applyTab(root, next);
+      window.scrollTo({ top: 0 });
+    });
+  });
+}
+
+export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
+  const root = document.getElementById("app");
+  if (!root) return { refresh: () => undefined };
+
+  let tab = readTab();
+  let live: ReturnType<typeof setInterval> | undefined;
   const render = (): void => {
     const locale = ports.getLocale?.() ?? "en";
     if (document.documentElement) document.documentElement.lang = locale;
-    root.innerHTML = template(ports.getData(), locale, ports.getSensorOff?.() ?? false);
+    root.innerHTML = template(ports.getData(), locale, ports.getSensorOff?.() ?? false, ports.sensor);
+    bindTabs(root, tab, (next) => { tab = next; });
     wire(root, ports, render);
+    const sensor = ports.sensor;
+    if (sensor) {
+      wireSensorPanel(root, locale, sensor, render);
+      // The interval only runs while the test is on; it reads the live DOM each time.
+      clearInterval(live);
+      live = undefined;
+      if (sensor.isOn()) {
+        updateSensorPanel(root, locale, sensor);
+        live = setInterval(() => updateSensorPanel(root, ports.getLocale?.() ?? "en", sensor), SENSOR_REFRESH_MS);
+      }
+    }
   };
 
   render();
+  return { refresh: render };
 }
 
-function template(data: PostureData, locale: Locale, sensorOff: boolean): string {
+function template(data: PostureData, locale: Locale, sensorOff: boolean, sensor?: SensorPorts): string {
   const s = data.settings;
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const next = sensorOff
@@ -43,16 +106,18 @@ function template(data: PostureData, locale: Locale, sensorOff: boolean): string
       ? x("p.nextReady", { time: formatDuration(s.sustainSeconds, locale) })
       : x("p.nextFirst");
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>PostureLens</h1>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>PostureLens</h1>
+    </div>
+    <span class="chip${data.reference && !sensorOff ? " on" : ""}">${sensorOff ? x("p.chipSensorOff") : data.reference ? x("p.chipCal") : x("p.chipNoCal")}</span>
   </header>
 
+  <div class="tab" data-tab="main">
   <section class="card next">
     <p class="${sensorOff ? "warn" : ""}">${next}</p>
   </section>
-
-  <section class="card compact">${languageSelect(locale)}</section>
 
   <section class="card">
     <h2>${x("p.calTitle")}</h2>
@@ -60,7 +125,9 @@ function template(data: PostureData, locale: Locale, sensorOff: boolean): string
     ${data.reference ? `<button id="clear" type="button" class="secondary">${x("p.calClear")}</button>` : ""}
     <p class="hint">${x("p.calHint")}</p>
   </section>
+  </div>
 
+  <div class="tab" data-tab="warn">
   <section class="card">
     <h2>${x("p.warnTitle")}</h2>
 
@@ -82,24 +149,38 @@ function template(data: PostureData, locale: Locale, sensorOff: boolean): string
       <p class="hint">${x("p.smoothHint")}</p>
     </details>
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
   <section class="card">
     <h2>${x("p.displayTitle")}</h2>
     <label class="check"><input id="angle-good" type="checkbox" ${data.showAngleWhenGood ? "checked" : ""} /> ${x("p.angleGood")}</label>
     <p class="hint">${x("p.angleGoodHint")}</p>
     <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
   </section>
+  </div>
 
+  <div class="tab" data-tab="more">
   <section class="card">
     <h2>${x("p.controlsTitle")}</h2>
     <table class="keys">
       <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
       <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
+      <tr><td>${x("p.long")}</td><td>${x("p.longDo")}</td></tr>
       <tr><td>${x("p.double")}</td><td>${x("p.doubleDo")}</td></tr>
     </table>
   </section>
 
-  <footer class="hint">${x("p.privacy")}</footer>`;
+  ${sensor ? sensorPanelHtml(locale, sensor) : ""}
+
+  <section class="card compact">${languageSelect(locale)}</section>
+
+  <footer class="hint">${x("p.privacy")}</footer>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${x(key)}</button>`).join("")}
+  </nav>`;
 }
 
 function wire(root: HTMLElement, ports: PhoneUiPorts, rerender: () => void): void {

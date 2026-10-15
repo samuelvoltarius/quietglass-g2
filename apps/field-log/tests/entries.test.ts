@@ -173,29 +173,34 @@ describe("display", () => {
 
   it("shows the microphone indicator while recording", () => {
     const view = buildView(started(), { ...options, phase: "recording" });
-    expect(view.footer).toContain("MIC");
+    expect(view.header).toContain("MIC");
+    // 2x does nothing while recording, so the footer lists only the tap.
+    expect(view.footer).toBe("Tap = done");
   });
 
   it("marks a mock recogniser", () => {
     const view = buildView(started(), { ...options, phase: "recording", mock: true });
-    expect(view.footer).toContain("MOCK");
+    expect(view.header).toContain("MOCK");
   });
 
   it("asks before keeping a transcript, since reports get acted on", () => {
     const view = buildView(started(), { ...options, phase: "review", pending: "Cracked tile" });
-    expect(view.header).toBe("Keep this?");
+    expect(view.header).toBe("FIELDLOG · Keep this?");
     expect(view.body.join(" ")).toContain("Cracked tile");
-    expect(view.footer).toContain("swipe = discard");
+    // A swipe only moves between the three choices; it never discards.
+    expect(view.body.slice(-3)).toEqual(["> Keep", "  Keep + photo", "  Discard"]);
+    expect(view.footer).toBe("Tap = keep · Swipe = choice");
   });
 
-  it("offers a photo at the moment the entry is made", () => {
-    const view = buildView(started(), { ...options, phase: "review", pending: "x" });
-    expect(view.footer).toContain("hold = photo");
+  it("offers a photo at the moment the entry is made, as an explicit choice (QIS v1.2)", () => {
+    const view = buildView(started(), { ...options, phase: "review", pending: "x", reviewChoice: 1 });
+    expect(view.body.at(-2)).toBe("> Keep + photo");
+    expect(view.footer).toBe("Tap = keep + photo · Swipe = choice");
   });
 
   it("uses the section as the header once one is set", () => {
     const inspection = setSection(started(), "Kitchen");
-    expect(buildView(inspection, options).header).toBe("Kitchen");
+    expect(buildView(inspection, options).header).toMatch(/^FIELDLOG · Kitchen · for /);
   });
 });
 
@@ -251,7 +256,9 @@ describe("display budget", () => {
   it("regression: a long transcript under review fits the seven body rows", () => {
     const view = buildView(started(), { phase: "review", severity: "major", pending: long, status: "ready", mock: false }, 0);
     expect(view.body.length).toBeLessThanOrEqual(7);
-    expect(view.body[view.body.length - 1]).toBe("saved as: MAJOR");
+    // The type row and the three choices always stay visible.
+    expect(view.body.slice(-4)[0]).toBe("saved as: MAJOR");
+    expect(view.body.slice(-3)).toEqual(["> Keep", "  Keep + photo", "  Discard"]);
     expect(view.body.some((row) => row.endsWith("…"))).toBe(true);
   });
 

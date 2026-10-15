@@ -1,13 +1,17 @@
 import {
   CreateStartUpPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import type { Frames, Layout, PageView } from "./views";
-import { ImageLink, imageContainer, type ImageSlot } from "./images";
+import { SIDE_MENU, type Frames, type Layout, type PageView } from "./views";
+import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, type ImageSlot } from "./images";
+
+export { PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, bounded };
 import { CURVE_HEIGHT, CURVE_WIDTH, ICON_HEIGHT, ICON_WIDTH, VALUE_HEIGHT, VALUE_WIDTH } from "./charts";
 
 /**
@@ -74,6 +78,22 @@ function text(spec: TextSpec, content: string, z: number, capture: boolean): Tex
   });
 }
 
+/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec {
+  /** Changes exactly when the glasses need a different menu (=> one rebuild). */
+  readonly key: string;
+  readonly items: readonly MenuItemSpec[];
+}
+/** The side menu every page carries; set before a page is built. */
+let pageMenu: MenuSpec | null = null;
+export function setPageMenu(menu: MenuSpec | null): void { pageMenu = menu; }
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel and Quiet Hub. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (!SIDE_MENU || menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({ menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })) });
+}
+
 export function buildPage(view: PageView): CreateStartUpPageContainer {
   const texts = [
     text(HEADER, view.header, 1, false),
@@ -82,7 +102,8 @@ export function buildPage(view: PageView): CreateStartUpPageContainer {
     text(FOOTER, view.footer, 3, false),
   ];
   const images = slotsFor(view.layout).map(imageContainer);
-  return new CreateStartUpPageContainer({ containerTotalNum: texts.length + images.length, textObject: texts, imageObject: images });
+  const menuObject = buildMenu(pageMenu);
+  return new CreateStartUpPageContainer({ ...(menuObject === undefined ? {} : { menuObject }), containerTotalNum: texts.length + images.length, textObject: texts, imageObject: images });
 }
 
 const started = new WeakSet<EvenAppBridge>();
@@ -108,16 +129,16 @@ export async function installPage(bridge: EvenAppBridge, view: PageView, frames:
   try {
     if (!started.has(bridge)) {
       try {
-        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       } catch {
         // Expected before the first creation; it registers the input route on real glasses.
       }
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
       started.add(bridge);
       renderStats.creates += 1;
     } else {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       if (!ok) return { ok: false, reason: "rebuild refused" };
       renderStats.rebuilds += 1;
     }
@@ -138,7 +159,7 @@ export async function updatePage(bridge: EvenAppBridge, view: PageView, frames: 
     for (const [spec, content, before] of updates) {
       if (before !== undefined && before === content) continue;
       renderStats.upgrades += 1;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: spec.id, containerName: spec.name, ...guarded(spec.id, content) }));
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: spec.id, containerName: spec.name, ...guarded(spec.id, content) })), TEXT_CALL_MS, "text " + spec.name);
     }
     return await pushImages(bridge, view.layout, frames);
   } catch (error) {

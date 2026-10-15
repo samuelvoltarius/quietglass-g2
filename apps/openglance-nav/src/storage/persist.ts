@@ -4,7 +4,11 @@ import { DEFAULT_ROUTER_URL, type TravelMode } from "../routing/provider";
 import { DEFAULT_GEOCODER_URL } from "../geocode/photon";
 import type { GlassLayout } from "../glasses/view";
 import { buildTtsUrl } from "../speech/server-tts";
-import { parseRoutes, type SavedRoute } from "../trip/saved";
+import { clampUsableKwh, DEFAULT_USABLE_KWH } from "../car/byd";
+import { buildSugarUrl } from "../sugar/glucose";
+import { briefConfigured } from "../appointments/appointments";
+import { DEFAULT_PEAK_RADIUS, isPeakRadius, type PeakRadiusKm } from "../peaks/peaks";
+import { parseRoutes, parseTombstones, type RouteTombstone, type SavedRoute } from "../trip/saved";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -31,6 +35,8 @@ export interface NavData {
   readonly demo: boolean;
   /** Next-turn arrow or overview map on the glasses; swipe switches. */
   readonly glassView: GlassLayout;
+  /** Driving: the HUD layout ("new": big arrow right, speed left, one alert line) or the classic turn page. */
+  readonly hudLayout: HudLayout;
   readonly mode: TravelMode;
   /** Saved places, so a destination can be picked without typing in the field. */
   readonly places: readonly Destination[];
@@ -41,6 +47,8 @@ export interface NavData {
   readonly recent: readonly Destination[];
   /** Routes planned on the phone and saved under a name (start, stops, destination). */
   readonly routes: readonly SavedRoute[];
+  /** Saved routes deleted here, kept for a while so the deletion reaches the route store (private build). */
+  readonly deletedRoutes: readonly RouteTombstone[];
   /** Selected destination id (a saved place, a recent one or a saved route), or null. */
   readonly destinationId: string | null;
   readonly invertScroll: boolean;
@@ -57,6 +65,24 @@ export interface NavData {
    * driving. Off by default: nothing is asked for while it is off.
    */
   readonly chargers: boolean;
+  /** "Peaks nearby" on the glasses list (OpenStreetMap via Overpass). Off by default: nothing is asked for while it is off. */
+  readonly peaks: boolean;
+  /** Radius of the peak search, 10, 25 or 50 km. */
+  readonly peakRadiusKm: PeakRadiusKm;
+  /** Facing direction when standing still (degrees, set on the phone); null = north up. */
+  readonly peakFacing: number | null;
+  /** Glucose in the driving HUD (own Nightscout server, private build). Default: on only when the build has an address. */
+  readonly sugar: boolean;
+  /** Today's appointments from the owner's Quiet Hub daemon on the glasses list (private build). Default: on only when the build has the daemon. */
+  readonly appointments: boolean;
+  /**
+   * Neutral speed hint before fixed enforcement points (OpenStreetMap via
+   * Overpass, once per route) while driving. On by default; always off in
+   * Germany, where using such warnings while driving is not allowed.
+   */
+  readonly cameras: boolean;
+  /** Usable battery of the car in kWh, for the arrival estimate (car link, private build). */
+  readonly carUsableKwh: number;
   /**
    * When the running navigation was started (ms), null when none runs. The
    * phone may end the app (screen lock); on the next start the navigation to
@@ -65,6 +91,8 @@ export interface NavData {
   readonly activeSince: number | null;
 }
 
+export type HudLayout = "new" | "classic";
+
 const KEY = "quietglass.openglance.v1";
 
 export const EMPTY_DATA: NavData = {
@@ -72,16 +100,25 @@ export const EMPTY_DATA: NavData = {
   geocoderUrl: "",
   demo: false,
   glassView: "turns",
+  hudLayout: "new",
   // Walking is the safe default: on foot, glancing at the glasses is fine.
   mode: "walking",
   places: [],
   recent: [],
   routes: [],
+  deletedRoutes: [],
   destinationId: null,
   invertScroll: false,
   streets: true,
   announce: buildTtsUrl() !== "",
   chargers: false,
+  peaks: false,
+  peakRadiusKm: DEFAULT_PEAK_RADIUS,
+  peakFacing: null,
+  sugar: buildSugarUrl() !== "",
+  appointments: briefConfigured(),
+  cameras: true,
+  carUsableKwh: DEFAULT_USABLE_KWH,
   activeSince: null,
 };
 
@@ -94,8 +131,15 @@ export function routerUrlOf(data: NavData): string {
   return data.valhallaUrl.trim() || DEFAULT_ROUTER_URL;
 }
 
-export function geocoderUrlOf(data: NavData): string {
-  return data.geocoderUrl.trim() || DEFAULT_GEOCODER_URL;
+/**
+ * The place search of this build: the owner's own glass-geocode (private
+ * build, `VITE_GEOCODER_URL`: Photon and Nominatim at once, answers in about
+ * a second) - photon.komoot.io alone took 13-15 s on 15.10.
+ */
+const BUILD_GEOCODER_URL = ((import.meta as { env?: Record<string, string | undefined> }).env?.VITE_GEOCODER_URL ?? "").trim();
+
+export function geocoderUrlOf(data: NavData, build: string = BUILD_GEOCODER_URL): string {
+  return data.geocoderUrl.trim() || build || DEFAULT_GEOCODER_URL;
 }
 
 export function destinationOf(data: NavData): Destination | null {
@@ -256,15 +300,24 @@ export function parseData(raw: string): NavData {
       geocoderUrl: url(value.geocoderUrl),
       demo: value.demo === true,
       glassView: value.glassView === "overview" ? "overview" : "turns",
+      hudLayout: value.hudLayout === "classic" ? "classic" : "new",
       mode: isMode(value.mode) ? value.mode : EMPTY_DATA.mode,
       places,
       recent,
       routes,
+      deletedRoutes: parseTombstones(value.deletedRoutes),
       destinationId,
       invertScroll: typeof value.invertScroll === "boolean" ? value.invertScroll : false,
       streets: typeof value.streets === "boolean" ? value.streets : EMPTY_DATA.streets,
       announce: typeof value.announce === "boolean" ? value.announce : EMPTY_DATA.announce,
       chargers: value.chargers === true,
+      peaks: value.peaks === true,
+      peakRadiusKm: isPeakRadius(value.peakRadiusKm) ? value.peakRadiusKm : DEFAULT_PEAK_RADIUS,
+      peakFacing: typeof value.peakFacing === "number" && Number.isFinite(value.peakFacing) ? ((Math.round(value.peakFacing) % 360) + 360) % 360 : null,
+      sugar: typeof value.sugar === "boolean" ? value.sugar : EMPTY_DATA.sugar,
+      appointments: typeof value.appointments === "boolean" ? value.appointments : EMPTY_DATA.appointments,
+      cameras: typeof value.cameras === "boolean" ? value.cameras : EMPTY_DATA.cameras,
+      carUsableKwh: value.carUsableKwh === undefined ? DEFAULT_USABLE_KWH : clampUsableKwh(value.carUsableKwh),
       activeSince: typeof value.activeSince === "number" && Number.isFinite(value.activeSince) && destinationId !== null ? value.activeSince : null,
     };
   } catch {

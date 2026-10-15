@@ -31,6 +31,14 @@ Written through `setLocalStorage()` under `quietglass.statusglass.v1`.
 
 Metric readings are held in memory only. No history is written.
 
+**Home network watch (optional, server side).** When you run the reference
+server with `STATUS_NETWATCH=1`, *your* server keeps a list of the devices on
+your home network (MAC, IP, DNS name, first/last seen) in a file only its
+owner can read, and sends it to the app with the status. The app shows it and
+keeps it in memory only; "mark as known" goes to that server alone. Nothing is
+sent anywhere else, and the watch only reads the machine's own neighbour table
+unless you also switch on the ping refresh of your own private /24.
+
 ## Credentials
 
 - Tokens are sent in an `Authorization` header, **never in the URL**, because

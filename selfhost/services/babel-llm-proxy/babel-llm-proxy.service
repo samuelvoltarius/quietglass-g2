@@ -5,7 +5,7 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now babel-llm-proxy
 #   loginctl enable-linger "$USER"
 [Unit]
-Description=Babel Glass translation proxy (CORS/token/no-think -> OpenAI-compatible LLM)
+Description=Babel Glass LLM proxy (CORS/token/no-think -> OpenAI-compatible LLM, own memory)
 After=network-online.target
 
 [Service]

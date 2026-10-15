@@ -2,17 +2,18 @@
   "package_id": "glass.quiet.rainlens",
   "edition": "202601",
   "name": "RainLens",
-  "version": "0.4.2",
+  "version": "0.7.3",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Load the forecast from Open-Meteo and look up place names you type.",
+      "desc": "Load the forecast from Open-Meteo, official weather warnings for Austria from GeoSphere Austria, and look up place names you type.",
       "whitelist": [
         "https://api.open-meteo.com",
-        "https://geocoding-api.open-meteo.com"
+        "https://geocoding-api.open-meteo.com",
+        "https://warnungen.zamg.at"
       ]
     },
     {

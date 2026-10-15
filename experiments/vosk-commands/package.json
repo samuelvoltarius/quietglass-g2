@@ -1,0 +1,16 @@
+{
+  "name": "@quietglass/experiment-vosk-commands",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Feasibility prototype: offline voice commands with Vosk (WASM) in the Even Hub WebView",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^5.0.3"
+  }
+}

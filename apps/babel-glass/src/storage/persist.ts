@@ -4,6 +4,8 @@ import { AUTO, normalizeLanguageCode } from "../text/languages";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import type { TranscriptEntry } from "../companion/transcript";
+import type { SpeakerChoice } from "../companion/wordfinder";
+import { clampPersons, PERSONS_DEFAULT } from "../stt/voice";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -44,6 +46,35 @@ export interface BabelData {
   readonly autoSummary: boolean;
   /** Keep the last transcript (and summary) on the phone across the lock and a restart. Off by default. */
   readonly keepTranscript: boolean;
+  /** Wortfinder (0.4.0): which speaker letter is the user ("auto" = whoever spoke last). */
+  readonly mySpeaker: SpeakerChoice;
+  /**
+   * Babel's own memory (0.4.0): store each summary (with agreements) on the
+   * babel-llm-proxy and let the companion use it. Never any other store.
+   */
+  readonly memory: boolean;
+  /** Antwort-Vorschläge (0.5.0): propose one short reply to the other person. On by default. */
+  readonly replySuggestions: boolean;
+  /**
+   * Meine Sätze übersetzen (0.5.0): the user's own lines (own language = the
+   * translation target) are translated INTO the conversation language. Off by default.
+   */
+  readonly translateOwn: boolean;
+  /**
+   * 0.6.3: the mode picked on the glasses or the phone ("client" =
+   * Kundengespräch, "translate" = Übersetzen). Absent = not picked yet: client
+   * when Shoot Day reports a customer, else translate (see companion/talkmode).
+   */
+  readonly talkMode?: "client" | "translate";
+  /** Tipp-Karten (Kundengespräch): short live tip cards on the glasses. Absent = on; only `false` is stored. */
+  readonly cueCards?: boolean;
+  /** 0.8.0: people in the conversation, the user included ("Personen: 2-5" in the side menu). */
+  readonly persons: number;
+  /**
+   * 0.8.0: the user's voice is enrolled on the speech server ("Meine Stimme lernen").
+   * Only this flag lives here; the voice print itself stays on the server.
+   */
+  readonly voiceEnrolled: boolean;
 }
 
 /**
@@ -67,6 +98,12 @@ export const EMPTY_DATA: BabelData = {
   insights: true,
   autoSummary: true,
   keepTranscript: false,
+  mySpeaker: "auto",
+  memory: true,
+  replySuggestions: true,
+  translateOwn: false,
+  persons: PERSONS_DEFAULT,
+  voiceEnrolled: false,
 };
 
 export function usesMockStt(data: BabelData): boolean {
@@ -87,7 +124,8 @@ export function companionConfigured(data: BabelData): boolean {
 }
 
 export function translationEnabled(data: BabelData): boolean {
-  return data.mode !== "captionOnly" && translationConfigured(data);
+  // 0.6.3: Kundengespräch shows the German captions only, never a translation.
+  return data.talkMode !== "client" && data.mode !== "captionOnly" && translationConfigured(data);
 }
 
 export async function save(bridge: EvenAppBridge, data: BabelData): Promise<void> {
@@ -209,6 +247,19 @@ export function parseData(raw: string): BabelData {
       autoSummary: value.autoSummary !== false,
       // New in 0.3.1: opt-in, absent = off.
       keepTranscript: value.keepTranscript === true,
+      // New in 0.4.0.
+      mySpeaker: value.mySpeaker === "A" || value.mySpeaker === "B" ? value.mySpeaker : "auto",
+      memory: value.memory !== false,
+      // New in 0.5.0.
+      replySuggestions: value.replySuggestions !== false,
+      translateOwn: value.translateOwn === true,
+      // New in 0.6.3: absent = not picked yet.
+      ...(value.talkMode === "client" || value.talkMode === "translate" ? { talkMode: value.talkMode } : {}),
+      // Tipp-Karten: absent = on.
+      ...(value.cueCards === false ? { cueCards: false } : {}),
+      // New in 0.8.0.
+      persons: clampPersons(value.persons),
+      voiceEnrolled: value.voiceEnrolled === true,
     };
   } catch {
     return EMPTY_DATA;
@@ -225,7 +276,7 @@ export const KEPT_LINES = 300;
 
 export interface KeptConversation {
   readonly log: readonly TranscriptEntry[];
-  readonly summary: { readonly short: readonly string[]; readonly long: readonly string[] } | null;
+  readonly summary: { readonly short: readonly string[]; readonly long: readonly string[]; readonly agreements?: readonly string[] } | null;
 }
 
 export async function saveConversation(bridge: EvenAppBridge, conversation: KeptConversation | null): Promise<void> {
@@ -257,6 +308,8 @@ export function parseConversation(raw: string): KeptConversation | null {
             ...(typeof entry.speaker === "string" ? { speaker: entry.speaker } : {}),
             ...(typeof entry.language === "string" ? { language: entry.language } : {}),
             ...(typeof entry.translated === "string" ? { translated: entry.translated } : {}),
+            ...(typeof entry.own === "string" ? { own: entry.own } : {}),
+            ...(typeof entry.reply === "string" ? { reply: entry.reply } : {}),
           }];
         }).slice(-KEPT_LINES)
       : [];

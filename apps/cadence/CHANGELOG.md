@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.6.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus: Seine Klicks kommen auf der Brille nie in der App an, und Halten öffnet sonst das Menü statt die App zu erreichen. Die Seiten tragen kein Menü mehr (`SIDE_MENU = false`); der Menü-Code und der Klick-Handler bleiben.
+- Hilfe wieder per Geste: Halten bei stehendem Takt öffnet die Hilfe (2× geht zurück), die Fußzeile zeigt wieder `Halten = Hilfe`. Halten bei laufendem Takt setzt weiter auf Takt 1 zurück; Tippen = Start/Pause (erst nach 2. Tippen), Wischen = Tempo.
+- Hilfetexte der Brille und Hinweise am Handy beschreiben wieder die Gesten statt des Seitenmenüs.
+
+## [0.6.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach gilt der Aufruf als fehlgeschlagen und die Seite wird neu aufgebaut.
+
+## [0.6.0] — 2026-10-14
+
+### Changed (QIS v1.2)
+
+- Conforms to QIS v1.2 (`docs/BEDIENSTANDARD.md`, audit 2026-10-14).
+- The help moved into the glasses' side menu (entry "Hilfe", also while the beat runs; the beat keeps going, a pending pause is cancelled, 2× returns to the main screen). Hold on the stopped metronome no longer opens it and now does nothing; hold while the beat runs still goes back to bar 1.
+- The stopped footer reads `Tippen = Start · Wischen = Tempo · 2× = Ende`; the help page text and the phone's gesture table mention the menu.
+- Unchanged, documented exception to "swipe never changes data" (rule 5): the swipe sets the tempo, the app's core control. A language change on the phone rebuilds the page so the menu follows the language.
+
+## [0.5.0] — 2026-10-14
+
+### Changed (QIS v1)
+
+- Conforms to the Quietglass Interaction Standard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Safety: a single tap no longer pauses a running beat (which also ends the practice session). Tap arms (`Nochmal tippen = pausieren · Wischen/2× = abbrechen`), a second tap within 4 s pauses. Swipe, hold, double tap or 4 s without input cancel; a swipe then does not change the tempo.
+- Double tap is back one level (help -> main screen); on the main screen it leaves through the system dialog. It never pauses the beat.
+- Header is `CADENCE · state`; the practised item and the session clock moved into the body. Footers come from one `footer()` helper in the order Tippen/Wischen/Halten/2× and end in `2× = zurück` or `2× = Ende` (the Wischen part is dropped when the row is too wide).
+- Hold while stopped opens a help page listing the gestures; while the beat runs it still goes back to bar 1.
+- Phone: new tab "Brille" (Glasses) with the gesture table and a switch to reverse the swipe direction. The `invertScroll` setting had no switch before, so it could never be turned on.
+- Tabs: Takt · Üben · Brille · Mehr (no "Verbindung" tab: Cadence has no server).
+- Swipe still adjusts the tempo (a setting, not a record); it is the one deliberate exception to "swipe only moves".
+
+## [0.4.2] — 2026-10-13
+
+### Changed
+
+- Handy-Seite in Tabs statt einer langen Spalte: Takt · Üben · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Chip mit Tempo und Taktart oben.
+
 ## [0.4.1] — 2026-10-13
 
 ### Fixed

@@ -1,0 +1,26 @@
+{
+  "incidents": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "LineString", "coordinates": [[13.0500, 47.8000], [13.0600, 47.8000], [13.0700, 47.8000]]},
+      "properties": {"id": "fake-jam-1", "iconCategory": 6, "magnitudeOfDelay": 2, "events": [{"description": "Stau", "code": 101, "iconCategory": 6}],
+        "startTime": "2026-10-14T08:00:00Z", "endTime": null, "from": "Beispielknoten West", "to": "Beispielknoten Ost", "length": 1500.0, "delay": 540, "roadNumbers": ["A1"]}
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "LineString", "coordinates": [[13.1200, 47.8003], [13.1100, 47.8003], [13.1000, 47.8003]]},
+      "properties": {"id": "fake-jam-opposite", "iconCategory": 6, "magnitudeOfDelay": 3, "events": [{"description": "Stau", "code": 101, "iconCategory": 6}],
+        "from": "Gegenrichtung A", "to": "Gegenrichtung B", "length": 1500.0, "delay": 900}
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [13.1000, 47.9000]},
+      "properties": {"id": "fake-far", "iconCategory": 8, "events": [{"description": "Gesperrt", "code": 401}], "delay": 0}
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [13.1500, 47.8001]},
+      "properties": {"id": "fake-closure", "iconCategory": 8, "events": [{"description": "Straße gesperrt", "code": 401}], "from": "Musterort", "to": "Beispieldorf", "length": 800}
+    }
+  ]
+}

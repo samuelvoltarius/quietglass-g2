@@ -4,6 +4,7 @@ import { messages } from "../src/messages";
 import { geocodeUrl, parsePlaces, parseSavedPlace, searchPlaces, usableQuery } from "../src/rain/geocode";
 import { errorKey, noticeKey, resolveLocation, storedMode, storedSources, type LocationSources } from "../src/rain/location";
 import { BODY_ROWS, LINE_WIDTH, glassesBody } from "../src/rain/model";
+import { footer } from "../src/glasses/footer";
 import app from "../app.json";
 
 const vars = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1] ?? "").sort();
@@ -30,8 +31,8 @@ describe("messages", () => {
     for (const key of ["errorTimeout", "errorServer", "errorOffline", "errorData"]) expect(width(`! ${tr(messages, locale, key, { status: "503" })}`), `${locale}.${key}`).toBeLessThanOrEqual(LINE_WIDTH);
   });
   it.each(locales)("%s header and footer fit the full width", (locale) => {
-    for (const page of ["now", "hourly", "days"]) expect(width(`RAINLENS  ${tr(messages, locale, page)}  ${tr(messages, locale, "sampleTag")}`)).toBeLessThanOrEqual(56);
-    expect(width(tr(messages, locale, "controls"))).toBeLessThanOrEqual(56);
+    for (const page of ["now", "hourly", "days"]) expect(width(`RAINLENS · ${tr(messages, locale, page)} · ${tr(messages, locale, "updating")}`)).toBeLessThanOrEqual(56);
+    for (const tap of ["fRefresh", "fRetry"]) expect(width(footer(locale, { tap: tr(messages, locale, tap), swipe: tr(messages, locale, "fView"), hold: tr(messages, locale, "fHelp") })), `${locale}.${tap}`).toBeLessThanOrEqual(56);
   });
   it("keeps jargon out of the German main screen", () => {
     const advanced = new Set(["latitude", "longitude", "useCoords", "help", "badCoords", "credits", "advanced"]);
@@ -125,9 +126,9 @@ describe("first-run and error states", () => {
 
 describe("app.json", () => {
   const manifest = app as unknown as { permissions: { name: string; whitelist?: string[] }[]; supported_languages: string[] };
-  it("asks for location and allows both Open-Meteo hosts", () => {
+  it("asks for location and allows both Open-Meteo hosts and the Austrian warning service", () => {
     expect(manifest.permissions.map((permission) => permission.name).sort()).toEqual(["location", "network"]);
-    expect(manifest.permissions.find((permission) => permission.name === "network")?.whitelist).toEqual(["https://api.open-meteo.com", "https://geocoding-api.open-meteo.com"]);
+    expect(manifest.permissions.find((permission) => permission.name === "network")?.whitelist).toEqual(["https://api.open-meteo.com", "https://geocoding-api.open-meteo.com", "https://warnungen.zamg.at"]);
     expect(manifest.supported_languages).toEqual([...locales]);
   });
 });

@@ -13,7 +13,7 @@ function state(over: Partial<ViewState> = {}): ViewState {
   return {
     locale: "de", demo: false, connection: { kind: "ok" },
     data: { readings: demoReadings("normal", NOW), pump: demoPump("normal", NOW), treatments: demoTreatments(NOW) },
-    page: "glucose", unit: "mgdl", limits: DEFAULT_LIMITS, now: NOW, ...over,
+    page: "glucose", help: false, unit: "mgdl", limits: DEFAULT_LIMITS, now: NOW, ...over,
   };
 }
 
@@ -54,7 +54,7 @@ describe("what the glasses say", () => {
   it("value, age and target in the normal case", () => {
     const view = buildView(state());
     expect(view.layout).toBe("glucose");
-    expect(view.header).toMatch(/^\d{2,3} mg\/dL · vor \d min$/);
+    expect(view.header).toMatch(/^SUGARGLASS · \d{2,3} mg\/dL · vor \d min$/);
     expect(view.body[0]).toMatch(/^Δ [+\-±]\d+ mg\/dL in 5 min · Ziel 70–180$/);
     expect(view.body[1]).toBe("IOB 1,2 E · Reservoir 87 E · SmartGuard Auto");
   });
@@ -63,8 +63,8 @@ describe("what the glasses say", () => {
     const s = state({ data: { readings: demoReadings("low", NOW), pump: null, treatments: demoTreatments(NOW) } });
     const a = buildView({ ...s, now: NOW - (NOW % 1200) }).header;
     const b = buildView({ ...s, now: NOW - (NOW % 1200) + 600 }).header;
-    expect(a).toMatch(/^!! NIEDRIG \d+ mg\/dL !!$/);
-    expect(b.trim()).toMatch(/^NIEDRIG \d+ mg\/dL$/);
+    expect(a).toMatch(/^SUGARGLASS · !! NIEDRIG \d+ mg\/dL !!$/);
+    expect(b.trim()).toMatch(/^SUGARGLASS · +NIEDRIG \d+ mg\/dL$/);
   });
 
   it("stale: says how old, in mmol too", () => {

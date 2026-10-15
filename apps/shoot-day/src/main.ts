@@ -1,26 +1,34 @@
-import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { AppLocationAccuracy, AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { createClient, toApiError, type ShootDayApi } from "./api/client";
 import { createDemoApi } from "./api/demo";
-import type { CallSheet, EquipmentItem, Shot, Take, TakeStatus } from "./api/types";
+import type { Brief, CallSheet, CustomerItem, CustomerList, EquipmentItem, ProjectItem, Shot, Storyboard, Take, TakeStatus } from "./api/types";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
-import { gestureFromEvent, type Gesture } from "./input/gestures";
+import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
 import { takeNotes, t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, rebuildPage, updatePage, type Layout } from "./glasses/render";
+import { LIGHT_TILES, createPage, installLightPage, rebuildPage, sendTile, setPageMenu, updatePage, type Layout, type MenuSpec } from "./glasses/render";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
+import { composeLight } from "./sun/compose";
+import { lightAt, place as validPlace, type Place } from "./sun/light";
+import { lightModel, sheetPlace, type PlaceSource } from "./sun/model";
 import { PULSE_MS, dayBarFrame, headerIcon } from "./glasses/charts";
 import { bitmapKey } from "./glasses/gfx";
 import { wrap, type ScreenView } from "./glasses/screen";
 import {
-  buildView, errorText, MENU, SCHEDULE_BODY_ROWS, TAKE_ACTIONS, type LastTake, type LoadStatus, type Mode, type TakeScreen, type ViewState,
+  briefPages, buildView, CUSTOMER_MENU, errorText, menuFor, SCHEDULE_BODY_ROWS, SIDE_MENU, TAKE_ACTIONS,
+  type ArmKind, type LastTake, type LoadStatus, type Mode, type Module, type RecTarget, type TakeScreen, type ViewState,
 } from "./glasses/views";
 import {
-  UI_KEY, effectiveUrl, loadOutbox, loadSettings, parseUi, saveOutbox, saveSettings, type PendingTake, type SavedUi, type Settings,
+  ROLLING_MAX_MS, UI_KEY, effectiveUrl, loadOutbox, loadSettings, parseUi, saveOutbox, saveSettings, type PendingTake, type SavedUi, type Settings,
 } from "./storage/persist";
 import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type ConnectionState } from "./ui/phone";
 import { parsePackCommand } from "./voice/pack-voice";
 import { parseTakeCommand } from "./voice/take-voice";
+import { parseCustomerName, sameCustomerName } from "./voice/customer-voice";
 import { concat, pcmToWav, toPcm } from "./voice/wav";
+import { MAX_COMMAND_MS, liveSttUrl, openLiveStt, type LiveSession } from "./voice/live-stt";
 
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 
@@ -30,29 +38,57 @@ const PROMPTER_TICK_MS = 200;
 const CLOCK_TICK_MS = 30_000;
 /** A feedback line stays this long. */
 const MESSAGE_MS = 6_000;
-/** Voice commands are short; the microphone never stays on longer than this. */
-const MAX_RECORD_MS = 15_000;
-/** 16 kHz × 2 bytes × 16 s — anything beyond is dropped, never buffered. */
-const MAX_PCM_BYTES = 16_000 * 2 * 16;
+/** A guard against a lost release event: the microphone never stays on longer than this. */
+const MAX_RECORD_MS = MAX_COMMAND_MS;
+/** 16 kHz × 2 bytes × 121 s — anything beyond is dropped, never buffered. */
+const MAX_PCM_BYTES = 16_000 * 2 * (MAX_RECORD_MS / 1000 + 1);
+/** Live text on the glasses is redrawn at most this often. */
+const LIVE_REDRAW_MS = 300;
+/** Private builds name their live speech recogniser (`VITE_LIVE_STT_URL=wss://host:port`); public builds leave it empty. */
+const LIVE_STT_DEFAULT = (import.meta.env.VITE_LIVE_STT_URL as string | undefined) ?? "";
 /** Shorter than this is a slip of the finger, not a sentence. */
 const MIN_PCM_BYTES = 16_000 * 2 / 5;
 /** Takes logged offline are tried again this often while any are waiting. */
 const OUTBOX_RETRY_MS = 60_000;
-/** "Alles eingepackt" by voice waits this long for the confirming tap. */
-const CONFIRM_ALL_MS = 8_000;
+/** QIS v1: an armed action (cancel a take, tick everything) waits this long for its second tap. */
+const ARM_MS = 4_000;
+/** The phone's location answer is waited for at most this long (the SDK's own timeout is only a hint). */
+const LOCATION_TIMEOUT_MS = 10_000;
+/** Last known place (rounded to ~1 km), so the light view works without a fresh fix. */
+const PLACE_KEY = "quietglass.shootday.place.v1";
+/** ?demo=1 without a phone location: a sample place so the light view can be tried in the simulator. */
+const DEMO_PLACE: Place = { latitude: 47.8, longitude: 13.04 };
+/** One swipe on the light view moves the time shown by this much; at most a day either way. */
+const LIGHT_STEP_MIN = 30;
+const LIGHT_MAX_MIN = 24 * 60;
+/** Side menu (QIS v1.2): item ids. */
+const MENU_HELP = 1;
+const MENU_DEL_TAKE = 2;
+const MENU_SEND_REC = 3;
+const MENU_DISCARD_REC = 4;
 
-type Module = Exclude<Mode, "menu">;
-type LoadKind = Mode;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), ms);
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error: unknown) => { clearTimeout(timer); reject(error); });
+  });
+}
+
+type LoadKind = Exclude<Mode, "help">;
 
 interface Recording {
   readonly id: number;
-  readonly target: "takes" | "pack";
+  readonly target: RecTarget;
   readonly via: "tap" | "hold";
   phase: "opening" | "listening" | "transcribing";
   stopRequested: boolean;
   chunks: Uint8Array[];
   bytes: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** Live transcription while speaking; null without a live recogniser. */
+  live: LiveSession | null;
+  /** What the live recogniser heard so far. */
+  text: string;
 }
 
 async function boot(): Promise<void> {
@@ -62,8 +98,21 @@ async function boot(): Promise<void> {
   let outbox: PendingTake[] = await loadOutbox(bridge);
   let locale: Locale = await resolveLocale(bridge);
 
+  /** Demo: `?demo=1`, or nothing configured yet (QIS v1.2 no. 7). The first saved server address ends it. */
+  const isDemo = (): boolean => DEMO || effectiveUrl(settings) === "";
+  /** QIS v1.2: help, undo of the last take and the kept recording live in the glasses' side menu. */
+  const menuSpec = (): MenuSpec => ({
+    items: [
+      { id: MENU_HELP, label: t(locale, "m.help") },
+      { id: MENU_DEL_TAKE, label: t(locale, "m.delTake") },
+      { id: MENU_SEND_REC, label: t(locale, "m.sendRec") },
+      { id: MENU_DISCARD_REC, label: t(locale, "m.discardRec") },
+    ],
+  });
+  setPageMenu(menuSpec());
+
   const makeApi = (): ShootDayApi | null => {
-    if (DEMO) return createDemoApi(locale);
+    if (isDemo()) return createDemoApi(locale);
     const url = effectiveUrl(settings);
     if (!url) return null;
     return createClient({ baseUrl: url, ...(settings.token ? { token: settings.token } : {}) });
@@ -92,6 +141,8 @@ async function boot(): Promise<void> {
   let noteCursor = 0;
   /** When the running take started; null while no take runs. */
   let rollingSince: number | null = null;
+  /** The shot the running take belongs to ("scene\0shot"): a swipe or a 2× leaves it running. */
+  let rollingKey: string | null = null;
 
   let prompterLines: string[] = [];
   let prompterPos = 0;
@@ -106,17 +157,60 @@ async function boot(): Promise<void> {
   let packCursor = 0;
   let showMissing = false;
 
+  // ---- customers → projects (server 0.5.0+) -------------------------------
+  /** The server knows customers; until it has said so, the app behaves exactly as before. */
+  let customerMode = false;
+  /** Any gesture since the start: from then on the app never switches screens by itself. */
+  let touched = false;
+  let customerList: CustomerItem[] = [];
+  /** 0 = "+ new customer", 1… = customerList. */
+  let customerCursor = 0;
+  /** A name heard for a new customer, waiting for the confirming tap. */
+  let pendingCustomer: string | null = null;
+  /** Put the cursor on this customer once the list has (re)loaded. */
+  let wantedCustomer = "";
+  let customer: CustomerItem | null = null;
+  let activeProjectId = "";
+  let activeCustomerId = "";
+  let projectList: ProjectItem[] = [];
+  /** 0 = the card before the appointment, 1… = projectList. */
+  let projectCursor = 0;
+  let resetProjectCursor = true;
+  let brief: Brief | null = null;
+  let briefPage = 0;
+  let boards: Storyboard[] = [];
+  let boardIndex = 0;
+  let sceneCursor = 0;
+  let boardPicking = false;
+
+  /** Minutes the light view looks ahead (or back) of now. */
+  let lightOffset = 0;
+  let phonePlace: Place | null = null;
+  let savedPlace: Place | null = null;
+  try {
+    const saved = JSON.parse((await bridge.getLocalStorage(PLACE_KEY).catch(() => "")) || "null") as { latitude?: unknown; longitude?: unknown } | null;
+    savedPlace = saved ? validPlace(saved.latitude, saved.longitude) : null;
+  } catch {
+    savedPlace = null;
+  }
+  let textBackend: TextBackend | null = null;
+
   let rec: Recording | null = null;
   let recIds = 0;
-  /** A voice "everything packed / unpacked" waiting for its confirming tap. */
-  let confirmAll: { packed: boolean; until: number } | null = null;
+  /** An action waiting for its second tap (QIS v1: arm, then confirm within ARM_MS). */
+  let armed: { readonly kind: ArmKind; readonly until: number } | null = null;
+  let armTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A dictation left with 2× (QIS v1.2 no. 2): kept until it is sent from the menu or discarded (armed first). */
+  let parked: { readonly target: RecTarget; readonly pcm: Uint8Array; readonly text: string } | null = null;
+  /** The side-menu help opens over any screen and goes back to it. */
+  let helpBack: LoadKind = "menu";
   /** Left through the system: no microphone, no timers, no drawing until the app is back. */
   let backgrounded = false;
   /** The shot to return to once the shot list has loaded (after a restart). */
   let wantedShot: { scene: string; shot: string } | null = null;
 
   // Back where the user was before a restart (phone locked, app unloaded).
-  const savedUi: SavedUi | null = DEMO ? null : parseUi(await bridge.getLocalStorage(UI_KEY).catch(() => "") ?? "");
+  const savedUi: SavedUi | null = isDemo() ? null : parseUi(await bridge.getLocalStorage(UI_KEY).catch(() => "") ?? "");
   if (savedUi) {
     menuCursor = savedUi.menuCursor;
     prompterSpeed = savedUi.prompterSpeed;
@@ -126,13 +220,14 @@ async function boot(): Promise<void> {
   }
   let lastSavedUi = "";
   const saveUi = (): void => {
-    if (DEMO) return;
+    if (isDemo()) return;
     const shot = shots[shotCursor];
     const ui: SavedUi = {
-      mode,
+      // The lists above the project are cheap to reach again; a restart starts at the menu (or the customer list).
+      mode: mode === "customers" || mode === "projects" || mode === "brief" || mode === "help" ? "menu" : mode,
       menuCursor,
       shot: shot ? { scene: shot.scene, shot: shot.shot } : wantedShot,
-      rollingSince,
+      rollingSince: rollingHere() ? rollingSince : null,
       prompterPos,
       prompterSpeed,
       packCursor,
@@ -175,7 +270,25 @@ async function boot(): Promise<void> {
 
   // ---- takes -------------------------------------------------------------
   const takeKey = (scene: string, shot: string): string => scene + "\u0000" + shot;
-  const takesFor = (shot: Shot | undefined): Array<LastTake & { readonly id?: string }> => {
+  /** The running take belongs to the shot on screen (and was not forgotten hours ago). */
+  function rollingHere(): boolean {
+    const shot = shots[shotCursor];
+    if (rollingSince === null || rollingKey === null || !shot) return false;
+    if (Date.now() - rollingSince > ROLLING_MAX_MS) return false;
+    return takeKey(shot.scene, shot.shot) === rollingKey;
+  }
+  const stopRolling = (): void => { rollingSince = null; rollingKey = null; };
+
+  const liveArm = (): ArmKind | null => (armed && armed.until > Date.now() ? armed.kind : null);
+  const disarm = (): void => { armed = null; clearTimeout(armTimer); armTimer = undefined; };
+  const arm = (kind: ArmKind): void => {
+    clearTimeout(armTimer);
+    armed = { kind, until: Date.now() + ARM_MS };
+    // Without input the question goes away on its own and the footer comes back.
+    armTimer = setTimeout(() => { armed = null; armTimer = undefined; void draw(); }, ARM_MS + 20);
+  };
+  type TakeRow = LastTake & { readonly id?: string };
+  const takesFor = (shot: Shot | undefined): TakeRow[] => {
     if (!shot) return [];
     const key = takeKey(shot.scene, shot.shot);
     const synced = serverTakes
@@ -187,8 +300,12 @@ async function boot(): Promise<void> {
     return [...synced, ...waiting];
   };
 
+  const latestTake = (shot: Shot | undefined): TakeRow | null =>
+    takesFor(shot).reduce<TakeRow | null>((latest, take) => (!latest || take.ts >= latest.ts ? take : latest), null);
+
   // ---- view --------------------------------------------------------------
-  const currentLoad = (): LoadStatus => load.get(mode) ?? { kind: "idle" };
+  const helpLoad = (): LoadKind => helpBack;
+  const currentLoad = (): LoadStatus => load.get(mode === "help" ? helpLoad() : mode) ?? { kind: "idle" };
 
   const viewState = (): ViewState => {
     const shot = shots[shotCursor];
@@ -196,7 +313,7 @@ async function boot(): Promise<void> {
     const last = all.reduce<LastTake | null>((latest, take) => (!latest || take.ts >= latest.ts ? take : latest), null);
     return {
       locale,
-      demo: DEMO,
+      demo: isDemo(),
       configured: api !== null,
       now: new Date(),
       mode,
@@ -204,8 +321,8 @@ async function boot(): Promise<void> {
       project,
       pendingCount: outbox.length,
       load: mode === "menu" ? load.get("menu") ?? { kind: "idle" } : currentLoad(),
-      message,
-      rec: rec ? { target: rec.target, via: rec.via, busy: rec.phase === "transcribing" } : null,
+      message: message || (parked && !rec ? t(locale, "g.parked") : ""),
+      rec: rec ? { target: rec.target, via: rec.via, busy: rec.phase === "transcribing", live: rec.text } : null,
       takes: {
         shots,
         cursor: shotCursor,
@@ -216,7 +333,7 @@ async function boot(): Promise<void> {
         ng: all.filter((take) => take.status === "NG").length,
         last,
         nextN: all.length + 1,
-        rollingSince,
+        rollingSince: rollingHere() ? rollingSince : null,
         notes: notes(),
       },
       prompter: { lines: prompterLines, pos: prompterPos, speed: prompterSpeed, playing },
@@ -224,24 +341,68 @@ async function boot(): Promise<void> {
       pack: {
         items: needed(), cursor: packCursor, missing: showMissing,
       },
-      ...(confirmAll && confirmAll.until > Date.now() ? { packQuestion: t(locale, confirmAll.packed ? "g.pack.confirmAll" : "g.pack.confirmReset") } : {}),
+      ...(liveArm() !== null ? { armed: liveArm() as ArmKind } : {}),
+      customerMode,
+      customers: { list: customerList, cursor: customerCursor, pending: pendingCustomer },
+      projects: { customer, list: projectList, cursor: projectCursor, active: activeProjectId },
+      brief: { data: brief, page: briefPage },
+      board: { boards, board: boardIndex, cursor: sceneCursor, picking: boardPicking },
     };
   };
 
   let lastView: ScreenView | null = null;
-  let lastLayout: Layout = "plain";
+  let lastLayout: Layout | "light" = "plain";
   let lastFrames = "";
   let pageReady = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
 
+  // ---- light view: one full-screen frame, only changed tiles go out ------
+  const lightSender = createTileSender(LIGHT_TILES, (slot, png) => sendTile(bridge, slot, png));
+
+  /** Where the sun is computed for: the phone, else the shoot's place, else the last known place. */
+  const lightPlace = (): { place: Place; source: PlaceSource } | null => {
+    if (phonePlace) return { place: phonePlace, source: "phone" };
+    const shoot = sheetPlace(sheet);
+    if (shoot) return { place: shoot, source: "shoot" };
+    if (savedPlace) return { place: savedPlace, source: "saved" };
+    if (isDemo()) return { place: DEMO_PLACE, source: "demo" };
+    return null;
+  };
+
+  const currentLight = (offsetMinutes: number) => {
+    const now = Date.now();
+    const where = lightPlace();
+    return {
+      where,
+      model: lightModel({
+        at: now + offsetMinutes * 60_000, now, place: where?.place ?? null, source: where?.source ?? null, locale,
+        sheet: sheet.schedule.length > 0 || sheetPlace(sheet) ? sheet : null,
+      }),
+    };
+  };
+
+  const drawLight = async (): Promise<void> => {
+    if (!pageReady || lastLayout !== "light") {
+      const result = await installLightPage(bridge);
+      if (!result.ok) { pageReady = false; lastView = null; console.warn("[shootday] light page failed:", result.reason); return; }
+      pageReady = true; lastLayout = "light"; lastView = null; lastFrames = "";
+      // A new page starts with blank images.
+      lightSender.reset();
+    }
+    textBackend ??= autoBackend();
+    // Never awaited: a slow transfer must not hold up the next gesture.
+    void lightSender.push(composeLight(currentLight(lightOffset).model, textBackend));
+  };
+
   const drawOnce = async (): Promise<void> => {
+    if (mode === "light" && !rec) { await drawLight(); return; }
     const state = viewState();
     const view = buildView(state);
     const layout: Layout = mode === "schedule" && !rec ? "schedule" : "plain";
     const now = Date.now();
     const frames = {
-      sign: headerIcon(mode, rollingSince !== null, now),
+      sign: headerIcon(mode, rollingHere(), now),
       bar: layout === "schedule" && currentLoad().kind === "ready"
         ? dayBarFrame(sheet, state.now.getHours() * 60 + state.now.getMinutes())
         : null,
@@ -291,13 +452,70 @@ async function boot(): Promise<void> {
   const fail = (kind: LoadKind, error: unknown): void => {
     const problem = toApiError(error);
     load.set(kind, { kind: "error", code: problem.code, ...(problem.status ? { status: problem.status } : {}) });
-    if (kind === "menu" || kind === "takes") {
+    if (kind === "menu" || kind === "takes" || kind === "customers") {
       connectionError = { code: problem.code, ...(problem.status ? { status: problem.status } : {}) };
       connected = false;
     }
   };
 
+  /** A fresh customer list; the cursor stays on the same customer (or goes to the wanted one). */
+  const applyCustomers = (next: CustomerList): void => {
+    const before = customerList[customerCursor - 1]?.id ?? "";
+    customerList = [...next.customers];
+    activeProjectId = next.activeProject;
+    activeCustomerId = next.activeCustomer;
+    const target = wantedCustomer || before;
+    const at = target ? customerList.findIndex((c) => c.id === target) : -1;
+    if (at >= 0) customerCursor = at + 1;
+    wantedCustomer = "";
+    customerCursor = Math.min(customerCursor, customerList.length + 1);
+    if (customer) customer = customerList.find((c) => c.id === customer?.id) ?? customer;
+  };
+
   const fetchers: Record<LoadKind, (client: ShootDayApi, stillCurrent: () => boolean) => Promise<void>> = {
+    customers: async (client, stillCurrent) => {
+      const next = await client.customers();
+      if (!stillCurrent()) return;
+      applyCustomers(next);
+    },
+    projects: async (client, stillCurrent) => {
+      const target = customer;
+      if (!target) return;
+      const next = await client.customer(target.id);
+      if (!stillCurrent()) return;
+      customer = next.customer;
+      projectList = [...next.projects];
+      if (resetProjectCursor) {
+        // On the project the glasses work on, else on the card before the appointment.
+        const at = projectList.findIndex((item) => item.id === activeProjectId);
+        projectCursor = at >= 0 ? at + 1 : 0;
+        resetProjectCursor = false;
+      }
+      projectCursor = Math.min(projectCursor, projectList.length);
+    },
+    brief: async (client, stillCurrent) => {
+      const target = customer;
+      if (!target) return;
+      const next = await client.brief(target.id);
+      if (!stillCurrent()) return;
+      brief = next;
+      briefPage = Math.min(briefPage, briefPages(locale, next) - 1);
+    },
+    board: async (client, stillCurrent) => {
+      const next = await client.storyboards();
+      if (!stillCurrent()) return;
+      const before = boards[boardIndex]?.id;
+      boards = next.filter((board) => board.scenes.length > 0);
+      const again = before ? boards.findIndex((board) => board.id === before) : -1;
+      if (again >= 0) boardIndex = again;
+      else {
+        // A new start: one storyboard opens at once, several ask which one.
+        boardIndex = 0;
+        sceneCursor = 0;
+        boardPicking = boards.length > 1;
+      }
+      sceneCursor = Math.min(sceneCursor, Math.max(0, (boards[boardIndex]?.scenes.length ?? 1) - 1));
+    },
     menu: async (client, stillCurrent) => {
       const list = await client.shotList();
       if (!stillCurrent()) return;
@@ -339,6 +557,12 @@ async function boot(): Promise<void> {
       equipment = [...next.items];
       packCursor = Math.min(packCursor, Math.max(0, needed().length - 1));
     },
+    // The light view works offline; the schedule only adds the next shoot (and maybe its place).
+    light: async (client, stillCurrent) => {
+      const next = await client.callSheet();
+      if (!stillCurrent()) return;
+      sheet = next;
+    },
   };
 
   const requestLoad = (kind: LoadKind): void => {
@@ -354,7 +578,7 @@ async function boot(): Promise<void> {
         await fetchers[kind](client, stillCurrent);
         if (!stillCurrent()) return;
         load.set(kind, { kind: "ready" });
-        if (kind === "menu" || kind === "takes") { connectionError = null; connected = true; }
+        if (kind === "menu" || kind === "takes" || kind === "customers") { connectionError = null; connected = true; }
         if (kind === "takes" || kind === "menu") flushOutbox();
       } catch (error) {
         if (!stillCurrent()) return;
@@ -403,8 +627,8 @@ async function boot(): Promise<void> {
     const shot = shots[shotCursor];
     const client = api;
     if (!shot || !client) return;
-    // A logged take is a finished take.
-    rollingSince = null;
+    // A logged take is a finished take (the running one of this shot, not one on another shot).
+    if (rollingHere()) stopRolling();
     const pending: PendingTake = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       project, scene: shot.scene, shot: shot.shot, status, note, ts: Date.now(),
@@ -484,10 +708,9 @@ async function boot(): Promise<void> {
         say("");
         break;
       case "all":
-        // One misheard sentence must not tick (or clear) the whole list: a tap confirms.
-        confirmAll = { packed: command.packed, until: Date.now() + CONFIRM_ALL_MS };
+        // One misheard sentence must not tick (or clear) the whole list: it is armed, a second tap carries it out.
+        arm(command.packed ? "packAll" : "packReset");
         say("");
-        setTimeout(() => { if (confirmAll && confirmAll.until <= Date.now()) { confirmAll = null; void draw(); } }, CONFIRM_ALL_MS + 50);
         break;
       case "item": {
         const item = items[command.index];
@@ -512,6 +735,70 @@ async function boot(): Promise<void> {
     say(t(locale, "g.msg.unknown", { text: text.slice(0, 24) }));
   };
 
+  // ---- customers by voice ------------------------------------------------
+  const applyCustomerName = (text: string): void => {
+    const name = parseCustomerName(text);
+    if (!name) { say(t(locale, "g.msg.nothing")); return; }
+    // Said twice, or already there: go to it instead of a second entry.
+    const existing = customerList.findIndex((c) => sameCustomerName(c.name, name));
+    if (existing >= 0) { customerCursor = existing + 1; say(t(locale, "g.cust.exists", { name: customerList[existing]?.name ?? name })); return; }
+    pendingCustomer = name;
+    say("");
+  };
+
+  const createCustomer = (name: string): void => {
+    const client = api;
+    if (!client) return;
+    pendingCustomer = null;
+    say(t(locale, "g.loading"));
+    void draw();
+    void queueWrite(async () => {
+      try {
+        const created = await client.createCustomer(name);
+        if (api !== client) return;
+        customerList = [...customerList, created];
+        customerCursor = customerList.length;
+        wantedCustomer = created.id;
+        say(t(locale, "g.cust.created", { name: created.name }));
+        requestLoad("customers");
+      } catch (error) {
+        // Nothing is lost: the name waits for the next tap.
+        pendingCustomer = name;
+        const problem = toApiError(error);
+        say(t(locale, "g.msg.notSaved", { reason: t(locale, "g.err." + problem.code, { status: problem.status }) }));
+      }
+      await draw();
+    }, "creating a customer");
+  };
+
+  // ---- storyboard ----------------------------------------------------------
+  const toggleScene = (): void => {
+    const board = boards[boardIndex];
+    const scene = board?.scenes[sceneCursor];
+    const client = api;
+    if (!board || !scene) return;
+    const index = sceneCursor;
+    const done = !scene.done;
+    const patch = (value: boolean): void => {
+      boards = boards.map((b) => (b.id !== board.id ? b : { ...b, scenes: b.scenes.map((s, i) => (i === index ? { ...s, done: value } : s)) }));
+    };
+    patch(done);
+    say(t(locale, done ? "g.board.marked" : "g.board.unmarked", { n: scene.n }));
+    void draw();
+    if (!client) return;
+    void queueWrite(async () => {
+      try {
+        await client.setSceneDone(board.id, index, done);
+      } catch (error) {
+        // Show what is true: the tick did not reach the server.
+        if (api === client) patch(!done);
+        const problem = toApiError(error);
+        say(t(locale, "g.msg.notSaved", { reason: t(locale, "g.err." + problem.code, { status: problem.status }) }));
+        await draw();
+      }
+    }, "saving a scene");
+  };
+
   // ---- microphone --------------------------------------------------------
   const MIC_DRAIN_MS = 150;
   const micOff = async (): Promise<void> => {
@@ -519,9 +806,33 @@ async function boot(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, MIC_DRAIN_MS));
   };
 
-  const startRec = async (target: "takes" | "pack", via: "tap" | "hold"): Promise<void> => {
+  let liveDrawAt = 0;
+  let liveDrawTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Live text redraws at most every LIVE_REDRAW_MS. */
+  const drawLive = (): void => {
+    if (liveDrawTimer) return;
+    const wait = Math.max(0, liveDrawAt + LIVE_REDRAW_MS - Date.now());
+    liveDrawTimer = setTimeout(() => { liveDrawTimer = undefined; liveDrawAt = Date.now(); if (!closed) void draw(); }, wait);
+  };
+
+  const startLive = (current: Recording): LiveSession | null => {
+    const url = isDemo() ? "" : liveSttUrl(undefined, LIVE_STT_DEFAULT);
+    if (!url) return null;
+    return openLiveStt({
+      url,
+      language: locale,
+      onText: (text) => {
+        if (rec !== current || current.phase !== "listening" || closed) return;
+        current.text = text;
+        drawLive();
+      },
+    });
+  };
+
+  const startRec = async (target: RecTarget, via: "tap" | "hold"): Promise<void> => {
     if (rec || closed || !api) return;
-    const current: Recording = { id: ++recIds, target, via, phase: "opening", stopRequested: false, chunks: [], bytes: 0 };
+    disarm();
+    const current: Recording = { id: ++recIds, target, via, phase: "opening", stopRequested: false, chunks: [], bytes: 0, live: null, text: "" };
     rec = current;
     say("");
     await draw();
@@ -538,6 +849,7 @@ async function boot(): Promise<void> {
       return;
     }
     current.phase = "listening";
+    current.live = startLive(current);
     current.timer = setTimeout(() => { background(stopRec(), "stopping the microphone"); }, MAX_RECORD_MS);
     if (current.stopRequested) await stopRec();
   };
@@ -553,19 +865,30 @@ async function boot(): Promise<void> {
     await draw();
     const pcm = concat(current.chunks);
     current.chunks = [];
+    await recognise(current, pcm);
+  };
+
+  /** Turns a finished recording (live text first, else the server's recogniser) into what it asks for. */
+  const recognise = async (current: Recording, pcm: Uint8Array): Promise<void> => {
     const client = api;
     if (pcm.length < MIN_PCM_BYTES || !client) {
+      current.live?.cancel();
       if (rec === current) { rec = null; say(t(locale, "g.msg.nothing")); }
       await draw();
       return;
     }
-    let text = "";
+    // The live transcript is the command: no second recognition on the server.
+    // Only when the live path failed (or heard nothing) does the WAV go to /api/stt.
+    let text = current.live ? ((await current.live.finish()) ?? "").trim() : "";
+    if (rec !== current || closed) return;
     let failed = "";
-    try {
-      text = (await client.transcribe(pcmToWav(pcm), locale)).trim();
-    } catch (error) {
-      const problem = toApiError(error);
-      failed = t(locale, "g.err." + problem.code, { status: problem.status });
+    if (!text) {
+      try {
+        text = (await client.transcribe(pcmToWav(pcm), locale)).trim();
+      } catch (error) {
+        const problem = toApiError(error);
+        failed = t(locale, "g.err." + problem.code, { status: problem.status });
+      }
     }
     // Cancelled, closed or left the module while the server was listening.
     if (rec !== current || closed) return;
@@ -573,8 +896,46 @@ async function boot(): Promise<void> {
     if (failed) say(t(locale, "g.msg.sttFail", { reason: failed }));
     else if (!text) say(t(locale, "g.msg.nothing"));
     else if (current.target === "pack") applyPackCommand(text);
+    else if (current.target === "customer") applyCustomerName(text);
     else applyTakeCommand(text);
     await draw();
+  };
+
+  /**
+   * 2× while speaking goes back and keeps the recording (QIS v1.2 no. 2): the microphone is off, the audio
+   * (and what was heard live) stays until it is sent from the menu or discarded there (armed first).
+   */
+  const parkRec = (): void => {
+    const current = rec;
+    if (!current || current.phase === "transcribing") return;
+    // Nothing recorded yet: nothing to keep.
+    if (current.phase === "opening") { cancelRec(false); return; }
+    clearTimeout(current.timer);
+    const pcm = concat(current.chunks);
+    current.chunks = [];
+    current.live?.cancel();
+    rec = null;
+    background(micOff(), "stopping the microphone");
+    if (pcm.length >= MIN_PCM_BYTES) {
+      parked = { target: current.target, pcm, text: current.text };
+      say(t(locale, "g.parked"));
+    } else {
+      say(t(locale, "g.msg.nothing"));
+    }
+  };
+
+  /** Menu "Send recording": the kept audio is recognised and used exactly like a recording that ended with a tap. */
+  const sendParked = (): void => {
+    if (rec || !api) return;
+    const kept = parked;
+    if (!kept) { say(t(locale, "g.msg.noRec")); void draw(); return; }
+    disarm();
+    parked = null;
+    const current: Recording = { id: ++recIds, target: kept.target, via: "tap", phase: "transcribing", stopRequested: false, chunks: [], bytes: 0, live: null, text: kept.text };
+    rec = current;
+    say("");
+    void draw();
+    background(recognise(current, kept.pcm), "recognising a kept recording");
   };
 
   const cancelRec = (announce: boolean): void => {
@@ -583,6 +944,7 @@ async function boot(): Promise<void> {
     rec = null;
     clearTimeout(current.timer);
     current.chunks = [];
+    current.live?.cancel();
     if (current.phase !== "transcribing") background(micOff(), "stopping the microphone");
     if (announce) say(t(locale, "g.msg.cancelled"));
   };
@@ -602,23 +964,160 @@ async function boot(): Promise<void> {
     void draw();
   };
 
-  const enter = (next: Module, resume = false): void => {
+  /** Asks the phone where it is, in the background and never longer than LOCATION_TIMEOUT_MS. */
+  let locating: Promise<void> | null = null;
+  const locate = (): Promise<void> => {
+    if (locating) return locating;
+    locating = (async () => {
+      if (typeof (bridge as Partial<EvenAppBridge>).getAppLocation !== "function") return;
+      const fix = await withTimeout(
+        Promise.resolve(bridge.getAppLocation({ accuracy: AppLocationAccuracy.Medium, timeoutMs: 8_000 })),
+        LOCATION_TIMEOUT_MS,
+      ).catch(() => null);
+      const found = fix ? validPlace(fix.latitude, fix.longitude) : null;
+      if (!found || closed) return;
+      phonePlace = found;
+      // Kept on the phone only, rounded to about a kilometre: plenty for the sun.
+      const rounded = { latitude: Math.round(found.latitude * 100) / 100, longitude: Math.round(found.longitude * 100) / 100 };
+      savedPlace = rounded;
+      void bridge.setLocalStorage(PLACE_KEY, JSON.stringify(rounded)).catch(() => false);
+      refreshPhone();
+      if (mode === "light") void draw();
+    })().catch((error: unknown) => { console.warn("[shootday] location failed:", error); }).finally(() => { locating = null; });
+    return locating;
+  };
+
+  const enter = (next: Module): void => {
     generation++;
     mode = next;
     say("");
-    if (next === "takes") { takeScreen = "card"; actionCursor = TAKE_ACTIONS.indexOf("ok"); if (!resume) rollingSince = null; }
+    disarm();
+    if (next === "takes") { takeScreen = "card"; actionCursor = TAKE_ACTIONS.indexOf("ok"); }
     if (next === "pack") showMissing = false;
+    if (next === "light") {
+      lightOffset = 0;
+      void locate();
+      // Drawn at once: the view needs neither the server nor the location to start.
+      void draw();
+    }
     load.delete(next);
     requestLoad(next);
+  };
+
+  /** The lists above a project: customers, a customer's projects, the card before the appointment. */
+  const show = (next: "customers" | "projects" | "brief"): void => {
+    cancelRec(false);
+    stopPrompter();
+    disarm();
+    generation++;
+    mode = next;
+    pendingCustomer = null;
+    say("");
+    requestLoad(next);
+    void draw();
+  };
+
+  const openCustomer = (picked: CustomerItem): void => {
+    if (customer?.id !== picked.id) {
+      projectList = [];
+      load.delete("projects");
+      resetProjectCursor = true;
+    }
+    customer = picked;
+    show("projects");
+  };
+
+  /** Double tap in a project's menu: back to its customer's projects. */
+  const backToProjects = (): void => {
+    const owner = customerList.find((c) => c.id === activeCustomerId) ?? customer;
+    if (!owner) { show("customers"); return; }
+    openCustomer(owner);
+  };
+
+  /** The server makes the project the active one; only then does the menu load it. */
+  const openProject = (item: ProjectItem): void => {
+    const client = api;
+    if (!client) return;
+    const started = ++generation;
+    say(t(locale, "g.loading"));
+    void draw();
+    void (async () => {
+      try {
+        await client.activate(item.id);
+      } catch (error) {
+        if (generation !== started || closed) return;
+        const problem = toApiError(error);
+        say(errorText(locale, problem.code, problem.status));
+        await draw();
+        return;
+      }
+      if (generation !== started || closed || api !== client) return;
+      activeProjectId = item.id;
+      activeCustomerId = customer?.id ?? activeCustomerId;
+      // Nothing of the previous project may stay on the glasses.
+      project = item.name;
+      stopRolling();
+      shots = [];
+      serverTakes = [];
+      shotCursor = 0;
+      boards = [];
+      boardIndex = 0;
+      sceneCursor = 0;
+      prompterLines = [];
+      prompterPos = 0;
+      sheet = { date: "", call: "", location: "", contact: "", notes: "", schedule: [] };
+      equipment = [];
+      packCursor = 0;
+      scheduleScroll = 0;
+      for (const kind of CUSTOMER_MENU) load.delete(kind);
+      menuCursor = 0;
+      toMenu();
+    })().catch((error: unknown) => { console.warn("[shootday] opening a project failed:", error); });
+  };
+
+  /**
+   * Asks once whether the server knows customers. An older server answers 404:
+   * then nothing changes. A newer one puts the customer list on top — but only
+   * if nobody has touched the glasses since the start.
+   */
+  let probing = false;
+  const probeCustomers = (): void => {
+    const client = api;
+    if (!client || probing || closed) return;
+    probing = true;
+    void (async () => {
+      try {
+        const next = await client.customers();
+        if (api !== client || closed) return;
+        const before = customerMode;
+        customerMode = true;
+        wantedCustomer = wantedCustomer || next.activeCustomer;
+        applyCustomers(next);
+        load.set("customers", { kind: "ready" });
+        customer ??= customerList.find((c) => c.id === activeCustomerId) ?? null;
+        if (!before && mode === "menu") {
+          if (!touched) mode = "customers";
+          // The storyboard came in front of the other modules: keep the same one selected.
+          else menuCursor = Math.min(menuCursor + 1, CUSTOMER_MENU.length - 1);
+        }
+        refreshPhone();
+        await draw();
+      } catch {
+        // An older server (404) or no connection: the menu works as before.
+      } finally {
+        probing = false;
+      }
+    })();
   };
 
   const toMenu = (): void => {
     cancelRec(false);
     stopPrompter();
+    disarm();
     generation++;
-    rollingSince = null;
     mode = "menu";
     showMissing = false;
+    lightOffset = 0;
     say("");
     requestLoad("menu");
   };
@@ -639,41 +1138,244 @@ async function boot(): Promise<void> {
   const shutDown = (): void => {
     if (closed) return;
     cancelRec(false);
+    parked = null;
     saveUi();
     closed = true;
     stopPrompter();
     clearInterval(clock);
     clearInterval(outboxTimer);
     clearTimeout(messageTimer);
+    clearTimeout(armTimer);
+    clearTimeout(liveDrawTimer);
+    lightSender.close();
   };
 
   // ---- gestures ----------------------------------------------------------
+  /** Menu "Delete last take" (armed): removes the newest take of the shot on screen. */
+  const deleteLastTake = (): void => {
+    const shot = shots[shotCursor];
+    const target = latestTake(shot);
+    if (!shot || !target) { say(t(locale, "g.msg.noTakeToDelete")); void draw(); return; }
+    const label = `${shot.scene}${shot.shot} T${target.n} ${target.status}`;
+    const client = api;
+    // Queued behind any write still on its way (a take just logged may not have reached the server yet).
+    void queueWrite(async () => {
+      const now = latestTake(shot);
+      if (!now || now.n !== target.n) { say(t(locale, "g.msg.noTakeToDelete")); await draw(); return; }
+      if (now.pending) {
+        outbox = outbox.filter((take) => take.id !== now.id);
+        persistOutbox();
+        say(t(locale, "g.msg.deleted", { what: label }));
+        refreshPhone();
+        await draw();
+        return;
+      }
+      if (!client) return;
+      try {
+        await client.deleteTake(shot.scene, shot.shot, now.n);
+        serverTakes = serverTakes.filter((take) => !(take.scene === shot.scene && take.shot === shot.shot && take.n === now.n));
+        say(t(locale, "g.msg.deleted", { what: label }));
+      } catch (error) {
+        const problem = toApiError(error);
+        say(t(locale, "g.msg.notSaved", { reason: t(locale, "g.err." + problem.code, { status: problem.status }) }));
+      }
+      refreshPhone();
+      await draw();
+    }, "deleting a take");
+  };
+
+  /** The second tap of an armed action. */
+  const confirmArmed = (kind: ArmKind): void => {
+    if (kind === "delTake") {
+      takeScreen = "card";
+      deleteLastTake();
+      return;
+    }
+    if (kind === "discardRec") {
+      if (rec) cancelRec(true);
+      else { parked = null; say(t(locale, "g.msg.cancelled")); }
+    } else if (kind === "discardName") {
+      pendingCustomer = null;
+      say(t(locale, "g.cust.discarded"));
+    } else if (kind === "ng") {
+      takeScreen = "card";
+      addTake("NG");
+    } else if (kind === "roll") {
+      stopRolling();
+      takeScreen = "card";
+      say(t(locale, "g.msg.cancelled"));
+    } else {
+      const packed = kind === "packAll";
+      for (const entry of needed()) if (entry.packed !== packed) void setPacked(entry.name, packed, false);
+      say(t(locale, packed ? "g.pack.all" : "g.pack.reset"));
+    }
+    void draw();
+  };
+
   const step = (gesture: Gesture): number => (gesture === "scrollDown" ? 1 : -1);
   const wrapIndex = (index: number, count: number): number => (count <= 0 ? 0 : (index + count) % count);
 
   const onRecGesture = (gesture: Gesture): void => {
     const current = rec;
     if (!current) return;
-    if (gesture === "doubleClick") { cancelRec(true); return; }
+    // Without the side menu nothing could send or discard a kept recording: 2× cancels it, as before QIS v1.2.
+    if (gesture === "doubleClick") { if (SIDE_MENU) parkRec(); else cancelRec(true); return; }
     if (current.phase === "transcribing") return;
     if (gesture === "click" || gesture === "longPressRelease") background(stopRec(), "stopping the microphone");
   };
 
+  /** Hilfe: the gestures on a page of their own; a tap or 2× goes back to where it was opened. */
+  const showHelp = (): void => {
+    if (mode === "help") return;
+    cancelRec(false);
+    stopPrompter();
+    disarm();
+    helpBack = mode;
+    mode = "help";
+    say("");
+    void draw();
+  };
+  const onHelp = (gesture: Gesture): void => {
+    if (gesture !== "click" && gesture !== "doubleClick") return;
+    // The server may have turned out to know customers while the help was open.
+    mode = helpBack === "menu" && customerMode ? "customers" : helpBack;
+    say("");
+    void draw();
+  };
+
   const onMenu = (gesture: Gesture): void => {
+    const items = menuFor(customerMode);
     switch (gesture) {
       case "scrollUp":
       case "scrollDown":
-        menuCursor = wrapIndex(menuCursor + step(gesture), MENU.length);
+        menuCursor = wrapIndex(menuCursor + step(gesture), items.length);
         break;
       case "click": {
-        const next = MENU[menuCursor];
+        const next = items[menuCursor];
         if (!next) break;
-        if (!api) { requestLoad("menu"); break; }
+        if (next === "help") { showHelp(); return; }
+        // The light view needs no server.
+        if (!api && next !== "light") { requestLoad("menu"); break; }
         enter(next);
         return;
       }
       case "doubleClick":
+        if (customerMode) backToProjects();
+        else requestExit();
+        return;
+      default:
+        return;
+    }
+    void draw();
+  };
+
+  const onCustomers = (gesture: Gesture): void => {
+    if (pendingCustomer !== null) {
+      if (gesture === "click") { createCustomer(pendingCustomer); return; }
+      // 2× only asks (QIS v1.2 no. 2): the name is discarded by the second tap, never by 2× alone.
+      if (gesture === "doubleClick") { arm("discardName"); void draw(); return; }
+      if (gesture === "longPress") { pendingCustomer = null; background(startRec("customer", "hold"), "starting the microphone"); }
+      return;
+    }
+    if (currentLoad().kind !== "ready") {
+      if (gesture === "click") requestLoad("customers");
+      else if (gesture === "doubleClick") requestExit();
+      return;
+    }
+    switch (gesture) {
+      case "scrollUp":
+      case "scrollDown":
+        customerCursor = wrapIndex(customerCursor + step(gesture), customerList.length + (SIDE_MENU ? 1 : 2));
+        say("");
+        break;
+      case "click": {
+        if (customerCursor === 0) { background(startRec("customer", "tap"), "starting the microphone"); return; }
+        // Hilfe is the last entry of the list (without the side menu).
+        if (!SIDE_MENU && customerCursor === customerList.length + 1) { showHelp(); return; }
+        const picked = customerList[customerCursor - 1];
+        if (picked) openCustomer(picked);
+        return;
+      }
+      case "longPress":
+        background(startRec("customer", "hold"), "starting the microphone");
+        return;
+      case "doubleClick":
         requestExit();
+        return;
+      default:
+        return;
+    }
+    void draw();
+  };
+
+  const onProjects = (gesture: Gesture): void => {
+    if (gesture === "doubleClick") { show("customers"); return; }
+    if (currentLoad().kind !== "ready") {
+      if (gesture === "click") requestLoad("projects");
+      return;
+    }
+    switch (gesture) {
+      case "scrollUp":
+      case "scrollDown":
+        projectCursor = wrapIndex(projectCursor + step(gesture), projectList.length + 1);
+        say("");
+        break;
+      case "click": {
+        if (projectCursor === 0) {
+          brief = null;
+          briefPage = 0;
+          load.delete("brief");
+          show("brief");
+          return;
+        }
+        const picked = projectList[projectCursor - 1];
+        if (picked) openProject(picked);
+        return;
+      }
+      default:
+        return;
+    }
+    void draw();
+  };
+
+  /** Swipe = page, tap = load again, 2× = back to the projects. */
+  const onBrief = (gesture: Gesture): void => {
+    if (gesture === "doubleClick") { show("projects"); return; }
+    if (gesture === "click") { requestLoad("brief"); return; }
+    if ((gesture === "scrollUp" || gesture === "scrollDown") && currentLoad().kind === "ready") {
+      briefPage = Math.max(0, Math.min(briefPages(locale, brief) - 1, briefPage + step(gesture)));
+      void draw();
+    }
+  };
+
+  /** Swipe = next/previous scene, tap = done (or not), 2× = other storyboard or menu. */
+  const onBoard = (gesture: Gesture): void => {
+    if (currentLoad().kind !== "ready" || boards.length === 0) {
+      if (gesture === "click" && currentLoad().kind !== "loading") { enter("board"); return; }
+      if (gesture === "doubleClick") toMenu();
+      return;
+    }
+    if (boardPicking) {
+      if (gesture === "scrollUp" || gesture === "scrollDown") boardIndex = wrapIndex(boardIndex + step(gesture), boards.length);
+      else if (gesture === "click") { boardPicking = false; sceneCursor = 0; }
+      else if (gesture === "doubleClick") { toMenu(); return; }
+      else return;
+      void draw();
+      return;
+    }
+    const scenes = boards[boardIndex]?.scenes ?? [];
+    switch (gesture) {
+      case "scrollUp":
+      case "scrollDown":
+        sceneCursor = Math.max(0, Math.min(scenes.length - 1, sceneCursor + step(gesture)));
+        say("");
+        break;
+      case "click":
+        toggleScene();
+        return;
+      case "doubleClick":
+        if (boards.length > 1) { boardPicking = true; say(""); break; }
+        toMenu();
         return;
       default:
         return;
@@ -692,12 +1394,21 @@ async function boot(): Promise<void> {
       else if (gesture === "doubleClick") takeScreen = "card";
       else if (gesture === "click") {
         const action = TAKE_ACTIONS[actionCursor];
+        // Cancelling a running take is armed: the first tap asks, the second one carries it out.
+        if (action === "roll" && rollingHere()) { arm("roll"); void draw(); return; }
+        // Marking a take "nicht ok" is armed as well; OK stays a single tap.
+        if (action === "ng") { arm("ng"); void draw(); return; }
+        // Deleting the newest take is armed too (no side menu): the second tap carries it out; with no take there is nothing to ask.
+        if (action === "delTake" && latestTake(shots[shotCursor])) { arm("delTake"); void draw(); return; }
         takeScreen = "card";
-        if (action === "roll") rollingSince = rollingSince === null ? Date.now() : null;
-        else if (action === "ok") addTake("OK");
-        else if (action === "ng") addTake("NG");
+        if (action === "roll") {
+          const here = shots[shotCursor];
+          rollingSince = Date.now();
+          rollingKey = here ? takeKey(here.scene, here.shot) : null;
+        } else if (action === "ok") addTake("OK");
         else if (action === "note") { takeScreen = "notes"; noteCursor = 0; }
         else if (action === "voice") { background(startRec("takes", "tap"), "starting the microphone"); return; }
+        else if (action === "delTake") say(t(locale, "g.msg.noTakeToDelete"));
       } else return;
       void draw();
       return;
@@ -714,9 +1425,8 @@ async function boot(): Promise<void> {
     switch (gesture) {
       case "scrollUp":
       case "scrollDown":
+        // A swipe only moves; a running take stays with its shot.
         shotCursor = wrapIndex(shotCursor + step(gesture), shots.length);
-        // A running take belongs to its shot.
-        rollingSince = null;
         say("");
         break;
       case "click":
@@ -792,19 +1502,9 @@ async function boot(): Promise<void> {
     switch (gesture) {
       case "scrollUp":
       case "scrollDown":
-        // A swipe says "no" to a pending "tick everything".
-        if (confirmAll) { confirmAll = null; break; }
         packCursor = Math.max(0, Math.min(items.length - 1, packCursor + step(gesture)));
         break;
       case "click": {
-        const pending = confirmAll && confirmAll.until > Date.now() ? confirmAll : null;
-        confirmAll = null;
-        if (pending) {
-          for (const entry of items) if (entry.packed !== pending.packed) void setPacked(entry.name, pending.packed, false);
-          say(t(locale, pending.packed ? "g.pack.all" : "g.pack.reset"));
-          void draw();
-          return;
-        }
         const item = items[packCursor];
         if (!item) { requestLoad("pack"); return; }
         void setPacked(item.name, !item.packed, false);
@@ -813,6 +1513,26 @@ async function boot(): Promise<void> {
       case "longPress":
         background(startRec("pack", "hold"), "starting the microphone");
         return;
+      case "doubleClick":
+        toMenu();
+        return;
+      default:
+        return;
+    }
+    void draw();
+  };
+
+  /** Swipe = look 30 min ahead or back, tap = back to now (or, at now, ask for the location again), 2× = menu. */
+  const onLight = (gesture: Gesture): void => {
+    switch (gesture) {
+      case "scrollUp":
+      case "scrollDown":
+        lightOffset = Math.max(-LIGHT_MAX_MIN, Math.min(LIGHT_MAX_MIN, lightOffset + step(gesture) * LIGHT_STEP_MIN));
+        break;
+      case "click":
+        if (lightOffset !== 0) lightOffset = 0;
+        else { void locate(); requestLoad("light"); }
+        break;
       case "doubleClick":
         toMenu();
         return;
@@ -840,7 +1560,46 @@ async function boot(): Promise<void> {
     lastView = null;
     startTimers();
     void draw();
-    if (api) requestLoad(mode);
+    if (api) requestLoad(mode === "help" ? helpBack : mode);
+  };
+
+  /**
+   * A click in the glasses' side menu (QIS v1.2). Help only looks. Deleting the last take and discarding a
+   * recording change something, so the first click arms them (footer: "Nochmal tippen = …") and a single tap
+   * or a second click of the same item within the window carries them out; a swipe, 2× or the timeout cancel.
+   */
+  const onSideMenu = (id: number): void => {
+    if (closed || backgrounded) return;
+    touched = true;
+    const pending = liveArm();
+    switch (id) {
+      case MENU_HELP:
+        if (rec) return;
+        showHelp();
+        return;
+      case MENU_DEL_TAKE: {
+        if (rec) return;
+        const shot = shots[shotCursor];
+        if (mode !== "takes" || !shot) { disarm(); say(t(locale, "g.msg.takesOnly")); void draw(); return; }
+        if (!latestTake(shot)) { disarm(); say(t(locale, "g.msg.noTakeToDelete")); void draw(); return; }
+        if (pending === "delTake") { disarm(); confirmArmed("delTake"); return; }
+        arm("delTake");
+        void draw();
+        return;
+      }
+      case MENU_SEND_REC:
+        disarm();
+        sendParked();
+        return;
+      case MENU_DISCARD_REC:
+        if (!rec && !parked) { disarm(); say(t(locale, "g.msg.noRec")); void draw(); return; }
+        if (pending === "discardRec") { disarm(); confirmArmed("discardRec"); void draw(); return; }
+        arm("discardRec");
+        void draw();
+        return;
+      default:
+        return;
+    }
   };
 
   // The glasses listen before the first page is built: a slow page must never make a tap or the exit go nowhere.
@@ -850,6 +1609,8 @@ async function boot(): Promise<void> {
     if (lifecycle === "foreground") { comeBack(); return; }
     if (lifecycle === "background") { goBackground(); return; }
     if (lifecycle === "exit") { goBackground(); shutDown(); return; }
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) { onSideMenu(menuId); return; }
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     if (audio) {
       const current = rec;
@@ -859,21 +1620,45 @@ async function boot(): Promise<void> {
       if (current.bytes + pcm.length > MAX_PCM_BYTES) { background(stopRec(), "stopping the microphone"); return; }
       current.chunks.push(pcm);
       current.bytes += pcm.length;
+      current.live?.send(pcm);
       return;
     }
 
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
+    touched = true;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
     if (backgrounded) { comeBack(); return; }
     const gesture = parsed.gesture;
-    if (rec) { onRecGesture(gesture); void draw(); return; }
+    const pending = liveArm();
+    if (rec) {
+      // A pending "discard recording" yields to anything: only the confirming tap carries it out.
+      if (pending === "discardRec") { disarm(); if (gesture === "click") confirmArmed("discardRec"); else void draw(); return; }
+      onRecGesture(gesture);
+      void draw();
+      return;
+    }
+    // QIS v1: while an action is armed, a tap carries it out; swipe, hold and 2× only cancel it.
+    if (pending !== null) {
+      disarm();
+      if (gesture === "click") confirmArmed(pending);
+      else void draw();
+      saveUi();
+      return;
+    }
+    if (armed) disarm();
     switch (mode) {
+      case "help": onHelp(gesture); break;
+      case "customers": onCustomers(gesture); break;
+      case "projects": onProjects(gesture); break;
+      case "brief": onBrief(gesture); break;
+      case "board": onBoard(gesture); break;
       case "menu": onMenu(gesture); break;
       case "takes": onTakes(gesture); break;
       case "prompter": onPrompter(gesture); break;
       case "schedule": onSchedule(gesture); break;
       case "pack": onPack(gesture); break;
+      case "light": onLight(gesture); break;
     }
     saveUi();
   });
@@ -882,10 +1667,14 @@ async function boot(): Promise<void> {
   if (api) {
     // Back in the module that was open before a restart; a running take keeps its clock.
     if (savedUi && savedUi.mode !== "menu") {
-      enter(savedUi.mode, true);
-      if (savedUi.mode === "takes") rollingSince = savedUi.rollingSince;
+      enter(savedUi.mode);
+      if (savedUi.mode === "takes" && savedUi.rollingSince !== null && savedUi.shot) {
+        rollingSince = savedUi.rollingSince;
+        rollingKey = takeKey(savedUi.shot.scene, savedUi.shot.shot);
+      }
       requestLoad("menu");
     } else requestLoad("menu");
+    probeCustomers();
   }
 
   // The page does not survive a disconnect; the last view is forgotten too,
@@ -906,10 +1695,8 @@ async function boot(): Promise<void> {
     clearInterval(outboxTimer);
     clock = setInterval(() => {
       ticks += 1;
-      if (mode === "takes" && rollingSince !== null && !rec) void draw();
-      else if (mode === "schedule" && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
-      // The "tick everything?" question goes away on its own.
-      else if (confirmAll && confirmAll.until <= Date.now()) { confirmAll = null; void draw(); }
+      if (mode === "takes" && rollingHere() && !rec) void draw();
+      else if ((mode === "schedule" || mode === "light") && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
     }, PULSE_MS);
     // Takes logged offline go out as soon as the server answers again, not only on the next visit.
     outboxTimer = setInterval(() => {
@@ -934,21 +1721,43 @@ async function boot(): Promise<void> {
         load.clear();
         connectionError = null;
         connected = false;
+        stopRolling();
+        parked = null;
+        customerMode = false;
+        customerList = [];
+        customer = null;
+        projectList = [];
+        boards = [];
+        touched = false;
         toMenu();
+        probeCustomers();
       }
       await draw();
     },
     connection: (): ConnectionState => {
-      if (DEMO) return { kind: "demo" };
+      if (isDemo()) return { kind: "demo" };
       if (!api) return { kind: "none" };
-      if (connectionError) return { kind: "error", reason: errorText(locale, connectionError.code, connectionError.status) };
+      // The phone shows the HTTP status; the glasses never do (QIS v1.2 no. 8).
+      if (connectionError) {
+        const { code, status } = connectionError;
+        return { kind: "error", reason: code === "http" ? t(locale, "g.error", { reason: t(locale, "p.err.http", { status: status ?? 0 }) }) : errorText(locale, code, status) };
+      }
       return connected ? { kind: "ok", project } : { kind: "loading" };
     },
     pendingCount: () => outbox.length,
+    light: () => {
+      const { where, model } = currentLight(0);
+      return { model, place: where?.place ?? null, source: where?.source ?? null, phase: where ? lightAt(Date.now(), where.place).phase : null };
+    },
+    onLocate: () => { void locate(); requestLoad("light"); },
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;
       rememberLocale(bridge, next);
+      // The side menu carries the language: the page is rebuilt with it.
+      setPageMenu(menuSpec());
+      pageReady = false;
+      lastView = null;
       void draw();
     },
   });

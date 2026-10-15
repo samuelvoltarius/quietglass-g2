@@ -1,6 +1,6 @@
 import type { PixelPoint } from "./project";
 import type { Street } from "./streets";
-import { MARKER_AT, PLATE } from "./camera";
+import { MARKER_AT, PLATE, SPEED_PLATE } from "./camera";
 
 /**
  * Street names on the map.
@@ -152,6 +152,8 @@ function boxFor(text: string, at: PixelPoint): Rect {
 export interface LabelInput {
   readonly width: number;
   readonly height: number;
+  /** The speed plate is on the bottom left: no label goes under it. */
+  readonly speedPlate?: boolean;
   readonly toPixel: (point: { lat: number; lon: number }) => PixelPoint;
   /** The whole route and where along it the next turn is. */
   readonly route: ReadonlyArray<{ lat: number; lon: number }>;
@@ -164,12 +166,13 @@ export interface LabelInput {
 const MARGIN = 3;
 
 /** Parts of the picture no label may cover. */
-export function reservedRects(width: number, turn: PixelPoint | null, end: PixelPoint | null): Rect[] {
+export function reservedRects(width: number, turn: PixelPoint | null, end: PixelPoint | null, speedPlate?: { readonly height: number }): Rect[] {
   const rects: Rect[] = [
     { x: MARKER_AT.x - 40, y: MARKER_AT.y - 46, w: 80, h: 76 }, // car chevron
     { x: 0, y: 0, w: PLATE.width + 4, h: PLATE.height + 4 },
     { x: width - 92, y: 10, w: 92, h: 88 }, // compass and its N
   ];
+  if (speedPlate) rects.push({ x: 0, y: speedPlate.height - SPEED_PLATE.height - 4, w: SPEED_PLATE.width + 4, h: SPEED_PLATE.height + 4 });
   if (turn) rects.push({ x: turn.x - 32, y: turn.y - 32, w: 64, h: 64 });
   if (end) rects.push({ x: end.x - 19, y: end.y - 19, w: 38, h: 38 });
   return rects;
@@ -220,7 +223,7 @@ export function placeLabels(input: LabelInput): PlacedLabel[] {
   const turnIdx = input.nextIndex !== null && input.nextIndex >= 0 && input.nextIndex < route.length ? input.nextIndex : null;
   const turn = turnIdx !== null ? route[turnIdx]! : null;
   const end = route[route.length - 1] ?? null;
-  const reserved = reservedRects(width, turn, end);
+  const reserved = reservedRects(width, turn, end, input.speedPlate ? { height } : undefined);
   const placed: PlacedLabel[] = [];
   const names = new Set<string>();
 

@@ -35,6 +35,8 @@ systemd-Units und Konfig-Vorlagen, eine Konfigurationsdatei für deine Adressen 
 | star-bridge | `STAR_TAILSCALE_USERS` |
 | sugar-bridge | `SUGAR_TAILSCALE_USERS` (ohne Allowlist und ohne `TOKEN`: alles gesperrt) |
 | chargers | `GLANCE_TAILSCALE_USERS` (ohne Allowlist und ohne `GLANCE_TOKEN`: alles gesperrt) |
+| routes | `ROUTES_TAILSCALE_USERS` (ohne Allowlist und ohne `ROUTES_TOKEN`: alles gesperrt) |
+| glass-traffic | `TRAFFIC_TAILSCALE_USERS` (ohne Allowlist und ohne `TRAFFIC_TOKEN`: alles gesperrt) |
 | whisper (WebSocket), babel-llm-proxy | `TAILSCALE_USERS` (wirkt, sobald auch `TOKEN` gesetzt ist) |
 | whisper (HTTP), oebb-proxy, valhalla | keine Anmeldung — nur im Tailnet erreichbar, Zugriff per Tailscale-ACL einschränkbar |
 
@@ -68,6 +70,8 @@ auf dem Rechner lauscht, „Tailscale“ = die HTTPS-Nummer für `tailscale serv
 | [`sugar-bridge`](services/sugar-bridge) (neben Nightscout; Nightscout selbst nur lokal) | 8466 | **8462** | Sugar Glass |
 | [`valhalla`](services/valhalla) (Docker) | 8112 | **8455** | OpenGlance Nav (Routing + Straßennamen), NextStop (Fußwege) |
 | [`chargers`](services/chargers) (Ladestationen aus amtlichen Verzeichnissen) | 8467 | **8464** | OpenGlance Nav (Ladestationen; ohne = öffentliches Overpass) |
+| [`routes`](services/routes) (gespeicherte Routen + PC-Planungsseite) | 8468 | **8465** | OpenGlance Nav (Routen gleich auf Handy und PC) |
+| [`glass-traffic`](services/glass-traffic) (Stau/Sperren entlang der Route: TomTom, ASFINAG DATEX II) | 8475 | **8474** | OpenGlance Nav (Verkehr, Umfahrung; ohne = kein Verkehr) |
 | Sprachausgabe: Piper-TTS-Server mit OpenAI-kompatiblem `POST /v1/audio/speech` und CORS (extern) | 8014 | **8459** | NextStop (Ansagen; ohne = Handy-Stimme) |
 | Agent-Endpunkt (Even Terminal / Hermes-Bridge / OpenClaw, extern) | 8765 | **8446** | Agent Glass |
 | LUMEN (eigenes Projekt, **nicht** Teil dieses Repos) | – | **8454** | Lumen Glass |
@@ -76,7 +80,7 @@ auf dem Rechner lauscht, „Tailscale“ = die HTTPS-Nummer für `tailscale serv
 | App | benötigt | Bemerkung |
 |---|---|---|
 | NextStop | optional `oebb-proxy`, `whisper`, `valhalla`, `tts` | ohne alles läuft es mit Transitous und dem öffentlichen FOSSGIS-Routing |
-| OpenGlance Nav | `valhalla`, optional `chargers`, `whisper`, `tts` | sonst öffentlicher FOSSGIS-Server und öffentliches Overpass (braucht keinen Privat-Build) |
+| OpenGlance Nav | `valhalla`, optional `chargers`, `whisper`, `tts`, `routes`, `traffic` | sonst öffentlicher FOSSGIS-Server und öffentliches Overpass (braucht keinen Privat-Build) |
 | Babel Glass | `whisper` (WebSocket) + `babel-llm-proxy` (+ ein LLM-Server) | |
 | FieldLog | `whisper` (HTTP) | Adresse trägst du in der App ein; der Privat-Build erlaubt nur den Ursprung |
 | Quiet Hub | `quiet-hub` (+ Relay je Rechner mit Agenten) | optional `whisper`, LLM, Home Assistant |

@@ -3,6 +3,43 @@
 All notable changes to PodCaption are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks aus dem Menü kommen auf der Brille nie an, und Halten öffnet bei einer Seite mit Menü nur das Menü. Die Seiten tragen kein `menuObject` mehr; der Menü-Code und der `menuItemClickEvent`-Handler bleiben für später.
+- Halten öffnet wieder die Hilfe (Tippen schließt sie, 2× geht zurück). Fußzeile wieder `Tippen = Start · Halten = Hilfe · 2× = Ende`.
+- Wischrichtung umkehren gibt es nur noch am Handy (Reiter Brille); auf der Brille hat sie keine Geste.
+
+## [0.4.1] — 2026-10-15
+
+### Behoben
+
+- Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben; jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s), danach wird die Seite neu aufgebaut.
+
+## [0.4.0] — 2026-10-14
+
+### Changed (QIS v1.2)
+
+- Side menu: Hold now opens the glasses' own side menu (`menuObject`, clicks via `menuItemClickEvent`, as in Babel and Quiet Hub) with `Hilfe` and the swipe direction (`Wischen: normal` / `Wischen: umgekehrt`; clicking it toggles `invertScroll` and rebuilds the page once so the label follows). Help is no longer the meaning of Hold; Hold on the page does nothing itself. The footer reads `Tippen = Pause · Halten = Menü · 2× = Ende`.
+- Help page: still reached by tap/2× to close, but opened from the menu; the hold line now reads `Halten = Menü (Hilfe, Wischen)`.
+- Errors: a failed feed download no longer shows its status code on the glasses (`Abruf fehlgeschlagen.`); the phone keeps the detail (`Abruf fehlgeschlagen (Code 503).`).
+- 2× at the root with captions running keeps playing until the exit dialog is confirmed (unchanged, now covered by a test with the menu).
+- Demo on first start: unchanged, the how-to captions start without a server or setup (the bridge is optional), so no hint line is needed (v1.2 #7).
+- Phone: the swipe checkbox redraws the glasses menu; README and demo text say Hold = menu, 2× = exit.
+- Tests: menu on the page and its labels (<= 32 bytes in all five languages), menu click opens the help, menu toggle rebuilds once, a hold alone changes nothing, no digits in the glasses error text.
+
+## [0.3.0] — 2026-10-14
+
+### Changed (QIS v1)
+
+- Conforms to the Quietglass Interaction Standard (QIS v1, `docs/BEDIENSTANDARD.md`).
+- Safety: no single gesture stops or deletes anything. A tap only plays or pauses (reversible, the main action), a swipe only moves the cursor through the captions, and a double tap is only back: help -> captions, and on the captions page the system exit dialog, which playback survives until you confirm. A running caption session is never stopped by the help or by 2× inside it.
+- Header is `PODCAPTION · state` (was two spaces); the footer comes from a shared `footer()` helper in the order Tippen/Wischen/Halten/2× and ends in `2× = Ende` or `2× = zurück` (swipe part dropped first when the row is too wide). The tap names what it does now (`Tippen = Pause` while playing, `Tippen = Start` otherwise). Glossary: `2×`, no "Tap"/"Wisch"/"Doppeltipp" in German, Tap/Swipe/Hold/2× in English.
+- Help page: hold opens it (`PODCAPTION · Hilfe`: the four gestures plus what the app needs); tap or 2× closes it.
+- Swipe direction: new switch "Wischrichtung umkehren" on the phone (`invertScroll`, off by default, stored in the SDK store); the captions page honours it.
+- Phone tabs in the fixed order Untertitel · Brille · Verbindung · Mehr: language and swipe direction under Brille, the bridge address under Verbindung (no longer hidden under "Erweitert"), about under Mehr.
+
 ## [0.2.1] — 2026-10-13
 
 ### Fixed

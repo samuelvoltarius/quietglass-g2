@@ -63,6 +63,24 @@ describe("phone page", () => {
     await vi.waitFor(() => expect(page.root.innerHTML).toContain("Could not save"));
   });
 
+  it("splits the page into tabs with a tab bar", () => {
+    const page = mount(EMPTY_DATA);
+    const html = page.root.innerHTML;
+    for (const tab of ["today", "projects", "glasses", "more"]) {
+      expect(html).toContain('data-tab="' + tab + '"');
+      expect(html).toContain('data-tab-go="' + tab + '"');
+    }
+    expect(html).toContain('class="tabbar"');
+    expect(html.indexOf('id="target"')).toBeLessThan(html.indexOf('data-tab="projects"'));
+    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
+    // QIS v1.2: [content] · Brille · Mehr, no Verbindung (no server); the swipe switch is on Brille.
+    const order = ["today", "projects", "glasses", "more"].map((tab) => html.indexOf('data-tab-go="' + tab + '"'));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(html.indexOf('id="invert"')).toBeGreaterThan(html.indexOf('data-tab="glasses"'));
+    expect(html.indexOf('id="invert"')).toBeLessThan(html.indexOf('data-tab="more"'));
+    expect(html).not.toMatch(/Doppeltipp|Double tap/);
+  });
+
   it("escapes a project name on the page", () => {
     const page = mount(addProject(EMPTY_DATA, "<img src=x onerror=alert(1)>"));
     expect(page.root.innerHTML).not.toContain("<img");

@@ -117,6 +117,23 @@ const shown = new Map<number, string>();
 const started = new WeakSet<object>();
 
 /**
+ * Every call into the glasses is bounded. Draws run one after another, so a
+ * single answer that never comes (a Bluetooth write lost on the way) used to
+ * freeze the display for good on whatever it showed last. A call that times
+ * out counts as failed: the caller marks the page broken and the next draw
+ * rebuilds it.
+ */
+export const PAGE_CALL_MS = 8_000;
+export const TEXT_CALL_MS = 5_000;
+export const IMAGE_CALL_MS = 10_000;
+
+function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Puts a page on the glasses: created exactly once per bridge, every later
  * page a `rebuildPageContainer` - the order Quiet Hub uses and that takes
  * input on real glasses. A rebuild before the first creation, or a second
@@ -128,9 +145,9 @@ async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContain
   if (!started.has(bridge)) {
     // Measured on real glasses: the very first page needs a rebuild call before
     // the creation, or taps are never delivered (Babel 0.2.5).
-    try { await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })); } catch { /* expected before the first page */ }
+    try { await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild"); } catch { /* expected before the first page */ }
     try {
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
       return { ok: false, reason: describeCreateResult(result) };
     } catch (error) {
@@ -138,7 +155,7 @@ async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContain
     }
   }
   try {
-    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+    const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
     return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -159,7 +176,7 @@ export async function createPage(bridge: EvenAppBridge, scene: Scene, menu: Menu
  */
 export async function rebuildPage(bridge: EvenAppBridge, scene: Scene, menu: MenuSpec | null): Promise<RenderResult> {
   try {
-    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(scene, menu)));
+    const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(scene, menu))), PAGE_CALL_MS, "rebuild");
     if (!ok) return { ok: false, reason: "rebuild refused" };
     sentLength.clear();
     shown.clear();
@@ -179,11 +196,11 @@ export async function updatePage(bridge: EvenAppBridge, scene: Scene): Promise<R
   ];
   try {
     for (const [id, name, content] of updates) {
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: id,
         containerName: name,
         ...guarded(id, content),
-      }));
+      })), TEXT_CALL_MS, "text " + name);
     }
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
@@ -206,9 +223,9 @@ async function updateImages(bridge: EvenAppBridge, scene: Scene): Promise<Render
     if (!spec) continue;
     try {
       const imageData = await picture.render();
-      const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
+      const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({
         containerID: spec.id, containerName: spec.name, imageData,
-      }));
+      })), IMAGE_CALL_MS, "image " + spec.name);
       if (result === ImageRawDataUpdateResult.success) { shown.set(picture.id, picture.key); continue; }
       console.warn("[nextstop] picture not taken:", spec.name, String(result));
     } catch (error) {

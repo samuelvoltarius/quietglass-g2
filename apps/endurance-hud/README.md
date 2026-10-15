@@ -25,7 +25,7 @@ Live-Daten senden:
 curl -X POST http://127.0.0.1:8792/live -H "Content-Type: application/json" -d '{"sport":"bike","speedKph":32.1,"powerWatts":245,"heartRate":151,"cadence":92,"distanceKm":18.4,"elapsedSeconds":2200,"source":"garmin"}'
 ```
 
-Bedienung: Tippen aktualisiert, Wischen wechselt zwischen Rad und Lauf (wird gespeichert; „Automatisch“ auf der Handy-Seite folgt wieder der Bridge), Doppeltippen beendet. Kommen länger als 10 s keine neuen Werte, zeigt die Brille `STALE 12s` statt Live. Optional schützt `ENDURANCE_TOKEN` den POST-Endpunkt. Deutsch, Englisch, Französisch, Spanisch und Italienisch werden unterstützt. Die App ist kein Medizinprodukt und noch nicht auf echter G2-Hardware geprüft.
+Bedienung: Tippen aktualisiert, Wischen wechselt die Sportart (Rad / Laufen), Halten öffnet die Hilfe, 2× beendet (in der Hilfe: zurück). Das Seitenmenü der Brille ist vorerst aus (SIDE_MENU), weil seine Klicks auf der echten Brille nie ankommen. Die Wischrichtung lässt sich im Handy-Tab „Brille“ umkehren. Kommen länger als 10 s keine neuen Werte, zeigt die Brille `STALE 12s` statt Live. Optional schützt `ENDURANCE_TOKEN` den POST-Endpunkt. Deutsch, Englisch, Französisch, Spanisch und Italienisch werden unterstützt. Die App ist kein Medizinprodukt und noch nicht auf echter G2-Hardware geprüft.
 
 ## Datenschutz
 

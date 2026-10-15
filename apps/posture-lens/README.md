@@ -86,11 +86,41 @@ gives you the chance to fix it first.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Set the current posture as upright (calibrate or re-calibrate) |
-| **Swipe** | Reset today's tally |
-| **Double tap** | Leave PostureLens |
+| **Tap** | Set the current posture as upright (once one is saved: a second tap within 4 s confirms) |
+| **Swipe** | Only turns the help pages. Never changes anything; cancels whatever is armed |
+| **Hold** | Opens the menu list: Sensor test · Clear today's tally · Help |
+| **2×** | Back one level (sensor test, help, menu); on the posture screen leave PostureLens |
+
+Clearing today's tally lives in the menu and is armed first (QIS v1): tap the
+entry, then tap it again within 4 s. A swipe, 2× or the timeout cancels. (The glasses' own
+side menu is off for now: its clicks do not arrive on the real glasses, `SIDE_MENU = false`.)
 
 The **R1 ring** works the same as the temple pads.
+
+## Sensor test (0.5.0)
+
+Nobody outside Even Realities knows yet what the SDK's IMU `{x, y, z}` means on
+real hardware — unit, axis orientation, accelerometer only or gyroscope too. The
+sensor test is there to find out with the glasses on:
+
+- **Glasses:** hold, then pick "Sensor test" in the menu. Live x / y / z (two decimals) with min/max since
+  start, magnitude and sample rate in the header, the axis that moved most
+  marked with ●. At most five text updates per second, no page rebuild. Tap
+  resets min/max, 2× returns to the posture screen.
+- **Phone:** "More" tab → "Start sensor test". The same live numbers, a pace
+  selector (`ImuReportPace` 100…1000 — the SDK does not say what unit that is,
+  the measured rate shows it), and **Record 20 s** with a guided procedure:
+  1) keep still looking ahead for 3 s, 2) turn your head left, 3) right,
+  4) nod, 5) tilt your head. The result is offered as CSV
+  (`t_ms,step,x,y,z,magnitude`) to download, copy or select.
+
+What to look for: a still head with |v| ≈ 1 or ≈ 9.81 means an accelerometer in
+g or m/s²; values near 0 at rest that spike while turning point to a gyroscope;
+the axis marked ● during the left/right turn versus the nod tells the axes apart.
+
+**Kurz auf Deutsch:** Halten am Bügel (oder Handy → „Mehr“ → „Sensor-Test
+starten“) zeigt die Rohwerte des Bewegungssensors live; „Aufnahme 20 s“ führt
+durch fünf Kopfbewegungen und liefert eine CSV-Datei.
 
 ## Install
 
@@ -98,7 +128,7 @@ The **R1 ring** works the same as the temple pads.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5192
 npm run build      # typecheck + production bundle
-npm test           # 67 unit tests
+npm test           # 137 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 

@@ -12,10 +12,47 @@ der Brille — auf Wunsch gleich übersetzt (z. B. Russisch oder Belarussisch �
 Deutsch). Die Spracherkennung läuft auf **deinem eigenen** Server, nicht in
 einer fremden Cloud. Ohne Server zeigt die App feste Demo-Sätze.
 
-**So geht's:** Einmal auf den Bügel tippen startet die Untertitel, nochmal
-tippen stoppt sie. Wischen blättert zurück, Halten löscht die Mitschrift,
-Doppeltippen beendet die App. Solange das Mikrofon offen ist, steht
-**● MIKRO** auf der Brille.
+**So geht's:** Einmal auf den Bügel tippen startet die Untertitel; laufen sie,
+bereitet Tippen den Stopp vor und ein zweites Tippen innerhalb von 4 s stoppt.
+Wischen blättert zurück, **Halten während der Untertitel startet den Wortfinder**.
+Bei gestoppten Untertiteln öffnet Halten die Hilfe; Meine Stimme lernen/löschen und
+Personen stehen am Ende der Kundenliste („Meine Stimme löschen“ braucht ein zweites
+Tippen innerhalb von 4 s). Das Seitenmenü der Brille ist vorerst aus (seine Klicks
+kommen auf der Brille nicht an). 2× im
+Hauptbild öffnet den Beenden-Dialog; laufende Untertitel enden erst, wenn du das
+Beenden bestätigst. Die Mitschrift löschst du nur am Handy. Solange das Mikrofon
+offen ist, steht **● MIKRO** auf der Brille.
+
+**Übersicht (ab 0.5.0):** Beim Zuhören zeigt die Kopfzeile kompakt, was gerade
+läuft, z. B. „● MIKRO · RU→DE · A/B · Antworten · Gedächtnis“ (nur Aktives).
+Jedes Popup beginnt mit seiner Art: „Info:“ (Erklärung), „Antwort:“
+(Antwort-Vorschlag), „Wort:“ (Wortfinder), „→“ (dein Satz übersetzt). Die
+**Hilfe** (Halten bei gestoppten Untertiteln) und ihre Übersicht-Seiten zeigen jede Funktion,
+wie sie ausgelöst wird und ob sie gerade an ist (Tippen = schließen). Am Handy
+steht oben im Tab Gespräch dieselbe Übersicht als Tabelle mit Schaltern und
+Live-Status (Server live/Demo, Gedächtnis verbunden/nicht verfügbar) und einem
+Knopf „Hilfe auf der Brille zeigen“.
+
+**Antwort-Vorschläge (ab 0.5.0, an):** Beendet dein Gegenüber eine Frage oder
+einen Satz, auf den du antworten solltest, schlägt dein Sprachmodell **einen**
+kurzen Satz vor (höchstens 12 Wörter) – in der Gesprächssprache, damit du ihn
+vorlesen kannst; bei einer Fremdsprache mit kurzer deutscher Übersetzung in
+Klammern. Kontext: die letzte Minute plus die passendsten Einträge aus dem
+eigenen Gedächtnis. Höchstens alle 15 s, nie während du selbst sprichst, und
+nur wenn es passt (sonst antwortet das Modell „-“ und es erscheint nichts).
+Popups kommen nie übereinander: Wortfinder/eigener Satz vor Antwort-Vorschlag
+vor Erklärung; Wartendes folgt, solange es noch aktuell ist.
+
+**Meine Sätze übersetzen (ab 0.5.0, aus):** Normal übersetzt Babel, was das
+Gegenüber sagt (gesprochene Sprache → „Übersetzen in“, z. B. Russisch →
+Deutsch). Eingeschaltet gehen **deine eigenen** Sätze in die andere Richtung
+(Deutsch → Gesprächssprache) und stehen groß als „→ …“ in den Untertiteln, zum
+Vorlesen. Deine Sätze erkennt Babel am Sprecher-Buchstaben („Ich bin Sprecher“
+A/B) oder – ohne Sprecher bzw. bei „automatisch“ – an deiner Sprache;
+„Gesprochene Sprache“ dafür auf automatisch lassen. Klappt die Erkennung nicht:
+**am neuesten Stand nochmal zum Neuesten wischen** übersetzt deinen letzten Satz
+auf Abruf (Popup „→ …“). Beides erscheint auch in der Mitschrift am Handy
+(markiert „Antwort:“ bzw. „→ … zum Vorlesen“).
 
 **Gesprächs-Begleiter (ab 0.3.0):** Mit einem Server, der Streaming kann
 (Referenz: `selfhost/services/whisper/`), erscheinen vorläufige Zeilen (mit
@@ -24,6 +61,23 @@ Doppeltippen beendet die App. Solange das Mikrofon offen ist, steht
 Sachfrage oder ein Fachbegriff, erklärt dein eigenes Sprachmodell ihn kurz als
 Popup auf der Brille. Beim Stoppen gibt es eine Zusammenfassung – kurz auf der
 Brille, ausführlich auf dem Handy. Gesucht wird dabei nichts im Internet.
+
+**Wortfinder (ab 0.4.0):** Fehlt dir mitten im Gespräch ein Wort, halte den
+Bügel gedrückt. Dein Sprachmodell bekommt die letzten ~20 Sekunden und schlägt
+das wahrscheinlich gesuchte Wort plus 2–3 Ausweichwörter vor – eine Zeile auf
+der Brille, z. B. „Kostenvoranschlag · Angebot · Offerte“, bei eingestellter
+Übersetzung darunter das Wort in der Zielsprache. Nach spätestens 8 s steht
+„kein Vorschlag“ da. Unter „Ich bin Sprecher“ (Tab Gespräch) wählst du deinen
+Buchstaben; „automatisch“ nimmt, wer zuletzt gesprochen hat.
+
+**Eigenes Gedächtnis (ab 0.4.0):** Nach jeder Zusammenfassung merkt sich Babel
+Datum, Titel, Zusammenfassung und Abmachungen – auf deinem eigenen Server, im
+babel-llm-proxy (`selfhost/services/babel-llm-proxy/`, Endpunkte `/memory`).
+Im Gespräch bekommen die Erklär-Popups die drei passendsten früheren Einträge
+als „Notizen des Nutzers“ und erinnern nur daran, wenn es konkret passt. Am
+Handy (Tab **Gedächtnis**) siehst, löschst, ergänzt (Notizen) und exportierst du
+alles. Babel nutzt ausschließlich dieses eigene Gedächtnis. Ein älterer Proxy
+ohne `/memory` → „nicht verfügbar“, sonst ändert sich nichts.
 
 Die App gibt es auf Deutsch und Englisch; sie folgt der Sprache deines
 Handys. Umstellen kannst du das oben auf der Handy-Seite unter „Sprache“ —
@@ -78,9 +132,12 @@ asserting that history stays empty until the recogniser is done.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start / stop captioning |
+| **Tap** | Start / stop captioning; closes the help screen or a popup first |
 | **Swipe** | Scroll back through what was said |
-| **Hold** | Clear the transcript |
+| **Swipe towards the newest** (already at the live edge) | Translate *my last sentence* into the conversation language (0.5.0) |
+| **Swipe** (captions off, no summary on screen) | Help screen: every helper, its trigger, on/off now (0.5.0); tap = back |
+| **Hold** (captions on) | Word finder: suggests the word you are missing (0.4.0) |
+| **Hold twice** (captions off) | Clear the transcript |
 | **Double tap** | Leave — stops the microphone |
 
 New speech pulls the view back to the live edge automatically, because reading
@@ -149,6 +206,14 @@ and the model name; a bearer token is optional. Babel Glass sends a strict
 answer. With the spoken language on "auto", the language Whisper detected is
 put into the prompt instead of "auto". LibreTranslate keeps receiving
 `source: "auto"` exactly as before.
+
+Since 0.3.2 translation, summary and explanations ask the LLM for
+`"stream": true` (server-sent events). The glasses show the text while it is
+written (redrawn at most every 300 ms): a caption's translation fills in step
+by step, a summary or explanation grows. A server or proxy that answers with
+plain JSON keeps working; a stream that fails before its first word is
+retried once without streaming. `reasoning_content` and `<think>` blocks are
+never shown. A long summary is paged on the glasses (swipe), never cut.
 
 Leave the selected provider unconfigured to caption without translating. A
 failing translation server shows `translate: <reason>` on the glasses
@@ -230,6 +295,72 @@ NLLB size for Belarusian has not been measured here. Wrapping counts
 characters; the simulator capture shows a 40-character Cyrillic line using
 about three quarters of the 576 px width.
 
+### Word finder and own memory (0.4.0)
+
+**Word finder.** Holding the temple pad while captions run sends the last
+~20 s of the transcript (with "I am speaker: A/B" chosen, mostly your own
+lines; "auto" = whoever spoke last) plus the provisional line to the LLM with a
+tight prompt: the likely word and 2–3 alternatives, only the words, separated
+by ` · `. Request: `max_tokens` 40, temperature 0.1,
+`chat_template_kwargs.enable_thinking=false`, 8 s timeout. The answer pops up
+as one line of at most 40 characters (plus the word in the translation target,
+if one is set); on a timeout the glasses say "kein Vorschlag"/"no suggestion".
+
+**Own memory.** The [babel-llm-proxy](../../selfhost/services/babel-llm-proxy/)
+keeps a small memory of the app's own, next to the LLM (`/memory`, same
+host and auth as `/v1`):
+
+```
+POST   /memory          {"type":"session|note","title":"…","summary":"…","agreements":["…"],"date":"ISO"}
+GET    /memory?limit=50 → {"memory":true,"entries":[…]}   newest first
+DELETE /memory/<id>     DELETE /memory  (everything)
+POST   /memory/search   {"query":"…","limit":3} → keyword (BM25) hits
+```
+
+After each summary the app stores date, title, summary and agreements
+("Abmachungen"); notes typed on the phone are stored as `note`. The live
+explanation prompt receives the top three hits for the newest lines as
+"Notizen des Nutzers" and may remind you of one only when it fits concretely —
+otherwise the model answers exactly `-` and nothing is shown. The phone tab
+"Memory" lists, deletes, adds notes and exports everything as text. Against a
+server without `/memory` the app says "not available" and otherwise behaves
+as before. Babel Glass reads and writes no other memory store.
+
+### Overview, reply ideas and own sentences (0.5.0)
+
+**Overview.** One source (`src/companion/overview.ts`) feeds three views that
+therefore never disagree: the glasses header while listening (only what is
+active, e.g. `● MIC · RU→DE · A/B · Replies · Memory`; least important parts
+drop first so it always fits 46 characters, the microphone never), the glasses
+help screen (swipe while stopped, or the phone button) and the phone table at
+the top of the Talk tab (switch, trigger, live state). Every popup is labelled
+by its kind — `Info:`, `Reply:`/`Antwort:`, `Word:`/`Wort:`, `→` — on the
+glasses and in the phone transcript.
+
+**Reply ideas** (on by default). After a final line of the *other* person
+(speaker letter ≠ "I am speaker"; with "auto" or speakers off: a line not in
+your own language) that is a question or a real statement, the app waits
+1.2 s and asks the LLM for exactly one sentence of at most 12 words in the
+conversation language (with a translation target set: the foreign language,
+plus a short gloss in brackets in yours), with the last ~60 s and the top
+three memory hits as context. `max_tokens` 64, temperature 0.3,
+`chat_template_kwargs.enable_thinking=false`, 8 s. The model answers exactly
+`-` when no reply is needed. At most one shown suggestion per 15 s (a `-` does
+not count), never while you speak, and a late answer is dropped once you have
+said something. Popups never stack: word finder / own sentence > reply idea >
+explanation; a lower one waits briefly and is dropped when stale.
+
+**Own sentences** (off by default). Babel's normal direction is spoken
+language → "Translate into" (your language). With "Translate my sentences" on,
+your own final lines (speaker letter, or with speakers off/"auto" the lines
+detected in your language) are translated the other way, into the
+conversation language (the fixed spoken language, or the last detected
+foreign one), and shown as `→ …` in place of the caption's translation. Leave
+the spoken language on "auto" so your own speech is recognised as yours. On
+demand, a swipe towards the newest while already at the live edge (and not the
+tail of the swipe that got there) translates your last sentence and shows it
+as a `→` popup.
+
 ## Without a server
 
 With no speech URL configured, Babel Glass runs a **mock** that emits fixed
@@ -245,6 +376,9 @@ says so.
   nowhere at all.
 - **No audio is ever stored.**
 - **The transcript is memory-only** and is discarded when you close the app.
+- **Own memory (0.4.0, switchable):** summaries, agreements and your notes are
+  kept on **your** server (babel-llm-proxy, file mode 600) and can be deleted
+  from the phone. Nothing else is read or written.
 - Tokens are never logged and never shown in full.
 
 Captioning a conversation captures other people's speech; local law varies and
@@ -256,7 +390,7 @@ is your responsibility. See [docs/PRIVACY.md](docs/PRIVACY.md).
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5197
 npm run build      # typecheck + production bundle
-npm test           # 142 unit tests
+npm test           # 284 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 

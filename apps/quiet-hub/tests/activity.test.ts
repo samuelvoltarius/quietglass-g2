@@ -34,7 +34,7 @@ describe("finished steps while there are no words yet", () => {
     const m = { ...createModel(report), screen: "agent" as const, agentView: "ask" as const };
     const body = buildView(m, "de", 0).body;
     expect(body.some((r) => r.startsWith("· Führt Befehl aus · find /etc"))).toBe(true);
-    expect(buildView(m, "de", 0).header.startsWith("Führt Befehl aus")).toBe(true);
+    expect(buildView(m, "de", 0).header.startsWith("QUIET HUB · Führt Befehl aus")).toBe(true);
   });
 });
 

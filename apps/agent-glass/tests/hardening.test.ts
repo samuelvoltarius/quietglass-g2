@@ -208,9 +208,47 @@ describe("gesture routing", () => {
     ...overrides,
   });
 
-  it("maps the swipes to allow and deny on the decision screen", () => {
-    expect(routeGesture("scrollUp", context())).toEqual({ kind: "decide", decision: "allow" });
-    expect(routeGesture("scrollDown", context())).toEqual({ kind: "decide", decision: "deny" });
+  it("never maps a swipe to an answer: swiping only moves the cursor", () => {
+    for (const gesture of ["scrollUp", "scrollDown"] as const) {
+      for (const choice of [0, 1] as const) {
+        for (const armed of [null, "allow", "deny"] as const) {
+          expect(routeGesture(gesture, context({ choice, armed })).kind).toBe("choose");
+        }
+      }
+    }
+    expect(routeGesture("scrollUp", context({ choice: 1 }))).toEqual({ kind: "choose", index: 0 });
+    expect(routeGesture("scrollDown", context({ choice: 0 }))).toEqual({ kind: "choose", index: 1 });
+  });
+
+  it("a tap arms the chosen answer, a second tap sends exactly that one", () => {
+    expect(routeGesture("click", context())).toEqual({ kind: "arm", what: "allow" });
+    expect(routeGesture("click", context({ choice: 1 }))).toEqual({ kind: "arm", what: "deny" });
+    expect(routeGesture("click", context({ armed: "allow" }))).toEqual({ kind: "decide", decision: "allow" });
+    expect(routeGesture("click", context({ choice: 1, armed: "deny" }))).toEqual({ kind: "decide", decision: "deny" });
+    // Armed for the other entry (the cursor moved): the tap arms again, it does not send.
+    expect(routeGesture("click", context({ choice: 1, armed: "allow" }))).toEqual({ kind: "arm", what: "deny" });
+  });
+
+  it("a double tap cancels an armed answer and only leaves when nothing is armed", () => {
+    expect(routeGesture("doubleClick", context({ armed: "allow" }))).toEqual({ kind: "disarm" });
+    expect(routeGesture("doubleClick", context())).toEqual({ kind: "exit" });
+  });
+
+  it("hold never stops the agent by itself: it arms, a tap interrupts, anything else cancels", () => {
+    const busy = context({ state: { ...EMPTY_STATE, session: SESSION, controllable: true, busy: true } });
+    expect(routeGesture("longPress", busy)).toEqual({ kind: "arm", what: "interrupt" });
+    expect(routeGesture("click", { ...busy, armed: "interrupt" })).toEqual({ kind: "interrupt" });
+    expect(routeGesture("scrollDown", { ...busy, armed: "interrupt" })).toEqual({ kind: "disarm" });
+    expect(routeGesture("doubleClick", { ...busy, armed: "interrupt" })).toEqual({ kind: "disarm" });
+    expect(routeGesture("click", busy).kind).not.toBe("interrupt");
+  });
+
+  it("the help page closes with a tap or a double tap and ignores the rest", () => {
+    const help = context({ screen: "help", state: EMPTY_STATE });
+    expect(routeGesture("click", help)).toEqual({ kind: "closeHelp" });
+    expect(routeGesture("doubleClick", help)).toEqual({ kind: "closeHelp" });
+    expect(routeGesture("scrollDown", help)).toEqual({ kind: "ignore" });
+    expect(routeGesture("longPress", help)).toEqual({ kind: "ignore" });
   });
 
   it("does not answer a request hidden behind an error screen", () => {

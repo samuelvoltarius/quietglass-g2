@@ -1,6 +1,7 @@
 import type { LatLng } from "../geo/geometry";
 import type { TravelMode } from "../routing/provider";
 import type { BBox, PixelPoint, Projector } from "./project";
+import { buildOverpassUrl, isOwnOverpass, overpassUrlsFor } from "../overpass/own";
 
 /**
  * Real streets behind the overview route, from OpenStreetMap via Overpass.
@@ -90,6 +91,30 @@ export function fetchBox(view: BBox, margin = 0.15): BBox | null {
   if (box.south < -90 || box.north > 90 || box.west < -180 || box.east > 180) return null;
   if (box.south >= box.north || box.west >= box.east) return null;
   return box;
+}
+
+/**
+ * The map follows the car (a few hundred metres to a few km ahead), so its
+ * streets are fetched around the current place, not for the whole route: on
+ * a 116 km trip the route's box is far above MAJOR_MAX_SPAN_M and no street
+ * was ever asked for (15.10.). Radius per way of travel, so the box stays
+ * inside the spans where minor roads (and on foot the paths) are asked for.
+ */
+export const AROUND_RADIUS_M: Readonly<Record<TravelMode, number>> = { driving: 1_900, cycling: 1_900, walking: 1_200 };
+/** Fetch again once the car is this close to the edge of what was loaded. */
+export const AROUND_REFETCH_EDGE_M = 600;
+
+export function boxAround(center: LatLng, radiusM: number): BBox | null {
+  const dLat = radiusM / M_PER_DEG;
+  const dLon = radiusM / (M_PER_DEG * Math.max(0.01, Math.cos((center.lat * Math.PI) / 180)));
+  return fetchBox({ south: center.lat - dLat, west: center.lon - dLon, north: center.lat + dLat, east: center.lon + dLon }, 0);
+}
+
+/** True while `point` is inside `box` and at least `marginM` from every edge. */
+export function wellInside(box: BBox, point: LatLng, marginM: number): boolean {
+  const dLat = marginM / M_PER_DEG;
+  const dLon = marginM / (M_PER_DEG * Math.max(0.01, Math.cos((point.lat * Math.PI) / 180)));
+  return point.lat >= box.south + dLat && point.lat <= box.north - dLat && point.lon >= box.west + dLon && point.lon <= box.east - dLon;
 }
 
 export function containsBox(outer: BBox, inner: BBox): boolean {
@@ -225,6 +250,8 @@ export interface StreetSourceConfig {
   /** Pause after the servers refused or failed, before asking again (Overpass asks ≥ 30 s after a 429/406). */
   readonly cooldownMs?: number;
   readonly clock?: () => number;
+  /** The own Overpass server; default VITE_OVERPASS_URL (private build). */
+  readonly ownUrl?: string;
 }
 
 export interface StreetSource {
@@ -238,7 +265,9 @@ export interface StreetSource {
  * after failures so a struggling public server is not asked again at once.
  */
 export function createStreetSource(config: StreetSourceConfig = {}): StreetSource {
-  const urls = config.urls ?? DEFAULT_OVERPASS_URLS;
+  const own = config.ownUrl ?? buildOverpassUrl();
+  const urlsFor = (box: BBox): readonly string[] => config.urls ?? overpassUrlsFor(
+    [{ lat: box.south, lon: box.west }, { lat: box.north, lon: box.east }], DEFAULT_OVERPASS_URLS, own);
   const doFetch = config.fetchImpl ?? ((input, init) => fetch(input, init));
   const clock = config.clock ?? Date.now;
   const maxBytes = config.maxBytes ?? MAX_RESPONSE_BYTES;
@@ -276,17 +305,20 @@ export function createStreetSource(config: StreetSourceConfig = {}): StreetSourc
       if (clock() < blockedUntil) return { streets: [], error: "cooldown" };
       const query = buildOverpassQuery(box, classes);
       let last: StreetsError = "server";
+      const urls = urlsFor(box);
       for (const url of urls) {
         const outcome = await fetchOne(url, query);
         if ("error" in outcome) {
           // Offline means every server would fail the same way; do not count it against them.
-          if (outcome.error === "offline") return { streets: [], error: "offline" };
+          if (outcome.error === "offline" && !isOwnOverpass(url, own)) return { streets: [], error: "offline" };
           last = outcome.error;
           continue;
         }
         let parsed: Street[] | null = null;
         try { parsed = parseOverpass(JSON.parse(outcome.text), classes); } catch { parsed = null; }
         if (!parsed) { last = "invalid"; continue; }
+        // The own server has only some countries: no streets at all from it means "not mine here", ask the next.
+        if (parsed.length === 0 && url !== urls[urls.length - 1]) continue;
         cache = { box, classes: [...classes], streets: parsed };
         return { streets: parsed, error: null };
       }

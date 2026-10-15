@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenGlance Routen</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Cpath d='M7 24 L14 9 L19 18 L25 8' stroke='%236ee7a8' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  </head>
+  <body class="pc">
+    <header class="pc-head">
+      <div>
+        <span class="brand-mark">Quietglass · OpenGlance</span>
+        <h1>Routen planen</h1>
+      </div>
+      <p id="sync-state" class="sync-state" aria-live="polite"></p>
+    </header>
+    <div class="pc-grid">
+      <main id="app"></main>
+      <aside class="pc-map-wrap">
+        <div id="map" class="pc-map" role="img" aria-label="Karte"></div>
+        <p id="map-caption" class="hint"></p>
+      </aside>
+    </div>
+    <script type="module" src="/src/pc/main.ts"></script>
+  </body>
+</html>

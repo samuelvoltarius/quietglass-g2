@@ -11,7 +11,7 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
 
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
 
-const CLICK = 0, UP = 1, DOWN = 2, DOUBLE = 3;
+const CLICK = 0, UP = 1, DOWN = 2, DOUBLE = 3, HOLD = 9;
 const SETTINGS = "quietglass.klipperglance.v1";
 
 function fakeGlasses(stored: Record<string, string> = {}) {
@@ -19,15 +19,18 @@ function fakeGlasses(stored: Record<string, string> = {}) {
   const storage = new Map(Object.entries(stored));
   const screen = new Map<number, string>();
   const exit = { calls: [] as unknown[], answer: true as boolean | "reject" };
+  const pages: Array<{ menuObject?: { menuItems?: Array<{ itemName: string }> } }> = [];
   const bridge = {
     getLocalStorage: vi.fn(async (key: string) => storage.get(key) ?? ""),
     setLocalStorage: vi.fn(async (key: string, value: string) => { storage.set(key, value); return true; }),
     updateImageRawData: vi.fn(async () => "success"),
-    rebuildPageContainer: vi.fn(async (page: { textObject?: Array<{ containerID?: number; content?: string }> }) => {
+    rebuildPageContainer: vi.fn(async (page: { menuObject?: { menuItems?: Array<{ itemName: string }> }; textObject?: Array<{ containerID?: number; content?: string }> }) => {
+      pages.push(page);
       for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
       return true;
     }),
-    createStartUpPageContainer: vi.fn(async (page: { textObject?: Array<{ containerID?: number; content?: string }> }) => {
+    createStartUpPageContainer: vi.fn(async (page: { menuObject?: { menuItems?: Array<{ itemName: string }> }; textObject?: Array<{ containerID?: number; content?: string }> }) => {
+      pages.push(page);
       for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
       return 0;
     }),
@@ -43,10 +46,15 @@ function fakeGlasses(stored: Record<string, string> = {}) {
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, exit,
+    bridge, exit, pages,
     header: () => screen.get(1) ?? "",
     body: () => screen.get(2) ?? "",
     footer: () => screen.get(3) ?? "",
+    menu: (itemID: number) => handler?.({ menuItemClickEvent: { itemID } }),
+    menuLabels: () => {
+      const page = [...pages].reverse().find((item) => item.menuObject);
+      return (page?.menuObject?.menuItems ?? []).map((item) => item.itemName);
+    },
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
@@ -105,10 +113,11 @@ describe("Klipper Glance lifecycle", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  it("first run: explains the setup and fetches nothing", async () => {
+  it("first run (QIS v1.2 #7): starts in the demo with the hint line and fetches nothing", async () => {
     const fake = fakeGlasses();
     const root = await boot(fake);
-    await vi.waitFor(() => expect(fake.body()).toContain("Noch keine Bridge eingerichtet."));
+    await vi.waitFor(() => expect(fake.body()).toContain("Demo · Verbindung am Handy einrichten"));
+    expect(fake.header()).toContain("DEMO");
     await vi.waitFor(() => expect(root.innerHTML).toContain("Erster Start"));
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
@@ -122,7 +131,7 @@ describe("Klipper Glance lifecycle", () => {
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     await new Promise((done) => setTimeout(done, 20));
     fake.emit(CLICK);                                        // still alive: opens control
-    await vi.waitFor(() => expect(fake.header()).toContain("STEUERN"));
+    await vi.waitFor(() => expect(fake.header()).toContain("KLIPPER · Steuern"));
   });
 
   it("a confirmed exit stops polling; a rejected one leaves no unhandled rejection", async () => {
@@ -153,17 +162,26 @@ describe("Klipper Glance lifecycle", () => {
   it("every command needs two taps; a swipe in between drops the first", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = steuern · 2× = Ende"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = steuern · Halten = Hilfe · 2× = Ende"));
     fake.emit(CLICK);                                        // control screen
     await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
     fake.emit(CLICK);                                        // arm pause
     await vi.waitFor(() => expect(fake.body()).toContain("Nochmal tippen = Pause bestätigen"));
-    fake.emit(DOWN);                                         // moving disarms
+    await vi.waitFor(() => expect(fake.footer()).toBe("Nochmal tippen = Pause · Wischen/2× = abbrechen"));
+    fake.emit(DOWN);                                         // a swipe only cancels, the highlight stays
+    await vi.waitFor(() => expect(fake.body()).not.toContain("Nochmal tippen"));
+    expect(fake.body()).toContain("> Pause");
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = wählen · Wischen = bewegen · 2× = zurück"));
+    fake.emit(DOWN);                                         // now it moves
     await vi.waitFor(() => expect(fake.body()).toContain("> Druck abbrechen"));
-    expect(fake.body()).not.toContain("Nochmal tippen");
     fake.emit(CLICK);                                        // arm cancel …
     await vi.waitFor(() => expect(fake.body()).toContain("Druck ABBRECHEN"));
-    fake.emit(UP);                                           // … and drop it again
+    await vi.waitFor(() => expect(fake.footer()).toBe("Nochmal tippen = Druck abbrechen · 2× = abbrechen"));
+    fake.emit(UP);                                           // … drop it again (nothing was sent)
+    await vi.waitFor(() => expect(fake.body()).not.toContain("Druck ABBRECHEN"));
+    expect(server.state.commands).toEqual([]);
+    fake.emit(UP);                                           // move up to Pause
+    await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
     fake.emit(CLICK);                                        // arm pause
     fake.emit(CLICK);                                        // confirm pause
     await vi.waitFor(() => expect(server.state.commands).toEqual(["pause"]));
@@ -181,8 +199,10 @@ describe("Klipper Glance lifecycle", () => {
     fake.emit(CLICK);                                        // arm cancel
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.body()).toContain("Druck ABBRECHEN");
-    await vi.advanceTimersByTimeAsync(7_000);
-    expect(fake.body()).not.toContain("Druck ABBRECHEN");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(fake.body()).toContain("Druck ABBRECHEN");         // still waiting after 3 s
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(fake.body()).not.toContain("Druck ABBRECHEN");     // lapsed after 4 s (QIS v1)
     fake.emit(CLICK);                                        // only arms again, sends nothing
     await vi.advanceTimersByTimeAsync(10);
     expect(server.state.commands).toEqual([]);
@@ -193,17 +213,76 @@ describe("Klipper Glance lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toContain("STEUERN"));
+    await vi.waitFor(() => expect(fake.header()).toContain("KLIPPER · Steuern"));
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
     expect(fake.exit.calls).toEqual([]);
+  });
+
+  it("2× while a command is armed only cancels it, and stays on the control screen", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("Nochmal tippen = Pause bestätigen"));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.body()).not.toContain("Nochmal tippen"));
+    expect(fake.header()).toContain("KLIPPER · Steuern");
+    expect(fake.exit.calls).toEqual([]);
+    expect(server.state.commands).toEqual([]);
+    fake.emit(DOUBLE);                                       // not armed: this one goes back
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+  });
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+    expect(fake.menuLabels()).toEqual([]);
+    expect(fake.pages.length).toBeGreaterThan(0);
+    for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
+  });
+
+  it("a hold opens the help from the HUD; tap, hold or 2× close it; 2× never exits there", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+    fake.emit(HOLD);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · Hilfe"));
+    expect(fake.footer()).toBe("Tippen = zurück · 2× = zurück");
+    fake.emit(DOWN);                                         // a swipe changes nothing in the help
+    await new Promise((done) => setTimeout(done, 30));
+    expect(fake.header()).toBe("KLIPPER · Hilfe");
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+    expect(fake.exit.calls).toEqual([]);
+  });
+
+  it("QIS v1.2: the menu's Hilfe drops an armed command, nothing is sent", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.footer()).toContain("Tippen = steuern"));
+    fake.emit(CLICK);                                        // control screen
+    await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
+    fake.emit(CLICK);                                        // arm pause
+    await vi.waitFor(() => expect(fake.body()).toContain("Nochmal tippen = Pause bestätigen"));
+    fake.menu(1);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · Hilfe"));
+    fake.emit(DOUBLE);                                       // back to the HUD; the question is gone
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
+    expect(fake.body()).not.toContain("Nochmal tippen");
+    expect(server.state.commands).toEqual([]);
   });
 
   it("without control permission, tap refreshes instead of opening controls", async () => {
     server.state.printer = { ...server.state.printer, controllable: false };
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = aktualisieren · 2× = Ende"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = aktualisieren · Halten = Hilfe · 2× = Ende"));
     const before = server.state.statusCalls;
     fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.statusCalls).toBe(before + 1));

@@ -168,7 +168,10 @@ describe("status-glass lifecycle", () => {
     const fake = fakeBridge();
     await boot(fake);
     await vi.waitFor(() => expect(replies).toHaveLength(1));
-    fake.gesture(HOLD);
+    fake.gesture(HOLD); // opens the menu; its first entry refreshes every source
+    await vi.waitFor(() => expect(fake.state.body).toContain("Refresh every source"));
+    resetGestureDedupe();
+    fake.gesture(0);
     await vi.waitFor(() => expect(replies).toHaveLength(2));
     replies[1]?.(REPORT);
     replies[0]?.(REPORT);
@@ -230,14 +233,14 @@ describe("status-glass lifecycle", () => {
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.({ name: "nas", metrics: [{ id: "load", label: "Load", value: 97.5, warn: 85, critical: 95 }] });
     await vi.waitFor(() => expect(fake.state.body).toContain("nas Load 97.5"));
-    expect(fake.state.footer).toBe("tap = acknowledge");
+    expect(fake.state.footer).toBe("Tap = seen · Swipe = list · Hold = menu · 2× = exit");
 
     const picker = root.querySelector("#language");
     picker.value = "de";
     picker.fire("change");
 
     // No poll answers in between: the redraw comes from the switch itself.
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Tippen = gesehen"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tippen = gesehen · Halten = Menü · 2× = Ende"));
     expect(fake.state.body).toContain("nas Load 97,5");
     expect(replies).toHaveLength(1);
     expect(savedLocale).toBe("de");
@@ -268,21 +271,26 @@ describe("status-glass lifecycle", () => {
     ] });
     replies[0]?.(host("Spark"));
     replies[1]?.(host("Pi5"));
-    await vi.waitFor(() => expect(fake.state.footer).toBe("tap = details · swipe = machine · hold = refresh"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tap = details · Hold = menu · 2× = exit"));
 
     fake.gesture(0);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("swipe = more · hold = seen · 2× = back"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tap = next · Swipe = page · Hold = seen · 2× = back"));
     await vi.waitFor(() => expect(fake.state.body).toContain("· 2 failed units"));
     expect(fake.state.body).toContain("a.mount, b.service");
     expect(fake.state.body).toContain("RAM 45% 54/119 GB");
 
     resetGestureDedupe();
-    fake.gesture(HOLD);
+    fake.gesture(HOLD); // QIS v1.2: a hold only asks
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tap again = seen · Swipe/2× = cancel"));
+    expect(fake.state.body).not.toContain("(ack)");
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    resetGestureDedupe();
+    fake.gesture(0); // the confirming tap
     await vi.waitFor(() => expect(fake.state.body).toContain("2 failed units (ack)"));
 
     resetGestureDedupe();
     fake.gesture(DOUBLE_TAP);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("tap = details · swipe = machine · hold = refresh"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tap = details · Hold = menu · 2× = exit"));
     expect(fake.state.shutdowns).toBe(0);
   });
 
@@ -311,12 +319,12 @@ describe("status-glass lifecycle", () => {
     first.gesture(2); // second machine
     resetGestureDedupe();
     first.gesture(0); // open it
-    await vi.waitFor(() => expect(first.state.footer).toBe("swipe = more · hold = seen · 2× = back"));
+    await vi.waitFor(() => expect(first.state.footer).toBe("Tap = next · Swipe = page · Hold = seen · 2× = back"));
     first.gesture(7);
     expect(kv.get("quietglass.statusglass.ui.v1")).toContain('"detailId":"b"');
 
     const second = fakeBridge(two, { kv });
     await boot(second);
-    await vi.waitFor(() => expect(second.state.footer).toBe("swipe = more · hold = seen · 2× = back"));
+    await vi.waitFor(() => expect(second.state.footer).toBe("Tap = next · Swipe = page · Hold = seen · 2× = back"));
   });
 });

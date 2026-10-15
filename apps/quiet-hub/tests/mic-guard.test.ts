@@ -87,7 +87,7 @@ describe("gestures work before the network answers (0.6.5)", () => {
     expect(handler).toBeGreaterThan(0);
     // Top-level boot code up to the handler (function bodies defined there only run later).
     const boot = source.slice(source.indexOf("let model: HubModel = createModel("), source.indexOf("const savedUi"));
-    expect(boot).toMatch(/if \(DEMO\) \{\s*model = createModel\(await api\.report\(\)\);/);
+    expect(boot).toMatch(/if \(demoMode\) \{\s*model = \{ \.\.\.createModel\(await api\.report\(\)\), setupHint: !DEMO \};/);
     expect(boot.split("await api.report()").length - 1).toBe(1);
     expect(boot).toContain('emptyReport("loading")');
     // The first poll (network) starts only at the end, after the handler.

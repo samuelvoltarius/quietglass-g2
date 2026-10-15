@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-pc/
 *.log
 .sim/
 .env

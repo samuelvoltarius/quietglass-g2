@@ -91,3 +91,19 @@ code {
 }
 footer.hint { text-align: center; padding: 8px 0 24px; }
 .error { margin: 0 0 12px; font-size: 13px; color: var(--warning); overflow-wrap: anywhere; }
+
+/* Phone tabs: Live · Brille · Verbindung · Mehr (QIS v1, section 5) */
+body { padding-bottom: 84px; }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+}
+.tabbar button {
+  margin: 0; padding: 10px 0; background: transparent; color: var(--muted);
+  border-radius: 10px; font-size: 13px; font-weight: 500;
+}
+.tabbar button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }

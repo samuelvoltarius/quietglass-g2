@@ -1,5 +1,7 @@
 import {
   CreateStartUpPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -7,8 +9,11 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { StatusView } from "./view";
+import { SIDE_MENU } from "./actions-view";
 import { createBitmap, type Bitmap } from "./gfx";
-import { ImageLink, imageContainer, type ImageSlot } from "./images";
+import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, type ImageSlot } from "./images";
+
+export { PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, bounded };
 import { ICON_HEIGHT, ICON_WIDTH, SPARK_HEIGHT, SPARK_WIDTH } from "./charts";
 import { FLEET_ROWS, ROW_HEIGHT, ROW_WIDTH } from "./fleet";
 
@@ -128,8 +133,25 @@ function pageParts(view: StatusView, layout: Layout) {
   };
 }
 
-export function buildPage(view: StatusView, layout: Layout = "list"): CreateStartUpPageContainer {
-  return new CreateStartUpPageContainer(pageParts(view, layout));
+/** One item of the glasses' side menu (id > 0, label at most 32 bytes). QIS v1.2. */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec {
+  /** Changes exactly when the glasses need a different menu (=> one rebuild). */
+  readonly key: string;
+  readonly items: readonly MenuItemSpec[];
+}
+
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel Glass. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (!SIDE_MENU || menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({
+    menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })),
+  });
+}
+
+export function buildPage(view: StatusView, layout: Layout = "list", menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
+  return new CreateStartUpPageContainer({ ...pageParts(view, layout), ...(menuObject === undefined ? {} : { menuObject }) });
 }
 
 function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, rightGap = 0, x = 0): TextContainerProperty {
@@ -157,22 +179,22 @@ function text(spec: ContainerSpec, content: string, zOrderIndex: number, capture
  */
 const started = new WeakSet<EvenAppBridge>();
 
-async function installPage(bridge: EvenAppBridge, view: StatusView, layout: Layout, frames: Frames): Promise<RenderResult> {
-  const page = buildPage(view, layout);
+async function installPage(bridge: EvenAppBridge, view: StatusView, layout: Layout, frames: Frames, menu: MenuSpec | null = null): Promise<RenderResult> {
+  const page = buildPage(view, layout, menu);
   sentLength.clear();
   link.reset();
   try {
     if (!started.has(bridge)) {
       try {
-        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       } catch {
         // Expected on current firmware; the creation below is the real path.
       }
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
       started.add(bridge);
     } else {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       // A refused rebuild leaves the old page in place.
       if (!ok) return { ok: false, reason: "rebuild refused" };
     }
@@ -250,11 +272,11 @@ export async function updatePage(
     for (const [spec, content, before] of updates) {
       if (before !== undefined && before === content) continue;
       renderStats.upgrades += 1;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
-      }));
+      })), TEXT_CALL_MS, "text " + spec.name);
     }
     return await pushImages(bridge, layout, frames);
   } catch (error) {

@@ -1,0 +1,16 @@
+[Unit]
+Description=Brillen-Melder (kurze Telegram-Nachrichten -> Handy -> Even G2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/glass-notify/.env
+Environment=PYTHONPATH=
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 %h/glass-notify/glass_notify.py
+Restart=on-failure
+RestartSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target

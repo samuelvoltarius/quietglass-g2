@@ -28,7 +28,7 @@ function fakeDocument() {
   const input = { value: "" };
   const listeners: Record<string, () => void> = {};
   const element = (id: string) => ({ addEventListener: (_type: string, fn: () => void) => { listeners[id] = fn; } });
-  return { app, input, listeners, document: { activeElement: null, querySelector: (selector: string) => selector === "#app" ? app : selector === "#endpoint" ? input : selector === "#save" || selector === "#language" ? element(selector) : null } };
+  return { app, input, listeners, document: { activeElement: null, querySelectorAll: () => ({ forEach: () => undefined }), querySelector: (selector: string) => selector === "#app" ? app : selector === "#endpoint" ? input : selector === "#save" || selector === "#language" || selector === "#invert" ? element(selector) : null } };
 }
 
 type Pending = { url: string; resolve: (body: unknown) => void; reject: (error: Error) => void };
@@ -79,11 +79,11 @@ describe("market glance refresh loop", () => {
     const fake = await boot();
     pending[0]?.resolve(live());
     await vi.advanceTimersByTimeAsync(10);
-    expect(fake.headers.at(-1)).toBe("MARKET GLANCE  LIVE");
+    expect(fake.headers.at(-1)).toBe("MARKET GLANCE · LIVE");
     await vi.advanceTimersByTimeAsync(15000);
     pending[1]?.reject(new TypeError("Failed to fetch"));
     await vi.advanceTimersByTimeAsync(10);
-    expect(fake.headers.at(-1)).toBe("MARKET GLANCE  STALE 15s");
+    expect(fake.headers.at(-1)).toBe("MARKET GLANCE · STALE 15s");
     expect(dom.app.innerHTML).toContain("Last error: Failed to fetch");
   });
 

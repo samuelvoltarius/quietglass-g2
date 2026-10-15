@@ -1,24 +1,35 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
-import { backoffMs, fetchReport, runAction } from "./protocol/fetcher";
+import { backoffMs, fetchReport, markDeviceKnown, runAction } from "./protocol/fetcher";
 import {
   acknowledge, applyError, applyReport, createSource, problems, type SourceStatus,
 } from "./monitor/dashboard";
-import { gestureFromEvent } from "./input/gestures";
+import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { lifecycleFromEvent } from "./lifecycle";
 import { buildView, type StatusView } from "./glasses/view";
 import { MetricHistory, type SparkSeries } from "./monitor/history";
-import { DEMO_FLEET, demoFleetReport, demoNasReport } from "./monitor/demo";
+import { DEMO_FLEET, demoFleetReport, demoNasReport, demoNetwork } from "./monitor/demo";
 import { PULSE_MS, SPARK_WIDTH, signFrame, signState, sparklineFrame } from "./glasses/charts";
 import { detailPage, detailSeries } from "./glasses/detail";
 import { bitmapKey } from "./glasses/gfx";
 import { fleetPulses, fleetRowFrame, fleetRows, fleetView } from "./glasses/fleet";
-import { availableActions, buildActionsView } from "./glasses/actions-view";
+import { ARM_MS, MENU_EXTRAS, SIDE_MENU, availableActions, buildActionsView } from "./glasses/actions-view";
+import { buildHelpView } from "./glasses/help-view";
 import { sameView } from "./glasses/diff";
-import { BODY_ROWS, DETAIL_SPARK_HEIGHT, createPage, rebuildPage, updatePage, type Frames, type Layout } from "./glasses/render";
+import { BODY_ROWS, DETAIL_SPARK_HEIGHT, createPage, rebuildPage, updatePage, type Frames, type Layout, type MenuSpec } from "./glasses/render";
 import { load, save, type StatusData } from "./storage/persist";
-import { mountPhoneUi } from "./ui/phone";
+import { mountPhoneUi, type PhoneNetwork, type PhoneUi } from "./ui/phone";
+import { describeIssue, t } from "./messages";
+import { armedFooter } from "./glasses/footer";
 import { createExitRequest } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
+
+/** Side-menu item ids (QIS v1.2: help and the app's own menu live in the glasses' side menu). */
+const MENU_HELP = 1;
+const MENU_ACTIONS = 2;
+const MENU_RELOAD = 3;
+const DEMO_SOURCES = [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] as const;
+/** The hold that armed "seen" must not be confirmed by the tap on its heels. */
+const ACK_SETTLE_MS = 400;
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 /** `?demo=1&scene=graph|warn|critical` shows a NAS with CPU/GPU/RAM sparklines; without it a Home Assistant demo. */
@@ -56,9 +67,16 @@ function parseUi(raw: string): SavedUi {
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let data: StatusData = await load(bridge);
+  let stored: StatusData = await load(bridge);
+  let data: StatusData = stored;
+  // QIS v1.2 ruling 7: without a source the app starts in demo mode (sample data, one hint line).
+  // Explicit ?demo=1 stays as it was; the first-start demo never writes its sample sources to storage.
+  let firstStartDemo = !DEMO && stored.sources.length === 0;
+  let demo = DEMO || firstStartDemo;
   const NAS_DEMO = DEMO && SCENE !== null;
-  if (DEMO) {
+  if (firstStartDemo) {
+    data = { ...data, sources: DEMO_SOURCES };
+  } else if (DEMO) {
     data = { ...data, sources: SCENE === "fleet" ? DEMO_FLEET.map((m) => ({ id: m.id, name: m.name, url: `http://demo.local/${m.id}` })) : NAS_DEMO ? [{ id: "nas", name: "NAS", url: "http://demo.local/nas" }] : [{ id: "ha", name: "HA", url: "http://demo.local/home-assistant" }] };
   }
   const history = new MetricHistory();
@@ -85,25 +103,77 @@ async function boot(): Promise<void> {
   let pageReady = false;
   /** createStartUpPageContainer runs once; afterwards a page is only ever rebuilt. */
   let created = false;
+  /** Key of the side menu the page on the glasses carries; a different one (language) needs a rebuild. */
+  let pageMenuKey = "";
   let locale: Locale = await resolveLocale(bridge);
 
   // The actions screen is a separate mode. Monitoring is something you glance
   // at; triggering something in your house is deliberate, so a stray tap on the
   // dashboard can never run anything.
-  let screen: "status" | "actions" | "detail" = "status";
+  let screen: "status" | "actions" | "detail" | "help" = "status";
+  /** Where 2× on the help page goes back to. */
+  let helpFrom: "status" | "actions" | "detail" = "status";
   /** The machine whose detail page is open, and which page of it. */
   let detailId: string | null = null;
   let detailIndex = 0;
   let actionCursor = 0;
   let pendingActionId: string | null = null;
+  /** An armed action lapses after ARM_MS without the confirming tap (QIS v1). */
+  let armTimer: ReturnType<typeof setTimeout> | null = null;
+  const disarm = (): void => {
+    if (armTimer !== null) clearTimeout(armTimer);
+    armTimer = null;
+    pendingActionId = null;
+  };
+  const arm = (id: string): void => {
+    disarm();
+    pendingActionId = id;
+    armTimer = setTimeout(() => {
+      armTimer = null;
+      if (pendingActionId === null) return;
+      pendingActionId = null;
+      void draw();
+    }, ARM_MS);
+  };
+  /** "Seen" (acknowledging) is armed too: a first tap (overview) or hold (details) asks, a second tap within ARM_MS does it. */
+  let ackArmedUntil = 0;
+  let ackArmedAt = 0;
+  let ackTimer: ReturnType<typeof setTimeout> | null = null;
+  const ackArmed = (): boolean => ackArmedUntil > Date.now();
+  const disarmAck = (): void => {
+    if (ackTimer !== null) clearTimeout(ackTimer);
+    ackTimer = null;
+    ackArmedUntil = 0;
+  };
+  const armAck = (): void => {
+    disarmAck();
+    ackArmedAt = Date.now();
+    ackArmedUntil = ackArmedAt + ARM_MS;
+    ackTimer = setTimeout(() => {
+      ackTimer = null;
+      ackArmedUntil = 0;
+      void draw();
+    }, ARM_MS);
+  };
+  /** Off while its clicks do not arrive on the real glasses (SIDE_MENU, step log 15.10.2026): the pages carry no menu. */
+  const menuSpec = (): MenuSpec => !SIDE_MENU ? { key: "none", items: [] } : ({
+    key: `menu:${locale}`,
+    items: [
+      { id: MENU_HELP, label: t(locale, "g.menuHelp") },
+      { id: MENU_ACTIONS, label: t(locale, "g.menuActions") },
+      { id: MENU_RELOAD, label: t(locale, "g.menuReload") },
+    ],
+  });
   let actionBusy = false;
   let actionResult: { label: string; ok: boolean } | null = null;
   /** Left through the system: no polling, no drawing until the app is back. */
   let backgrounded = false;
+  /** The phone page; its network tab follows every poll. */
+  let phone: PhoneUi | null = null;
 
   // Back where the user was before a restart. The actions screen is never restored: running
   // something in the house always starts from a deliberate hold.
-  if (!DEMO) {
+  if (!demo) {
     const ui = parseUi(await bridge.getLocalStorage(UI_KEY).catch(() => "") ?? "");
     fleetCursor = ui.fleetCursor ?? 0;
     cursor = ui.cursor ?? 0;
@@ -116,7 +186,7 @@ async function boot(): Promise<void> {
   }
   let savedUi = "";
   const saveUi = (): void => {
-    if (DEMO) return;
+    if (demo) return;
     const ui: SavedUi = { screen: screen === "detail" ? "detail" : "status", fleetCursor, cursor, sparkIndex, detailId, detailIndex };
     const json = JSON.stringify(ui);
     if (json === savedUi) return;
@@ -170,7 +240,7 @@ async function boot(): Promise<void> {
       detailIndex = page.page;
       const sign = signState([detailSource], now);
       return {
-        view: page.view,
+        view: ackArmed() ? { ...page.view, footer: armedFooter(locale, t(locale, "g.w.seen")) } : page.view,
         layout: "detail",
         frames: {
           sign: signFrame(sign, now),
@@ -180,6 +250,9 @@ async function boot(): Promise<void> {
       };
     }
     if (screen === "detail") screen = "status";
+    if (screen === "help") {
+      return { view: buildHelpView(locale), layout: "list", frames: { sign: signFrame(signState(sources, now), 0), sparks: [] }, pulses: false };
+    }
     if (screen === "actions") {
       const view = buildActionsView(availableActions(sources), {
         cursor: actionCursor,
@@ -204,9 +277,11 @@ async function boot(): Promise<void> {
     }
     const focus = focusSeries(sources, now);
     const layout: Layout = focus ? "graph" : "list";
-    const view = buildView(sources, {
+    const built = buildView(sources, {
       cursor, locale, maxRows: BODY_ROWS[layout], ...(focus ? { focusName: focus.name } : {}),
+      ...(firstStartDemo ? { demo: true } : {}),
     }, now);
+    const view = ackArmed() ? { ...built, footer: armedFooter(locale, t(locale, "g.w.seen")) } : built;
     return {
       view,
       layout,
@@ -218,26 +293,30 @@ async function boot(): Promise<void> {
     };
   };
 
-  const draw = async (): Promise<void> => {
+  const drawOnce = async (): Promise<void> => {
     if (closed || backgrounded) return;
     const { view, layout, frames } = currentScene(Date.now());
     const pictures = layout === "fleet" ? frames.rows ?? [] : [frames.sign, ...frames.sparks];
     const key = pictures.map((frame) => (frame ? bitmapKey(frame) : "-")).join("|");
     if (pageReady && layout === lastLayout && sameView(lastView, view) && key === lastFrames) return;
 
+    const menu = menuSpec();
+    // The side menu travels with the page: a different one (language) means one rebuild.
+    if (pageReady && menu.key !== pageMenuKey) pageReady = false;
     let result;
     if (!pageReady) {
       // After the first creation a page is only rebuilt: a second create would be refused as invalid.
-      result = created ? await rebuildPage(bridge, view, layout, frames) : await createPage(bridge, view, layout, frames);
+      result = created ? await rebuildPage(bridge, view, layout, frames, menu) : await createPage(bridge, view, layout, frames, menu);
       if (result.ok) created = true;
     } else if (layout !== lastLayout) {
-      result = await rebuildPage(bridge, view, layout, frames);
+      result = await rebuildPage(bridge, view, layout, frames, menu);
     } else {
       result = await updatePage(bridge, view, layout, frames, lastView);
     }
     if (closed) return;
     if (result.ok) {
       pageReady = true;
+      pageMenuKey = menu.key;
       lastView = view;
       lastLayout = layout;
       lastFrames = key;
@@ -245,6 +324,25 @@ async function boot(): Promise<void> {
     }
     pageReady = false;
     console.warn("[statusglass] draw failed:", result.reason);
+  };
+
+  /**
+   * One page write at a time. A gesture, a poll answer and the tick all ask for redraws; two writes in
+   * flight compare against the same stale view, so a quick cancel could leave the armed footer behind.
+   * Requests made during a write collapse into one more pass with the newest state.
+   */
+  let drawing: Promise<void> | null = null;
+  let drawAgain = false;
+  const draw = (): Promise<void> => {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => {
+      try {
+        do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
+      } finally {
+        drawing = null;
+      }
+    })();
+    return drawing;
   };
 
   /**
@@ -276,6 +374,7 @@ async function boot(): Promise<void> {
     }
 
     void draw();
+    phone?.refreshNetwork();
 
     const delay = backoffMs(failures.get(id) ?? 0, data.pollSeconds * 1000);
     // An extra poll (after an action) must replace the scheduled one, not run
@@ -313,7 +412,7 @@ async function boot(): Promise<void> {
     if (!config) return;
 
     actionBusy = true;
-    pendingActionId = null;
+    disarm();
     actionResult = null;
     await draw();
 
@@ -358,7 +457,31 @@ async function boot(): Promise<void> {
     lastFrames = "";
     startTick();
     void draw();
-    if (!DEMO) startPolling();
+    if (!demo) startPolling();
+  };
+
+  /** An item of the glasses' side menu. Nothing here changes data. */
+  const onMenu = (itemId: number): void => {
+    if (actionBusy) return;
+    disarm();
+    disarmAck();
+    actionResult = null;
+    if (itemId === MENU_HELP) {
+      if (screen !== "help") {
+        helpFrom = screen === "actions" || screen === "detail" ? screen : "status";
+        screen = "help";
+      }
+    } else if (itemId === MENU_ACTIONS) {
+      screen = "actions";
+      detailId = null;
+      actionCursor = 0;
+    } else if (itemId === MENU_RELOAD) {
+      if (!demo) startPolling();
+    } else {
+      return;
+    }
+    saveUi();
+    void draw();
   };
 
   bridge.onEvenHubEvent((event) => {
@@ -367,6 +490,13 @@ async function boot(): Promise<void> {
     if (lifecycle === "foreground") { comeBack(); return; }
     if (lifecycle === "background") { goBackground(); return; }
     if (lifecycle === "exit") { goBackground(); closed = true; return; }
+    // QIS v1.2: the glasses' side menu holds help, the actions and refresh. A menu click never runs anything.
+    const menuId = menuItemIdFromEvent(event);
+    if (menuId !== null) {
+      if (backgrounded) { comeBack(); return; }
+      onMenu(menuId);
+      return;
+    }
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
@@ -374,16 +504,44 @@ async function boot(): Promise<void> {
 
     const sources = [...statuses.values()];
 
+    if (screen === "help") {
+      // Help is a subpage: 2× goes back to where it was opened from, everything else is ignored.
+      if (gesture.gesture !== "doubleClick") return;
+      screen = helpFrom;
+      void draw();
+      return;
+    }
+
+    // A pending "seen" is cancelled by anything but its confirming tap. The release of the hold that
+    // armed it is not a cancellation; 2× and a second hold only cancel (never leave, never re-arm);
+    // a swipe cancels and still moves.
+    if (ackArmed() && screen !== "actions") {
+      if (gesture.gesture === "longPressRelease") return;
+      if (gesture.gesture !== "click") {
+        disarmAck();
+        if (gesture.gesture === "doubleClick" || gesture.gesture === "longPress") { void draw(); return; }
+      }
+    }
+
     if (screen === "actions") {
       const actions = availableActions(sources);
+      const entries = actions.length + MENU_EXTRAS.length;
       switch (gesture.gesture) {
         case "click": {
+          if (actionBusy) break;
           const entry = actions[actionCursor];
-          if (!entry || actionBusy) break;
-          // Every action needs a second tap (a source's "confirm" only adds the "!" mark):
-          // switching something in the house is never one stray tap away.
+          if (!entry) {
+            // Past the actions: refresh is harmless, one tap runs it.
+            const extra = MENU_EXTRAS[actionCursor - actions.length];
+            actionResult = null;
+            if (extra === "help") { helpFrom = "actions"; screen = "help"; }
+            else if (extra === "reload" && !demo) startPolling();
+            break;
+          }
+          // Every action is armed first (a source's "confirm" only adds the "!" mark): a second
+          // single tap within ARM_MS runs it. Switching something in the house is never one tap away.
           if (pendingActionId !== entry.action.id) {
-            pendingActionId = entry.action.id;
+            arm(entry.action.id);
             actionResult = null;
             break;
           }
@@ -392,23 +550,22 @@ async function boot(): Promise<void> {
         }
         case "scrollUp":
         case "scrollDown": {
-          // Moving the selection cancels a pending confirmation, so the tap
-          // that follows can never run the previously highlighted action.
-          pendingActionId = null;
+          // A swipe only moves - and cancels an armed action, so the tap that follows can
+          // never run the previously highlighted one.
+          disarm();
           actionResult = null;
           const delta = gesture.gesture === "scrollDown" ? 1 : -1;
-          actionCursor = Math.min(Math.max(0, actions.length - 1), Math.max(0, actionCursor + delta));
+          actionCursor = Math.min(entries - 1, Math.max(0, actionCursor + delta));
           break;
         }
-        case "longPress":
+        case "doubleClick":
+          // 2× is "back one level" - never a way to leave from the menu.
+          disarm();
           screen = "status";
-          pendingActionId = null;
           actionResult = null;
           break;
-        case "doubleClick":
-          void requestExit();
-          return;
         default:
+          // Hold does nothing here: it must never run, cancel or leave anything.
           return;
       }
       saveUi();
@@ -420,6 +577,18 @@ async function boot(): Promise<void> {
       const source = detailId !== null ? statuses.get(detailId) : undefined;
       switch (gesture.gesture) {
         case "click":
+          if (ackArmed()) {
+            // The confirming tap (not the tail of the hold): every open problem of this machine stops being the headline.
+            if (Date.now() - ackArmedAt < ACK_SETTLE_MS) return;
+            disarmAck();
+            if (!source) break;
+            let next = source;
+            for (const problem of problems([source], Date.now())) next = acknowledge(next, problem.metric.id);
+            statuses.set(source.id, next);
+            break;
+          }
+          detailIndex += 1;
+          break;
         case "scrollDown":
           detailIndex += 1;
           break;
@@ -427,11 +596,10 @@ async function boot(): Promise<void> {
           detailIndex -= 1;
           break;
         case "longPress": {
-          // Hold = "I have seen it": every open problem of this machine stops being the headline.
+          // Hold = "I have seen it", but it only asks: a tap within ARM_MS confirms (QIS v1.2).
           if (!source) break;
-          let next = source;
-          for (const problem of problems([source], Date.now())) next = acknowledge(next, problem.metric.id);
-          statuses.set(source.id, next);
+          if (problems([source], Date.now()).every((problem) => problem.acknowledged)) break;
+          armAck();
           break;
         }
         case "doubleClick":
@@ -465,8 +633,11 @@ async function boot(): Promise<void> {
         }
         // Acknowledging says "I know" — it never hides the problem, it just
         // stops it being the headline.
+        // QIS v1.2: first tap asks (footer: Nochmal tippen = gesehen), a second one within ARM_MS does it.
         const problem = list[cursor];
-        if (!problem) break;
+        if (!problem || problem.acknowledged) break;
+        if (!ackArmed()) { armAck(); break; }
+        disarmAck();
         const status = statuses.get(problem.sourceId);
         if (status) statuses.set(problem.sourceId, acknowledge(status, problem.metric.id));
         break;
@@ -483,16 +654,11 @@ async function boot(): Promise<void> {
         else cursor = Math.min(Math.max(0, list.length - 1), cursor + 1);
         break;
       case "longPress":
-        // Hold opens the actions screen when anything is on offer; otherwise
-        // it keeps its old meaning of refreshing everything.
-        if (availableActions(sources).length > 0) {
-          screen = "actions";
-          actionCursor = 0;
-          pendingActionId = null;
-          actionResult = null;
-        } else {
-          startPolling();
-        }
+        // Hold opens the menu: the actions on offer, refresh and the help row.
+        screen = "actions";
+        actionCursor = 0;
+        disarm();
+        actionResult = null;
         break;
       case "doubleClick":
         void requestExit();
@@ -512,7 +678,8 @@ async function boot(): Promise<void> {
       if (!status) continue;
       const seen = machine.offlineMinutes > 0 ? now - machine.offlineMinutes * 60_000 : now;
       for (let step = 0; step < 12; step += 1) history.record(machine.id, demoFleetReport(machine, step));
-      const fresh = applyReport(status, demoFleetReport(machine, 11), seen);
+      const report = demoFleetReport(machine, 11);
+      const fresh = applyReport(status, machine.id === "spark" ? { ...report, network: demoNetwork(now) } : report, seen);
       statuses.set(machine.id, machine.offlineMinutes > 0 ? applyError(fresh, "unreachable", now) : fresh);
     }
   } else if (NAS_DEMO) {
@@ -522,7 +689,7 @@ async function boot(): Promise<void> {
       for (let step = 0; step < 12; step += 1) history.record("nas", demoNasReport(SCENE, step));
       statuses.set("nas", applyReport(nas, demoNasReport(SCENE, 11), now));
     }
-  } else if (DEMO) {
+  } else if (demo) {
     const now = Date.now();
     const homeAssistant = statuses.get("ha");
     if (homeAssistant) statuses.set("ha", applyReport(homeAssistant, {
@@ -539,7 +706,7 @@ async function boot(): Promise<void> {
     }, now));
   }
   await draw();
-  if (!DEMO) startPolling();
+  if (!demo) startPolling();
 
   bridge.onDeviceStatusChanged((status) => {
     if (status?.connectType === "connected" && !closed) {
@@ -562,21 +729,57 @@ async function boot(): Promise<void> {
   };
   startTick();
 
-  mountPhoneUi({
+  /** Marks a device known on its source and shows it at once; the next poll confirms it. */
+  const markKnown = async (sourceId: string, mac: string): Promise<string | null> => {
+    const config = data.sources.find((s) => s.id === sourceId);
+    if (!config) return describeIssue("failed", locale);
+    if (!demo) {
+      const outcome = await markDeviceKnown(config.url, mac, true, {
+        ...(config.token ? { token: config.token } : {}),
+      });
+      if (!outcome.ok) return describeIssue(outcome.error ?? "failed", locale, { detail: true });
+    }
+    const status = statuses.get(sourceId);
+    const report = status?.report;
+    if (status && report?.network) {
+      const devices = report.network.devices.map((d) => (d.mac === mac ? { ...d, known: true, new: false } : d));
+      const network = { ...report.network, devices, new: devices.filter((d) => d.new).length };
+      statuses.set(sourceId, { ...status, report: { ...report, network } });
+    }
+    void draw();
+    if (!demo && !closed && !backgrounded) void pollSource(sourceId);
+    return null;
+  };
+
+  phone = mountPhoneUi({
     getLocale: () => locale,
+    getNetworks: () => data.sources.flatMap((config): PhoneNetwork[] => {
+      const network = statuses.get(config.id)?.report?.network;
+      return network ? [{ sourceId: config.id, name: config.name, network }] : [];
+    }),
+    markKnown,
     setLocale: (next) => {
       locale = next;
       rememberLocale(bridge, next);
       // The glasses follow straight away, not on the next poll.
       void draw();
     },
-    getData: () => data,
+    // The phone always works on what is stored, never on the first-start sample source.
+    getData: () => (firstStartDemo ? stored : data),
     setData: async (next) => {
-      data = next;
+      stored = next;
+      // Other settings changed while there is still no source: the sample source stays.
+      data = firstStartDemo && next.sources.length === 0 ? { ...next, sources: DEMO_SOURCES } : next;
       await save(bridge, next);
+      if (firstStartDemo && next.sources.length > 0) {
+        // The first real source ends the demo: sample data goes, polling starts.
+        firstStartDemo = false;
+        demo = false;
+        screen = "status";
+      }
       syncSources();
       cursor = 0;
-      startPolling();
+      if (!demo) startPolling();
       await draw();
     },
   });

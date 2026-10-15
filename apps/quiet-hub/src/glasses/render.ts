@@ -40,11 +40,16 @@ interface ContainerSpec {
   readonly height: number;
 }
 
-const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
+const CONTAINER: Readonly<Record<"header" | "body" | "footer" | "side", ContainerSpec>> = {
   header: { id: 1, name: "header", y: 0, height: 32 },
   body: { id: 2, name: "body", y: 36, height: 214 },
   footer: { id: 3, name: "footer", y: 252, height: 34 },
+  // Split page (Zuhause): the right column next to the list, same height as the body.
+  side: { id: 5, name: "side", y: 36, height: 214 },
 };
+
+/** Where the right column of a split page starts (list ~30 characters, state ~21). */
+export const SPLIT_X = 336;
 
 export interface RenderResult {
   readonly ok: boolean;
@@ -62,14 +67,16 @@ export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefi
 
 function pageParts(view: ScreenView, menu: MenuSpec | null) {
   const menuObject = buildMenu(menu);
+  const split = view.side !== undefined;
   return {
-    containerTotalNum: 4,
+    containerTotalNum: split ? 5 : 4,
     textObject: [
       // The header leaves the top-right corner to the face; the body runs full width below it.
       text(CONTAINER.header, view.header, 1, false, ICON_WIDTH, brightnessOf(view, CONTAINER.header)),
-      // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join(NL), 2, true, 0, brightnessOf(view, CONTAINER.body)),
+      // Exactly one container may capture input; the body owns it (on a split page: the list).
+      text(CONTAINER.body, view.body.join(NL), 2, true, split ? SCREEN_WIDTH - SPLIT_X : 0, brightnessOf(view, CONTAINER.body)),
       text(CONTAINER.footer, view.footer, 3, false, 0, brightnessOf(view, CONTAINER.footer)),
+      ...(split ? [text(CONTAINER.side, (view.side ?? []).join(NL), 5, false, 0, brightnessOf(view, CONTAINER.side), SPLIT_X)] : []),
     ],
     imageObject: [new ImageContainerProperty({
       containerID: 4,
@@ -104,23 +111,43 @@ const sentBrightness = new Map<number, number>();
 function rememberPageBrightness(view: ScreenView): void {
   sentBrightness.clear();
   for (const spec of Object.values(CONTAINER)) sentBrightness.set(spec.id, brightnessOf(view, spec));
+  pageSplit = view.side !== undefined;
 }
 
-function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, rightGap = 0, brightness = MAX_TEXT_BRIGHTNESS): TextContainerProperty {
+/** The page on the glasses has the right column (set on every create / rebuild). */
+let pageSplit = false;
+
+function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean, rightGap = 0, brightness = MAX_TEXT_BRIGHTNESS, x = 0): TextContainerProperty {
   return new TextContainerProperty({
     // Omitted = device default 4; only a dimmed container carries the field.
     ...(brightness === MAX_TEXT_BRIGHTNESS ? {} : { textColor: brightness }),
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: 0,
+    xPosition: x,
     yPosition: spec.y,
-    width: SCREEN_WIDTH - rightGap,
+    width: SCREEN_WIDTH - rightGap - x,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
     isEventCapture: captureEvents ? 1 : 0,
     content: content || " ",
   });
+}
+
+/**
+ * Every call into the glasses is bounded. Draws run one after another, so one
+ * answer that never comes (a Bluetooth write lost on the way) used to freeze
+ * the display for good on its last page. A call that times out counts as
+ * failed: the caller marks the page broken and the next draw rewrites it.
+ */
+export const PAGE_CALL_MS = 8_000;
+export const TEXT_CALL_MS = 5_000;
+export const IMAGE_CALL_MS = 10_000;
+
+function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** Creates the startup page. The caller must invoke this exactly once. */
@@ -131,8 +158,8 @@ export async function createPage(bridge: EvenAppBridge, view: ScreenView, icon: 
     // Measured on real glasses (13.10.2026): the first page of a bridge is one
     // rebuild (result ignored) and then exactly one create. The rebuild also
     // revives a page that survived a WebView reload, where a second create fails.
-    const rebuilt = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu))).catch(() => false);
-    const result = await bridge.createStartUpPageContainer(page);
+    const rebuilt = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu))), PAGE_CALL_MS, "rebuild").catch(() => false);
+    const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
     if (result === StartUpPageCreateResult.success || rebuilt === true) { renderStats.creates += 1; lastIconKey = ""; rememberPageBrightness(view); return updatePixel(bridge, icon); }
     return { ok: false, reason: describeCreateResult(result) };
   } catch (error) {
@@ -166,7 +193,7 @@ function guarded(specId: number, content: string): { content: string; contentLen
 export async function rebuildPage(bridge: EvenAppBridge, view: ScreenView, icon: PixelIcon, menu: MenuSpec | null): Promise<RenderResult> {
   try {
     renderStats.rebuilds += 1;
-    const ok = await bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu)));
+    const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer(pageParts(view, menu))), PAGE_CALL_MS, "rebuild");
     // A refused rebuild leaves the old page (and its text lengths) in place.
     if (!ok) return { ok: false, reason: "rebuild refused" };
     lastIconKey = "";
@@ -191,6 +218,8 @@ export async function updatePage(bridge: EvenAppBridge, view: ScreenView, icon: 
     [CONTAINER.body, view.body.join(NL), previous?.body.join(NL)],
     [CONTAINER.footer, view.footer, previous?.footer],
   ];
+  // Only a page built with the right column has it; an empty column is blanked, never left stale.
+  if (pageSplit) updates.push([CONTAINER.side, (view.side ?? []).join(NL), previous === null ? undefined : (previous.side ?? []).join(NL)]);
 
   try {
     for (const [spec, content, before] of updates) {
@@ -199,17 +228,21 @@ export async function updatePage(bridge: EvenAppBridge, view: ScreenView, icon: 
       const brightnessChanged = previous === null || (sentBrightness.get(spec.id) ?? MAX_TEXT_BRIGHTNESS) !== brightness;
       if (before !== undefined && before === content && !brightnessChanged) continue;
       renderStats.upgrades += 1;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
         ...(brightnessChanged ? { textColor: brightness } : {}),
-      }));
+      })), TEXT_CALL_MS, "text " + spec.name);
       if (brightnessChanged) sentBrightness.set(spec.id, brightness);
     }
     if (iconKey(icon) === lastIconKey) return { ok: true };
     return updatePixel(bridge, icon);
   } catch (error) {
+    // Unknown what the glasses show now: write every box and the icon again next time.
+    sentLength.clear();
+    sentBrightness.clear();
+    lastIconKey = "";
     return { ok: false, reason: errorMessage(error) };
   }
 }
@@ -218,11 +251,11 @@ async function updatePixel(bridge: EvenAppBridge, icon: PixelIcon): Promise<Rend
   try {
     const imageData = await renderPixelIcon(icon);
     renderStats.images += 1;
-    const result = await bridge.updateImageRawData(new ImageRawDataUpdate({
+    const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({
       containerID: 4,
       containerName: "pixel-icon",
       imageData,
-    }));
+    })), IMAGE_CALL_MS, "image pixel-icon");
     if (result === ImageRawDataUpdateResult.success) lastIconKey = iconKey(icon);
     return result === ImageRawDataUpdateResult.success
       ? { ok: true }

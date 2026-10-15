@@ -1,14 +1,18 @@
 import {
   CreateStartUpPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import type { Frames, Layout, PageView } from "./views";
-import { ImageLink, imageContainer, type ImageSlot } from "./images";
-import { ICON_HEIGHT, ICON_WIDTH, PANEL_HEIGHT, PANEL_WIDTH, PREVIEW_HEIGHT, PREVIEW_WIDTH, RING_SIZE } from "./charts";
+import { SIDE_MENU, type Frames, type Layout, type PageView } from "./views";
+import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, type ImageSlot } from "./images";
+
+export { PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS, bounded };
+import { CLOUD_CHART_HEIGHT, CLOUD_CHART_WIDTH, ICON_HEIGHT, ICON_WIDTH, PANEL_HEIGHT, PANEL_WIDTH, PREVIEW_HEIGHT, PREVIEW_WIDTH, RING_SIZE } from "./charts";
 
 /**
  * Puts a page view onto the G2 (576 x 288).
@@ -20,6 +24,7 @@ import { ICON_HEIGHT, ICON_WIDTH, PANEL_HEIGHT, PANEL_WIDTH, PREVIEW_HEIGHT, PRE
  *  - overview: exposure ring 144 x 144 at the left, text column beside it;
  *  - guiding:  RMS panel and HFR panel (288 x 106 each) stacked at the left;
  *  - image:    the newest frame 288 x 144 at the left;
+ *  - weather:  the cloud chart for the next 12 h, 288 x 144 at the left;
  *  - plain:    equipment, control, setup and error pages.
  *
  * At most four image containers per page (sign + up to two). The first page
@@ -49,6 +54,7 @@ const BODY: Readonly<Record<Layout, TextSpec>> = {
   overview: { id: 2, name: "body", x: RING_SIZE + 8, y: 36, width: SCREEN_WIDTH - RING_SIZE - 8, height: 214 },
   guiding: { id: 2, name: "body", x: PANEL_WIDTH + 8, y: 36, width: SCREEN_WIDTH - PANEL_WIDTH - 8, height: 214 },
   image: { id: 2, name: "body", x: PREVIEW_WIDTH + 8, y: 36, width: SCREEN_WIDTH - PREVIEW_WIDTH - 8, height: 214 },
+  weather: { id: 2, name: "body", x: CLOUD_CHART_WIDTH + 8, y: 36, width: SCREEN_WIDTH - CLOUD_CHART_WIDTH - 8, height: 214 },
 };
 
 export const ICON: ImageSlot = { id: 4, name: "sign", x: SCREEN_WIDTH - ICON_WIDTH, y: 1, width: ICON_WIDTH, height: ICON_HEIGHT, z: 4 };
@@ -56,12 +62,14 @@ export const RING: ImageSlot = { id: 5, name: "ring", x: 0, y: 36, width: RING_S
 export const PANEL_A: ImageSlot = { id: 5, name: "rms", x: 0, y: 36, width: PANEL_WIDTH, height: PANEL_HEIGHT, z: 5 };
 export const PANEL_B: ImageSlot = { id: 6, name: "hfr", x: 0, y: 36 + PANEL_HEIGHT + 2, width: PANEL_WIDTH, height: PANEL_HEIGHT, z: 6 };
 export const PREVIEW: ImageSlot = { id: 5, name: "frame", x: 0, y: 36, width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, z: 5 };
+export const CHART: ImageSlot = { id: 5, name: "clouds", x: 0, y: 36, width: CLOUD_CHART_WIDTH, height: CLOUD_CHART_HEIGHT, z: 5 };
 
 export function slotsFor(layout: Layout): ImageSlot[] {
   switch (layout) {
     case "overview": return [ICON, RING];
     case "guiding": return [ICON, PANEL_A, PANEL_B];
     case "image": return [ICON, PREVIEW];
+    case "weather": return [ICON, CHART];
     case "plain": return [ICON];
   }
 }
@@ -94,6 +102,22 @@ function text(spec: TextSpec, content: string, z: number, capture: boolean): Tex
   });
 }
 
+/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+export interface MenuItemSpec { readonly id: number; readonly label: string }
+export interface MenuSpec {
+  /** Changes exactly when the glasses need a different menu (=> one rebuild). */
+  readonly key: string;
+  readonly items: readonly MenuItemSpec[];
+}
+/** The side menu every page carries; set before a page is built. */
+let pageMenu: MenuSpec | null = null;
+export function setPageMenu(menu: MenuSpec | null): void { pageMenu = menu; }
+/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel and Quiet Hub. */
+export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
+  if (!SIDE_MENU || menu === null || menu.items.length === 0) return undefined;
+  return new MenuContainerProperty({ menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })) });
+}
+
 export function buildPage(view: PageView): CreateStartUpPageContainer {
   const texts = [
     text(HEADER, view.header, 1, false),
@@ -102,7 +126,8 @@ export function buildPage(view: PageView): CreateStartUpPageContainer {
     text(FOOTER, view.footer, 3, false),
   ];
   const images = slotsFor(view.layout).map(imageContainer);
-  return new CreateStartUpPageContainer({ containerTotalNum: texts.length + images.length, textObject: texts, imageObject: images });
+  const menuObject = buildMenu(pageMenu);
+  return new CreateStartUpPageContainer({ ...(menuObject === undefined ? {} : { menuObject }), containerTotalNum: texts.length + images.length, textObject: texts, imageObject: images });
 }
 
 const started = new WeakSet<EvenAppBridge>();
@@ -128,16 +153,16 @@ export async function installPage(bridge: EvenAppBridge, view: PageView, frames:
   try {
     if (!started.has(bridge)) {
       try {
-        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       } catch {
         // Expected before the first creation; it registers the input route on real glasses.
       }
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
       started.add(bridge);
       renderStats.creates += 1;
     } else {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       if (!ok) return { ok: false, reason: "rebuild refused" };
       renderStats.rebuilds += 1;
     }
@@ -158,7 +183,7 @@ export async function updatePage(bridge: EvenAppBridge, view: PageView, frames: 
     for (const [spec, content, before] of updates) {
       if (before !== undefined && before === content) continue;
       renderStats.upgrades += 1;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: spec.id, containerName: spec.name, ...guarded(spec.id, content) }));
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: spec.id, containerName: spec.name, ...guarded(spec.id, content) })), TEXT_CALL_MS, "text " + spec.name);
     }
     return await pushImages(bridge, view.layout, frames, preview);
   } catch (error) {
@@ -181,6 +206,10 @@ async function pushImages(bridge: EvenAppBridge, layout: Layout, frames: Frames,
         const r = await link.push(bridge, slot, frame);
         if (!r.ok) return { ok: false, reason: r.reason ?? "panel failed" };
       }
+    }
+    if (layout === "weather" && frames.chart) {
+      const r = await link.push(bridge, CHART, frames.chart);
+      if (!r.ok) return { ok: false, reason: r.reason ?? "chart failed" };
     }
     if (layout === "image" && preview) {
       const r = await link.pushBytes(bridge, PREVIEW, "preview:" + preview.key, () => preview.bytes);

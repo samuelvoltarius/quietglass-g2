@@ -45,7 +45,7 @@ describe("German on the glasses", () => {
     const p = await progress();
     expect(buildView(p, { ...options, rerouting: true, locale: "de" }).body).toEqual(["Abseits der Route", "Neue Route…"]);
     expect(buildView(p, { ...options, mock: true, mode: "driving", locale: "de" }).footer).toContain("DEMO");
-    expect(buildView(null, { ...options, error: "Kein GPS — geh ins Freie", locale: "de" }).footer).toBe("Tippen = nochmal · Halten = Zielliste");
+    expect(buildView(null, { ...options, error: "Kein GPS — geh ins Freie", locale: "de" }).footer).toBe("Tippen = nochmal · 2× = Ende");
   });
 
   it("writes distances the German way", () => {
@@ -93,14 +93,17 @@ describe("overview layout", () => {
     expect(page.imageObject?.map((image) => image.containerName)).toEqual(["map-nw", "map-ne", "map-sw", "map-se"]);
     const body = page.textObject?.find((text) => text.containerName === "body");
     expect(body).toMatchObject({ xPosition: 0, yPosition: 0 });
-    expect(body?.isEventCapture).toBe(1);
+    expect(body?.isEventCapture).toBe(0);
     // Exactly one container captures input, as the SDK requires.
     expect(page.textObject?.filter((text) => text.isEventCapture === 1)).toHaveLength(1);
     // The text sits above the images.
     const z = [...(page.textObject ?? []), ...(page.imageObject ?? [])].map((c) => c.zOrderIndex);
     expect(new Set(z).size).toBe(z.length);
     expect(body!.zOrderIndex!).toBeGreaterThan(Math.max(...images.map((image) => image.zOrderIndex!)));
-    expect(page.containerTotalNum).toBe(5);
+    // Map text and the speed line on its plate at the bottom left.
+    expect(page.containerTotalNum).toBe(7);
+    const speed = page.textObject?.find((text) => text.containerName === "speed");
+    expect(speed).toMatchObject({ xPosition: 0, yPosition: 248, width: 200, height: 40 });
     expect(validateEvenHubPageContainer(page).valid).toBe(true);
   });
 

@@ -6,8 +6,8 @@
 
 /** Less audio than this is a mis-press (16 kHz, 16 bit, mono = 32 bytes per ms): 0.4 s. */
 export const MIN_VOICE_BYTES = 32 * 400;
-/** The hard stop of a recording whose release event never arrives. */
-export const MAX_VOICE_MS = 8000;
+/** The hard stop of a recording whose release event never arrives (a guard, not a limit for speaking). */
+export const MAX_VOICE_MS = 30_000;
 
 /** Set at build time in a private build: `VITE_STT_URL=https://… npm run build`. */
 const BUILD_STT_URL: string | undefined = import.meta.env.VITE_STT_URL as string | undefined;

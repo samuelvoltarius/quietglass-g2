@@ -3,6 +3,7 @@ import type { PrinterStatus } from "../printer/status";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { t } from "../messages";
 import { BUILD_URL, maskToken, type Settings } from "../storage/persist";
+import { VERSION } from "../version";
 import { escapeHtml } from "./html";
 
 /**
@@ -32,17 +33,50 @@ export interface PhoneUi {
 
 const DRAFT_FIELDS = ["url", "token"] as const;
 
+/** The page is split into tabs instead of one long column. */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "printer", icon: "🖨️", key: "p.tabPrinter" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "bridge", icon: "🔌", key: "p.tabBridge" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.klipper-glance.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "printer"; } catch { return "printer"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   const root = document.getElementById("app");
   if (!root) return { refresh: () => undefined };
 
   let notice = "";
   let locale: Locale = ports.locale?.() ?? getLocale();
+  let tab = readTab();
 
   const render = (): void => {
     const typed = DRAFT_FIELDS.map((id) => root.querySelector<HTMLInputElement>("#" + id)?.value);
     root.innerHTML = template(ports.getSettings(), ports.connection(), ports.status(), locale, notice);
     notice = "";
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "printer";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
     DRAFT_FIELDS.forEach((id, index) => {
       const field = root.querySelector<HTMLInputElement>("#" + id);
       const value = typed[index];
@@ -114,25 +148,37 @@ function template(settings: Settings, connection: PhoneConnection, status: Print
   const warnHttp = shown && isPlainHttp(shown) && !isLoopback(shown);
 
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>Klipper Glance</h1>
-    <p class="hint">${L("p.lede")}</p>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>Klipper Glance</h1>
+    </div>
+    <span class="chip${connection.kind === "ok" ? " on" : ""}">${L("p.chip." + connection.kind)}</span>
   </header>
 
   ${notice ? `<p class="notice">${escapeHtml(notice)}</p>` : ""}
 
-  <section class="card">
-    ${languageSelect(locale)}
-  </section>
-
+  <div class="tab" data-tab="printer">
   <section class="card">
     <h2>${L("p.status")}</h2>
+    <p class="hint">${L("p.lede")}</p>
     <p id="status">${line}</p>
     ${connection.kind === "demo" ? `<p class="hint">${L("p.status.demo")}</p>` : ""}
     ${control}
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
+  <section class="card">
+    <label class="check"><input id="invert" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+  </section>
+
+  <section class="card">
+    ${languageSelect(locale)}
+  </section>
+  </div>
+
+  <div class="tab" data-tab="bridge">
   <section class="card">
     <h2>${L("p.bridge")}</h2>
     ${shown ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
@@ -145,17 +191,27 @@ function template(settings: Settings, connection: PhoneConnection, status: Print
     <p class="hint">${L("p.tokenNow", { state: maskToken(settings.token, locale) })}</p>
     <button id="save" type="button">${L("p.save")}</button>
     ${settings.token ? `<button id="clear-token" type="button" class="secondary">${L("p.tokenClear")}</button>` : ""}
-    <label class="check"><input id="invert" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
   </section>
+  </div>
 
+  <div class="tab" data-tab="more">
   <section class="card">
     <h2>${L("p.controls")}</h2>
     <table class="keys">
       <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
       <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
+      <tr><td>${L("p.c.hold")}</td><td>${L("p.c.hold.d")}</td></tr>
       <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
     </table>
   </section>
 
-  <footer class="hint">${L("p.privacy")}</footer>`;
+  <section class="card">
+    <p><strong>Klipper Glance</strong> · ${L("p.moreVersion")} ${VERSION}</p>
+    <p class="hint">${L("p.privacy")}</p>
+  </section>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${L(key)}</button>`).join("")}
+  </nav>`;
 }

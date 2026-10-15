@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.7.3] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks aus dem Menü kommen auf der Brille nie an, und Halten öffnet bei einer Seite mit Menü nur das Menü. Die Seiten (Wetter, Radar, Cockpit) tragen kein `menuObject` mehr; der Menü-Code und der `menuItemClickEvent`-Handler bleiben für später.
+- Halten zeigt wieder die Hilfe (2× geht zurück). Fußzeile wieder `Tippen = neu · Wischen = Ansicht · Halten = Hilfe · 2× = Ende`.
+- Aktualisieren: Tippen lädt neu (wie bisher). Wischrichtung umkehren: nur am Handy (Reiter Brille), auf der Brille ohne Geste.
+
+## [0.7.1] — 2026-10-15
+
+### Behoben
+
+- Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben; jetzt hat jeder Aufruf an die Brille ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s), danach gilt der Aufruf als fehlgeschlagen und die Seite wird beim nächsten Zeichnen neu aufgebaut.
+
+## [0.7.0] — 2026-10-14
+
+### Geändert (QIS v1.2)
+
+- **Seitenmenü**: Halten öffnet jetzt das Menü der Brille (`menuObject` auf jeder Seite: Wetter, Radar, Cockpit; Klicks über `menuItemClickEvent`, wie Babel und Quiet Hub) mit **Hilfe**, **Aktualisieren** und **Wischen: normal / umgekehrt**. Der Schalter für die Wischrichtung kippt `invertScroll`; die Beschriftung nennt den Zustand, deshalb baut sich die Seite dabei einmal neu auf. Halten selbst öffnet die Hilfe nicht mehr; die Fußzeile sagt `Halten = Menü`.
+- Die Hilfe-Seite wird aus dem Menü geöffnet, 2× geht weiter zurück zur Ansicht. Ihre Zeile heißt `Halten = Menü (Hilfe, Wischen)`.
+- **Fehler ohne Zahlen auf der Brille**: ein gestörter Wetterdienst zeigt auf der Brille nur `Wetterdienst gestört.`; der Statuscode steht nur am Handy (`… (Code 503)`).
+- Handy-Tabs unverändert `Wetter · Ort · Brille · Mehr`: RainLens spricht mit keinem eigenen Server, daher bewusst kein Tab „Verbindung“ (v1.2 Nr. 6) und keine Demo-Hinweiszeile (v1.2 Nr. 7).
+- README: Bedienung auf Tippen/Wischen/Halten/2× umgestellt (kein „Doppeltippen“ mehr).
+- Tests: Menü auf jeder Seite samt Beschriftungen (höchstens 32 Byte in allen fünf Sprachen), Halten allein öffnet nichts, Menü-Hilfe, Menü-Wischschalter baut die Seite einmal neu auf, Menü-Aktualisieren lädt neu, keine Statuszahl auf der Brille.
+
+## [0.6.0] — 2026-10-14
+
+### Geändert
+
+- **Bedienung nach QIS v1** (Quietglass Interaction Standard, `docs/BEDIENSTANDARD.md`): Kopfzeile `RAINLENS · Ansicht · Ort` (Radar: `RAINLENS · RADAR  Ort  Zeit`), Fußzeile immer in der Reihenfolge Tippen → Wischen → Halten → 2× und mit `2× = Ende` bzw. `2× = zurück` am Schluss (gemeinsamer `footer()`-Helfer; ist die Zeile zu breit, entfällt zuerst der Wischen-Teil, dann das Halten – auf dem Radar bleibt die Quellenangabe stehen). Tippen lädt nur neu und Wischen wechselt nur die Ansicht (auch durch die Radarbilder): nichts auf der Brille löscht, stoppt oder sendet etwas, deshalb gibt es keine Bestätigungs-Geste. 2× fragt weiter nach dem Beenden der App.
+- **Hilfe-Seite**: Halten öffnet sie über jeder Ansicht (auch Radar und Cockpit), 2× geht zurück zur Ansicht; Tippen und Wischen tun dort nichts.
+- **Wischrichtung umkehren** (Handy, neuer Tab „Brille“): gilt für alle Ansichten und bleibt gespeichert. Bisher wurde die Einstellung in RainLens nicht beachtet.
+- Handy-Tabs: **Wetter · Ort · Brille · Mehr** (Wischrichtung, Bedienung und Böen-Warnung des Cockpits wandern in „Brille“). RainLens hat keinen eigenen Server, daher gibt es keinen Tab „Verbindung“; die Ortswahl bleibt unter „Ort“.
+- Fehler- und Hinweisseiten nennen den Zustand in der Kopfzeile (`RAINLENS · kein Standort`) und lassen das „Tippen = nochmal“ der Fußzeile.
+
+## [0.5.0] — 2026-10-13
+
+### Neu
+
+- **Cockpit-Ansicht** als letzte Ansicht im Wisch-Kreis: der ganze Bildschirm als vier Bild-Kacheln (2 × 2 à 288 × 144) mit echten Proportionalschriften in mehreren Größen.
+  - Links das Radar (privater Build, `VITE_RADAR=1`) in eigenem Ausschnitt mit Fadenkreuz für deinen Standort, gestricheltem Entfernungsring samt km-Angabe, Nordpfeil und Windrichtungs-Zeiger; darunter die Loop-Leiste (letzte Stunde durchgezogen, nächste Stunde gestrichelt mit dem Regen je Viertelstunde) und „HH:MM · Ort“. Ohne Radar (öffentlicher Build) ein großes Piktogramm des aktuellen Wetters.
+  - Rechts: Kopfzeile mit App-Name und Uhrzeit, darunter groß die Antwort auf „Wann regnet es?“ – „REGEN IN ~25 MIN“, „REGNET JETZT“, „TROCKEN BIS 18:00“, „TROCKEN“ (bei Schnee nach Wettercode „SCHNEE IN ~… MIN“ / „SCHNEIT JETZT“) – aus Open-Meteo `minutely_15=precipitation` (ab 0,1 mm je Viertelstunde = Regen, ohne Viertelstundenwerte aus den Stundenwerten). Dann kleine Beschriftung, großer Wert: TEMP, GEFÜHLT, FEUCHTE / HIMMEL, WIND, BÖEN / REGEN 2 H, WARNUNG.
+  - **Amtliche Warnungen für Österreich** von GeoSphere Austria (`warnungen.zamg.at`, öffentlich, CORS offen): höchste Stufe mit Art, z. B. „▲ STURM (gelb)“; außerhalb Österreichs oder ohne Verbindung „–“.
+  - **Böen-Warnung** (Handy, Tab „Mehr“, standardmäßig aus): ab der gewählten Stärke zeigt WARNUNG „▲ BÖEN 72“, wenn in der nächsten Stunde solche Böen erwartet werden.
+  - Tippen spielt den Radar-Loop einmal ab und kehrt zum Standbild zurück; Wischen wechselt die Ansicht, Doppeltippen beendet.
+  - Nur geänderte Kacheln gehen über Bluetooth: die Uhr kostet eine Kachel pro Minute, der Radar-Loop nur die linken zwei.
+- **Vollbild-Baukasten** `src/screen/` (zum Kopieren in andere Quietglass-Apps): 576 × 288-Graustufenbild, Aufteilung in vier Kacheln, Sender, der nur geänderte Kacheln schickt, Text über das Canvas der WebView (`fillText`, Alpha → Graustufe) mit Größen, Gewicht, links/rechts/zentriert und „…“ bei zu langem Text, 5 × 7-Pixelschrift als Ersatz (Tests ohne Canvas), Linien, gestrichelte Linien, Rechtecke, (gestrichelte) Kreise, Dreiecke, Pfeil, Fadenkreuz, PNG-Encoder ohne Canvas.
+- Vorschau: `node scripts/cockpit-preview.mjs` → `docs/cockpit-preview.png`.
+
+### Geändert
+
+- Die Vorhersage lädt zusätzlich `minutely_15` (12 Stunden) und stündliche Böen.
+- Grundkarte und Radarbild lassen sich für einen beliebigen Kartenausschnitt zeichnen (Radarseite unverändert).
+
+## [0.4.3] — 2026-10-13
+
+### Geändert
+
+- Handy-Seite in Tabs statt einer langen Spalte: Wetter · Ort · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip mit dem aktuellen Ort oben. Ohne Standort öffnet sich zuerst „Ort“. „Erweitert“ ist jetzt eine normale Karte im Tab „Mehr“.
+
 ## [0.4.2] — 2026-10-13
 
 ### Added

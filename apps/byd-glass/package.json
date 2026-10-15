@@ -1,0 +1,29 @@
+{
+  "name": "@quietglass/byd-glass",
+  "version": "0.4.3",
+  "description": "Quietglass BYD Glass — your BYD on the Even G2: speed, battery, charging, tyres, warnings, and climate/lock with a confirm step (via your own byd-bridge)",
+  "author": "Quietglass",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "evenhub-simulator --automation-port 9941 http://127.0.0.1:5241/?demo=1",
+    "pack": "evenhub pack app.json dist -o byd-glass.ehpk",
+    "bridge:selftest": "python3 ../../selfhost/services/byd-bridge/byd_bridge.py --selftest"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

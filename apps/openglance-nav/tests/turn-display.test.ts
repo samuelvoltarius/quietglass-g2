@@ -215,8 +215,11 @@ describe("turn layout on the glasses", () => {
     const body = page.textObject?.find((text) => text.containerName === "body");
     expect(body?.yPosition).toBeGreaterThanOrEqual((left?.yPosition ?? 0) + (left?.height ?? 0));
     expect((body?.yPosition ?? 0) + (body?.height ?? 0)).toBeLessThanOrEqual(252);
-    expect(body?.isEventCapture).toBe(1);
-    expect(page.containerTotalNum).toBe(6);
+    expect(body?.isEventCapture).toBe(0);
+    // Input catcher, body, footer and the speed column left of the arrow.
+    expect(page.containerTotalNum).toBe(8);
+    const speed = page.textObject?.find((text) => text.containerName === "speed");
+    expect((speed?.xPosition ?? 0) + (speed?.width ?? 0)).toBeLessThanOrEqual(arrow?.xPosition ?? 0);
     expect(page.imageObject).toHaveLength(4);
     const result = validateEvenHubPageContainer(page);
     expect(result.valid, JSON.stringify(result)).toBe(true);

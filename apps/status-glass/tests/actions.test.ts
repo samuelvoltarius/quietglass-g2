@@ -135,8 +135,10 @@ describe("actions screen", () => {
   ])]);
 
   it("explains that sources are read-only by default when there are none", () => {
+    // Without actions the menu still offers refresh and the help row (the side menu is off).
     const view = buildActionsView([], base);
-    expect(view.body.join(" ")).toContain("read-only");
+    expect(view.body.join(" ")).toContain("Refresh every source");
+    expect(view.body.join(" ")).toContain("Help");
   });
 
   it("lists actions with their source", () => {
@@ -149,27 +151,27 @@ describe("actions screen", () => {
     expect(view.body[1]).toContain("!");
   });
 
-  it("asks for a second tap even for a harmless action", () => {
-    expect(buildActionsView(actions, base).footer).toContain("confirm first");
+  it("arms with the first tap even for a harmless action, and never says 'run' yet", () => {
+    expect(buildActionsView(actions, base).footer).toBe("Tap = choose · Swipe = list · 2× = back");
   });
 
-  it("demands a confirmation first for a consequential one", () => {
-    expect(buildActionsView(actions, { ...base, cursor: 1 }).footer).toContain("confirm first");
+  it("ends the menu with refresh and the help row", () => {
+    const view = buildActionsView(actions, { ...base, cursor: 3 });
+    expect(view.body.map((l) => l.replace(/^[> ]+/, "").replace(/^! /, "").trim())).toEqual(["home Kitchen light", "home Front door", "Refresh every source", "Help"]);
   });
 
   it("asks plainly once confirmation is pending", () => {
     const view = buildActionsView(actions, { ...base, cursor: 1, pendingId: "door" });
     expect(view.body[1]).toContain("CONFIRM:");
-    expect(view.footer).toContain("tap again = run");
-    expect(view.footer).toContain("swipe = cancel");
+    expect(view.footer).toBe("Tap again = run · Swipe/2× = cancel");
   });
 
   it("shows progress and the outcome", () => {
-    expect(buildActionsView(actions, { ...base, busy: true }).header).toBe("Running…");
+    expect(buildActionsView(actions, { ...base, busy: true }).header).toBe("STATUS · Running…");
     expect(buildActionsView(actions, { ...base, result: { label: "Kitchen light", ok: true } }).header)
-      .toBe("Done");
+      .toBe("STATUS · Done");
     expect(buildActionsView(actions, { ...base, result: { label: "HTTP 403", ok: false } }).header)
-      .toBe("Failed");
+      .toBe("STATUS · Failed");
   });
 
   it("keeps the selection on screen in a long list", () => {
@@ -200,6 +202,6 @@ describe("fitting the display", () => {
       cursor: 0, pendingId: null, result: { label: "y".repeat(60), ok: false }, busy: false,
     });
     expect(failed.footer.length).toBeLessThanOrEqual(56);
-    expect(failed.footer.endsWith("hold = back")).toBe(true);
+    expect(failed.footer.endsWith("2× = back")).toBe(true);
   });
 });

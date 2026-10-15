@@ -36,6 +36,13 @@ describe("phone page", () => {
     expect(root.get("#url").value).toBe("");
   });
 
+  it("is split into tabs with a tab bar and keeps every control", () => {
+    const { root } = mount({ serverUrl: "", invertScroll: false });
+    expect(root.innerHTML).toContain('class="tabbar"');
+    for (const id of ["day", "glasses", "connection", "more"]) expect(root.innerHTML).toContain(`data-tab-go="${id}"`);
+    for (const id of ["#url", "#token", "#save", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
+  });
+
   it("saves a valid address, keeps the stored token when the field is left empty, and never shows it", async () => {
     const { root, saved } = mount({ serverUrl: "https://old.example", token: "s3cret-token", invertScroll: true });
     expect(root.innerHTML).not.toContain("s3cret-token");

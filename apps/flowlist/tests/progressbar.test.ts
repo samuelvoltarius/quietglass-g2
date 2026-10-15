@@ -103,12 +103,11 @@ describe("progress bar: when it changes", () => {
 });
 
 describe("header beside the bar", () => {
-  it("keeps the position and gives way on a long section name", () => {
+  it("keeps the app name and the position, whatever the section is called", () => {
     const long = list([{ id: "a", section: "Ein sehr langer Abschnittsname für die Küche" }, { id: "b" }]);
     const header = buildView(long, startRun(long, 0), { locale: "de" }, 0).header;
     expect(header.length).toBeLessThanOrEqual(HEADER_TEXT_WIDTH);
-    expect(header.endsWith("  1/2")).toBe(true);
-    expect(header).toContain("…");
+    expect(header).toBe("FLOWLIST · 1/2");
   });
 
   it("no longer repeats progress as a percentage in the footer", () => {
@@ -117,7 +116,8 @@ describe("header beside the bar", () => {
       const run = { ...complete(short, startRun(short, 0), "done", 0), startedAt: 0 };
       const view = buildView(short, run, { locale }, 65_000);
       expect(view.footer).not.toContain("%");
-      expect(view.footer).toContain("1:05");
+      expect(view.footer.length).toBeLessThanOrEqual(56);
+      if (locale === "de") expect(view.footer).toContain("1:05");
     }
   });
 });

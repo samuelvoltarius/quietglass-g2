@@ -2,6 +2,7 @@ import { lightBar, mothLine } from "../lumen/moth";
 import type { LumenStatus } from "../lumen/client";
 import type { Locale } from "../i18n";
 import { messages, t } from "../messages";
+import { armedFooter, footer } from "./footer";
 
 /**
  * What the glasses show.
@@ -23,11 +24,17 @@ export interface ViewOptions {
   /** Outcome of the last submission. */
   readonly result: { readonly ok: boolean; readonly text: string } | null;
   readonly error: string | null;
-  /** A hold is armed and waits for its confirmation: the footer says what a second hold does. */
+  /** A hold armed "new quest" and waits for its confirming tap: the footer says what that tap does. */
   readonly confirmQuest?: boolean;
+  /** The help page is open. */
+  readonly help?: boolean;
   /** Language of everything the app itself writes; LUMEN's own words pass through. */
   readonly locale: Locale;
   readonly lineWidth?: number;
+  /** First start: the data is made up; a one-line hint says how to connect (QIS v1.2 no. 7). */
+  readonly demo?: boolean;
+  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default: swipe opens the help, hold asks for a new quest. */
+  readonly sideMenu?: boolean;
 }
 
 /**
@@ -43,6 +50,11 @@ const DEFAULT_WIDTH = BODY_COLS;
 /** Lines the body container shows before the text runs into the footer. */
 export const MAX_BODY_ROWS = 7;
 
+/** `LUMEN · state` (QIS v1), within the width the pixel moth leaves. */
+function headerOf(label: string): string {
+  return truncate(`LUMEN · ${label}`, HEADER_COLS);
+}
+
 export function buildView(
   status: LumenStatus | null,
   options: ViewOptions,
@@ -51,28 +63,27 @@ export function buildView(
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const width = options.lineWidth ?? DEFAULT_WIDTH;
 
+  if (options.help) return helpView(locale, width);
+
   if (options.error) {
     return {
-      header: "Lumen Glass",
+      header: headerOf(x("g.s.error")),
       body: fitBody(wrap(errorText(options.error, locale), width), [], [x("g.checkAddress")], width),
-      footer: x("g.tapRetry"),
+      footer: footer(locale, { tap: x("g.v.retry") }, "exit"),
     };
   }
 
   if (!status) {
-    return { header: "Lumen Glass", body: [x("g.connecting")], footer: "" };
+    return { header: headerOf(x("g.s.connecting")), body: [x("g.connecting")], footer: footer(locale, {}, "exit") };
   }
 
   if (options.phase === "shooting") {
-    return {
-      header: "",
-      body: [x("g.shooting")],
-      footer: "",
-    };
+    return { header: headerOf(x("g.s.photo")), body: [x("g.shooting")], footer: footer(locale, {}, "exit") };
   }
 
+  // Nothing can be done while the photo is on its way: no gesture is offered.
   if (options.phase === "submitting") {
-    return { header: "", body: [x("g.sending")], footer: "" };
+    return { header: headerOf(x("g.s.sending")), body: [x("g.sending")], footer: "" };
   }
 
   if (options.phase === "result" && options.result) {
@@ -80,35 +91,57 @@ export function buildView(
       ? x(options.result.text === "done" ? "g.done" : "g.sent")
       : errorText(options.result.text, locale);
     return {
-      header: x(options.result.ok ? "g.accepted" : "g.rejected"),
+      header: headerOf(x(options.result.ok ? "g.accepted" : "g.rejected")),
       body: fitBody([], wrap(text, width), [], width),
-      footer: x("g.tapCarryOn"),
+      footer: footer(locale, { tap: x("g.v.on") }, "back"),
     };
   }
 
   // LUMEN's own wording, which can be any length: one line, never a wrap.
   const head = [truncate(mothLine(status.moth.state, status.moth.gesture), width)];
+  const light = lightLine(status, locale);
+  const armed = Boolean(options.confirmQuest);
+  const demo = options.demo ? [truncate(x("g.demo"), width)] : [];
 
   const body = status.quest
     // The instruction is what you act on; the short name is the heading.
-    ? fitBody(head, wrap(status.quest.task ?? status.quest.title, width), [truncate(questMeta(status.quest, locale), width)].filter(Boolean), width)
-    : fitBody(head, wrap(x("g.noQuest"), width), [], width);
+    ? fitBody(head, wrap(status.quest.task ?? status.quest.title, width), [truncate(questMeta(status.quest, locale), width), light, ...demo].filter(Boolean), width)
+    : fitBody(head, wrap(x("g.noQuest"), width), [light, ...demo].filter(Boolean), width);
 
   return {
-    header: "",
+    // LUMEN's own word for the moth's state (it can be any length) stands in the header.
+    header: headerOf(armed ? x("g.s.newQuest") : status.moth.state),
     body,
-    footer: options.confirmQuest && status.quest ? x("g.confirmQuest") : footerText(status, Boolean(status.quest), locale),
+    footer: armed
+      ? armedFooter(locale, x("g.v.newQuest"))
+      // QIS v1.2 with a side menu: help and "new quest" live there and a swipe does nothing here.
+      : options.sideMenu === true
+        ? footer(locale, { ...(status.quest ? { tap: x("g.v.photo") } : {}), hold: x("g.v.menu") }, "exit")
+        : footer(locale, { ...(status.quest ? { tap: x("g.v.photo") } : {}), swipe: x("g.v.help"), hold: x("g.v.quest") }, "exit"),
+  };
+}
+
+/** The help page (QIS v1): the gestures in footer order, then what the app needs. */
+export function helpView(locale: Locale, width = DEFAULT_WIDTH): LumenView {
+  const x = (key: string): string => t(locale, key);
+  return {
+    header: headerOf(x("g.s.help")),
+    body: ["g.h.tap", "g.h.swipe", "g.h.hold", "g.h.end", "g.h.needs"].map((key) => truncate(x(key), width)),
+    footer: footer(locale, { tap: x("g.v.back") }, "back"),
   };
 }
 
 /**
  * The client reports its own failures in fixed English words (see
- * src/lumen/client.ts); those are translated here. Anything else, such as
- * "HTTP 500" or a raw network message, is technical and shown as it came.
+ * src/lumen/client.ts); those are translated here. A bare HTTP status or a
+ * generic failure becomes a plain sentence; anything else is LUMEN's own wording and passes through.
  */
 export function errorText(error: string, locale: Locale): string {
   const key = Object.keys(messages.en).find((name) => name.startsWith("g.err.") && messages.en[name] === error);
-  return key ? t(locale, key) : error;
+  if (key) return t(locale, key);
+  // QIS v1.2 no. 8: no HTTP codes or exception text on the glasses; the phone's More tab has the detail.
+  if (/^HTTP \d+/.test(error) || error === "failed") return t(locale, "g.err.failed");
+  return error;
 }
 
 /**
@@ -128,22 +161,17 @@ export function questMeta(quest: { medium: string | null; minutes: number | null
 }
 
 /**
- * Light, streak, light window and the gesture hint, on one full-width line.
- * When that is too long (a long streak, a window hours away, German), the
- * streak goes first and then the hint — the phone page lists the gestures,
- * and the light window is the reason this footer exists.
+ * Light, streak and light window on one full-width line (the footer carries the gestures now, QIS v1).
+ * When that is too long (a long streak, a window hours away, German), the streak goes first. The light
+ * window is the reason this line exists: it is the reason to stand up now rather than later.
  */
-function footerText(status: LumenStatus, hasQuest: boolean, locale: Locale): string {
+function lightLine(status: LumenStatus, locale: Locale): string {
   const bar = lightBar(status.moth.light, 8);
   const streak = status.moth.streak > 0 ? t(locale, "g.streak", { days: status.moth.streak }) : "";
-  // The light window is the single most useful thing on this display: it is
-  // the reason to stand up now rather than later.
   const light = status.window ? windowLabel(status.window.kind, status.window.minutesAway, locale) : "";
-  const hint = t(locale, hasQuest ? "g.tapPhoto" : "g.holdQuest");
 
   const join = (parts: string[]): string => parts.filter(Boolean).join(" · ");
-  const candidates = [[bar, streak, light, hint], [bar, light, hint], [bar, light]];
-  for (const parts of candidates) {
+  for (const parts of [[bar, streak, light], [bar, light]]) {
     const line = join(parts);
     if (line.length <= LINE_COLS) return line;
   }

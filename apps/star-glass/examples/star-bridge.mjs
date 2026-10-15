@@ -26,8 +26,15 @@
  *   STAR_WS=0             do not listen to the Advanced API websocket
  *   STAR_ALLOW_CONTROL=1  allow stopping / starting the sequence. Refused anyway
  *                         unless a TOKEN or STAR_TAILSCALE_USERS is set.
+ *   STAR_SITE=1           share the observing site from N.I.N.A. (mount or
+ *                         profile), rounded to 2 decimals (~1 km), so the app
+ *                         can fetch the weather forecast for it. Off by default.
  *
- * The status never contains the site coordinates the API reports.
+ * Weather: if N.I.N.A. has a weather device (ASCOM ObservingConditions) or a
+ * safety monitor connected, their readings go into the status (`weather`,
+ * `safety`). Wind is converted from m/s to km/h.
+ *
+ * Without STAR_SITE=1 the status never contains the site coordinates the API reports.
  * Dependency-free: Node 18+ (the websocket needs Node 22+, polling works without).
  */
 import { createServer } from "node:http";
@@ -52,6 +59,10 @@ const TAILSCALE_USERS = String(process.env["STAR_TAILSCALE_USERS"] ?? "").split(
  */
 const CONTROL = process.env["STAR_ALLOW_CONTROL"] === "1" && (TOKEN !== "" || TAILSCALE_USERS.length > 0);
 const CONTROL_BLOCKED = process.env["STAR_ALLOW_CONTROL"] === "1" && !CONTROL;
+/** Share the site (rounded) for the weather forecast: opt-in. */
+const SHARE_SITE = process.env["STAR_SITE"] === "1";
+/** The profile is large; its site is read at most this often. */
+const PROFILE_MS = 10 * 60_000;
 
 /** Preview box on the glasses (one image container). */
 export const PREVIEW_W = 288;
@@ -164,6 +175,48 @@ export function readGuider(info) {
     ra: arc(rmsErr.RA),
     dec: arc(rmsErr.Dec),
   };
+}
+
+/**
+ * Weather device readings (ASCOM ObservingConditions via `equipment/weather/info`).
+ * Values a device does not provide come as NaN / "NaN" and are dropped.
+ * Wind speed and gusts are m/s in ASCOM; the glasses get km/h.
+ */
+export function readWeather(info) {
+  if (!info?.Connected) return { connected: false };
+  const kmh = (value) => { const n = num(value); return n === null ? null : Math.round(n * 3.6); };
+  return {
+    connected: true,
+    name: text(info.DisplayName || info.Name) || null,
+    cloudCover: round(info.CloudCover),
+    rainRate: round(info.RainRate, 1),
+    humidity: round(info.Humidity),
+    dewPoint: round(info.DewPoint, 1),
+    temperature: round(info.Temperature, 1),
+    windSpeed: kmh(info.WindSpeed),
+    windGust: kmh(info.WindGust),
+    skyQuality: round(info.SkyQuality, 2),
+  };
+}
+
+/** Safety monitor (`equipment/safetymonitor/info`): IsSafe, when connected. */
+export function readSafety(info) {
+  if (!info?.Connected) return { connected: false, safe: null };
+  return { connected: true, safe: typeof info.IsSafe === "boolean" ? info.IsSafe : null };
+}
+
+/**
+ * The observing site, rounded to 2 decimals: the mount's site first, then the
+ * profile's astrometry settings. Null when unknown or the unset 0/0.
+ */
+export function readSite(mount, profile) {
+  const pick = (lat, lon) => {
+    const a = num(lat), b = num(lon);
+    if (a === null || b === null || Math.abs(a) > 90 || Math.abs(b) > 180 || (a === 0 && b === 0)) return null;
+    return { lat: round(a, 2), lon: round(b, 2) };
+  };
+  const astro = profile?.AstrometrySettings ?? profile?.Astrometry ?? null;
+  return (mount?.Connected ? pick(mount.SiteLatitude, mount.SiteLongitude) : null) ?? pick(astro?.Latitude, astro?.Longitude);
 }
 
 // ---- PNG in, PNG out (only what N.I.N.A. streams: 8/16 bit, gray/RGB/alpha) ----
@@ -318,6 +371,10 @@ const state = {
   focuser: null,
   filter: null,
   guider: readGuider(null),
+  weather: readWeather(null),
+  safety: readSafety(null),
+  profile: null,
+  profileAt: 0,
   exposure: { active: false, total: null, endsAt: null },
   /** First time a given exposure end time was seen: the start, when no sequence says how long. */
   exposureSeen: new Map(),
@@ -389,7 +446,7 @@ async function refresh() {
   const version = await soft(nina("/version", 3000));
   if (version === null) { state.ok = false; state.reason = "nina-silent"; return; }
   state.version = String(version);
-  const [camera, mount, focuser, wheel, guider, sequence, events] = await Promise.all([
+  const [camera, mount, focuser, wheel, guider, sequence, events, weather, safety] = await Promise.all([
     soft(nina("/equipment/camera/info")),
     soft(nina("/equipment/mount/info")),
     soft(nina("/equipment/focuser/info")),
@@ -397,6 +454,8 @@ async function refresh() {
     soft(nina("/equipment/guider/info")),
     soft(nina("/sequence/state")),
     soft(nina("/event-history")),
+    soft(nina("/equipment/weather/info")),
+    soft(nina("/equipment/safetymonitor/info")),
   ]);
   state.ok = true;
   state.reason = "";
@@ -406,6 +465,12 @@ async function refresh() {
   state.filter = wheel?.Connected ? text(wheel.SelectedFilter?.Name) || null : null;
   state.guider = readGuider(guider);
   state.sequence = readSequence(sequence);
+  state.weather = readWeather(weather);
+  state.safety = readSafety(safety);
+  if (SHARE_SITE && !readSite(mount, null) && Date.now() - state.profileAt > PROFILE_MS) {
+    state.profileAt = Date.now();
+    state.profile = await soft(nina("/profile/show?active=true", 6000));
+  }
 
   const now = Date.now();
   const exposing = camera?.Connected === true && camera.IsExposing === true;
@@ -438,8 +503,8 @@ async function refresh() {
   }
 }
 
-/** What the glasses get. No site coordinates, no file paths. */
-export function snapshot(s = state, now = Date.now()) {
+/** What the glasses get. No file paths; the site (rounded) only with STAR_SITE=1. */
+export function snapshot(s = state, now = Date.now(), shareSite = SHARE_SITE) {
   if (!s.ok) return { v: 1, online: false, reason: s.reason, controllable: CONTROL };
   const c = s.camera, m = s.mount, f = s.focuser;
   const remaining = s.exposure.active && s.exposure.endsAt ? Math.max(0, (s.exposure.endsAt - now) / 1000) : null;
@@ -485,6 +550,9 @@ export function snapshot(s = state, now = Date.now()) {
     events: s.events.map((e) => ({ name: e.name, ageSeconds: Number.isFinite(e.time) ? Math.max(0, Math.round((now - e.time) / 1000)) : null })),
     preview: s.preview ? s.previewKey : null,
     controllable: CONTROL,
+    weather: s.weather,
+    safety: s.safety,
+    ...(shareSite ? { site: readSite(m, s.profile) } : {}),
   };
 }
 
@@ -609,7 +677,7 @@ export function startServer() {
   server.listen(PORT, HOST, () => {
     console.log("Star Glass bridge on http://" + HOST + ":" + PORT + "/api/star");
     console.log("  N.I.N.A.: " + API);
-    console.log("  control: " + (CONTROL ? "on" : "off") + ", preview: " + (PREVIEW ? "on" : "off"));
+    console.log("  control: " + (CONTROL ? "on" : "off") + ", preview: " + (PREVIEW ? "on" : "off") + ", site: " + (SHARE_SITE ? "shared (rounded)" : "private"));
     if (CONTROL_BLOCKED) console.log("  STAR_ALLOW_CONTROL=1 ignored: control needs a TOKEN or STAR_TAILSCALE_USERS.");
     if (!TOKEN && TAILSCALE_USERS.length === 0) console.log("  No TOKEN and no STAR_TAILSCALE_USERS: anyone who can reach this port can read the status.");
   });

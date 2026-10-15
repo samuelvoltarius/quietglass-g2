@@ -41,6 +41,29 @@ const SIZE_WARN_BYTES = 4 * 1024 * 1024;
 /** Text fields that hold an unsaved draft and must survive a re-render. */
 const DRAFT_FIELDS = ["title", "note", "quick", "stt", "stt-token", "lang"] as const;
 
+/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "walk", icon: "🎯", key: "p.tabWalk" },
+  { id: "archive", icon: "🗂️", key: "p.tabArchive" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.field-log.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "walk"; } catch { return "walk"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
 
 type Commit = (next: FieldLogData, options?: { readonly keepDraft?: boolean; readonly notice?: string }) => void;
@@ -48,7 +71,6 @@ type Commit = (next: FieldLogData, options?: { readonly keepDraft?: boolean; rea
 interface View {
   readonly locale: Locale;
   readonly notice: string;
-  readonly advancedOpen: boolean;
   readonly canPhoto: boolean;
 }
 
@@ -58,19 +80,27 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
 
   let notice = "";
   let locale: Locale = ports.locale?.() ?? getLocale();
-  /** The advanced section stays open while the user works in it. */
-  let advancedOpen = false;
+  let tab = readTab();
 
   // Re-rendered after every change. Handlers always read the current data:
   // the glasses file entries while this page is open, and a change computed
   // from the data of the last render would write those entries away again.
   const render = (keepDraft = true): void => {
     const draft = keepDraft ? readDraft(root) : null;
-    root.innerHTML = template(ports.getData(), { locale, notice, advancedOpen, canPhoto: Boolean(ports.takePhoto) });
+    root.innerHTML = template(ports.getData(), { locale, notice, canPhoto: Boolean(ports.takePhoto) });
     notice = "";
     if (draft) writeDraft(root, draft);
     const notify = (message: string): void => { notice = message; render(); };
-    wire(root, ports, commit, notify, locale, () => { advancedOpen = true; });
+    applyTab(root, tab);
+    root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+      button.addEventListener("click", () => {
+        tab = button.dataset["tabGo"] ?? "walk";
+        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
+        applyTab(root, tab);
+        window.scrollTo({ top: 0 });
+      });
+    });
+    wire(root, ports, commit, notify, locale);
     root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
       const value = (event.target as HTMLSelectElement).value;
       if (value !== "de" && value !== "en") return;
@@ -124,20 +154,23 @@ function template(data: FieldLogData, view: View): string {
     '<option value="' + s + '"' + (s === selected ? " selected" : "") + ">" + escapeHtml(severityName(locale, s)) + "</option>").join("");
 
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>FieldLog</h1>
-    <p class="hint">${L("p.lede")}</p>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>FieldLog</h1>
+      <p class="hint">${L("p.lede")}</p>
+    </div>
+    <span class="chip${active ? " on" : ""}">${escapeHtml(active ? active.title : L("p.chipNone"))}</span>
   </header>
 
   ${view.notice ? '<p class="notice">' + escapeHtml(view.notice) + "</p>" : ""}
 
+  <div class="tab" data-tab="walk">
   <section class="card">
     <h2>${L("p.start")}</h2>
     ${active
       ? `<p>${L("p.running", { title: escapeHtml(active.title) })} ${L(voice ? "p.nextVoice" : "p.nextQuick")}</p>`
       : `<p>${L("p.noneYet")}</p>`}
-    ${languageSelect(locale)}
   </section>
 
   <section class="card">
@@ -192,7 +225,9 @@ function template(data: FieldLogData, view: View): string {
       <p class="hint">${L("p.csvHint")}</p>
     `}
   </section>` : ""}
+  </div>
 
+  <div class="tab" data-tab="archive">
   <section class="card">
     <h2>${L("p.past")}</h2>
     ${data.inspections.length === 0 ? `<p class="hint">${L("p.pastEmpty")}</p>` : `
@@ -215,7 +250,9 @@ function template(data: FieldLogData, view: View): string {
       ${bytes > SIZE_WARN_BYTES ? "<strong>" + L("p.sizeWarn") + "</strong>" : ""}
     </p>
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
   <section class="card">
     <h2>${L("p.quick")}</h2>
     <label for="quick">${L("p.quickHint")}</label>
@@ -231,12 +268,19 @@ function template(data: FieldLogData, view: View): string {
       <tr><td>${L("p.key.hold")}</td><td>${L("p.key.holdDo")}</td></tr>
       <tr><td>${L("p.key.double")}</td><td>${L("p.key.doubleDo")}</td></tr>
     </table>
+    <p class="hint">${L("p.discardHint")}</p>
     <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
     <p class="hint">${L("p.invertHint")}</p>
   </section>
+  </div>
 
-  <details class="card"${view.advancedOpen ? " open" : ""}>
-    <summary><h2>${L("p.advanced")}</h2></summary>
+  <div class="tab" data-tab="more">
+  <section class="card">
+    ${languageSelect(locale)}
+  </section>
+
+  <section class="card">
+    <h2>${L("p.advanced")}</h2>
     <p class="hint">${L("p.advancedHint")}</p>
     <p class="hint"><strong>${L(voice ? "p.modeVoice" : "p.modeQuick")}</strong></p>
     <label for="stt">${L("p.server")}</label>
@@ -246,9 +290,14 @@ function template(data: FieldLogData, view: View): string {
     <label for="lang">${L("p.speechLanguage")}</label>
     <input id="lang" type="text" value="${escapeHtml(data.language)}" placeholder="auto, de, en …" />
     <button id="save-stt" type="button">${L("p.saveServer")}</button>
-  </details>
+  </section>
 
-  <footer class="hint">${L("p.privacy")}</footer>`;
+  <footer class="card hint">${L("p.privacy")}</footer>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${escapeHtml(L(key))}</button>`).join("")}
+  </nav>`;
 }
 
 function severityBadge(severity: Severity): string {
@@ -263,7 +312,6 @@ function wire(
   commit: Commit,
   notify: (message: string) => void,
   locale: Locale,
-  keepAdvancedOpen: () => void,
 ): void {
   const current = ports.getData;
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
@@ -371,7 +419,6 @@ function wire(
   });
 
   byId<HTMLButtonElement>("save-stt")?.addEventListener("click", () => {
-    keepAdvancedOpen();
     const sttUrl = byId<HTMLInputElement>("stt")?.value.trim() ?? "";
     const check = validateSttUrl(sttUrl, locale);
     if (!check.valid) { notify(check.errors.join(" ")); return; }

@@ -55,6 +55,19 @@ export async function load(bridge: EvenAppBridge): Promise<LumenData> {
   return parseData(await bridge.getLocalStorage(KEY));
 }
 
+/**
+ * QIS v1.2 no. 7: nothing saved yet and no server baked into the build means a first start; the app then
+ * shows demo data (`Demo · Verbindung am Handy einrichten`) until the address is saved on the phone.
+ */
+export function isFirstStart(raw: string, build: string = BUILD_LUMEN_URL): boolean {
+  return raw.trim() === "" && build === "";
+}
+
+export async function loadWithStart(bridge: EvenAppBridge): Promise<{ data: LumenData; firstStart: boolean }> {
+  const raw = await bridge.getLocalStorage(KEY);
+  return { data: parseData(raw), firstStart: isFirstStart(raw) };
+}
+
 export interface UrlCheck {
   readonly valid: boolean;
   readonly errors: readonly string[];

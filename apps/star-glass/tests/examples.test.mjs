@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { deflateSync, crc32 } from "node:zlib";
-import { readSequence, flipMinutes, readGuider, decodePngGray, encodePngGray, fitPreview } from "../examples/star-bridge.mjs";
+import { readSequence, flipMinutes, readGuider, readWeather, readSafety, readSite, decodePngGray, encodePngGray, fitPreview } from "../examples/star-bridge.mjs";
 
 const example = (name) => fileURLToPath(new URL("../examples/" + name, import.meta.url));
 
@@ -69,8 +69,21 @@ describe("the Star Glass bridge", () => {
     expect(body.last).toMatchObject({ index: 2, filter: "L", hfr: 2.31, stars: 920, target: "M 42" });
     expect(body.history.hfr).toEqual([2.4, 2.2, 2.31]);
     expect(body.controllable).toBe(false);
+    expect(body.weather).toEqual({
+      connected: true, name: "Mock CloudWatcher", cloudCover: 35, rainRate: 0, humidity: 81, dewPoint: 3.2, temperature: 6.1,
+      windSpeed: 9, windGust: 18, skyQuality: 20.84,
+    });
+    expect(body.safety).toEqual({ connected: true, safe: true });
+    expect(body.site).toBeUndefined();
     const text = JSON.stringify(body);
     expect(text).not.toMatch(/Site|Latitude|Longitude|1\.2345|6\.789|\.fits/);
+  }, 20000);
+
+  it("shares the site rounded to 2 decimals only with STAR_SITE=1", async () => {
+    const { bridge } = await ninaAndBridge({ STAR_SITE: "1" }, cleanup);
+    const { body } = await status(bridge.base);
+    expect(body.site).toEqual({ lat: 1.23, lon: 6.79 });
+    expect(JSON.stringify(body)).not.toMatch(/1\.2345|6\.789/);
   }, 20000);
 
   it("serves the newest frame as a 288 x 144 grayscale PNG", async () => {
@@ -170,6 +183,19 @@ describe("bridge helpers", () => {
     expect(flipMinutes({ TrackingEnabled: true, TimeToMeridianFlip: 24 })).toBeNull();
     expect(readGuider({ Connected: false })).toMatchObject({ connected: false, rms: null });
     expect(readGuider({ Connected: true, PixelScale: 1.5, RMSError: { Total: { Pixel: 0.5 } } })).toMatchObject({ rms: 0.75, guiding: null });
+  });
+
+  it("weather station, safety monitor and site", () => {
+    expect(readWeather({ Connected: false })).toEqual({ connected: false });
+    expect(readWeather(null)).toEqual({ connected: false });
+    const w = readWeather({ Connected: true, Name: "AAG", CloudCover: "NaN", RainRate: 1.24, WindSpeed: 10, WindGust: "NaN", SkyQuality: 21.123 });
+    expect(w).toMatchObject({ connected: true, name: "AAG", cloudCover: null, rainRate: 1.2, windSpeed: 36, windGust: null, skyQuality: 21.12 });
+    expect(readSafety({ Connected: true, IsSafe: false })).toEqual({ connected: true, safe: false });
+    expect(readSafety({ Connected: true })).toEqual({ connected: true, safe: null });
+    expect(readSafety(undefined)).toEqual({ connected: false, safe: null });
+    expect(readSite({ Connected: true, SiteLatitude: 47.80951, SiteLongitude: 13.05502 }, null)).toEqual({ lat: 47.81, lon: 13.06 });
+    expect(readSite({ Connected: true, SiteLatitude: 0, SiteLongitude: 0 }, { AstrometrySettings: { Latitude: 47.8, Longitude: 13.04 } })).toEqual({ lat: 47.8, lon: 13.04 });
+    expect(readSite({ Connected: false }, null)).toBeNull();
   });
 
   it("decodes 16-bit PNGs and fits them into the preview box", () => {

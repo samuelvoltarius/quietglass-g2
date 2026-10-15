@@ -24,7 +24,9 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
   const imu: boolean[] = [];
   const saved: string[] = [];
   const images: string[] = [];
-  const writes = { count: 0, inFlight: 0, maxInFlight: 0, creates: 0, rebuilds: 0, footer: "" };
+  const pages: { menuObject?: { menuItems?: { itemName?: string; itemID?: number }[] } }[] = [];
+  const writes = { count: 0, inFlight: 0, maxInFlight: 0, creates: 0, rebuilds: 0, footer: "", header: "", body: "" };
+  const paces: (number | undefined)[] = [];
   const imuAnswer = { hang: false };
   const write = async (): Promise<void> => {
     writes.count += 1;
@@ -38,22 +40,26 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
     getLocalStorage: async () => stored,
     setLocalStorage: async (_key: string, value: string) => { saved.push(value); return true; },
     rebuildPageContainer: async () => { writes.rebuilds += 1; return true; },
-    createStartUpPageContainer: async () => { writes.creates += 1; await write(); return 0; },
+    createStartUpPageContainer: async (page: { menuObject?: { menuItems?: { itemName?: string; itemID?: number }[] } }) => { pages.push(page); writes.creates += 1; await write(); return 0; },
     textContainerUpgrade: async (update: { containerID?: number; content?: string }) => {
       if (update.containerID === 3) writes.footer = update.content ?? "";
+      if (update.containerID === 1) writes.header = update.content ?? "";
+      if (update.containerID === 2) writes.body = update.content ?? "";
       await write();
       return true;
     },
     updateImageRawData: async (update: { containerName?: string }) => { images.push(update.containerName ?? ""); return ImageRawDataUpdateResult.success; },
-    imuControl: (on: boolean): Promise<boolean> => { imu.push(on); return imuAnswer.hang ? new Promise(() => undefined) : Promise.resolve(true); },
+    imuControl: (on: boolean, pace?: number): Promise<boolean> => { imu.push(on); if (on) paces.push(pace); return imuAnswer.hang ? new Promise(() => undefined) : Promise.resolve(true); },
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: (callback: (status: unknown) => void) => { statusHandler = callback; return () => undefined; },
   };
   return {
-    bridge, shutdown, imu, writes, saved, images, imuAnswer,
+    bridge, shutdown, imu, paces, writes, saved, images, imuAnswer, pages,
+    menu: (itemID: number) => (resetGestureDedupe(), handler?.({ menuItemClickEvent: { itemID } })),
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     sample: (y: number) => handler?.({ sysEvent: { eventType: IMU_DATA_REPORT, imuData: { x: 0, y, z: 1 } } }),
+    longPress: () => (resetGestureDedupe(), handler?.({ sysEvent: { eventType: 9, eventSource: 1 } })),
     reconnect: () => statusHandler?.({ connectType: "connected" }),
     ready: () => handler !== undefined,
   };
@@ -153,6 +159,7 @@ describe("posturelens loop", () => {
 
   it("does not resend the head gauge while the head holds still", async () => {
     const fake = await boot();
+    await vi.advanceTimersByTimeAsync(0); // the first draw (head not seen yet) finishes before the first sample
     for (let i = 0; i < 10; i++) { fake.sample(0); await vi.advanceTimersByTimeAsync(500); }
     // Before the first sample the gauge has no head yet; with it, the head appears. The figure
     // and the angle digits (blank at first, "0°" once the head is seen) are sent.
@@ -211,7 +218,7 @@ describe("posturelens loop", () => {
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(1100);
     expect(fake.saved).toEqual([]);
-    expect(fake.writes.footer).toContain("tap again");
+    expect(fake.writes.footer).toBe("Tap again = save again · Swipe/2× = cancel");
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.saved).toHaveLength(1);
@@ -224,25 +231,138 @@ describe("posturelens loop", () => {
     await vi.advanceTimersByTimeAsync(600);
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(5000);
-    expect(fake.writes.footer).not.toContain("tap again");
+    expect(fake.writes.footer).not.toContain("Tap again");
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.saved).toEqual([]);
   });
 
-  it("one swipe does not clear today's tally; a second swipe does", async () => {
+  it("a swipe never clears today's tally or arms anything", async () => {
+    // QIS v1: a swipe only moves. It used to clear the tally on the second swipe.
     vi.stubGlobal("navigator", { language: "en-US" });
     const fake = await boot();
     for (let i = 0; i < 6; i++) { fake.sample(0); await vi.advanceTimersByTimeAsync(500); }
     await vi.advanceTimersByTimeAsync(1100);
-    const before = fake.writes.footer;
-    expect(before).toContain("upright");
-    fake.emit(1);
+    expect(fake.writes.header).toContain("upright");
+    for (const swipe of [1, 2, 1, 2]) { fake.emit(swipe); await vi.advanceTimersByTimeAsync(600); }
     await vi.advanceTimersByTimeAsync(1100);
-    expect(fake.writes.footer).toContain("swipe again");
-    fake.emit(2);
-    await vi.advanceTimersByTimeAsync(1100);
-    expect(fake.writes.footer).toBe("tracking");
+    expect(fake.writes.header).toContain("upright");
+    expect(fake.writes.footer).toBe("Tap = save again · Hold = menu · 2× = exit");
+  });
+
+  describe("QIS v1: menu, arm-and-confirm, help", () => {
+    const HOLD = 9;
+    const CLICK = 0;
+    const DOWN = 2;
+    const DOUBLE = 3;
+    const step = async (fake: Awaited<ReturnType<typeof boot>>, type: number, ms = 600): Promise<void> => {
+      fake.emit(type);
+      await vi.advanceTimersByTimeAsync(ms);
+    };
+    async function booted() {
+      vi.stubGlobal("navigator", { language: "en-US" });
+      const fake = await boot();
+      for (let i = 0; i < 6; i++) { fake.sample(0); await vi.advanceTimersByTimeAsync(500); }
+      return fake;
+    }
+
+
+    it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+      const fake = await booted();
+      expect(fake.pages.length).toBeGreaterThan(0);
+      for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
+      // The hold opens the app's own menu list, not a side menu.
+      await step(fake, HOLD);
+      expect(fake.writes.header).toBe("POSTURE · menu");
+      expect(fake.writes.body).toContain("> Sensor test");
+      expect(fake.writes.footer).toBe("Tap = choose · Swipe = list · 2× = back");
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toContain("upright");
+      expect(fake.writes.footer).toBe("Tap = save again · Hold = menu · 2× = exit");
+      expect(fake.shutdown.modes).toEqual([]);
+      for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
+    });
+
+    it("clearing the tally by gesture: hold, swipe to the entry, tap arms, a second tap clears", async () => {
+      const fake = await booted();
+      expect(fake.writes.header).toContain("100% upright");
+      await step(fake, HOLD);
+      await step(fake, DOWN);
+      expect(fake.writes.body).toContain("> Clear today's tally");
+      await step(fake, CLICK);
+      expect(fake.writes.body).toContain("SURE? Clear today's tally");
+      expect(fake.writes.footer).toBe("Tap again = clear tally · Swipe/2× = cancel");
+      await step(fake, CLICK);
+      expect(fake.writes.header).toBe("POSTURE · Tally cleared");
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toContain("tracking");
+    });
+
+    it("a swipe, 2× or 4 s cancel the armed tally reset; nothing is cleared", async () => {
+      const fake = await booted();
+      await step(fake, HOLD);
+      await step(fake, DOWN);
+      await step(fake, CLICK);
+      expect(fake.writes.body).toContain("SURE? ");
+      await step(fake, DOWN);
+      expect(fake.writes.body).not.toContain("SURE? ");
+      await step(fake, 1); // back on the entry
+      await step(fake, CLICK);
+      expect(fake.writes.body).toContain("SURE? ");
+      await vi.advanceTimersByTimeAsync(4200);
+      expect(fake.writes.body).not.toContain("SURE? ");
+      await step(fake, CLICK);
+      expect(fake.writes.body).toContain("SURE? ");
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toContain("100% upright");
+      expect(fake.shutdown.modes).toEqual([]);
+    });
+
+    it("a swipe cancels an armed re-calibration and saves nothing", async () => {
+      const fake = await booted();
+      await step(fake, CLICK);
+      expect(fake.writes.footer).toBe("Tap again = save again · Swipe/2× = cancel");
+      await step(fake, DOWN);
+      expect(fake.writes.footer).toBe("Tap = save again · Hold = menu · 2× = exit");
+      expect(fake.saved).toEqual([]);
+    });
+
+    it("help from the menu: swipe turns the pages, 2× goes back to the menu, then the posture screen, and only then leaves", async () => {
+      const fake = await booted();
+      await step(fake, HOLD);
+      await step(fake, DOWN); await step(fake, DOWN);
+      expect(fake.writes.body).toContain("> Help");
+      await step(fake, CLICK);
+      expect(fake.writes.header).toBe("POSTURE · Help 1/2");
+      expect(fake.writes.body).toContain("Tap: save your posture");
+      expect(fake.writes.footer).toBe("Swipe = page · 2× = back");
+      await step(fake, DOWN);
+      expect(fake.writes.header).toBe("POSTURE · Help 2/2");
+      expect(fake.writes.body).toContain("Hold: menu");
+      await step(fake, HOLD);
+      expect(fake.writes.header).toBe("POSTURE · Help 2/2");
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toBe("POSTURE · menu");
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toContain("upright");
+      expect(fake.shutdown.modes).toEqual([]);
+      await step(fake, DOUBLE);
+      expect(fake.shutdown.modes).toEqual([1]);
+    });
+
+    it("the sensor test by gesture: hold, tap the first entry; 2× goes back to the menu, then the posture screen", async () => {
+      const fake = await booted();
+      await step(fake, HOLD);
+      await step(fake, CLICK);
+      expect(fake.writes.header).toMatch(/Sensor/);
+      await step(fake, HOLD);
+      expect(fake.writes.header).toMatch(/Sensor/);
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toBe("POSTURE · menu");
+      await step(fake, DOUBLE);
+      expect(fake.writes.header).toContain("upright");
+      expect(fake.shutdown.modes).toEqual([]);
+    });
   });
 
   it("leaving through the system switches the IMU off; coming back rebuilds and switches it on", async () => {
@@ -282,6 +402,53 @@ describe("posturelens loop", () => {
     expect(fake.writes.creates).toBe(1);
     expect(fake.writes.rebuilds).toBe(2);
     expect(fake.imu.length).toBe(imuCalls + 1);
+  });
+
+  describe("sensor test", () => {
+    it("switches to raw values from the side menu and back on 2×, text upgrades only", async () => {
+      const fake = await boot();
+      fake.sample(0.1);
+      await vi.advanceTimersByTimeAsync(600);
+      const createsBefore = fake.writes.creates;
+      const rebuildsBefore = fake.writes.rebuilds;
+      fake.menu(2); // side menu: the sensor test
+      for (let i = 1; i <= 4; i++) { fake.sample(i * 0.25); await vi.advanceTimersByTimeAsync(100); }
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fake.writes.header).toMatch(/Sensor/);
+      expect(fake.writes.body).toContain("y   1.00");
+      expect(fake.writes.body).toMatch(/y .*●/);
+      expect(fake.writes.creates).toBe(createsBefore);
+      expect(fake.writes.rebuilds).toBe(rebuildsBefore);
+      fake.emit(3); // 2x: back out of the test
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fake.writes.header).not.toMatch(/Sensor/);
+    });
+
+    it("redraws at most five times a second, however fast the samples come", async () => {
+      const fake = await boot();
+      fake.sample(0.1);
+      await vi.advanceTimersByTimeAsync(600);
+      fake.menu(2);
+      await vi.advanceTimersByTimeAsync(300);
+      const before = fake.writes.count;
+      // 50 samples in one second (20 ms apart), each one different.
+      for (let i = 0; i < 50; i++) { fake.sample(i * 0.01); await vi.advanceTimersByTimeAsync(20); }
+      // Three containers per redraw; at most ~5 redraws plus the 1 s tick.
+      expect(fake.writes.count - before).toBeLessThanOrEqual(6 * 3);
+    });
+
+    it("does not calibrate on a tap while the test is open", async () => {
+      const fake = await boot(0, JSON.stringify({ reference: null }));
+      fake.sample(0.1);
+      await vi.advanceTimersByTimeAsync(600);
+      fake.menu(2); // the sensor test
+      await vi.advanceTimersByTimeAsync(300);
+      fake.emit(0);
+      await vi.advanceTimersByTimeAsync(300);
+      fake.emit(0);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(fake.saved.some((value) => value.includes('"reference":{'))).toBe(false);
+    });
   });
 });
 

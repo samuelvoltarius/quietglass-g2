@@ -133,9 +133,58 @@ details.advanced summary { cursor: pointer; font-size: 14px; color: var(--muted)
 .spk-1 { background: #93c5fd; }
 .spk-2 { background: #fcd34d; }
 .spk-3 { background: #f9a8d4; }
+.spk-me { background: #e5e7eb; }
 .buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
 button[disabled] { opacity: 0.5; cursor: default; }
 .card h3 { margin: 16px 0 6px; font-size: 14px; }
 ul.summary, ul.insights { margin: 0; padding-left: 20px; }
 ul.summary li, ul.insights li { margin-bottom: 4px; }
+
+/* ---- Tabs instead of one long column (13.10.2026) ---- */
+body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+.brand.bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.chip {
+  max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); background: var(--card);
+}
+.chip::before { content: "●"; margin-right: 6px; color: var(--muted); }
+.chip.on { color: var(--text); }
+.chip.on::before { color: var(--accent); }
+.tab[hidden] { display: none !important; }
+.tab { animation: tab-in 0.18s ease-out; }
+@keyframes tab-in { from { opacity: 0; transform: translateY(4px); } }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+}
+.tabbar button {
+  all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 0; border-radius: 10px; font-size: 12px; color: var(--muted);
+}
+.tabbar button span { font-size: 20px; line-height: 1; filter: grayscale(1); opacity: 0.7; }
+.tabbar button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.tabbar button.on span { filter: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .tab { animation: none; } }
+
+/* Gedächtnis tab (0.4.0) */
+ul.memory { list-style: none; margin: 0; padding: 0; }
+ul.memory li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+ul.memory li small { color: var(--muted); }
+button.small { padding: 4px 10px; font-size: 12px; margin-top: 6px; }
+#mem-note { font-family: inherit; }
+
+/* 0.5.0 — overview table and marked lines */
+.overview th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 0 6px 6px 0; }
+.overview td { padding: 7px 6px 7px 0; }
+.overview td:first-child { width: 36px; }
+.overview td.state { text-align: right; white-space: nowrap; }
+.overview tr.off td.state { color: var(--muted); }
+.overview input { margin: 0; }
+.line small.own { font-size: 15px; font-weight: 600; }
+.line small.reply { font-style: italic; }

@@ -2,14 +2,14 @@
   "package_id": "glass.quiet.shootday",
   "edition": "202601",
   "name": "Shoot Day",
-  "version": "0.2.1",
+  "version": "0.7.2",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Load shot list, script, schedule and packing list from the Shoot Day server you enter in the phone app, and log takes there. No other server is contacted.",
+      "desc": "Load customers, projects, storyboards, shots, script, schedule and packing list from the Shoot Day server you enter in the phone app, and save takes, done scenes and new customers there. A private build may also stream voice to your own speech server; no other server is contacted.",
       "whitelist": [
         "http://*",
         "https://*"
@@ -17,7 +17,11 @@
     },
     {
       "name": "g2-microphone",
-      "desc": "Optional voice commands: hold to speak on the packing list, or pick Voice for a take. Audio is recorded only while you speak and goes only to your own Shoot Day server for transcription."
+      "desc": "Optional voice commands: hold to speak on the packing list, pick Voice for a take, or say the name of a new customer. Audio is recorded only while you speak (at most 2 minutes) and goes only to your own Shoot Day server and, if built in, your own live speech recognition server."
+    },
+    {
+      "name": "location",
+      "desc": "Optional, for the Light view only: sun position, golden and blue hour where you are, computed on the phone. Asked only when you open Light; the place never leaves the phone."
     }
   ],
   "supported_languages": [

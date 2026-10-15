@@ -74,12 +74,12 @@ DecibelGuard accumulates that fraction as you go. Both the 3 dB (EU) and 5 dB
 
 | Situation | Display |
 |---|---|
-| Stopped | `Not listening.` · `Tap once to start measuring.` · `tap = start` |
-| Microphone refused | `Microphone not available.` · `tap = try again` |
+| Stopped | `DECIBELGUARD · ready` · `Not listening.` · `Swipe = help` · `Tap = start · Hold = clear dose · 2× = exit` |
+| Microphone refused | `Microphone not available.` · `Tap = try again · 2× = exit` |
 | Quiet | `62 dB` · `● MIC` |
 | Accumulating | `86 dB` · `dose 34% of today's limit` · `2h 10m left at this level` |
-| Halfway | **`HALFWAY`** · `dose 60% of today's limit` · `A quiet break helps.` |
-| Limit reached | **`DAILY DOSE REACHED`** · `Go somewhere quiet or use earplugs.` |
+| Halfway | **`DECIBELGUARD · halfway`** · `dose 60% of today's limit` · `A quiet break helps.` |
+| Limit reached | **`DECIBELGUARD · limit reached`** · `Go somewhere quiet or use earplugs.` |
 
 The warning at **halfway** is deliberate. Being told only once the limit has
 passed is useless for preventing anything.
@@ -112,9 +112,14 @@ approximation across the mid range and nothing more.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start / stop measuring |
-| **Hold** | Reset the accumulated dose |
-| **Double tap** | Leave — stops the microphone |
+| **Tap** | Start measuring. While measuring: asks to stop, a second tap within 4 s stops. After a hold: confirm clearing the dose |
+| **Swipe** | Main screen: open the help; in the help: turn the pages (honours the invert setting on the phone tab "Glasses") |
+| **Hold** | Ask to clear today's dose. Nothing is cleared yet: one tap within 4 s confirms, a swipe, 2× or 4 s cancel |
+| **2×** | Back (help, question); on the main screen asks to leave. Measuring only ends once you confirm |
+| **Side menu** | Off for now (its clicks never arrive on the real glasses, a hold would open it instead); the help is on the swipe |
+
+Stopping and clearing follow the Quietglass Interaction Standard (QIS v1.2): a plain
+tap never clears the dose and never stops measuring on its own.
 
 ## Install
 

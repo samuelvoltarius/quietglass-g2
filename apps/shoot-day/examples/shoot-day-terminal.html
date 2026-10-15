@@ -5,118 +5,93 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Shoot Day · web terminal</title>
 <style>
-  :root { --bg:#0e1113; --panel:#171b1e; --line:#2a3136; --fg:#e7edf0; --dim:#93a1a8; --acc:#28d17c; --ng:#ff6b5e; color-scheme: dark; }
+  :root { --bg:#0e1113; --panel:#171b1e; --panel2:#1d2226; --line:#2a3136; --fg:#e7edf0; --dim:#93a1a8; --acc:#28d17c; --ng:#ff6b5e; --warn:#f2c14e; color-scheme: dark; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,"Segoe UI",Roboto,sans-serif; }
-  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header { padding:10px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   header h1 { font-size:16px; margin:0; letter-spacing:.5px; }
   .pill { background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:3px 10px; color:var(--dim); font-size:12px; }
-  main { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; padding:16px; align-items:start; }
-  @media (max-width:820px) { main { grid-template-columns:1fr; } }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
-  .wide { grid-column:1/-1; }
+  .pill b { color:var(--fg); font-weight:600; }
+  .layout { display:grid; grid-template-columns:290px 1fr; min-height:calc(100vh - 50px); }
+  @media (max-width:860px) { .layout { grid-template-columns:1fr; } aside { border-right:none !important; border-bottom:1px solid var(--line); max-height:45vh; } }
+  aside { border-right:1px solid var(--line); padding:12px; display:flex; flex-direction:column; gap:8px; overflow:auto; }
+  main { padding:16px 20px; overflow:auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
   .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin:0 0 10px; }
   input, select, button, textarea { font:inherit; }
   input, select, textarea { background:var(--bg); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:7px 9px; }
-  textarea { width:100%; min-height:160px; resize:vertical; line-height:1.7; }
+  textarea { width:100%; min-height:90px; resize:vertical; line-height:1.6; }
   button { background:var(--acc); color:#04110a; border:none; border-radius:8px; padding:8px 12px; font-weight:600; cursor:pointer; }
   button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); font-weight:500; }
+  button.danger { background:transparent; color:var(--ng); border:1px solid #5a2a26; font-weight:500; }
   button.sm { padding:4px 8px; font-size:12px; }
+  button:disabled { opacity:.5; cursor:default; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .scene { border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px; }
-  .scene-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-  table { width:100%; border-collapse:collapse; }
-  td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:middle; }
-  th { color:var(--dim); font-weight:600; }
-  .ok { color:var(--acc); } .bad { color:var(--ng); } .muted { color:var(--dim); }
   .grow { flex:1; min-width:120px; }
-  #auth { display:none; }
-  #auth.show { display:block; }
+  .muted { color:var(--dim); } .ok { color:var(--acc); } .bad { color:var(--ng); }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top; }
+  th { color:var(--dim); font-weight:600; }
+  td input, td textarea { width:100%; }
+  td textarea { min-height:54px; }
+  .clist { display:flex; flex-direction:column; gap:2px; }
+  .citem { display:flex; justify-content:space-between; align-items:center; gap:6px; padding:7px 9px; border-radius:8px; cursor:pointer; border:1px solid transparent; }
+  .citem:hover { background:var(--panel); }
+  .citem.on { background:var(--panel2); border-color:var(--line); }
+  .citem small { display:block; color:var(--dim); font-size:12px; }
+  .badge { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:0 7px; font-size:11px; color:var(--dim); white-space:nowrap; }
+  .badge.acc { color:var(--acc); border-color:#1e5a3b; }
+  .crumbs { color:var(--dim); margin-bottom:8px; }
+  .crumbs a { color:var(--dim); cursor:pointer; text-decoration:underline; }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin:12px 0 14px; }
+  .tabs button { background:transparent; color:var(--dim); border:none; border-bottom:2px solid transparent; border-radius:0; padding:8px 12px; font-weight:500; }
+  .tabs button.on { color:var(--fg); border-bottom-color:var(--acc); }
+  .plist { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:10px; }
+  .pcard { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; }
+  .pcard:hover { border-color:var(--acc); }
+  .pcard b { display:block; }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:22px; text-align:center; color:var(--dim); }
+  .drop.over { border-color:var(--acc); color:var(--fg); }
+  .scene { border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px; }
+  .scene-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+  .banner { border:1px solid var(--line); border-left:4px solid var(--warn); background:var(--panel2); border-radius:8px; padding:8px 12px; margin-bottom:10px; }
+  label.field { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--dim); }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+  #auth { display:none; } #auth.show { display:block; }
+  details summary { cursor:pointer; color:var(--dim); }
+  #everywhere { display:none; flex-direction:column; gap:6px; } #everywhere.show { display:flex; }
+  .hit { padding:6px 8px; border-radius:8px; cursor:pointer; border:1px solid var(--line); background:var(--panel); }
+  .hit:hover { border-color:var(--acc); }
+  .hit small { display:block; color:var(--dim); font-size:11px; }
+  .hit span { display:block; font-size:12px; color:var(--dim); overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+  pre { white-space:pre-wrap; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; max-height:260px; overflow:auto; font-size:12px; }
 </style>
 </head>
 <body>
 <header>
   <h1 data-t="title">Shoot Day</h1>
-  <span class="pill"><span data-t="active">Active</span>: <b id="activeName">–</b></span>
+  <span class="pill"><span data-t="onGlasses">On the glasses</span>: <b id="activeName">–</b></span>
   <span class="grow"></span>
-  <select id="projSel" aria-label="project"></select>
-  <button class="ghost sm" id="btnSetActive" data-t="setActive">make active</button>
+  <span class="muted" id="flash"></span>
 </header>
 
-<main>
-  <section class="card wide" id="auth">
-    <h2 data-t="authTitle">Token</h2>
-    <p class="muted" data-t="authHint">This server needs a token. It is kept in this browser only.</p>
-    <div class="row"><input id="tokenInput" type="password" class="grow" autocomplete="off" /><button id="btnToken" data-t="authSave">Use token</button></div>
-  </section>
-
-  <section class="card">
-    <h2 data-t="shotsTitle">Shoot and scenes</h2>
-    <div class="row" style="margin-bottom:12px">
-      <input id="projectName" class="grow" data-tp="projectPlaceholder" />
-      <button id="btnNewProj" data-t="projectSave">Create / load project</button>
+<div class="layout">
+  <aside>
+    <section class="card" id="auth">
+      <h2 data-t="authTitle">Token</h2>
+      <p class="muted" data-t="authHint">This server needs a token. It is kept in this browser only.</p>
+      <div class="row"><input id="tokenInput" type="password" class="grow" autocomplete="off" /><button id="btnToken" data-t="authSave">Use token</button></div>
+    </section>
+    <div class="row"><input id="search" class="grow" type="search" data-tp="search" /></div>
+    <div id="everywhere">
+      <div class="row"><input id="searchAll" class="grow" type="search" data-tp="searchAll" /></div>
+      <div id="hits"></div>
     </div>
-    <div class="row" style="margin-bottom:10px">
-      <input id="newScene" data-tp="scenePlaceholder" style="width:180px" />
-      <button class="ghost" id="btnAddScene" data-t="addScene">+ scene</button>
-    </div>
-    <div id="scenes"></div>
-    <div class="row" style="margin-top:12px">
-      <button id="btnSave" data-t="sendToGlasses">Save → glasses</button>
-      <span id="saveHint" class="muted"></span>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2 data-t="takesTitle">Take log (from set)</h2>
-    <div class="row" style="margin-bottom:8px">
-      <button class="ghost sm" id="btnRefresh" data-t="refresh">refresh</button>
-      <label class="muted"><input type="checkbox" id="autoRef" checked /> <span data-t="auto">auto</span></label>
-    </div>
-    <table>
-      <thead><tr><th data-t="scene">Scene</th><th data-t="shot">Shot</th><th>Take</th><th data-t="status">Status</th><th data-t="note">Note</th><th data-t="time">Time</th></tr></thead>
-      <tbody id="takes"></tbody>
-    </table>
-  </section>
-
-  <section class="card wide">
-    <h2 data-t="scriptTitle">Teleprompter script</h2>
-    <p class="muted" style="margin-top:0" data-t="scriptHint">The Teleprompter module on the glasses scrolls this text.</p>
-    <textarea id="promptText" data-tp="scriptPlaceholder"></textarea>
-    <div class="row" style="margin-top:10px"><button id="btnSavePrompt" data-t="sendToGlasses">Save → glasses</button><span id="promptHint" class="muted"></span></div>
-  </section>
-
-  <section class="card wide">
-    <h2 data-t="dispoTitle">Schedule (call sheet)</h2>
-    <div class="row" style="margin-bottom:10px">
-      <input id="dDate" data-tp="datePlaceholder" style="width:200px" />
-      <input id="dCall" data-tp="callPlaceholder" style="width:120px" />
-      <input id="dLoc" data-tp="locationPlaceholder" class="grow" />
-      <input id="dContact" data-tp="contactPlaceholder" class="grow" />
-    </div>
-    <div id="sched"></div>
-    <div class="row" style="margin-top:8px">
-      <input id="sTime" data-tp="timePlaceholder" style="width:100px" />
-      <input id="sWhat" data-tp="whatPlaceholder" class="grow" />
-      <button class="ghost" id="btnAddSched" data-t="addRow">+ row</button>
-    </div>
-    <div class="row" style="margin-top:10px"><button id="btnSaveDispo" data-t="sendToGlasses">Save → glasses</button><span id="dispoHint" class="muted"></span></div>
-  </section>
-
-  <section class="card wide">
-    <h2><span data-t="packTitle">Packing list</span> <span class="muted" id="eqCount" style="font-weight:400;font-size:14px"></span></h2>
-    <p class="muted" style="margin-top:0" data-t="packHint">Left: what this shoot needs. Right: tick on the day what is packed. Every project has its own list.</p>
-    <div class="row" style="margin-bottom:10px">
-      <input id="eqNew" data-tp="itemPlaceholder" class="grow" />
-      <input id="eqNewGroup" data-tp="groupPlaceholder" style="width:140px" />
-      <button class="ghost" id="btnAddEq" data-t="addItem">+ item</button>
-      <button class="ghost sm" id="btnEqNoneNeed" data-t="clearNeed">clear selection</button>
-      <button class="ghost sm" id="btnEqUnpack" data-t="clearPacked">remove ticks</button>
-    </div>
-    <div id="equip"></div>
-    <div class="row" style="margin-top:10px"><span class="muted" data-t="packSaved">Every change is saved at once — also while someone ticks on the glasses.</span><span id="eqHint" class="muted"></span></div>
-  </section>
-</main>
+    <button id="btnNewCustomer" data-t="newCustomer">+ New customer</button>
+    <div class="clist" id="customers"></div>
+  </aside>
+  <main id="main"></main>
+</div>
 
 <script>
 "use strict";
@@ -125,44 +100,96 @@
 // ---------------------------------------------------------------------------
 const WORDS = {
   en: {
-    title: "Shoot Day", active: "Active", setActive: "make active",
+    title: "Shoot Day", onGlasses: "On the glasses", search: "Search customers …", newCustomer: "+ New customer",
+    searchAll: "Search all projects …", searchNone: "Nothing found.", searchFailed: "Search did not work.",
     authTitle: "Token", authHint: "This server needs a token. It is kept in this browser only.", authSave: "Use token",
-    shotsTitle: "Shoot and scenes", projectPlaceholder: "Project name (e.g. Example shoot)", projectSave: "Create / load project",
-    scenePlaceholder: "Scene (e.g. 3 or 3A)", addScene: "+ scene", sendToGlasses: "Save → glasses",
-    takesTitle: "Take log (from set)", refresh: "refresh", auto: "auto",
+    welcome: "Pick a customer on the left, or create a new one. Every customer has projects; every project has storyboard, shot list, ideas, script, schedule, packing list and files.",
+    customers: "Customers", customer: "Customer", projects: "Projects", noProjects: "No projects yet.",
+    name: "Name", company: "Company", phone: "Phone", email: "E-mail", notes: "Notes (shown on the glasses before the appointment)", team: "Team in the Work Dashboard (names, comma-separated – they see all tasks of this customer)",
+    save: "Save", saved: "saved ✓", delete: "Delete", cancel: "Cancel", create: "Create",
+    newProject: "+ New project", projectName: "Project name", date: "Date", place: "Place",
+    gcal: "Google Calendar", gcalOn: "connected", gcalOff: "off", gcalError: "error",
+    confirmDeleteCustomer: "Delete the customer “{name}”?",
+    confirmDeleteProjects: "“{name}” has {n} project(s).\n\nOK = delete them too, with all files.\nCancel = keep them under “{unassigned}”.",
+    confirmDeleteProject: "Delete the project “{name}” with storyboards, takes, ideas and files?",
+    unassignedHint: "Projects from before customers existed. Move each one to its customer (project page → Customer).",
+    nameRequired: "Please enter a name.", created: "created ✓",
+    wd: "Work Dashboard", wdOn: "connected", wdOff: "off", wdError: "error", wdPending: "pending",
+    moveTo: "Customer", makeActive: "Show on the glasses", isActive: "on the glasses ✓", activated: "the glasses now show this project",
+    tabBoard: "Storyboard", tabShots: "Shot list", tabIdeas: "Ideas", tabScript: "Script", tabDay: "Schedule", tabPack: "Packing list", tabFiles: "Files",
+    boardNew: "+ Empty storyboard", boardFromPdf: "Storyboard from PDF", boardTitle: "Title", boardSource: "from {file}",
+    boardNone: "No storyboard yet. Start an empty one, or import a PDF (drop it here or in the Files tab).",
+    n: "No.", from: "From", to: "To", sceneTitle: "Title / what happens", camera: "Camera", overlay: "Text overlay", goal: "Goal", done: "Done", content: "What happens",
+    addScene: "+ scene", deleteBoard: "Delete storyboard", confirmDeleteBoard: "Delete the storyboard “{name}”?",
+    proposalLlm: "Proposal from the language model – please check every scene, then save.",
+    proposalNoLlm: "No language model is configured (SHOOT_LLM_URL). The text of the PDF is below – enter the scenes by hand.",
+    proposalFailed: "The language model did not answer usably ({error}). The text of the PDF is below – enter the scenes by hand or try again.",
+    proposalNoText: "This PDF contains no readable text (scanned, or drawn as pictures?). Enter the scenes by hand.",
+    proposalEncrypted: "This PDF is encrypted; its text cannot be read. Enter the scenes by hand.",
+    proposalWorking: "Reading the PDF and asking the language model … this can take a minute.",
+    pdfText: "Text from the PDF", pickPdf: "PDF …", noPdf: "No PDF in this project yet.",
     scene: "Scene", shot: "Shot", status: "Status", note: "Note", time: "Time", size: "Size", description: "Description",
-    scriptTitle: "Teleprompter script", scriptHint: "The Teleprompter module on the glasses scrolls this text.", scriptPlaceholder: "Your script …",
-    dispoTitle: "Schedule (call sheet)", datePlaceholder: "Day / date", callPlaceholder: "Call (07:30)",
-    locationPlaceholder: "Location", contactPlaceholder: "Contact", timePlaceholder: "Time", whatPlaceholder: "What happens", addRow: "+ row",
-    packTitle: "Packing list", packHint: "Left: what this shoot needs. Right: tick on the day what is packed. Every project has its own list.",
-    itemPlaceholder: "Own item (e.g. spare battery)", groupPlaceholder: "Group", addItem: "+ item",
-    clearNeed: "clear selection", clearPacked: "remove ticks",
-    packSaved: "Every change is saved at once — also while someone ticks on the glasses.",
-    needs: "needed", packed: "packed", noScenes: "No scenes yet. Add one above.", noTakes: "– none yet –", noRows: "No schedule rows yet.",
-    deleteScene: "Delete scene", shotPlaceholder: "Shot (A, B, 1 …)", addShot: "+ shot", nameRequired: "Please enter a project name.",
-    sceneExists: "That scene already exists.", saved: "saved ✓", savedGlasses: "saved ✓ – the glasses load it next time",
-    notSaved: "NOT saved – reload the page", confirmRemove: "Remove “{name}” from the list?",
-    countNone: "– nothing selected yet", countSome: "– {packed}/{need} packed", unreachable: "Server not reachable.",
+    shotsTitle: "Scenes and shots", sceneAdd: "+ scene", scenePlaceholder: "Scene (e.g. 3 or 3A)", shotPlaceholder: "Shot (A, B, 1 …)", addShot: "+ shot",
+    deleteScene: "Delete scene", sceneExists: "That scene already exists.", noScenes: "No scenes yet.",
+    takesTitle: "Take log (from set)", refresh: "refresh", auto: "auto", noTakes: "– none yet –",
+    ideasHint: "Ideas for this customer, with keywords. A later Babel version can show matching ideas during a conversation (GET /api/ideas?customer=…).",
+    idea: "Idea", tags: "Keywords (comma)", addIdea: "+ idea", noIdeas: "No ideas yet.", used: "used",
+    scriptHint: "The teleprompter on the glasses scrolls this text.", scriptPlaceholder: "Your script …",
+    datePlaceholder: "Day / date", callPlaceholder: "Call (07:30)", locationPlaceholder: "Location", contactPlaceholder: "Contact", geoPlaceholder: "lat, lon (light)",
+    timePlaceholder: "Time", whatPlaceholder: "What happens", addRow: "+ row", noRows: "No schedule rows yet.",
+    packHint: "Left: what this shoot needs. Right: tick on the day what is packed. Every change is saved at once — also while someone ticks on the glasses.",
+    itemPlaceholder: "Own item (e.g. spare battery)", groupPlaceholder: "Group", addItem: "+ item", clearNeed: "clear selection", clearPacked: "remove ticks",
+    needs: "needed", packed: "packed", countNone: "– nothing selected yet", countSome: "– {packed}/{need} packed", confirmRemove: "Remove “{name}” from the list?",
+    dropHere: "Drop PDF, PNG or JPEG here (at most {mb} MB) – or", choose: "choose files", uploading: "uploading {name} …",
+    tooLarge: "“{name}” is larger than {mb} MB.", wrongType: "“{name}”: only PDF, PNG or JPEG.", open: "open", noFiles: "No files yet.", draftMake: "Write a draft", draftPick: "Paperwork…", draftDate: "Date on the document", draftBusy: "Writing the draft (takes up to a minute)…", draftOff: "Drafts need Chrome on the server.",
+    confirmDeleteFile: "Delete the file “{name}”?",
+    notSaved: "NOT saved – reload the page", unreachable: "Server not reachable.", failed: "That did not work ({error}).",
   },
   de: {
-    title: "Shoot Day", active: "Aktiv", setActive: "aktiv setzen",
+    title: "Shoot Day", onGlasses: "Auf der Brille", search: "Kunden suchen …", newCustomer: "+ Neuer Kunde",
+    searchAll: "In allen Projekten suchen …", searchNone: "Nichts gefunden.", searchFailed: "Die Suche hat nicht geklappt.",
     authTitle: "Token", authHint: "Dieser Server braucht ein Token. Es bleibt nur in diesem Browser.", authSave: "Token verwenden",
-    shotsTitle: "Dreh und Szenen", projectPlaceholder: "Projektname (z. B. Beispiel-Dreh)", projectSave: "Projekt anlegen / laden",
-    scenePlaceholder: "Szene (z. B. 3 oder 3A)", addScene: "+ Szene", sendToGlasses: "Speichern → Brille",
-    takesTitle: "Take-Protokoll (vom Set)", refresh: "aktualisieren", auto: "automatisch",
+    welcome: "Links einen Kunden wählen oder neu anlegen. Jeder Kunde hat Projekte; jedes Projekt hat Storyboard, Shotlist, Ideen, Skript, Tagesplan, Packliste und Dateien.",
+    customers: "Kunden", customer: "Kunde", projects: "Projekte", noProjects: "Noch keine Projekte.",
+    name: "Name", company: "Firma", phone: "Telefon", email: "E-Mail", notes: "Notizen (stehen vor dem Termin auf der Brille)", team: "Team im Work Dashboard (Namen mit Komma – sehen alle Aufgaben dieses Kunden)",
+    save: "Speichern", saved: "gespeichert ✓", delete: "Löschen", cancel: "Abbrechen", create: "Anlegen",
+    newProject: "+ Neues Projekt", projectName: "Projektname", date: "Datum", place: "Ort",
+    gcal: "Google Kalender", gcalOn: "verbunden", gcalOff: "aus", gcalError: "Fehler",
+    confirmDeleteCustomer: "Den Kunden „{name}“ löschen?",
+    confirmDeleteProjects: "„{name}“ hat {n} Projekt(e).\n\nOK = mitlöschen, samt aller Dateien.\nAbbrechen = behalten, unter „{unassigned}“.",
+    confirmDeleteProject: "Das Projekt „{name}“ mit Storyboards, Takes, Ideen und Dateien löschen?",
+    unassignedHint: "Projekte aus der Zeit vor den Kunden. Verschiebe jedes zu seinem Kunden (Projektseite → Kunde).",
+    nameRequired: "Bitte einen Namen eingeben.", created: "angelegt ✓",
+    wd: "Work Dashboard", wdOn: "verbunden", wdOff: "aus", wdError: "Fehler", wdPending: "ausstehend",
+    moveTo: "Kunde", makeActive: "Auf der Brille zeigen", isActive: "auf der Brille ✓", activated: "die Brille zeigt jetzt dieses Projekt",
+    tabBoard: "Storyboard", tabShots: "Shotlist", tabIdeas: "Ideen", tabScript: "Skript", tabDay: "Tagesplan", tabPack: "Packliste", tabFiles: "Dateien",
+    boardNew: "+ Leeres Storyboard", boardFromPdf: "Storyboard aus PDF", boardTitle: "Titel", boardSource: "aus {file}",
+    boardNone: "Noch kein Storyboard. Leer beginnen oder ein PDF importieren (hier hineinziehen oder im Tab Dateien).",
+    n: "Nr.", from: "Von", to: "Bis", sceneTitle: "Titel / was passiert", camera: "Kamera", overlay: "Texteinblendung", goal: "Ziel", done: "Erledigt", content: "Was passiert",
+    addScene: "+ Szene", deleteBoard: "Storyboard löschen", confirmDeleteBoard: "Das Storyboard „{name}“ löschen?",
+    proposalLlm: "Vorschlag vom Sprachmodell – bitte jede Szene prüfen, dann speichern.",
+    proposalNoLlm: "Kein Sprachmodell eingerichtet (SHOOT_LLM_URL). Der Text der PDF steht unten – Szenen bitte von Hand eintragen.",
+    proposalFailed: "Das Sprachmodell hat nicht brauchbar geantwortet ({error}). Der Text der PDF steht unten – von Hand eintragen oder nochmal versuchen.",
+    proposalNoText: "Diese PDF enthält keinen auslesbaren Text (eingescannt oder als Bild gezeichnet?). Szenen bitte von Hand eintragen.",
+    proposalEncrypted: "Diese PDF ist verschlüsselt; ihr Text lässt sich nicht lesen. Szenen bitte von Hand eintragen.",
+    proposalWorking: "PDF wird gelesen und das Sprachmodell gefragt … das kann eine Minute dauern.",
+    pdfText: "Text aus der PDF", pickPdf: "PDF …", noPdf: "Noch keine PDF in diesem Projekt.",
     scene: "Szene", shot: "Shot", status: "Status", note: "Notiz", time: "Zeit", size: "Größe", description: "Beschreibung",
-    scriptTitle: "Teleprompter-Text", scriptHint: "Das Teleprompter-Modul auf der Brille rollt diesen Text ab.", scriptPlaceholder: "Dein Sprechtext …",
-    dispoTitle: "Tagesplan (Dispo)", datePlaceholder: "Tag / Datum", callPlaceholder: "Call (07:30)",
-    locationPlaceholder: "Ort", contactPlaceholder: "Kontakt", timePlaceholder: "Zeit", whatPlaceholder: "Programmpunkt", addRow: "+ Zeile",
-    packTitle: "Packliste", packHint: "Links: was für diesen Dreh mit muss. Rechts: am Drehtag abhaken, was eingepackt ist. Jedes Projekt hat seine eigene Liste.",
-    itemPlaceholder: "Eigene Position (z. B. Ersatzakku)", groupPlaceholder: "Gruppe", addItem: "+ Position",
-    clearNeed: "Auswahl leeren", clearPacked: "Haken entfernen",
-    packSaved: "Jede Änderung wird sofort gespeichert – auch wenn parallel auf der Brille abgehakt wird.",
-    needs: "braucht", packed: "eingepackt", noScenes: "Noch keine Szenen. Oben eine anlegen.", noTakes: "– noch keine –", noRows: "Noch keine Zeilen im Zeitplan.",
-    deleteScene: "Szene löschen", shotPlaceholder: "Shot (A, B, 1 …)", addShot: "+ Shot", nameRequired: "Bitte einen Projektnamen eingeben.",
-    sceneExists: "Diese Szene gibt es schon.", saved: "gespeichert ✓", savedGlasses: "gespeichert ✓ – die Brille lädt es beim nächsten Öffnen",
-    notSaved: "NICHT gespeichert – Seite neu laden", confirmRemove: "„{name}“ aus der Liste entfernen?",
-    countNone: "– noch nichts ausgewählt", countSome: "– {packed}/{need} eingepackt", unreachable: "Server nicht erreichbar.",
+    shotsTitle: "Szenen und Shots", sceneAdd: "+ Szene", scenePlaceholder: "Szene (z. B. 3 oder 3A)", shotPlaceholder: "Shot (A, B, 1 …)", addShot: "+ Shot",
+    deleteScene: "Szene löschen", sceneExists: "Diese Szene gibt es schon.", noScenes: "Noch keine Szenen.",
+    takesTitle: "Take-Protokoll (vom Set)", refresh: "aktualisieren", auto: "automatisch", noTakes: "– noch keine –",
+    ideasHint: "Ideen für diesen Kunden, mit Stichwörtern. Eine spätere Babel-Version kann passende Ideen im Kundengespräch zeigen (GET /api/ideas?customer=…).",
+    idea: "Idee", tags: "Stichwörter (mit Komma)", addIdea: "+ Idee", noIdeas: "Noch keine Ideen.", used: "umgesetzt",
+    scriptHint: "Der Teleprompter auf der Brille rollt diesen Text ab.", scriptPlaceholder: "Dein Sprechtext …",
+    datePlaceholder: "Tag / Datum", callPlaceholder: "Call (07:30)", locationPlaceholder: "Ort", contactPlaceholder: "Kontakt", geoPlaceholder: "lat, lon (Licht)",
+    timePlaceholder: "Zeit", whatPlaceholder: "Programmpunkt", addRow: "+ Zeile", noRows: "Noch keine Zeilen im Zeitplan.",
+    packHint: "Links: was für diesen Dreh mit muss. Rechts: am Drehtag abhaken, was eingepackt ist. Jede Änderung wird sofort gespeichert – auch wenn parallel auf der Brille abgehakt wird.",
+    itemPlaceholder: "Eigene Position (z. B. Ersatzakku)", groupPlaceholder: "Gruppe", addItem: "+ Position", clearNeed: "Auswahl leeren", clearPacked: "Haken entfernen",
+    needs: "braucht", packed: "eingepackt", countNone: "– noch nichts ausgewählt", countSome: "– {packed}/{need} eingepackt", confirmRemove: "„{name}“ aus der Liste entfernen?",
+    dropHere: "PDF, PNG oder JPEG hier hineinziehen (höchstens {mb} MB) – oder", choose: "Dateien wählen", uploading: "lade {name} hoch …",
+    tooLarge: "„{name}“ ist größer als {mb} MB.", wrongType: "„{name}“: nur PDF, PNG oder JPEG.", open: "öffnen", noFiles: "Noch keine Dateien.", draftMake: "Entwurf schreiben", draftPick: "Unterlage…", draftDate: "Datum auf der Unterlage", draftBusy: "Entwurf wird geschrieben (bis zu einer Minute)…", draftOff: "Entwürfe brauchen Chrome am Server.",
+    confirmDeleteFile: "Die Datei „{name}“ löschen?",
+    notSaved: "NICHT gespeichert – Seite neu laden", unreachable: "Server nicht erreichbar.", failed: "Das hat nicht geklappt ({error}).",
   },
 };
 const LANG = (navigator.language || "en").slice(0, 2).toLowerCase() === "de" ? "de" : "en";
@@ -179,243 +206,708 @@ const $ = (selector) => document.querySelector(selector);
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
+    if (value === undefined || value === null) continue;
     if (key === "class") el.className = value;
     else if (key === "style") el.style.cssText = value;
     else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
     else el[key] = value;
   }
-  for (const child of children.flat()) if (child !== null && child !== undefined) el.append(child instanceof Node ? child : String(child));
+  for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) el.append(child instanceof Node ? child : String(child));
   return el;
 }
-const flash = (selector, text) => { $(selector).textContent = text; setTimeout(() => { $(selector).textContent = ""; }, 3000); };
+let flashTimer;
+const flash = (text) => { $("#flash").textContent = text; clearTimeout(flashTimer); flashTimer = setTimeout(() => { $("#flash").textContent = ""; }, 3500); };
+const field = (label, input) => h("label", { class: "field" }, label, input);
+/** Seconds → "m:ss" for the time fields (the server reads "m:ss" and plain seconds alike). */
+const secs = (value) => {
+  if (value === null || value === undefined || value === "") return "";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  const whole = Math.floor(n);
+  return Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0");
+};
+const day = (ts) => (ts ? new Date(ts).toLocaleDateString(LANG, { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
+const bytes = (n) => (n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+const enc = encodeURIComponent;
 
 const TOKEN_KEY = "shootday.token";
 const token = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } };
-async function api(path, options = {}) {
-  const headers = { ...(options.body ? { "Content-Type": "application/json" } : {}) };
+async function request(path, options = {}) {
+  const headers = { ...(options.json !== undefined ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
   if (token()) headers.Authorization = "Bearer " + token();
-  const response = await fetch(path, { ...options, headers, signal: AbortSignal.timeout(10000) });
+  const response = await fetch(path, {
+    method: options.method || (options.json !== undefined || options.body ? "POST" : "GET"),
+    headers, body: options.json !== undefined ? JSON.stringify(options.json) : options.body,
+    signal: AbortSignal.timeout(options.timeout || 15000),
+  });
   if (response.status === 401) { $("#auth").classList.add("show"); throw new Error("unauthorized"); }
   $("#auth").classList.remove("show");
-  if (!response.ok) throw new Error("HTTP " + response.status);
-  return response.json();
-}
-const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
-$("#btnToken").onclick = () => {
-  try { localStorage.setItem(TOKEN_KEY, $("#tokenInput").value); } catch { /* private window: per page load only */ }
-  $("#tokenInput").value = "";
-  void loadEverything();
-};
-
-// ---------------------------------------------------------------------------
-// Projects and scenes
-// ---------------------------------------------------------------------------
-const SIZES = ["WS", "LS", "MS", "MCU", "CU", "ECU", "OTS", "Insert"];
-let scenes = [];
-
-function renderScenes() {
-  const box = $("#scenes");
-  box.replaceChildren();
-  if (!scenes.length) { box.append(h("p", { class: "muted" }, T("noScenes"))); return; }
-  scenes.forEach((scene, si) => {
-    const rows = scene.shots.map((shot, i) => h("tr", {},
-      h("td", {}, h("input", { value: shot.shot || "", style: "width:60px", oninput: (e) => { shot.shot = e.target.value; } })),
-      h("td", {}, h("input", { value: shot.desc || "", style: "width:100%", oninput: (e) => { shot.desc = e.target.value; } })),
-      h("td", {}, h("select", { onchange: (e) => { shot.size = e.target.value; } },
-        SIZES.map((size) => h("option", { value: size, selected: size === shot.size }, size)))),
-      h("td", {}, h("button", { class: "ghost sm", onclick: () => { scene.shots.splice(i, 1); renderScenes(); } }, "✕")),
-    ));
-    const newShot = h("input", { placeholder: T("shotPlaceholder"), style: "width:140px" });
-    box.append(h("div", { class: "scene" },
-      h("div", { class: "scene-head" }, h("b", {}, T("scene") + " " + scene.scene),
-        h("button", { class: "ghost sm", onclick: () => { scenes.splice(si, 1); renderScenes(); } }, T("deleteScene"))),
-      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, T("shot")), h("th", {}, T("description")), h("th", {}, T("size")), h("th", {}))), h("tbody", {}, rows)),
-      h("div", { class: "row", style: "margin-top:8px" }, newShot,
-        h("button", { class: "ghost sm", onclick: () => { scene.shots.push({ shot: newShot.value.trim() || "A", desc: "", size: "MS" }); renderScenes(); } }, T("addShot"))),
-    ));
-  });
-}
-
-$("#btnAddScene").onclick = () => {
-  const value = $("#newScene").value.trim();
-  if (!value) return;
-  if (scenes.some((s) => s.scene === value)) { alert(T("sceneExists")); return; }
-  scenes.push({ scene: value, shots: [] });
-  $("#newScene").value = "";
-  renderScenes();
-};
-
-async function saveProject(hint) {
-  const name = $("#projectName").value.trim();
-  if (!name) { alert(T("nameRequired")); return; }
-  await post("/api/project", { name, scenes });
-  if (hint) flash("#saveHint", T("savedGlasses"));
-  await loadState();
-  await loadProjectData();
-}
-$("#btnNewProj").onclick = () => { saveProject(false).catch(report); };
-$("#btnSave").onclick = () => { saveProject(true).catch(report); };
-$("#btnSetActive").onclick = async () => {
-  const name = $("#projSel").value;
-  if (!name) return;
-  try { await post("/api/active", { name }); await loadState(); await loadProjectData(); } catch (error) { report(error); }
-};
-
-async function loadState() {
-  const s = await api("/api/state");
-  $("#activeName").textContent = s.active || "–";
-  $("#projSel").replaceChildren(...s.projects.map((p) => h("option", { value: p.name, selected: p.name === s.active }, p.name)));
-}
-async function loadProject() {
-  const p = await api("/api/project");
-  $("#projectName").value = p.name || "";
-  scenes = Array.isArray(p.scenes) ? p.scenes : [];
-  renderScenes();
-}
-
-// ---------------------------------------------------------------------------
-// Takes
-// ---------------------------------------------------------------------------
-let loadingTakes = false;
-async function loadTakes() {
-  if (loadingTakes) return;          // never two polls at once
-  loadingTakes = true;
-  try {
-    const { takes } = await api("/api/takes");
-    const body = $("#takes");
-    if (!takes || !takes.length) { body.replaceChildren(h("tr", {}, h("td", { colSpan: 6, class: "muted" }, T("noTakes")))); return; }
-    body.replaceChildren(...takes.map((t) => h("tr", {},
-      h("td", {}, t.scene), h("td", {}, t.shot), h("td", {}, "T" + t.n),
-      h("td", { class: t.status === "OK" ? "ok" : "bad" }, t.status), h("td", {}, t.note || ""),
-      h("td", { class: "muted" }, new Date(t.ts).toLocaleString(LANG, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })),
-    )));
-  } finally {
-    loadingTakes = false;
+  if (!response.ok) {
+    let detail = "HTTP " + response.status;
+    try { detail = (await response.json()).error || detail; } catch { /* keep the status */ }
+    const error = new Error(detail); error.status = response.status; throw error;
   }
+  return options.raw ? response : response.json();
 }
-$("#btnRefresh").onclick = () => { loadTakes().catch(report); };
-setInterval(() => { if ($("#autoRef").checked && !document.hidden) loadTakes().catch(() => undefined); }, 3000);
-
-// ---------------------------------------------------------------------------
-// Script
-// ---------------------------------------------------------------------------
-async function loadPrompt() { $("#promptText").value = (await api("/api/prompter")).text || ""; }
-$("#btnSavePrompt").onclick = async () => {
-  try { await post("/api/prompter", { text: $("#promptText").value }); flash("#promptHint", T("saved")); } catch (error) { report(error); }
-};
-
-// ---------------------------------------------------------------------------
-// Schedule
-// ---------------------------------------------------------------------------
-let schedule = [];
-function renderSchedule() {
-  const box = $("#sched");
-  if (!schedule.length) { box.replaceChildren(h("p", { class: "muted" }, T("noRows"))); return; }
-  box.replaceChildren(h("table", {},
-    h("thead", {}, h("tr", {}, h("th", {}, T("time")), h("th", {}, T("whatPlaceholder")), h("th", {}))),
-    h("tbody", {}, schedule.map((row, i) => h("tr", {},
-      h("td", {}, row.time || ""), h("td", {}, row.what || ""),
-      h("td", {}, h("button", { class: "ghost sm", onclick: () => { schedule.splice(i, 1); renderSchedule(); } }, "✕")),
-    ))),
-  ));
-}
-$("#btnAddSched").onclick = () => {
-  const time = $("#sTime").value.trim();
-  const what = $("#sWhat").value.trim();
-  if (!what) return;
-  schedule.push({ time, what });
-  $("#sTime").value = "";
-  $("#sWhat").value = "";
-  renderSchedule();
-};
-async function loadDispo() {
-  const d = await api("/api/dispo");
-  $("#dDate").value = d.date || ""; $("#dCall").value = d.call || ""; $("#dLoc").value = d.location || ""; $("#dContact").value = d.contact || "";
-  schedule = Array.isArray(d.schedule) ? d.schedule : [];
-  renderSchedule();
-}
-$("#btnSaveDispo").onclick = async () => {
-  try {
-    await post("/api/dispo", { date: $("#dDate").value, call: $("#dCall").value, location: $("#dLoc").value, contact: $("#dContact").value, schedule });
-    flash("#dispoHint", T("saved"));
-  } catch (error) { report(error); }
-};
-
-// ---------------------------------------------------------------------------
-// Packing list — every change goes to the server on its own, never the whole
-// list, so a tick here cannot overwrite a tick made on the glasses meanwhile.
-// ---------------------------------------------------------------------------
-let equipment = [];
-function renderEquipment() {
-  const groups = [...new Set(equipment.map((item) => item.group))];
-  $("#equip").replaceChildren(...groups.map((group) => h("div", {},
-    h("h3", { style: "margin:14px 0 4px;font-size:15px" }, group),
-    h("table", {}, h("tbody", {}, equipment.filter((item) => item.group === group).map((item) => h("tr", {},
-      h("td", { style: "width:110px" }, h("label", {}, h("input", { type: "checkbox", checked: item.need, onchange: (e) => {
-        item.need = e.target.checked; if (!item.need) item.packed = false; renderEquipment();
-        void send({ setneed: { name: item.name, need: item.need } });
-      } }), " " + T("needs"))),
-      h("td", { style: "width:130px" }, h("label", { class: item.need ? "" : "muted" }, h("input", { type: "checkbox", checked: item.packed, disabled: !item.need, onchange: (e) => {
-        item.packed = e.target.checked; renderEquipment();
-        void send({ toggle: { name: item.name, packed: item.packed } });
-      } }), " " + T("packed"))),
-      h("td", { class: item.need ? "" : "muted" }, item.name),
-      h("td", { style: "width:40px" }, h("button", { class: "ghost sm", onclick: () => {
-        if (!confirm(T("confirmRemove", { name: item.name }))) return;
-        equipment = equipment.filter((x) => x !== item); renderEquipment();
-        void send({ remove: { name: item.name } });
-      } }, "✕")),
-    )))),
-  )));
-  const need = equipment.filter((i) => i.need).length;
-  const packed = equipment.filter((i) => i.need && i.packed).length;
-  $("#eqCount").textContent = need ? T("countSome", { packed, need }) : T("countNone");
-}
-async function loadEquipment() {
-  const e = await api("/api/equipment");
-  equipment = Array.isArray(e.items) ? e.items : [];
-  renderEquipment();
-}
-async function send(payload) {
-  try { await post("/api/equipment", payload); flash("#eqHint", T("saved")); }
-  catch (error) { $("#eqHint").textContent = T("notSaved"); console.error(error); }
-}
-$("#btnAddEq").onclick = async () => {
-  const name = $("#eqNew").value.trim();
-  if (!name) return;
-  const group = $("#eqNewGroup").value.trim() || "Other";
-  $("#eqNew").value = "";
-  await send({ add: { group, name, need: true } });
-  await loadEquipment().catch(report);
-};
-$("#btnEqNoneNeed").onclick = async () => {
-  for (const item of equipment.filter((i) => i.need)) await send({ setneed: { name: item.name, need: false } });
-  await loadEquipment().catch(report);
-};
-$("#btnEqUnpack").onclick = async () => {
-  for (const item of equipment.filter((i) => i.packed)) await send({ toggle: { name: item.name, packed: false } });
-  await loadEquipment().catch(report);
-};
-// Pick up ticks made on the glasses — unless someone is typing here.
-let loadingEquipment = false;
-setInterval(async () => {
-  if (loadingEquipment || document.hidden || document.activeElement?.tagName === "INPUT") return;
-  loadingEquipment = true;
-  try { await loadEquipment(); } catch { /* next round */ } finally { loadingEquipment = false; }
-}, 10000);
-
-// ---------------------------------------------------------------------------
+const api = (path) => request(path);
+const post = (path, json) => request(path, { json });
+const del = (path) => request(path, { method: "DELETE" });
 function report(error) {
   if (String(error?.message) === "unauthorized") return;
   console.error(error);
-  alert(T("unreachable"));
+  alert(error?.status ? T("failed", { error: error.message }) : T("unreachable"));
 }
-// Switching projects always reloads everything, so nothing of the previous shoot stays on screen.
-async function loadProjectData() { await loadProject(); await loadTakes(); await loadPrompt(); await loadDispo(); await loadEquipment(); }
-async function loadEverything() {
-  try { await loadState(); await loadProjectData(); } catch (error) { report(error); }
+$("#btnToken").onclick = () => {
+  try { localStorage.setItem(TOKEN_KEY, $("#tokenInput").value); } catch { /* private window: per page load only */ }
+  $("#tokenInput").value = "";
+  void start();
+};
+
+// ---------------------------------------------------------------------------
+// State and routing: #/c/<customer>  ·  #/p/<project>/<tab>
+// ---------------------------------------------------------------------------
+let config = { llm: false, maxUploadMb: 20 };
+let customers = [];
+let route = { kind: "home" };
+let currentProject = null;
+/** A PDF picked in the Files tab, to be turned into a storyboard once the Storyboard tab is open. */
+let pendingPdf = "";
+const TABS = ["board", "shots", "ideas", "script", "day", "pack", "files"];
+const TAB_KEYS = { board: "tabBoard", shots: "tabShots", ideas: "tabIdeas", script: "tabScript", day: "tabDay", pack: "tabPack", files: "tabFiles" };
+
+function parseRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").map((x) => { try { return decodeURIComponent(x); } catch { return ""; } });
+  if (parts[0] === "c" && parts[1]) return { kind: "customer", id: parts[1] };
+  if (parts[0] === "p" && parts[1]) return { kind: "project", id: parts[1], tab: TABS.includes(parts[2]) ? parts[2] : "board" };
+  return { kind: "home" };
 }
-void loadEverything();
+const go = (hash) => { if (location.hash === hash) void render(); else location.hash = hash; };
+window.addEventListener("hashchange", () => { void render(); });
+
+async function loadCustomers() {
+  const reply = await api("/api/customers");
+  customers = reply.customers || [];
+  const state = await api("/api/state");
+  const owner = customers.find((c) => c.id === reply.activeCustomer);
+  $("#activeName").textContent = state.active ? state.active + (owner ? " · " + owner.name : "") : "–";
+  renderCustomerList();
+}
+
+function renderCustomerList() {
+  const query = $("#search").value.trim().toLowerCase();
+  const selected = route.kind === "customer" ? route.id : route.kind === "project" ? currentProject?.customerId : "";
+  const shown = customers.filter((c) => !query || [c.name, c.company, c.email, c.phone].some((x) => (x || "").toLowerCase().includes(query)));
+  $("#customers").replaceChildren(...shown.map((c) => h("div", { class: "citem" + (c.id === selected ? " on" : ""), onclick: () => go("#/c/" + c.id) },
+    h("div", {}, h("span", { class: c.unassigned ? "muted" : "" }, c.name), c.company ? h("small", {}, c.company) : null),
+    h("span", { class: "badge", title: T("projects") }, String(c.projectCount)),
+  )));
+}
+$("#search").addEventListener("input", renderCustomerList);
+
+// Search over every customer and project (only when the server has an embedding service).
+let searchTimer;
+let searchRun = 0;
+async function searchAll() {
+  const q = $("#searchAll").value.trim();
+  const run = ++searchRun;
+  if (q.length < 2) { $("#hits").replaceChildren(); return; }
+  try {
+    const reply = await api("/api/search?q=" + enc(q) + "&limit=8");
+    if (run !== searchRun) return;
+    const hits = reply.hits || [];
+    $("#hits").replaceChildren(...(hits.length ? hits.map((hit) => h("div", { class: "hit", title: String(hit.score), onclick: () => go("#/p/" + enc(hit.projectId)) },
+      h("small", {}, [hit.customer, hit.project].filter(Boolean).join(" · ")),
+      h("b", {}, hit.title || ""),
+      h("span", {}, hit.snippet || ""),
+    )) : [h("p", { class: "muted", style: "margin:0" }, T("searchNone"))]));
+  } catch (error) {
+    if (run !== searchRun || String(error?.message) === "unauthorized") return;
+    $("#hits").replaceChildren(h("p", { class: "bad", style: "margin:0" }, T("searchFailed")));
+  }
+}
+$("#searchAll").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { void searchAll(); }, 350); });
+$("#searchAll").addEventListener("keydown", (event) => { if (event.key === "Enter") { clearTimeout(searchTimer); void searchAll(); } });
+
+function customerFields(customer = {}) {
+  const inputs = {
+    name: h("input", { value: customer.name || "" }),
+    company: h("input", { value: customer.company || "" }),
+    phone: h("input", { type: "tel", value: customer.phone || "" }),
+    email: h("input", { type: "email", value: customer.email || "" }),
+    notes: h("textarea", { value: customer.notes || "" }),
+    team: h("input", { value: (customer.team || []).join(", "), placeholder: "Anna, Max" }),
+  };
+  const values = () => Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+  const block = [
+    h("div", { class: "grid2" }, field(T("name"), inputs.name), field(T("company"), inputs.company), field(T("phone"), inputs.phone), field(T("email"), inputs.email)),
+    h("div", { style: "margin-top:10px" }, field(T("notes"), inputs.notes)),
+    h("div", { style: "margin-top:10px" }, field(T("team"), inputs.team)),
+  ];
+  return { inputs, values, block };
+}
+
+$("#btnNewCustomer").onclick = () => {
+  if (location.hash !== "#/new") location.hash = "#/new"; else renderNewCustomer();
+};
+function renderNewCustomer() {
+  currentProject = null;
+  renderCustomerList();
+  const form = customerFields();
+  $("#main").replaceChildren(h("section", { class: "card" },
+    h("h2", {}, T("newCustomer").replace("+ ", "")),
+    ...form.block,
+    h("div", { class: "row", style: "margin-top:10px" },
+      h("button", { onclick: async () => {
+        if (!form.inputs.name.value.trim()) { alert(T("nameRequired")); return; }
+        try {
+          const created = await post("/api/customers", form.values());
+          flash(T("created"));
+          await loadCustomers();
+          go("#/c/" + created.id);
+        } catch (error) { report(error); }
+      } }, T("create")),
+      h("button", { class: "ghost", onclick: () => go("#/") }, T("cancel"))),
+  ));
+  form.inputs.name.focus();
+}
+
+// ---------------------------------------------------------------------------
+// Customer page
+// ---------------------------------------------------------------------------
+async function renderCustomer(id) {
+  const { customer, projects } = await api("/api/customers/" + enc(id));
+  const form = customerFields(customer);
+  const pName = h("input", { placeholder: T("projectName"), class: "grow" });
+  const pDate = h("input", { type: "date" });
+  const pPlace = h("input", { placeholder: T("place") });
+  $("#main").replaceChildren(
+    h("div", { class: "crumbs" }, h("a", { onclick: () => go("#/") }, T("customers")), " › ", customer.name),
+    h("section", { class: "card" },
+      h("h2", {}, T("customer")),
+      customer.unassigned ? h("p", { class: "muted", style: "margin-top:0" }, T("unassignedHint")) : null,
+      ...form.block,
+      h("div", { class: "row", style: "margin-top:10px" },
+        h("button", { onclick: async () => {
+          if (!form.inputs.name.value.trim()) { alert(T("nameRequired")); return; }
+          try {
+            await post("/api/customers/" + enc(id), form.values());
+            flash(T("saved"));
+            await loadCustomers();
+            await render();
+          } catch (error) { report(error); }
+        } }, T("save")),
+        h("span", { class: "grow" }),
+        h("span", { class: "muted" }, day(customer.updated)),
+        h("button", { class: "danger", onclick: () => { void deleteCustomer(customer); } }, T("delete")),
+      ),
+    ),
+    h("section", { class: "card" },
+      h("h2", {}, T("projects")),
+      projects.length === 0 ? h("p", { class: "muted" }, T("noProjects")) : h("div", { class: "plist" }, projects.map((p) => h("div", { class: "pcard", onclick: () => go("#/p/" + p.id) },
+        h("b", {}, p.name, p.active ? h("span", { class: "badge acc", style: "margin-left:6px" }, T("isActive")) : null),
+        h("span", { class: "muted" }, [p.date, p.place].filter(Boolean).join(" · ") || "–"),
+        h("div", { class: "muted", style: "font-size:12px;margin-top:4px" },
+          `${T("tabBoard")} ${p.sceneCount} · ${T("tabShots")} ${p.shotCount} · ${T("tabIdeas")} ${p.ideaCount} · ${T("tabFiles")} ${p.fileCount}`),
+      ))),
+      h("div", { class: "row", style: "margin-top:12px" }, pName, pDate, pPlace,
+        h("button", { onclick: async () => {
+          if (!pName.value.trim()) { alert(T("nameRequired")); return; }
+          try {
+            const created = await post("/api/projects", { customerId: id, name: pName.value, date: pDate.value, place: pPlace.value });
+            await loadCustomers();
+            go("#/p/" + created.id);
+          } catch (error) { report(error); }
+        } }, T("newProject"))),
+    ),
+  );
+}
+
+async function deleteCustomer(customer) {
+  if (!confirm(T("confirmDeleteCustomer", { name: customer.name }))) return;
+  let mode = "";
+  if (customer.projectCount > 0) {
+    const unassigned = customers.find((c) => c.unassigned)?.name || (LANG === "de" ? "Ohne Zuordnung" : "Unassigned");
+    mode = confirm(T("confirmDeleteProjects", { name: customer.name, n: customer.projectCount, unassigned })) ? "delete" : "move";
+  }
+  try {
+    await del("/api/customers/" + enc(customer.id) + (mode ? "?projects=" + mode : ""));
+    await loadCustomers();
+    go("#/");
+  } catch (error) { report(error); }
+}
+
+// ---------------------------------------------------------------------------
+// Project page
+// ---------------------------------------------------------------------------
+const projectPath = (rest = "") => "/api/projects/" + enc(currentProject.id) + rest;
+/** The legacy endpoints (shot list, takes, script, schedule, packing list) for this project, not the glasses' active one. */
+const pq = (path) => path + (path.includes("?") ? "&" : "?") + "project=" + enc(currentProject.id);
+
+async function renderProject(id, tab) {
+  currentProject = await api("/api/projects/" + enc(id));
+  const p = currentProject;
+  renderCustomerList();
+  const name = h("input", { value: p.name, class: "grow" });
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(p.date);
+  const date = h("input", { type: iso || !p.date ? "date" : "text", value: p.date, placeholder: T("date") });
+  const place = h("input", { value: p.place, placeholder: T("place") });
+  const owner = h("select", {}, customers.map((c) => h("option", { value: c.id, selected: c.id === p.customerId }, c.name)));
+  const body = h("div");
+  const gcalLine = h("p", { class: "muted", style: "margin:6px 0 0" });
+  api("/api/gcal/status").then((g) => {
+    gcalLine.textContent = T("gcal") + ": " + (g.lastError ? T("gcalError") : g.enabled ? T("gcalOn") : T("gcalOff"));
+  }).catch(() => { gcalLine.textContent = ""; });
+  $("#main").replaceChildren(
+    h("div", { class: "crumbs" }, h("a", { onclick: () => go("#/") }, T("customers")), " › ",
+      h("a", { onclick: () => go("#/c/" + p.customerId) }, p.customer), " › ", p.name),
+    h("section", { class: "card" },
+      h("div", { class: "row" }, field(T("projectName"), name), field(T("date"), date), field(T("place"), place), field(T("moveTo"), owner),
+        h("button", { style: "align-self:flex-end", onclick: async () => {
+          if (!name.value.trim()) { alert(T("nameRequired")); return; }
+          try {
+            await post(projectPath(), { name: name.value, date: date.value, place: place.value, customerId: owner.value });
+            flash(T("saved"));
+            await loadCustomers();
+            await render();
+          } catch (error) { report(error); }
+        } }, T("save"))),
+      h("div", { class: "row", style: "margin-top:10px" },
+        p.active ? h("span", { class: "badge acc" }, T("isActive")) : h("button", { class: "ghost sm", onclick: async () => {
+          try { await post("/api/active", { id }); flash(T("activated")); await loadCustomers(); await render(); } catch (error) { report(error); }
+        } }, T("makeActive")),
+        wdLine(),
+        h("span", { class: "grow" }),
+        h("button", { class: "danger sm", onclick: async () => {
+          if (!confirm(T("confirmDeleteProject", { name: p.name }))) return;
+          try { await del(projectPath()); await loadCustomers(); go("#/c/" + p.customerId); } catch (error) { report(error); }
+        } }, T("delete"))),
+      gcalLine,
+    ),
+    h("nav", { class: "tabs" }, TABS.map((t) => h("button", { class: t === tab ? "on" : "", onclick: () => go("#/p/" + id + "/" + t) }, T(TAB_KEYS[t])))),
+    body,
+  );
+  await TAB_RENDER[tab](body);
+}
+
+/** "Work Dashboard: verbunden / aus / Fehler" — filled in once /api/wd/status answers. */
+function wdLine() {
+  const state = h("b", {}, "…");
+  const line = h("span", { class: "muted", style: "align-self:center; margin-left:12px", id: "wdStatus" }, T("wd") + ": ", state);
+  api("/api/wd/status").then((s) => {
+    const word = !s.enabled ? T("wdOff") : s.lastError ? T("wdError") : T("wdOn");
+    state.textContent = word + (s.enabled && s.pending ? " · " + s.pending + " " + T("wdPending") : "");
+    state.className = !s.enabled ? "" : s.lastError ? "bad" : "ok";
+    if (s.lastError) line.title = s.lastError;
+    else if (s.lastSync) line.title = new Date(s.lastSync).toLocaleString();
+  }).catch(() => { state.textContent = "–"; });
+  return line;
+}
+
+// ---- Storyboard -------------------------------------------------------------
+/** A storyboard being edited (a saved one or a fresh proposal); times stay as typed text ("0:05"). */
+function boardEditor(board, { banner = null, text = "", fresh = false } = {}) {
+  const scenes = board.scenes.map((s) => ({ ...s, from: secs(s.from), to: secs(s.to) }));
+  const title = h("input", { value: board.title || "", placeholder: T("boardTitle"), class: "grow" });
+  const box = h("div", { class: "scene" });
+  const rows = h("tbody");
+  const area = (scene, key, placeholder) => h("textarea", { value: scene[key] || "", placeholder: placeholder || "", oninput: (e) => { scene[key] = e.target.value; } });
+  const draw = () => {
+    rows.replaceChildren(...scenes.map((s, i) => h("tr", {},
+      h("td", { style: "width:52px" }, h("input", { value: String(s.n ?? i + 1), oninput: (e) => { s.n = Number(e.target.value) || i + 1; } })),
+      h("td", { style: "width:68px" }, h("input", { value: s.from ?? "", placeholder: "0:00", oninput: (e) => { s.from = e.target.value; } })),
+      h("td", { style: "width:68px" }, h("input", { value: s.to ?? "", placeholder: "0:05", oninput: (e) => { s.to = e.target.value; } })),
+      h("td", {}, h("input", { value: s.title || "", oninput: (e) => { s.title = e.target.value; } }), area(s, "content", T("content"))),
+      h("td", {}, area(s, "camera")),
+      h("td", {}, area(s, "overlay")),
+      h("td", {}, area(s, "goal")),
+      h("td", { style: "width:44px;text-align:center" }, h("input", { type: "checkbox", checked: s.done === true, onchange: (e) => { s.done = e.target.checked; } })),
+      h("td", { style: "width:36px" }, h("button", { class: "ghost sm", onclick: () => { scenes.splice(i, 1); draw(); } }, "✕")),
+    )));
+  };
+  draw();
+  box.append(...[
+    banner ? h("div", { class: "banner" }, banner) : null,
+    h("div", { class: "scene-head" }, title, board.source ? h("span", { class: "muted" }, T("boardSource", { file: board.source })) : null),
+    h("table", {}, h("thead", {}, h("tr", {}, ["n", "from", "to", "sceneTitle", "camera", "overlay", "goal", "done"].map((k) => h("th", {}, T(k))), h("th", {}))), rows),
+    h("div", { class: "row", style: "margin-top:8px" },
+      h("button", { class: "ghost sm", onclick: () => { scenes.push({ n: scenes.length + 1, from: "", to: "", title: "", content: "", camera: "", overlay: "", goal: "", done: false }); draw(); } }, T("addScene")),
+      h("span", { class: "grow" }),
+      h("button", { onclick: async () => {
+        try {
+          await post(projectPath("/storyboards"), { ...(fresh ? {} : { id: board.id }), title: title.value, source: board.source || "", scenes });
+          flash(T("saved"));
+          await render();
+        } catch (error) { report(error); }
+      } }, T("save")),
+      fresh ? h("button", { class: "ghost", onclick: () => box.remove() }, T("cancel")) : h("button", { class: "danger sm", onclick: async () => {
+        if (!confirm(T("confirmDeleteBoard", { name: board.title || "–" }))) return;
+        try { await del(projectPath("/storyboards/" + enc(board.id))); await render(); } catch (error) { report(error); }
+      } }, T("deleteBoard")),
+    ),
+    text ? h("details", { style: "margin-top:8px" }, h("summary", {}, T("pdfText")), h("pre", {}, text)) : null,
+  ].filter(Boolean));
+  return box;
+}
+
+/** Reads a stored PDF; the proposal (or the manual-entry fallback) opens as a new, unsaved storyboard. */
+async function storyboardFromPdf(file, where) {
+  const working = h("div", { class: "banner" }, T("proposalWorking"));
+  where.prepend(working);
+  try {
+    const result = await request(projectPath("/files/" + enc(file.id) + "/storyboard?lang=" + LANG), { method: "POST", timeout: 240000 });
+    let banner;
+    if (result.encrypted) banner = T("proposalEncrypted");
+    else if (!result.extracted) banner = T("proposalNoText");
+    else if (result.llm === "off") banner = T("proposalNoLlm");
+    else if (result.llm === "failed") banner = T("proposalFailed", { error: result.error || "?" });
+    else banner = T("proposalLlm");
+    const scenes = result.scenes.length ? result.scenes : [{ n: 1, from: "", to: "", title: "", content: "", camera: "", overlay: "", goal: "", done: false }];
+    working.replaceWith(boardEditor({ title: file.name.replace(/\.pdf$/i, ""), source: file.name, scenes }, { banner, text: result.text, fresh: true }));
+  } catch (error) {
+    working.remove();
+    report(error);
+  }
+}
+
+async function renderBoard(body) {
+  const p = currentProject;
+  const pdfs = p.files.filter((f) => f.type === "pdf");
+  const editors = h("div");
+  const select = h("select", {}, pdfs.length ? pdfs.map((f) => h("option", { value: f.id }, f.name)) : h("option", { value: "" }, T("noPdf")));
+  const drop = dropZone(async (files) => {
+    for (const uploaded of await upload(files)) if (uploaded.type === "pdf") await storyboardFromPdf(uploaded, editors);
+  });
+  body.replaceChildren(
+    h("section", { class: "card" },
+      h("div", { class: "row" },
+        h("button", { class: "ghost", onclick: () => editors.prepend(boardEditor({ title: "", scenes: [] }, { fresh: true })) }, T("boardNew")),
+        h("span", { class: "grow" }),
+        select,
+        h("button", { disabled: pdfs.length === 0, onclick: () => { const f = pdfs.find((x) => x.id === select.value); if (f) void storyboardFromPdf(f, editors); } }, T("boardFromPdf"))),
+      h("div", { style: "margin-top:10px" }, drop),
+    ),
+    editors,
+  );
+  if (p.storyboards.length === 0) editors.append(h("p", { class: "muted" }, T("boardNone")));
+  for (const board of p.storyboards) editors.append(boardEditor(board));
+  const wanted = pdfs.find((f) => f.id === pendingPdf);
+  pendingPdf = "";
+  if (wanted) await storyboardFromPdf(wanted, editors);
+}
+
+// ---- Shot list and takes --------------------------------------------------
+const SIZES = ["WS", "LS", "MS", "MCU", "CU", "ECU", "OTS", "Insert"];
+async function renderShots(body) {
+  const scenes = currentProject.scenes.map((s) => ({ scene: s.scene, shots: s.shots.map((x) => ({ ...x })) }));
+  const box = h("div");
+  const draw = () => {
+    box.replaceChildren();
+    if (!scenes.length) { box.append(h("p", { class: "muted" }, T("noScenes"))); return; }
+    scenes.forEach((scene, si) => {
+      const newShot = h("input", { placeholder: T("shotPlaceholder"), style: "width:140px" });
+      box.append(h("div", { class: "scene" },
+        h("div", { class: "scene-head" }, h("b", {}, T("scene") + " " + scene.scene),
+          h("button", { class: "ghost sm", onclick: () => { scenes.splice(si, 1); draw(); } }, T("deleteScene"))),
+        h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, T("shot")), h("th", {}, T("description")), h("th", {}, T("size")), h("th", {}))),
+          h("tbody", {}, scene.shots.map((shot, i) => h("tr", {},
+            h("td", { style: "width:70px" }, h("input", { value: shot.shot || "", oninput: (e) => { shot.shot = e.target.value; } })),
+            h("td", {}, h("input", { value: shot.desc || "", oninput: (e) => { shot.desc = e.target.value; } })),
+            h("td", { style: "width:100px" }, h("select", { onchange: (e) => { shot.size = e.target.value; } }, SIZES.map((size) => h("option", { value: size, selected: size === shot.size }, size)))),
+            h("td", { style: "width:36px" }, h("button", { class: "ghost sm", onclick: () => { scene.shots.splice(i, 1); draw(); } }, "✕")),
+          )))),
+        h("div", { class: "row", style: "margin-top:8px" }, newShot,
+          h("button", { class: "ghost sm", onclick: () => { scene.shots.push({ shot: newShot.value.trim() || "A", desc: "", size: "MS" }); draw(); } }, T("addShot"))),
+      ));
+    });
+  };
+  draw();
+  const newScene = h("input", { placeholder: T("scenePlaceholder"), style: "width:200px" });
+  const takes = h("tbody");
+  const auto = h("input", { type: "checkbox", checked: true });
+  body.replaceChildren(
+    h("section", { class: "card" }, h("h2", {}, T("shotsTitle")),
+      h("div", { class: "row", style: "margin-bottom:10px" }, newScene, h("button", { class: "ghost", onclick: () => {
+        const value = newScene.value.trim();
+        if (!value) return;
+        if (scenes.some((s) => s.scene === value)) { alert(T("sceneExists")); return; }
+        scenes.push({ scene: value, shots: [] }); newScene.value = ""; draw();
+      } }, T("sceneAdd"))),
+      box,
+      h("div", { class: "row", style: "margin-top:10px" }, h("button", { onclick: async () => {
+        try { await post(pq("/api/project"), { scenes }); flash(T("saved")); } catch (error) { report(error); }
+      } }, T("save")))),
+    h("section", { class: "card" }, h("h2", {}, T("takesTitle")),
+      h("div", { class: "row", style: "margin-bottom:8px" }, h("button", { class: "ghost sm", onclick: () => { loadTakes(takes).catch(report); } }, T("refresh")), h("label", { class: "muted" }, auto, " " + T("auto"))),
+      h("table", {}, h("thead", {}, h("tr", {}, [T("scene"), T("shot"), "Take", T("status"), T("note"), T("time")].map((x) => h("th", {}, x)))), takes)),
+  );
+  await loadTakes(takes);
+  poll(() => auto.checked && document.body.contains(takes), () => loadTakes(takes), 3000);
+}
+async function loadTakes(body) {
+  const { takes } = await api(pq("/api/takes"));
+  if (!takes.length) { body.replaceChildren(h("tr", {}, h("td", { colSpan: 6, class: "muted" }, T("noTakes")))); return; }
+  body.replaceChildren(...takes.map((t) => h("tr", {},
+    h("td", {}, t.scene), h("td", {}, t.shot), h("td", {}, "T" + t.n),
+    h("td", { class: t.status === "OK" ? "ok" : "bad" }, t.status), h("td", {}, t.note || ""),
+    h("td", { class: "muted" }, new Date(t.ts).toLocaleString(LANG, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })),
+  )));
+}
+
+// ---- Ideas --------------------------------------------------------------
+async function renderIdeas(body) {
+  const ideas = currentProject.ideas.map((i) => ({ ...i, tags: i.tags.join(", ") }));
+  const box = h("tbody");
+  const draw = () => {
+    box.replaceChildren(...(ideas.length ? ideas.map((idea, i) => h("tr", {},
+      h("td", {}, h("textarea", { value: idea.text, oninput: (e) => { idea.text = e.target.value; } })),
+      h("td", { style: "width:240px" }, h("input", { value: idea.tags, oninput: (e) => { idea.tags = e.target.value; } })),
+      h("td", { style: "width:110px" }, h("label", { class: "muted" }, h("input", { type: "checkbox", checked: idea.done, onchange: (e) => { idea.done = e.target.checked; } }), " " + T("used"))),
+      h("td", { style: "width:36px" }, h("button", { class: "ghost sm", onclick: () => { ideas.splice(i, 1); draw(); } }, "✕")),
+    )) : [h("tr", {}, h("td", { colSpan: 4, class: "muted" }, T("noIdeas")))]));
+  };
+  draw();
+  body.replaceChildren(h("section", { class: "card" },
+    h("p", { class: "muted", style: "margin-top:0" }, T("ideasHint")),
+    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, T("idea")), h("th", {}, T("tags")), h("th", {}), h("th", {}))), box),
+    h("div", { class: "row", style: "margin-top:10px" },
+      h("button", { class: "ghost", onclick: () => { ideas.push({ text: "", tags: "", done: false }); draw(); } }, T("addIdea")),
+      h("span", { class: "grow" }),
+      h("button", { onclick: async () => {
+        try {
+          const saved = await post(projectPath("/ideas"), { ideas });
+          currentProject.ideas = saved.ideas;
+          flash(T("saved"));
+          await renderIdeas(body);
+        } catch (error) { report(error); }
+      } }, T("save"))),
+  ));
+}
+
+// ---- Script ---------------------------------------------------------------
+async function renderScript(body) {
+  const text = h("textarea", { value: currentProject.prompter, placeholder: T("scriptPlaceholder"), style: "min-height:320px" });
+  body.replaceChildren(h("section", { class: "card" },
+    h("p", { class: "muted", style: "margin-top:0" }, T("scriptHint")), text,
+    h("div", { class: "row", style: "margin-top:10px" }, h("button", { onclick: async () => {
+      try { await post(pq("/api/prompter"), { text: text.value }); currentProject.prompter = text.value; flash(T("saved")); } catch (error) { report(error); }
+    } }, T("save")))));
+}
+
+// ---- Schedule -------------------------------------------------------------
+async function renderDay(body) {
+  const d = currentProject.dispo;
+  const schedule = d.schedule.map((r) => ({ ...r }));
+  const inputs = {
+    date: h("input", { value: d.date || "", placeholder: T("datePlaceholder"), style: "width:180px" }),
+    call: h("input", { value: d.call || "", placeholder: T("callPlaceholder"), style: "width:120px" }),
+    location: h("input", { value: d.location || "", placeholder: T("locationPlaceholder"), class: "grow" }),
+    contact: h("input", { value: d.contact || "", placeholder: T("contactPlaceholder"), class: "grow" }),
+    geo: h("input", { value: d.lat !== undefined && d.lon !== undefined ? `${d.lat}, ${d.lon}` : "", placeholder: T("geoPlaceholder"), style: "width:170px" }),
+  };
+  const rows = h("div");
+  const draw = () => {
+    rows.replaceChildren(schedule.length ? h("table", {}, h("tbody", {}, schedule.map((row, i) => h("tr", {},
+      h("td", { style: "width:110px" }, h("input", { value: row.time || "", oninput: (e) => { row.time = e.target.value; } })),
+      h("td", {}, h("input", { value: row.what || "", oninput: (e) => { row.what = e.target.value; } })),
+      h("td", { style: "width:36px" }, h("button", { class: "ghost sm", onclick: () => { schedule.splice(i, 1); draw(); } }, "✕")),
+    )))) : h("p", { class: "muted" }, T("noRows")));
+  };
+  draw();
+  const time = h("input", { placeholder: T("timePlaceholder"), style: "width:100px" });
+  const what = h("input", { placeholder: T("whatPlaceholder"), class: "grow" });
+  body.replaceChildren(h("section", { class: "card" },
+    h("div", { class: "row", style: "margin-bottom:10px" }, ...Object.values(inputs)),
+    rows,
+    h("div", { class: "row", style: "margin-top:8px" }, time, what, h("button", { class: "ghost", onclick: () => {
+      if (!what.value.trim()) return;
+      schedule.push({ time: time.value.trim(), what: what.value.trim() }); time.value = ""; what.value = ""; draw();
+    } }, T("addRow"))),
+    h("div", { class: "row", style: "margin-top:10px" }, h("button", { onclick: async () => {
+      try {
+        const [lat, lon] = inputs.geo.value.split(/[,;\s]+/).filter(Boolean);
+        await post(pq("/api/dispo"), { date: inputs.date.value, call: inputs.call.value, location: inputs.location.value, contact: inputs.contact.value, notes: d.notes || "", schedule, ...(lat && lon ? { lat, lon } : {}) });
+        flash(T("saved"));
+      } catch (error) { report(error); }
+    } }, T("save")))));
+}
+
+// ---- Packing list — every change goes to the server on its own, never the
+// whole list, so a tick here cannot overwrite a tick made on the glasses.
+async function renderPack(body) {
+  let equipment = [];
+  const list = h("div");
+  const count = h("span", { class: "muted", style: "font-weight:400" });
+  const send = async (payload) => {
+    try { await post(pq("/api/equipment"), payload); flash(T("saved")); } catch (error) { flash(T("notSaved")); console.error(error); }
+  };
+  const draw = () => {
+    const groups = [...new Set(equipment.map((item) => item.group))];
+    list.replaceChildren(...groups.map((group) => h("div", {},
+      h("h3", { style: "margin:14px 0 4px;font-size:15px" }, group),
+      h("table", {}, h("tbody", {}, equipment.filter((item) => item.group === group).map((item) => h("tr", {},
+        h("td", { style: "width:110px" }, h("label", {}, h("input", { type: "checkbox", checked: item.need, onchange: (e) => {
+          item.need = e.target.checked; if (!item.need) item.packed = false; draw();
+          void send({ setneed: { name: item.name, need: item.need } });
+        } }), " " + T("needs"))),
+        h("td", { style: "width:130px" }, h("label", { class: item.need ? "" : "muted" }, h("input", { type: "checkbox", checked: item.packed, disabled: !item.need, onchange: (e) => {
+          item.packed = e.target.checked; draw();
+          void send({ toggle: { name: item.name, packed: item.packed } });
+        } }), " " + T("packed"))),
+        h("td", { class: item.need ? "" : "muted" }, item.name),
+        h("td", { style: "width:40px" }, h("button", { class: "ghost sm", onclick: () => {
+          if (!confirm(T("confirmRemove", { name: item.name }))) return;
+          equipment = equipment.filter((x) => x !== item); draw();
+          void send({ remove: { name: item.name } });
+        } }, "✕")),
+      )))),
+    )));
+    const need = equipment.filter((i) => i.need).length;
+    const packed = equipment.filter((i) => i.need && i.packed).length;
+    count.textContent = need ? T("countSome", { packed, need }) : T("countNone");
+  };
+  const reload = async () => { equipment = (await api(pq("/api/equipment"))).items || []; draw(); };
+  const item = h("input", { placeholder: T("itemPlaceholder"), class: "grow" });
+  const group = h("input", { placeholder: T("groupPlaceholder"), style: "width:140px" });
+  body.replaceChildren(h("section", { class: "card" },
+    h("h2", {}, T("tabPack"), " ", count),
+    h("p", { class: "muted", style: "margin-top:0" }, T("packHint")),
+    h("div", { class: "row", style: "margin-bottom:10px" }, item, group,
+      h("button", { class: "ghost", onclick: async () => {
+        if (!item.value.trim()) return;
+        await send({ add: { group: group.value.trim() || "Other", name: item.value.trim(), need: true } });
+        item.value = ""; await reload().catch(report);
+      } }, T("addItem")),
+      h("button", { class: "ghost sm", onclick: async () => { for (const i of equipment.filter((x) => x.need)) await send({ setneed: { name: i.name, need: false } }); await reload().catch(report); } }, T("clearNeed")),
+      h("button", { class: "ghost sm", onclick: async () => { for (const i of equipment.filter((x) => x.packed)) await send({ toggle: { name: i.name, packed: false } }); await reload().catch(report); } }, T("clearPacked"))),
+    list));
+  await reload();
+  // Pick up ticks made on the glasses — unless someone is typing here.
+  poll(() => document.body.contains(list) && document.activeElement?.tagName !== "INPUT", reload, 10000);
+}
+
+// ---- Files ----------------------------------------------------------------
+function dropZone(onFiles) {
+  const input = h("input", { type: "file", multiple: true, accept: ".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg", style: "display:none", onchange: () => { void onFiles([...input.files]); input.value = ""; } });
+  const zone = h("div", { class: "drop" }, T("dropHere", { mb: config.maxUploadMb }), " ", h("button", { class: "ghost sm", onclick: () => input.click() }, T("choose")), input);
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("over"); void onFiles([...(e.dataTransfer?.files || [])]); });
+  return zone;
+}
+
+/** Uploads one file after the other; returns what the server stored. */
+async function upload(files) {
+  const stored = [];
+  for (const file of files) {
+    if (!/\.(pdf|png|jpe?g)$/i.test(file.name)) { alert(T("wrongType", { name: file.name })); continue; }
+    if (file.size > config.maxUploadMb * 1024 * 1024) { alert(T("tooLarge", { name: file.name, mb: config.maxUploadMb })); continue; }
+    flash(T("uploading", { name: file.name }));
+    try {
+      stored.push(await request(projectPath("/files"), {
+        method: "POST", body: file, headers: { "Content-Type": "application/octet-stream", "X-File-Name": enc(file.name) }, timeout: 120000,
+      }));
+      flash(T("saved"));
+    } catch (error) { report(error); }
+  }
+  currentProject.files.push(...stored);
+  return stored;
+}
+
+/** Fetched with the token, then shown from a local blob: no token ever goes into a URL. */
+async function openFile(file) {
+  try {
+    const response = await request(projectPath("/files/" + enc(file.id)), { raw: true, timeout: 60000 });
+    const url = URL.createObjectURL(await response.blob());
+    const link = h("a", { href: url, target: "_blank", rel: "noopener" });
+    if (file.type !== "pdf") link.download = file.name;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) { report(error); }
+}
+
+async function renderFiles(body) {
+  const list = h("tbody");
+  const draw = () => {
+    const files = currentProject.files;
+    list.replaceChildren(...(files.length ? files.map((f) => h("tr", {},
+      h("td", {}, f.name), h("td", { class: "muted" }, f.type.toUpperCase()), h("td", { class: "muted" }, bytes(f.size)), h("td", { class: "muted" }, day(f.uploaded)),
+      h("td", { style: "white-space:nowrap;text-align:right" },
+        h("button", { class: "ghost sm", onclick: () => { void openFile(f); } }, T("open")), " ",
+        f.type === "pdf" ? h("button", { class: "ghost sm", onclick: () => { pendingPdf = f.id; go("#/p/" + currentProject.id + "/board"); } }, T("boardFromPdf")) : null, " ",
+        h("button", { class: "danger sm", onclick: async () => {
+          if (!confirm(T("confirmDeleteFile", { name: f.name }))) return;
+          try {
+            await del(projectPath("/files/" + enc(f.id)));
+            currentProject.files = currentProject.files.filter((x) => x.id !== f.id); draw();
+          } catch (error) { report(error); }
+        } }, "✕")),
+    )) : [h("tr", {}, h("td", { colSpan: 5, class: "muted" }, T("noFiles")))]));
+  };
+  draw();
+  // paperwork drafts from templates (drone flight, location permit, consent) – written on the server as PDF
+  const pick = h("select", {}, h("option", { value: "" }, T("draftPick")));
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const date = h("input", { type: "date", value: today, title: T("draftDate"), ariaLabel: T("draftDate") });
+  const make = h("button", { class: "sm" }, T("draftMake"));
+  const note = h("span", { class: "muted" });
+  const drafts = h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px" }, pick, date, make, note);
+  api(projectPath("/docs")).then((info) => {
+    for (const t of info.templates) pick.append(h("option", { value: t.id }, t.label));
+    if (!info.pdf) { make.disabled = true; note.textContent = T("draftOff"); }
+  }).catch(() => { drafts.hidden = true; });
+  make.onclick = async () => {
+    if (!pick.value) return;
+    make.disabled = true; note.textContent = T("draftBusy");
+    try {
+      const made = await request(projectPath("/docs"), { json: { template: pick.value, date: date.value }, timeout: 180000 });
+      currentProject.files = [...currentProject.files, ...made.files]; draw();
+      note.textContent = "";
+    } catch (error) { note.textContent = ""; report(error); } finally { make.disabled = false; }
+  };
+  body.replaceChildren(h("section", { class: "card" },
+    dropZone(async (files) => { await upload(files); draw(); }),
+    drafts,
+    h("table", { style: "margin-top:12px" }, list)));
+}
+
+const TAB_RENDER = { board: renderBoard, shots: renderShots, ideas: renderIdeas, script: renderScript, day: renderDay, pack: renderPack, files: renderFiles };
+
+// ---------------------------------------------------------------------------
+/** One timer per page view; it does nothing once its view is gone. */
+let pollTimer;
+function poll(wanted, task, ms) {
+  clearInterval(pollTimer);
+  let busy = false;
+  pollTimer = setInterval(async () => {
+    if (busy || document.hidden || !wanted()) return;
+    busy = true;
+    try { await task(); } catch { /* next round */ } finally { busy = false; }
+  }, ms);
+}
+
+async function render() {
+  clearInterval(pollTimer);
+  route = parseRoute();
+  try {
+    if (location.hash === "#/new") { route = { kind: "new" }; renderNewCustomer(); return; }
+    if (route.kind === "customer") { currentProject = null; renderCustomerList(); await renderCustomer(route.id); }
+    else if (route.kind === "project") await renderProject(route.id, route.tab);
+    else { currentProject = null; renderCustomerList(); $("#main").replaceChildren(h("section", { class: "card" }, h("p", { style: "margin:0" }, T("welcome")))); }
+  } catch (error) {
+    if (error?.status === 404) { go("#/"); return; }
+    report(error);
+  }
+}
+
+async function start() {
+  try {
+    config = { ...config, ...(await api("/api/config")) };
+    $("#everywhere").classList.toggle("show", Boolean(config.embed));
+    await loadCustomers();
+    await render();
+  } catch (error) { report(error); }
+}
+void start();
 </script>
 </body>
 </html>

@@ -1,22 +1,35 @@
-import type { HudCard, HudFeed } from "../api/types";
+import type { Answer, HudCard, HudFeed } from "../api/types";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
+import { armedFooter, footer } from "../glasses/footer";
 import { MAX_BODY_ROWS, fit, wrap, type ScreenView } from "../glasses/screen";
 
 /**
  * The HUD's logic without any SDK: what the glasses show for a given state,
  * and what a gesture means. Kept pure so it can be tested exhaustively.
  *
- * Safety rules that live here:
- *  - A card whose effect is not "intern" needs a second tap within
- *    CONFIRM_MS before "yes" is sent. Speech never replaces that tap.
- *  - While a voice reply is on screen, a tap only closes it — it never answers
+ * Safety rules that live here (QIS v1 + v1.2, docs/BEDIENSTANDARD.md):
+ *  - An answer is never mapped to a swipe. The choice is a list (Ja / Nein / Hilfe without the side menu);
+ *    a swipe only moves the cursor, a tap arms the chosen entry and a second
+ *    single tap within CONFIRM_MS sends it. A swipe, a double tap or the
+ *    timeout cancels.
+ *  - Speech never answers on the wearer's behalf (v1.2 #4): a spoken yes/no
+ *    only selects and arms that entry; the confirming tap sends it.
+ *  - Recognised free text is shown first (`draft`); a tap sends it, 2×
+ *    discards it. Nothing goes out on the release alone when the text is known.
+ *  - While a voice reply is on screen, a tap only closes it - it never answers
  *    the card behind it.
+ *  - Help lives in the glasses' side menu (v1.2 #1) when SIDE_MENU is on, else it is the last list row.
  *  - "Always allow" does not exist on the glasses.
- *  - A double tap never answers a card: it is the exit, as on every app root.
- *    "No" takes two deliberate gestures: swipe to "Nein", then tap. The
- *    choice belongs to one card id and never carries over to another card.
+ *  - The choice belongs to one card id and never carries over to another card.
  */
+
+/**
+ * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses and a hold
+ * opens the menu instead of reaching the app (step log of 15.10.2026), so a hold speaks again and the
+ * help is the last row of the answer list again ("Hilfe").
+ */
+export const SIDE_MENU = false;
 
 export type RecPhase = "off" | "opening" | "listening" | "sending";
 
@@ -38,15 +51,25 @@ export interface HudModel {
   readonly confirm: string | null;
   /** Card id on which "Nein" is selected (swiped to); null = "Ja" is selected. */
   readonly nein: string | null;
-  /** One transient line for the footer, already localised. */
+  /** The cursor is on the last list entry, "Hilfe" (only without the side menu). */
+  readonly helpStop: boolean;
+  /** The help page is open (from the list row, or from the side menu when it is on). */
+  readonly help: boolean;
+  /** One transient line, already localised (shown in the body, never as the footer). */
   readonly message: string;
   readonly voice: VoiceReply | null;
   readonly rec: RecPhase;
+  /** What the live recogniser heard so far in this recording ("" without live STT). */
+  readonly live: string;
+  /** When the microphone opened (ms since epoch), 0 when off. */
+  readonly recSince: number;
+  /** Recognised text waiting for the wearer: a tap sends it, 2× discards it ("" = none). */
+  readonly draft: string;
 }
 
 export const EMPTY_MODEL: HudModel = {
   configured: false, online: false, problem: "", fault: false, feed: null, index: 0,
-  confirm: null, nein: null, message: "", voice: null, rec: "off",
+  confirm: null, nein: null, helpStop: false, help: false, message: "", voice: null, rec: "off", live: "", recSince: 0, draft: "",
 };
 
 /** The second tap must come within this time. */
@@ -55,10 +78,14 @@ export const CONFIRM_MS = 4_000;
 export type HudGesture = "click" | "doubleClick" | "scrollUp" | "scrollDown";
 
 export type HudAction =
-  | { readonly kind: "answer"; readonly cardId: string; readonly answer: "ja" | "nein" }
+  | { readonly kind: "answer"; readonly cardId: string; readonly answer: Answer }
   | { readonly kind: "confirm"; readonly cardId: string }
-  | { readonly kind: "move"; readonly index: number; readonly nein: string | null }
+  | { readonly kind: "move"; readonly index: number; readonly nein: string | null; readonly helpStop: boolean }
+  | { readonly kind: "disarm" }
+  | { readonly kind: "help"; readonly open: boolean }
   | { readonly kind: "dismiss" }
+  | { readonly kind: "sendDraft" }
+  | { readonly kind: "discardDraft" }
   | { readonly kind: "exit" }
   | { readonly kind: "none" };
 
@@ -67,39 +94,55 @@ export function currentCard(model: HudModel): HudCard | null {
   return cards.length ? cards[Math.min(model.index, cards.length - 1)] ?? null : null;
 }
 
-export function needsConfirm(card: HudCard): boolean {
-  return card.effect.trim().toLowerCase() !== "intern";
-}
-
 /** Whether "Nein" is the selected answer on the card shown now. */
 export function neinSelected(model: HudModel): boolean {
   const card = currentCard(model);
   return card !== null && model.nein === card.id;
 }
 
+const YES = new Set(["ja", "jawohl", "ja bitte", "ok", "okay", "passt", "yes", "yeah", "yep", "yes please"]);
+const NO = new Set(["nein", "nee", "nö", "nein danke", "stopp", "stop", "no", "nope", "no thanks"]);
+
+/** A recognised sentence that is nothing but a yes or a no; anything longer is free text. */
+export function spokenAnswer(text: string): Answer | null {
+  const plain = text.toLowerCase().replace(/[.,!?;:"'…]+/g, " ").replace(/\s+/g, " ").trim();
+  if (YES.has(plain)) return "ja";
+  if (NO.has(plain)) return "nein";
+  return null;
+}
+
 /**
- * Tap = the selected answer (Ja by default; Ja on an outward card needs a
- * second tap), swipe = through "Ja"/"Nein" of each card and on to the next
- * card, double tap = leave (always).
+ * Tap = arm the chosen entry, second tap = send, swipe = move the cursor
+ * through Ja/Nein of each card, double tap = cancel an armed answer, else
+ * leave. Never sends on a swipe. With recognised text waiting: tap = send it,
+ * double tap = discard it.
  */
 export function decide(model: HudModel, gesture: HudGesture): HudAction {
   if (model.voice) return { kind: "dismiss" };
-  if (gesture === "doubleClick") return { kind: "exit" };
+  if (model.help) return gesture === "click" || gesture === "doubleClick" ? { kind: "help", open: false } : { kind: "none" };
+  if (model.draft) {
+    if (gesture === "click") return { kind: "sendDraft" };
+    if (gesture === "doubleClick") return { kind: "discardDraft" };
+    return { kind: "none" };
+  }
+  if (gesture === "doubleClick") return model.confirm !== null ? { kind: "disarm" } : { kind: "exit" };
   const card = currentCard(model);
   const cards = model.feed?.cards ?? [];
   if (gesture === "scrollUp" || gesture === "scrollDown") {
     if (!card) return { kind: "none" };
-    // Two stops per card: Ja, then Nein, then the next card's Ja.
-    const stops = cards.length * 2;
-    const at = Math.min(model.index, cards.length - 1) * 2 + (neinSelected(model) ? 1 : 0);
+    // Two stops per card (Ja, Nein), then one last stop: Hilfe (without the side menu).
+    const last = cards.length * 2;
+    const stops = SIDE_MENU ? last : last + 1;
+    const at = !SIDE_MENU && model.helpStop ? last : Math.min(model.index, cards.length - 1) * 2 + (neinSelected(model) ? 1 : 0);
     const next = (at + (gesture === "scrollDown" ? 1 : -1) + stops) % stops;
+    if (!SIDE_MENU && next === last) return { kind: "move", index: cards.length - 1, nein: null, helpStop: true };
     const index = Math.floor(next / 2);
-    return { kind: "move", index, nein: next % 2 === 1 ? cards[index]?.id ?? null : null };
+    return { kind: "move", index, nein: next % 2 === 1 ? cards[index]?.id ?? null : null, helpStop: false };
   }
+  if (!SIDE_MENU && (!card || model.helpStop)) return { kind: "help", open: true };
   if (!card) return { kind: "none" };
-  if (neinSelected(model)) return { kind: "answer", cardId: card.id, answer: "nein" };
-  if (needsConfirm(card) && model.confirm !== card.id) return { kind: "confirm", cardId: card.id };
-  return { kind: "answer", cardId: card.id, answer: "ja" };
+  if (model.confirm !== card.id) return { kind: "confirm", cardId: card.id };
+  return { kind: "answer", cardId: card.id, answer: neinSelected(model) ? "nein" : "ja" };
 }
 
 function effectLabel(effect: string, locale: Locale): string {
@@ -118,57 +161,114 @@ function cut(rows: readonly string[], keep: number): string[] {
   return kept;
 }
 
-const clock = (now: Date): string => `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+/** The newest `keep` rows of a long text; a cut is marked with a leading ellipsis. */
+export function lastRows(rows: readonly string[], keep: number): string[] {
+  if (rows.length <= keep) return [...rows];
+  const kept = rows.slice(rows.length - Math.max(0, keep));
+  if (kept.length > 0) kept[0] = fit("…" + kept[0]);
+  return kept;
+}
+
+/** m:ss of a running recording. */
+export function elapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+const MARK_ON = "● ";
+const MARK_OFF = "○ ";
 
 export function buildView(model: HudModel, locale: Locale, now: Date): ScreenView {
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
-  const title = x("g.title");
+  const state = (what: string): string => fit(`${x("g.title")} · ${what}`);
+  const messageRows = (rows: number): string[] => (model.message ? ["", ...wrap(model.message).slice(0, rows)] : []);
 
   if (model.rec !== "off") {
-    const body = model.rec === "sending"
-      ? ["", x("g.rec.sending")]
-      : model.rec === "opening"
-        ? ["", x("g.rec.opening")]
-        : ["", x("g.rec.listen"), "", x("g.rec.release"), x("g.rec.cancel")];
-    return { header: fit(`${title}  ${x("g.mic")}`), body, footer: "" };
+    const time = model.recSince && model.rec === "listening" ? ` ${elapsed(now.getTime() - model.recSince)}` : "";
+    const header = state(`${x("g.state.mic")}${time}`);
+    const live = model.live.trim();
+    // 2× cancels a recording in every phase.
+    const cancelOnly = footer(locale, {}, "cancel");
+    if (model.rec === "sending") {
+      // What was said stays visible; the status line shows Xaventra's progress meanwhile.
+      const progress = model.feed?.status ? wrap(`> ${model.feed.status}`).slice(0, 1) : [];
+      if (!live) return { header, body: ["", x("g.rec.sending"), ...(progress.length ? ["", ...progress] : [])], footer: cancelOnly };
+      const said = lastRows(wrap(`${x("g.you")} ${live}`), MAX_BODY_ROWS - 4 - progress.length);
+      return { header, body: [...said, "", x("g.rec.sending"), ...(progress.length ? ["", ...progress] : [])], footer: cancelOnly };
+    }
+    if (model.rec === "opening") return { header, body: ["", x("g.rec.opening")], footer: cancelOnly };
+    const hint = footer(locale, { release: x("g.f.done") }, "cancel");
+    if (live) return { header, body: lastRows(wrap(live), MAX_BODY_ROWS), footer: hint };
+    return { header, body: ["", x("g.rec.listen")], footer: hint };
+  }
+
+  if (model.help) {
+    return {
+      header: state(x("g.state.help")),
+      body: ["", ...[1, 2, 3, 4, 5].flatMap((n) => wrap(x("g.help." + n)).slice(0, 1))],
+      footer: footer(locale, { tap: x("g.f.close") }, "back"),
+    };
   }
 
   if (model.voice) {
     const you = wrap(`${x("g.you")} ${model.voice.transcript}`).slice(0, 2);
     const reply = model.voice.reply ? wrap(`${x("g.reply")} ${model.voice.reply}`).slice(0, MAX_BODY_ROWS - you.length - 1) : [];
-    return { header: fit(`${title} · ${clock(now)}`), body: [...you, "", ...reply], footer: x("g.hint.close") };
+    return { header: state(x("g.state.voice")), body: [...you, "", ...reply], footer: footer(locale, { tap: x("g.f.close") }, "back") };
   }
 
-  const head = fit(`${title} ${model.online ? "·" : x("g.offline")} ${clock(now)}`);
+  if (model.draft) {
+    // v1.2: what was recognised is shown first; only the tap sends it.
+    return {
+      header: state(x("g.state.draft")),
+      body: lastRows(wrap(`${x("g.you")} ${model.draft}`), MAX_BODY_ROWS),
+      footer: footer(locale, { tap: x("g.f.send") }, "discard"),
+    };
+  }
 
+  const root = footer(locale, { hold: x("g.f.speak") }, "exit");
   if (!model.configured) {
-    return { header: head, body: ["", x("g.setup1"), x("g.setup2")], footer: "" };
+    return { header: state(x("g.state.setup")), body: ["", x("g.setup1"), x("g.setup2")], footer: footer(locale, {}, "exit") };
   }
   if (!model.feed) {
-    return { header: head, body: ["", ...wrap(model.problem || x("g.connecting")).slice(0, 3)], footer: "" };
+    return {
+      header: state(x(model.problem ? "g.state.offline" : "g.state.connecting")),
+      body: ["", ...wrap(model.problem || x("g.state.connecting")).slice(0, 3)],
+      footer: footer(locale, {}, "exit"),
+    };
   }
 
-  const status = wrap(`> ${model.feed.status}`).slice(0, 2);
+  const status = wrap(`> ${model.feed.status}`).slice(0, 1);
   const card = currentCard(model);
   if (!card) {
     const lines = [...status, "", x("g.nocards")];
     if (model.problem) lines.push("", ...wrap(model.problem).slice(0, 2));
-    else if (model.message) lines.push("", ...wrap(model.message).slice(0, 2));
-    return { header: head, body: lines.slice(0, MAX_BODY_ROWS), footer: x("g.hint.idle") };
+    else lines.push(...messageRows(2));
+    return {
+      header: state(x(model.online ? "g.state.idle" : "g.state.offline")),
+      body: SIDE_MENU ? lines.slice(0, MAX_BODY_ROWS) : [...lines.slice(0, MAX_BODY_ROWS - 1), MARK_ON + x("g.opt.help")],
+      footer: SIDE_MENU ? root : footer(locale, { tap: x("g.f.help"), hold: x("g.f.speak") }, "exit"),
+    };
   }
 
   const total = model.feed.cards.length;
   const effect = effectLabel(card.effect, locale);
-  const label = x("g.card", { n: Math.min(model.index, total - 1) + 1, total }) + (effect ? ` (${effect})` : "");
+  const armed = model.confirm === card.id;
+  const position = x("g.state.card", { n: Math.min(model.index, total - 1) + 1, total });
+  const header = state(armed ? x("g.state.armed") : position + (effect ? ` · ${effect}` : ""));
   const nein = neinSelected(model);
-  // The last row always shows the two answers and which one a tap sends.
-  const room = MAX_BODY_ROWS - status.length - 3;
-  const titleRows = cut(wrap(card.title), Math.min(2, room - 1));
+  // List rows at the bottom: the answers (and the help page without the side menu); the cursor is the filled dot.
+  const options = [
+    fit((!nein && !model.helpStop ? MARK_ON : MARK_OFF) + x("g.opt.yes")),
+    fit((nein && !model.helpStop ? MARK_ON : MARK_OFF) + x("g.opt.no")),
+    ...(SIDE_MENU ? [] : [fit((model.helpStop ? MARK_ON : MARK_OFF) + x("g.opt.help"))]),
+  ];
+  const note = model.message ? wrap(model.message).slice(0, 1) : [];
+  const room = MAX_BODY_ROWS - status.length - options.length - note.length;
+  const titleRows = cut(wrap(card.title), Math.min(2, Math.max(1, room - 1)));
   const textRows = cut(wrap(card.text), Math.max(0, room - titleRows.length));
-  const choice = fit(x(nein ? "g.choiceNo" : "g.choiceYes"));
-  const body = [...status, "", fit(label), ...titleRows, ...textRows].slice(0, MAX_BODY_ROWS - 1).concat(choice);
-  const footer = model.confirm === card.id
-    ? x("g.confirm")
-    : model.message ? fit(model.message) : x(nein ? "g.hint.no" : total > 1 ? "g.hint.cards" : "g.hint.card");
-  return { header: head, body, footer };
+  const body = [...status, ...titleRows, ...textRows].slice(0, MAX_BODY_ROWS - options.length - note.length).concat(note, options);
+  const foot = armed
+    ? armedFooter(locale, x(nein ? "g.f.sendNo" : "g.f.sendYes"))
+    : footer(locale, { tap: x(model.helpStop ? "g.f.help" : "g.f.choose"), swipe: true, hold: x("g.f.speak") }, "exit");
+  return { header, body, footer: foot };
 }

@@ -107,25 +107,36 @@ describe("the decision screen", () => {
 
   it("shows what will actually run, not just the tool name", () => {
     const view = buildView(asked, NOW, "en");
-    expect(view.header).toBe("Permission required");
+    expect(view.header).toBe("AGENT · approval · Example refactor session");
     expect(view.body.join(" ")).toContain("curl");
   });
 
-  it("puts neither answer on a plain tap", () => {
+  it("offers a list, never a swipe direction, and never a single tap", () => {
     // A stray touch must not be able to authorise a command.
-    const footer = buildView({ ...asked, controllable: true }, NOW, "en").footer;
-    expect(footer).toContain("up");
-    expect(footer).toContain("down");
-    expect(footer).not.toMatch(/tap = allow/);
+    const view = buildView({ ...asked, controllable: true }, NOW, "en");
+    expect(view.body.slice(-2)).toEqual(["● Allow", "○ Deny"]);
+    expect(view.footer).toBe("Tap = choose · Swipe · 2× = exit");
+    expect(view.footer).not.toMatch(/up|down|allow/i);
+  });
+
+  it("moves the cursor and shows what the second tap sends", () => {
+    const state = { ...asked, controllable: true };
+    expect(buildView(state, NOW, "en", 0, { choice: 1, armed: null, decisions: true }).body.slice(-2)).toEqual(["○ Allow", "● Deny"]);
+    const armed = buildView(state, NOW, "de", 0, { choice: 1, armed: "deny", decisions: true });
+    expect(armed.footer).toBe("Nochmal tippen = Ablehnen · Wischen/2× = abbrechen");
+    expect(armed.header).toBe("AGENT · bestätigen · Example refactor session");
+    expect(buildView(state, NOW, "de", 0, { choice: 0, armed: "allow", decisions: true }).footer)
+      .toBe("Nochmal tippen = Erlauben · Wischen/2× = abbrechen");
   });
 
   it("offers no swipe at all on a session it cannot steer", () => {
     // Even Terminal answers 404 for a session it merely read off disk.
     // Offering "swipe to allow" there would promise something that fails in
     // silence -- the screen says where the answer has to be given instead.
-    const footer = buildView({ ...asked, controllable: false }, NOW, "en").footer;
-    expect(footer).toContain("watch only");
-    expect(footer).not.toContain("up");
+    const view = buildView({ ...asked, controllable: false }, NOW, "en");
+    expect(view.body.join(" ")).toContain("watch only");
+    expect(view.body.join(" ")).not.toContain("Allow");
+    expect(view.footer).toBe("2× = exit");
   });
 
   it("drops the running commentary while a decision is pending", () => {
@@ -156,15 +167,15 @@ describe("the working screen", () => {
 
   it("counts how long it has been working", () => {
     const started = new Date(NOW.getTime() - 12000);
-    expect(buildView({ ...base, busy: true, startedAt: started }, NOW, "en").footer).toContain("12 s");
+    expect(buildView({ ...base, busy: true, startedAt: started }, NOW, "en").header).toContain("working 12 s");
   });
 
   it("says ready when nothing is running", () => {
-    expect(buildView({ ...base, controllable: true }, NOW, "en").footer).toContain("ready");
+    expect(buildView({ ...base, controllable: true }, NOW, "en").header).toContain("ready");
   });
 
   it("says plainly when it is only watching", () => {
-    expect(buildView(base, NOW, "en").footer).toContain("watch only");
+    expect(buildView(base, NOW, "en").header).toContain("watch only");
   });
 
   it("explains the CORS trap, which looks exactly like a dead server", () => {

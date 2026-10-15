@@ -13,7 +13,7 @@ const SESSION_ID = "openclaw-main";
 /** Adapter for the existing OpenClaw OpenAI-compatible gateway. */
 export class OpenClawBackend implements AgentBackend {
   readonly kind = "openclaw" as const;
-  readonly capabilities = { decisions: false, sessions: false, createSession: false } as const;
+  readonly capabilities = { decisions: false, sessions: false, createSession: true } as const;
   readonly #base: string;
   readonly #token: string;
   readonly #fetch: typeof fetch;
@@ -94,6 +94,21 @@ export class OpenClawBackend implements AgentBackend {
       clearTimeout(timer);
       if (this.#controller === controller) this.#controller = null;
     }
+  }
+
+  /**
+   * OpenClaw has no sessions of its own: the conversation is the context this
+   * app sends along. A "new session" therefore stops any running request and
+   * forgets that context; the id stays the same.
+   */
+  async createSession(): Promise<Session> {
+    this.#controller?.abort("superseded");
+    this.#controller = null;
+    this.#history.length = 0;
+    return {
+      id: SESSION_ID, title: "OpenClaw", cwd: "OpenClaw gateway", provider: "openclaw",
+      status: "idle", timestamp: new Date(),
+    };
   }
 
   async interrupt(): Promise<void> { this.#controller?.abort("interrupt"); }

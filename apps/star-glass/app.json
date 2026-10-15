@@ -2,18 +2,23 @@
   "package_id": "glass.quiet.starglass",
   "edition": "202601",
   "name": "Star Glass",
-  "version": "0.1.1",
+  "version": "0.4.2",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Read your astrophotography session from the Star Glass bridge you run next to N.I.N.A. and enter in the phone app, and stop or resume the sequence only after you confirm. No other server is contacted.",
+      "desc": "Read your astrophotography session from your Star Glass bridge next to N.I.N.A.; stop or resume the sequence only after you confirm. With weather warnings on, the cloud, rain, dew and wind forecast for your site comes from Open-Meteo (coordinates rounded to about 1 km).",
       "whitelist": [
         "http://*",
-        "https://*"
+        "https://*",
+        "https://api.open-meteo.com"
       ]
+    },
+    {
+      "name": "location",
+      "desc": "Optional: the weather forecast for where you are, asked once, only when N.I.N.A. does not share its site and no coordinates are entered."
     }
   ],
   "supported_languages": [

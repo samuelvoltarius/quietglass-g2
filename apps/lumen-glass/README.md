@@ -18,7 +18,7 @@ kommt so an, wie dein LUMEN es schickt.
 
 The glasses view now gives LUMEN its own monochrome pixel moth instead of relying on text alone.
 
-For a non-persistent simulator showcase without a running LUMEN server, open the development URL with `?demo=1`.
+Without a saved address (first start) the app shows demo data and the line `Demo · set up the connection on your phone`; saving the address on the phone ends the demo. For a showcase that stays in demo mode, open the development URL with `?demo=1`.
 
 [LUMEN](https://github.com/) is a self-hosted app built around a moth that
 lives on light. It gets tired when you stop photographing, and it never dies —
@@ -52,7 +52,8 @@ Finde ein wiederkehrendes Muster von oben
 (Acker, Parkplatz).
 VIDEO — use the camera app · 30 min
 
-[--------] · golden in 46m · tap = photo
+[--------] · golden in 46m
+Tap = photo · Swipe = help · Hold = quest · 2× = exit
 ```
 
 Five states, matching LUMEN's own thresholds. The wings tell you the state
@@ -88,9 +89,9 @@ than letting you shoot and have it rejected.
 | Gesture | Effect |
 |---|---|
 | **Tap** | Take a photo and send it |
-| **Hold** | Ask LUMEN for a new quest |
-| **Swipe** | Refresh the moth |
-| **Double tap** | Leave Lumen Glass |
+| **Hold** | Arms *New quest* (it replaces an open one); one single tap within 4 s fetches it, a swipe, 2× or a pause cancels |
+| **Swipe** | Opens the help; swiping again closes it and refreshes the moth (a swipe also cancels an open question) |
+| **2×** | Back (closes the help, cancels a question, leaves a result); at the root: leave Lumen Glass |
 
 ## Setup
 

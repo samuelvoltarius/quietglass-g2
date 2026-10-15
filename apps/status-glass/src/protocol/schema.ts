@@ -70,6 +70,37 @@ export interface Action {
   readonly confirm?: boolean;
 }
 
+/**
+ * One device of the home network, as the source's network watch (the
+ * reference server with STATUS_NETWATCH=1) sees it. Keyed by MAC address.
+ */
+export interface NetDevice {
+  readonly mac: string;
+  readonly ip?: string;
+  /** Reverse DNS name, when the local resolver knows one. */
+  readonly name?: string;
+  readonly online: boolean;
+  /** Marked as known by the user (or present when the watch started). */
+  readonly known: boolean;
+  /** First seen in the last 24 hours and not known. */
+  readonly new: boolean;
+  readonly firstSeen?: number;
+  readonly lastSeen?: number;
+}
+
+/** The optional `network` block: the devices of the home network. */
+export interface NetworkInfo {
+  readonly total: number;
+  readonly online: number;
+  readonly new: number;
+  readonly devices: readonly NetDevice[];
+}
+
+/** Most devices kept from one report; a home network has far fewer. */
+export const NET_DEVICES_MAX = 512;
+const NET_TEXT_MAX = 64;
+const MAC = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/;
+
 export interface SourceReport {
   readonly name: string;
   readonly metrics: readonly Metric[];
@@ -77,6 +108,8 @@ export interface SourceReport {
   readonly timestamp?: number;
   /** Optional; a source without actions is read-only. */
   readonly actions?: readonly Action[];
+  /** Optional; only sources that watch their home network send it. */
+  readonly network?: NetworkInfo;
 }
 
 export interface ParseResult {
@@ -136,6 +169,7 @@ export function reportFromValue(value: unknown, fallbackName = "source"): ParseR
   });
 
   const actions = readActions(root["actions"], errors);
+  const network = readNetwork(root["network"]);
 
   return {
     report: {
@@ -143,6 +177,7 @@ export function reportFromValue(value: unknown, fallbackName = "source"): ParseR
       metrics,
       ...(isNumber(root["timestamp"]) ? { timestamp: root["timestamp"] } : {}),
       ...(actions.length > 0 ? { actions } : {}),
+      ...(network ? { network } : {}),
     },
     errors,
   };
@@ -170,6 +205,48 @@ function readActions(value: unknown, errors: string[]): Action[] {
     });
   }
   return actions;
+}
+
+/**
+ * Reads the `network` block defensively. Devices without a usable MAC are
+ * dropped; the counts are taken from the source when they make sense, else
+ * counted from the devices.
+ */
+export function readNetwork(value: unknown): NetworkInfo | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  const devices: NetDevice[] = [];
+  const seen = new Set<string>();
+  for (const candidate of Array.isArray(root["devices"]) ? root["devices"] : []) {
+    if (devices.length >= NET_DEVICES_MAX) break;
+    const d = (candidate ?? {}) as Record<string, unknown>;
+    const mac = typeof d["mac"] === "string" ? d["mac"].trim().toLowerCase() : "";
+    if (!MAC.test(mac) || seen.has(mac)) continue;
+    seen.add(mac);
+    const text = (x: unknown): string | undefined => (typeof x === "string" && x.trim() ? x.trim().slice(0, NET_TEXT_MAX) : undefined);
+    const ip = text(d["ip"]);
+    const name = text(d["name"]);
+    const known = d["known"] === true;
+    devices.push({
+      mac,
+      ...(ip ? { ip } : {}),
+      ...(name ? { name } : {}),
+      online: d["online"] === true,
+      known,
+      new: d["new"] === true && !known,
+      ...(isNumber(d["firstSeen"]) ? { firstSeen: d["firstSeen"] } : {}),
+      ...(isNumber(d["lastSeen"]) ? { lastSeen: d["lastSeen"] } : {}),
+    });
+  }
+  const count = (x: unknown, fallback: number): number => (isNumber(x) && x >= 0 ? Math.round(x) : fallback);
+  const total = count(root["total"], devices.length);
+  if (total === 0 && devices.length === 0 && !isNumber(root["total"])) return null;
+  return {
+    total,
+    online: count(root["online"], devices.filter((d) => d.online).length),
+    new: count(root["new"], devices.filter((d) => d.new).length),
+    devices,
+  };
 }
 
 /** Judges one metric. An explicit state always wins over thresholds. */

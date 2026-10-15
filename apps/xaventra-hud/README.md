@@ -4,15 +4,16 @@
 
 > **Auf Deutsch, kurz:** Xaventra HUD zeigt auf der Brille, woran dein
 > Xaventra-Agent gerade arbeitet, und offene Rückfragen als Karten.
-> **Tippen = Ja**, **Wischen = Nein wählen** (dann Tippen = Nein; weiter wischen = nächste
-> Karte), **Doppeltippen = beenden** (mit Rückfrage). Karten, die
-> etwas **nach außen** bewirken (drucken, schalten, senden …), brauchen einen
-> **zweiten Tap** innerhalb von 4 Sekunden. **Halten = sprechen** (höchstens 15 s):
-> beim Loslassen geht die Aufnahme an *deinen* Xaventra-Rechner, der sie mit
-> seiner eigenen Spracherkennung versteht. Ein „Ja“/„Nein“ beantwortet die offene
-> Karte, alles andere geht als Nachricht an den Agenten, die Antwort steht auf der
-> Brille. Ein gesprochenes „Ja“ bestätigt **nie** eine Aktion nach außen – dafür
-> bleibt der Tap.
+> **Tippen** wählt in der Liste Ja / Nein, ein **zweites Tippen**
+> innerhalb von 4 Sekunden sendet die Antwort. **Wischen** bewegt nur den Cursor
+> und sendet nie etwas; Wischen oder **2×** bricht ein Bestätigen ab,
+> sonst beendet 2× die App (mit Rückfrage; Bedienstandard QIS v1.2). Die **Hilfe**
+> ist die letzte Zeile der Liste (Ja / Nein / Hilfe). **Halten = sprechen** (höchstens 2 min, Text erscheint schon beim Sprechen).
+> Beim Loslassen steht das Erkannte zuerst auf der Brille: **Tippen sendet** es an
+> *deinen* Xaventra-Rechner, **2× verwirft** es (ohne Live-Spracherkennung geht die
+> Aufnahme beim Loslassen an Xaventra). Ein gesagtes „Ja“/„Nein“ beantwortet **nie**
+> selbst: es wählt die Antwort in der Liste und schaltet sie scharf, erst dein
+> Tippen sendet sie.
 > Die App folgt der Handy-Sprache (Deutsch/Englisch).
 >
 > **In 3 Schritten loslegen** (Details: [Xaventra `docs/EVEN_G2.md`](https://github.com/samuelvoltarius/xaventra/blob/main/docs/EVEN_G2.md))
@@ -22,7 +23,7 @@
 > 2. In der Even-App bei Xaventra HUD eintragen: **Adresse des Xaventra-Endpunkts**
 >    (`https://<dein-rechner>.<dein-tailnet>.ts.net:8790`) und **Token (NOVA_EVEN_G2_TOKEN)**,
 >    dann **Speichern und verbinden**.
-> 3. Auf der Brille: tippen, doppeltippen, wischen oder halten und sprechen.
+> 3. Auf der Brille: wischen zum Wählen, zweimal tippen zum Antworten, halten zum Sprechen.
 
 Use `?demo=1` on the development URL to run against built-in sample data
 (nothing is sent, no server needed).
@@ -33,12 +34,12 @@ Use `?demo=1` on the development URL to run against built-in sample data
 
 | Gesture | Meaning |
 |---|---|
-| **Tap** | Sends the chosen answer. Yes is chosen by default; a yes on a card that acts outside (`physisch`, `nach außen`) needs a **second tap within 4 s**. |
-| **Swipe** | Moves through yes → no of each card, then on to the next card. "No" is sent by swiping to it and tapping. |
-| **Double tap** | Asks the system to quit the app (you can cancel). It never answers a card. |
-| **Hold** | Speak (at most 15 s, shown as **● MIC**). Release sends. Double tap cancels. |
+| **Tap** | Arms the entry the cursor is on in the list *Yes / No / Help* (the help page opens on the second tap; the glasses' side menu is off, `SIDE_MENU`). A **second tap within 4 s** sends the answer. On recognised text: sends it. |
+| **Swipe** | Moves the cursor (Yes, No of each card). It never sends anything; while an answer is armed it cancels it. |
+| **2×** | Cancels an armed answer or a recording, discards recognised text; otherwise asks the system to quit the app (you can cancel). It never answers a card. |
+| **Hold** | Speak (at most 2 min, shown as **● MIC**; with live speech recognition the words appear while you speak). On release the recognised text is shown first (tap = send, 2× = discard); without live text the recording is sent on release. 2× cancels. |
 
-The screen: the header (`Xaventra · 14:32`, or `(offline)`), what Xaventra is
+The screen: the header (`XAVENTRA · Frage 1/2`, or `XAVENTRA · offline`), what Xaventra is
 working on (`> …`), the current question with its position and effect, and a
 hint row. Seven rows of 46 characters at most, in German and English.
 
@@ -50,13 +51,26 @@ decides what it was:
 
 | You say | What happens |
 |---|---|
-| "Ja" / "yes" / "okay" with a card open | The card is answered yes. Cards that act outside only get *armed*: the glasses show "Tap again = confirm YES", and the tap sends it. |
-| "Nein" / "no" / "stopp" with a card open | The card is answered no. |
+| "Ja" / "yes" / "okay" with a card open | Nothing is sent yet: *Yes* is selected and armed ("Nochmal tippen = Ja senden"); your tap within 4 s sends it (QIS v1.2 #4). |
+| "Nein" / "no" / "stopp" with a card open | The same for *No*. |
 | Anything else | It goes to the agent as a normal message; the reply appears on the glasses with what was understood (`Du: …`). A tap closes it. |
 | Something unclear while a card is open | Nothing is answered: "Not clear. Say yes or no." |
 
 "Always allow" does not exist on the glasses, and speech never confirms an
 action that acts outside — that stays an explicit tap.
+
+**Live text (private builds).** With `VITE_LIVE_STT_URL` set at build time
+(a Quietglass streaming recogniser, `wss://…`), the PCM is also streamed to that
+server while you hold, and the words appear on the glasses as you speak (newest
+words visible, up to 2 minutes). On release the recognised text is shown first
+(`XAVENTRA · senden?`, `Tippen = senden · 2× = verwerfen`); a bare yes/no instead
+selects and arms that answer on the open card (nothing is sent to `/hud/ask`).
+Only the tap sends the text to `POST /hud/ask { text, cardId? }` (same reply as
+`/hud/voice`). A server without that endpoint (404/405 or a refused preflight)
+gets the WAV via `/hud/voice` instead; a recording whose live connection failed
+(no handshake within 3 s, or dropped) is sent as WAV on release, as before. Public builds leave the variable empty
+and behave exactly as before. Note: Xaventra's `/hud/voice` accepts at most
+20 s of audio; longer recordings need `/hud/ask`.
 
 ## Setup
 
@@ -121,5 +135,5 @@ documentation and tested with a mock.
 
 See [docs/PRIVACY.md](docs/PRIVACY.md). Short: the app talks only to the
 Xaventra server you enter; the microphone runs only while you hold, for at most
-15 seconds; nothing is stored by the app except address and token on your
+2 minutes; nothing is stored by the app except address and token on your
 phone. No account, no tracking.

@@ -24,12 +24,21 @@ import { t } from "./messages";
 import type { Destination, Journey, TransitLeg } from "./route/journey";
 import { buildWav } from "./audio/wav";
 import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
+import { chooseTranscript, liveSttUrl, LIVE_REDRAW_MS, openLiveStt, shouldRedraw, type LiveSession } from "./voice/live-stt";
 import { addFavorite, loadPlaces, savePlaces, targetsOf, type Places, type Target } from "./route/places";
 import { estimatedArrival, guideState, buildSteps, stepBy, withFreshTimes, withLeg, type Step, type StepOverride } from "./route/guide";
-import { placesView, voiceView, type VoiceState } from "./route/view";
+import { helpView, placesView, voiceView, type VoiceState } from "./route/view";
+import { armedFooter, ft } from "./footer";
 import { planScene } from "./route/plan-scene";
 import { BEAT_MS, beatOf, guideScene, plainScene, type Scene } from "./route/scene";
 import { MENU, menuFor, type Screen } from "./route/menu";
+
+/**
+ * The glasses' side menu. Off: its clicks never reach the app on the real glasses, and while a page carries a
+ * menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it the departure list
+ * ends with "Hilfe" again and a hold in the guidance arms "stop guidance" (one more tap carries it out).
+ */
+const SIDE_MENU = false;
 import type { Planner } from "./route/planner";
 import { DEMO_PLACES, DEMO_POSITION, demoBackend, demoFromUrl, demoPlanner, demoPosition, demoWalkRoute } from "./demo/demo";
 import { OFF_ROUTE_METRES, fetchWalkRoute, project, walkNav, type WalkNav, type WalkRoute } from "./route/walk";
@@ -161,8 +170,20 @@ async function boot(): Promise<void> {
     readonly target: Destination;
   }
   let guide: GuideSession | null = null;
-  /** The first double tap in the guide only asks; this is how long the second one counts. */
-  let confirmStopUntil = 0;
+  /**
+   * QIS v1: what a first single tap (or the menu entry "Begleitung beenden") has armed. The next
+   * single tap within ARM_MS carries it out; a swipe, a 2x, a hold or the timeout cancels it.
+   */
+  type ArmKind = "follow" | "stopGuide" | "search" | "saveVoice" | "again";
+  let armed: { readonly kind: ArmKind; readonly until: number } | null = null;
+  let armTimer: ReturnType<typeof setTimeout> | null = null;
+  const ARM_MS = 4000;
+  const isArmed = (kind: ArmKind): boolean => armed !== null && armed.kind === kind && armed.until > Date.now();
+  const disarm = (): void => {
+    armed = null;
+    if (armTimer !== null) clearTimeout(armTimer);
+    armTimer = null;
+  };
   let guideTimer: ReturnType<typeof setInterval> | null = null;
 
   // Spoken destination: the recording, the state of the voice page.
@@ -171,6 +192,11 @@ async function boot(): Promise<void> {
   let micActive = false;
   let recordTimer: ReturnType<typeof setTimeout> | null = null;
   const micChunks: Uint8Array[] = [];
+  /** Live recognition of the recording in progress (private build: VITE_LIVE_STT_URL), and its redraw throttle. */
+  let live: LiveSession | null = null;
+  let liveShown = "";
+  let liveShownAt = 0;
+  let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
   let lastScene: Scene | null = null;
   /** Menu and page kind of the page on the glasses: when it changes, the page is rebuilt. */
@@ -254,52 +280,62 @@ async function boot(): Promise<void> {
       if (current.status === "loading") return followLoadingScene(current.departure, now, locale);
       if (current.status === "ready" && current.ride) {
         const state = followRide(current.ride, current.boarding, current.departure.expected, now, position);
-        if (state) return followScene(current.departure, state, now, locale, beatOf(Date.now()));
+        if (state) return followScene(current.departure, state, now, locale, beatOf(Date.now()), isArmed("follow"));
       }
       const said = current.error?.(locale) ?? { error: glassesText(locale).noRide, hint: glassesText(locale).noRideHint };
-      return messageScene(said.error, said.hint, t(locale, "g.footerFollow"), "!");
+      return messageScene(said.error, said.hint, ft(locale, "exit", { tap: "back" }), "!");
     }
 
     if (error) {
       const { error: message, hint } = error(locale);
-      return messageScene(message, hint, t(locale, "g.footerRetry"), "!");
+      return messageScene(message, hint, ft(locale, "exit", { tap: "again" }), "!");
     }
 
     const stop = currentStop();
     if (!stop) {
       const { error: what, hint } = busy(locale);
-      return messageScene(what, hint, t(locale, "g.footerExit"), "...");
+      return messageScene(what, hint, ft(locale, "exit"), "...");
     }
 
     const away = position
       ? metresBetween(position.lat, position.lon, stop.lat, stop.lon)
       : null;
-    return boardScene(stop, departures, away, locale, selected, now);
+    return boardScene(stop, departures, away, locale, selected, now, !SIDE_MENU);
   };
 
   const planPage = (state: PlanState): Scene => {
     if (state.status === "loading") {
-      return messageScene(t(locale, "r.searchingPlans"), state.target.name, t(locale, "r.footerBack"), "...");
+      return messageScene(t(locale, "r.searchingPlans"), state.target.name, ft(locale, "back"), "...");
     }
     if (state.status === "error" || state.journeys.length === 0) {
       const { error: message, hint } = state.error
         ? state.error(locale)
         : { error: t(locale, "r.noPlans"), hint: t(locale, "r.noPlansHint") };
-      return messageScene(message, hint, t(locale, "g.footerRetry"), "!");
+      return messageScene(message, hint, ft(locale, "back", { tap: "again" }), "!");
     }
     return planScene(state.journeys, state.selected, clock(), locale);
   };
 
+  /** The same page with another footer row (the armed row). */
+  const withFooter = (scene: Scene, footer: string): Scene => ({ ...scene, view: { ...scene.view, footer } });
+
   const currentScene = (): Scene => {
+    if (screen === "help") return plainScene(helpView(locale));
     if (screen === "places") return plainScene(placesView(targets(), placeIndex, clock(), locale));
-    if (screen === "plans" && plan) return planPage(plan);
-    if (screen === "voice" && voice) return plainScene(voiceView(voice, clock(), locale));
+    if (screen === "plans" && plan) {
+      const page = planPage(plan);
+      return isArmed("again") ? withFooter(page, armedFooter(locale, t(locale, "q.search"))) : page;
+    }
+    if (screen === "voice" && voice) {
+      const page = plainScene(voiceView(voice, clock(), locale));
+      return isArmed("saveVoice") ? withFooter(page, armedFooter(locale, t(locale, "q.save"))) : page;
+    }
     if (screen === "guide" && guide) {
       const now = clock();
       const at = guidePosition();
       const state = guideState(guide.steps, now, at, guide.override);
       return guideScene(state, now, at, locale, {
-        confirmStop: confirmStopUntil > Date.now(),
+        armed: isArmed("stopGuide") ? "stop" : isArmed("search") ? "search" : undefined,
         walk: walkDisplay(state, at),
         arrival: estimatedArrival(guide.journey),
         rerouted: reroutedUntil > Date.now(),
@@ -313,7 +349,8 @@ async function boot(): Promise<void> {
     // After the double tap the page is gone; drawing again would bring it back.
     if (closed || backgrounded) return;
     const scene = currentScene();
-    const menu = menuFor(screen, locale);
+    // The key still names the language and the page, so each page change (and a language change) rebuilds once, menu or not.
+    const menu = SIDE_MENU ? menuFor(screen, locale) : { key: `${locale}:${screen}`, items: [] };
     const layout = `${menu.key}|${scene.kind}`;
     if (sameScene(lastScene, scene) && layout === menuKey) return;
 
@@ -375,9 +412,11 @@ async function boot(): Promise<void> {
       // Soonest first by the time now expected, and the selection stays on the
       // same bus when a refresh reorders the board under the passenger's eyes.
       const kept = departures[selected]?.tripId;
+      // The Hilfe entry at the end of the list (no side menu) stays selected across a refresh.
+      const onHelp = !SIDE_MENU && departures.length > 0 && selected >= departures.length;
       departures = bySoonest(next);
       const again = kept ? departures.findIndex((departure) => departure.tripId === kept) : -1;
-      selected = again >= 0 ? again : Math.min(selected, Math.max(0, departures.length - 1));
+      selected = again >= 0 ? again : onHelp && departures.length > 0 ? departures.length : Math.min(selected, Math.max(0, departures.length - 1));
       error = null;
     } catch (thrown) {
       if (seq !== requestSeq) return;
@@ -505,10 +544,54 @@ async function boot(): Promise<void> {
     if (micActive) void bridge.audioControl(false).catch(() => undefined);
     micActive = false;
     micChunks.length = 0;
+    live?.abort();
+    live = null;
+    if (liveTimer !== null) clearTimeout(liveTimer);
+    liveTimer = null;
     voice = null;
   };
 
+  /** New live words: onto the glasses, at most every LIVE_REDRAW_MS and only when the text changed. */
+  const showLive = (text: string, seq: number): void => {
+    if (seq !== voiceSeq || voice?.phase !== "recording") return;
+    voice = { phase: "recording", live: text };
+    const now = Date.now();
+    if (shouldRedraw(text, liveShown, now, liveShownAt)) {
+      liveShown = text; liveShownAt = now;
+      void draw();
+    } else if (liveTimer === null && text !== liveShown) {
+      liveTimer = setTimeout(() => {
+        liveTimer = null;
+        const latest = voice?.phase === "recording" ? voice.live ?? "" : "";
+        if (seq !== voiceSeq || latest === liveShown) return;
+        liveShown = latest; liveShownAt = Date.now();
+        void draw();
+      }, Math.max(0, LIVE_REDRAW_MS - (now - liveShownAt)));
+    }
+  };
+
+  /** The page the help was opened from: a guide or a plan must survive a look at the help. */
+  let helpReturn: Screen = "board";
+  const openHelp = (): void => {
+    disarm();
+    if (screen !== "help") helpReturn = screen;
+    screen = "help";
+    void draw();
+  };
+  const closeHelp = (): void => {
+    disarm();
+    const back = helpReturn;
+    helpReturn = "board";
+    if ((back === "guide" && guide) || (back === "plans" && plan) || (back === "voice" && voice) || back === "places") {
+      screen = back;
+      void draw();
+      return;
+    }
+    openBoard();
+  };
+
   const openBoard = (): void => {
+    disarm();
     abortVoice();
     planSeq++;
     stopGuideTimer();
@@ -518,6 +601,7 @@ async function boot(): Promise<void> {
   };
 
   const openPlaces = (): void => {
+    disarm();
     abortVoice();
     planSeq++;
     stopGuideTimer();
@@ -530,6 +614,7 @@ async function boot(): Promise<void> {
   /** Looks up connections from here to the target. A newer search drops an older answer. */
   const startPlan = async (target: Destination): Promise<void> => {
     const seq = ++planSeq;
+    disarm();
     stopGuideTimer();
     guide = null;
     screen = "plans";
@@ -567,14 +652,19 @@ async function boot(): Promise<void> {
     if (screen !== "places" && screen !== "board") return;
     const seq = ++voiceSeq;
     screen = "voice";
-    if (!demo.enabled && !sttBase(settings.sttUrl)) {
+    if (!demo.enabled && !sttBase(settings.sttUrl) && !liveSttUrl()) {
       showVoiceError(t(locale, "r.voiceNoServer"), t(locale, "r.voiceNoServerHint"));
       return;
     }
     voice = { phase: "recording" };
+    liveShown = ""; liveShownAt = 0;
     void draw();
     if (demo.enabled) return;
     micChunks.length = 0;
+    // Live words while speaking, when the build has a live server; it connects while the microphone starts.
+    live?.abort();
+    const liveUrl = liveSttUrl();
+    live = liveUrl ? openLiveStt({ url: liveUrl, language: locale, onText: (text) => showLive(text, seq) }) : null;
     // Blocks may arrive before the answer to the request does; they must not be dropped.
     micActive = true;
     const asked = bridge.audioControl(true, AudioInputSource.Glasses).catch(() => false);
@@ -590,6 +680,8 @@ async function boot(): Promise<void> {
     }
     micActive = granted;
     if (!granted) {
+      live?.abort();
+      live = null;
       showVoiceError(t(locale, "r.voiceMic"), t(locale, "r.voiceMicHint"));
       return;
     }
@@ -603,7 +695,10 @@ async function boot(): Promise<void> {
     const seq = ++voiceSeq;
     if (recordTimer !== null) clearTimeout(recordTimer);
     recordTimer = null;
-    voice = { phase: "working" };
+    if (liveTimer !== null) clearTimeout(liveTimer);
+    liveTimer = null;
+    const liveText = voice.live;
+    voice = { phase: "working", ...(liveText ? { heard: liveText } : {}) };
     void draw();
     if (!demo.enabled) {
       micActive = false;
@@ -614,15 +709,32 @@ async function boot(): Promise<void> {
     try {
       let heard = "Hauptbahnhof Salzburg";
       if (!demo.enabled) {
-        const bytes = micChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        if (bytes < MIN_VOICE_BYTES) {
+        const session = live;
+        live = null;
+        const liveOutcome = session ? await session.finish() : null;
+        if (seq !== voiceSeq) return;
+        const choice = chooseTranscript(liveOutcome, sttBase(settings.sttUrl) !== "");
+        if (choice.use === "live") {
           micChunks.length = 0;
-          if (seq === voiceSeq) showVoiceError(t(locale, "r.voiceShort"), t(locale, "r.voiceShortHint"));
+          heard = choice.text;
+        } else if (choice.use === "none") {
+          micChunks.length = 0;
+          // The live server was not reachable (and there is no batch server): said like any network failure.
+          if (!liveOutcome?.ok) throw new Error("live speech server: network failed");
+          showVoiceError(t(locale, "r.voiceNothing"), t(locale, "r.voiceNothingHint"));
           return;
+        } else {
+          // Batch: the whole recording to the speech server, as before live words existed.
+          const bytes = micChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+          if (bytes < MIN_VOICE_BYTES) {
+            micChunks.length = 0;
+            if (seq === voiceSeq) showVoiceError(t(locale, "r.voiceShort"), t(locale, "r.voiceShortHint"));
+            return;
+          }
+          const wav = buildWav(micChunks);
+          micChunks.length = 0;
+          heard = await transcribe(wav, sttBase(settings.sttUrl), locale);
         }
-        const wav = buildWav(micChunks);
-        micChunks.length = 0;
-        heard = await transcribe(wav, sttBase(settings.sttUrl), locale);
       }
       if (seq !== voiceSeq) return;
       if (!heard) { showVoiceError(t(locale, "r.voiceNothing"), t(locale, "r.voiceNothingHint")); return; }
@@ -718,7 +830,7 @@ async function boot(): Promise<void> {
     stopGuideTimer();
     journeyId += 1;
     guide = { journey, steps: buildSteps(journey), override, target };
-    confirmStopUntil = 0;
+    disarm();
     screen = "guide";
     guideTimer = setInterval(() => { void refreshGuide(); }, 60000);
     void ensureWalk();
@@ -728,7 +840,7 @@ async function boot(): Promise<void> {
   const leaveGuide = (): void => {
     stopGuideTimer();
     guide = null;
-    confirmStopUntil = 0;
+    disarm();
     screen = plan && plan.status === "ready" ? "plans" : "places";
     void draw();
   };
@@ -779,7 +891,7 @@ async function boot(): Promise<void> {
     if (demo.enabled) return;
     const session: SavedSession = {
       savedAt: Date.now(),
-      screen: screen === "guide" && guide ? "guide" : screen === "board" ? "board" : "places",
+      screen: (screen === "help" ? helpReturn : screen) === "guide" && guide ? "guide" : screen === "board" || (screen === "help" && helpReturn === "board") ? "board" : "places",
       stopId: currentStop()?.id ?? wantedStopId,
       follow: following ? { departure: following.departure, stop: following.stop } : null,
       guide: guide ? { journey: guide.journey, target: guide.target, override: guide.override } : null,
@@ -811,18 +923,60 @@ async function boot(): Promise<void> {
     void draw();
   });
 
-  /** A gesture on the departures page: unchanged from before the route pages. */
+  /** Arms an action: the next single tap within ARM_MS carries it out (QIS v1). */
+  const arm = (kind: ArmKind): void => {
+    disarm();
+    armed = { kind, until: Date.now() + ARM_MS };
+    // The footer returns to normal on its own when nobody confirms.
+    armTimer = setTimeout(() => { armTimer = null; armed = null; void draw(); }, ARM_MS + 50);
+    void draw();
+  };
+
+  /** A followed ride that is still going: ending it is risky, so it is armed first. */
+  const rideRunning = (): boolean => {
+    const current = following;
+    if (!current || current.status !== "ready" || !current.ride) return false;
+    const state = followRide(current.ride, current.boarding, current.departure.expected, clock(), position);
+    return state !== null && state.phase !== "finished";
+  };
+
+  /** The second single tap: does what was armed, if the screen still fits it. */
+  const carryOut = (kind: ArmKind): void => {
+    if (kind === "follow" && screen === "board" && following) { void stopFollow(); return; }
+    if (kind === "stopGuide" && screen === "guide" && guide) { leaveGuide(); return; }
+    if (kind === "search" && screen === "guide" && guide) { void startPlan(guide.target); return; }
+    if (kind === "again" && screen === "plans" && plan) { void startPlan(plan.target); return; }
+    if (kind === "saveVoice" && screen === "voice") saveVoiceHit();
+  };
+
+  /** Keeps the picked voice hit as a favourite (an equal place is renamed, so this is armed). */
+  const saveVoiceHit = (): void => {
+    if (screen !== "voice" || voice?.phase !== "results") return;
+    const hit = voice.results[voice.selected];
+    if (hit) {
+      voice = { ...voice, saved: true };
+      void updatePlaces(addFavorite(places, hit));
+    }
+  };
+
+  /** A gesture on the departures page. */
   const onBoardGesture = (gesture: string): void => {
     switch (gesture) {
       case "click":
-        // Following (also while its stops load, or after it failed): back to the board.
-        if (following) { void stopFollow(); return; }
+        if (following) {
+          // A running ride is ended by arming, then a second tap. Loading, failed or finished: back at once.
+          if (rideRunning()) { arm("follow"); return; }
+          void stopFollow();
+          return;
+        }
         if (error) { void findStops(); return; }
+        // Without a side menu the list ends with "Hilfe": one swipe past the last departure.
+        if (!SIDE_MENU && departures.length > 0 && selected >= departures.length) { openHelp(); return; }
         void startFollow();
         return;
       case "longPress":
         // Hold = say where you want to go, right from the start page. Cycling
-        // through nearby stops moved to the menu ("Andere Haltestelle").
+        // through nearby stops is in the menu ("Andere Haltestelle", only with a side menu).
         if (following) return;
         void startVoice();
         return;
@@ -833,7 +987,7 @@ async function boot(): Promise<void> {
         return;
       case "scrollDown":
         if (following || departures.length === 0) return;
-        selected = Math.min(departures.length - 1, selected + 1);
+        selected = Math.min(SIDE_MENU ? departures.length - 1 : departures.length, selected + 1);
         void draw();
         return;
       case "doubleClick":
@@ -915,25 +1069,39 @@ async function boot(): Promise<void> {
       case "scrollDown": stepGuide(1); return;
       case "click":
         if (state.phase === "arrived") { leaveGuide(); return; }
-        if (state.phase === "missed") { void startPlan(guide.target); return; }
+        // A missed bus may only look missed: planning anew drops this guide, so it is armed first.
+        if (state.phase === "missed") { arm("search"); return; }
         stepGuide(1);
         return;
       case "doubleClick":
-        // Leaving a journey by accident is costly, so it takes two double taps
-        // — except at the end, where there is nothing left to lose.
-        if (state.phase === "arrived" || confirmStopUntil > Date.now()) { leaveGuide(); return; }
-        confirmStopUntil = Date.now() + 4000;
-        void draw();
+        // QIS v1: 2x never ends a running trip. At the end there is nothing left to lose (back);
+        // otherwise it is the system exit dialog, which the passenger has to confirm.
+        if (state.phase === "arrived") { leaveGuide(); return; }
+        void requestExit();
+        return;
+      case "longPress":
+        // Without a side menu a hold asks to stop the guidance; one more single tap carries it out
+        // (swipe, 2x or 4 s without input cancel). Nothing to stop once the goal is reached.
+        if (SIDE_MENU || state.phase === "arrived") return;
+        arm("stopGuide");
         return;
       default: return;
     }
   };
 
-  const onMenu = (itemId: number): void => {
+  /** `confirmed`: the same entry was armed by the click before and the 4 s are not over. */
+  const onMenu = (itemId: number, confirmed: ArmKind | null = null): void => {
     switch (itemId) {
       case MENU.route: openPlaces(); return;
-      case MENU.board: openBoard(); return;
-      case MENU.refresh: if (screen === "board") { following = null; void findStops(); } return;
+      case MENU.board:
+        if (screen === "help") { closeHelp(); return; }
+        openBoard();
+        return;
+      case MENU.refresh:
+        // Reloading never drops a ride that is being followed: it only fetches fresh times.
+        if (screen === "board") { if (following) void refreshFollow(); else void findStops(); }
+        return;
+      case MENU.help: openHelp(); return;
       case MENU.otherStop:
         if (screen !== "board" || following || stops.length < 2) return;
         stopIndex = (stopIndex + 1) % stops.length;
@@ -941,18 +1109,22 @@ async function boot(): Promise<void> {
         void loadDepartures();
         return;
       case MENU.goals: openPlaces(); return;
-      case MENU.again: if (plan) void startPlan(plan.target); return;
+      case MENU.again:
+        if (screen !== "plans" || !plan) return;
+        if (confirmed === "again") { void startPlan(plan.target); return; }
+        arm("again");
+        return;
       case MENU.next: stepGuide(1); return;
       case MENU.prev: stepGuide(-1); return;
-      case MENU.stop: if (guide) leaveGuide(); return;
+      case MENU.stop:
+        if (!guide || screen !== "guide") return;
+        if (confirmed === "stopGuide") { leaveGuide(); return; }
+        arm("stopGuide");
+        return;
       case MENU.saveVoice:
-        if (screen === "voice" && voice?.phase === "results") {
-          const hit = voice.results[voice.selected];
-          if (hit) {
-            voice = { ...voice, saved: true };
-            void updatePlaces(addFavorite(places, hit));
-          }
-        }
+        if (screen !== "voice" || voice?.phase !== "results") return;
+        if (confirmed === "saveVoice") { saveVoiceHit(); return; }
+        arm("saveVoice");
         return;
       default: return;
     }
@@ -966,23 +1138,40 @@ async function boot(): Promise<void> {
     if (lifecycle === "exit") { void goBackground().then(() => { void shutDown(); }); return; }
     // Native contextual menu: arrives on its own event, whatever container captures input.
     const menuId = menuItemIdFromEvent(event);
-    if (menuId !== null) { if (backgrounded) comeBack(); onMenu(menuId); persistSession(); return; }
+    if (menuId !== null) {
+      if (backgrounded) comeBack();
+      // QIS v1.2: the second click on the same armed entry within 4 s carries it out.
+      const pending = armed !== null && armed.until > Date.now() ? armed.kind : null;
+      disarm();
+      onMenu(menuId, pending);
+      persistSession();
+      return;
+    }
 
     // PCM blocks of a recording arrive on the same channel as gestures.
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     if (audio !== undefined) {
       if (micActive) {
         const bytes = pcmBytes(audio.audioPcm);
-        if (bytes !== null && bytes.length > 0) micChunks.push(bytes);
+        if (bytes !== null && bytes.length > 0) { micChunks.push(bytes); live?.send(bytes); }
       }
       return;
     }
 
-    const gesture = gestureFromEvent(event, { invertScroll: false });
+    const gesture = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!gesture) return;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
     if (backgrounded) { comeBack(); return; }
+    // QIS v1: an armed action takes the next single tap; any other gesture only cancels it.
+    if (armed && gesture.gesture !== "longPressRelease") {
+      const pending = armed;
+      const live = pending.until > Date.now();
+      disarm();
+      if (live && gesture.gesture === "click") { carryOut(pending.kind); persistSession(); return; }
+      if (live) { void draw(); return; }
+    }
     switch (screen) {
+      case "help": if (gesture.gesture === "click" || gesture.gesture === "doubleClick") closeHelp(); break;
       case "voice": onVoiceGesture(gesture.gesture); break;
       case "places": onPlacesGesture(gesture.gesture); break;
       case "plans": onPlansGesture(gesture.gesture); break;

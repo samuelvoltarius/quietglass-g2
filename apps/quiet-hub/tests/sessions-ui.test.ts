@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { buildView, createModel, decide, withSessions, type Effect, type HubModel, type Screen } from "../src/hub/model";
+import { buildView, createModel, decide, withSessions, type Effect, type HubModel, type Screen, withHomePending } from "../src/hub/model";
 import { demoReport } from "../src/api/demo";
 import type { AgentInfo, HubReport, SessionInfo } from "../src/api/types";
 import { gestureFromEvent, resetGestureDedupe } from "../src/input/gestures";
@@ -176,7 +176,7 @@ describe("no page traps the wearer", () => {
 
   it("a stuck confirm countdown does not block going back", () => {
     const home = { ...createModel(demoReport()), screen: "home" as const };
-    const armed = decide(home, "click", T0).model;
+    const armed = withHomePending(home, "lock.haustuer", { token: "t", label: "Haustür: aufsperren", expiresInMs: 30_000 }, T0);
     expect(armed.confirm).not.toBeNull();
     expect(decide(armed, "doubleClick", T0 + 10).model.screen).toBe("root");
   });
@@ -204,11 +204,11 @@ describe("footer hint on every page", () => {
     }
   }
 
-  it("a running agent says 2× = stop, a card says 2× = deny, the root says 2× = exit", () => {
+  it("a running agent says Tippen = stoppen (2× only goes back), the root says 2× = exit", () => {
     const ask = { ...createModel(demoReport()), screen: "agent" as const, agentView: "ask" as const };
     const busy = { ...ask, report: { ...ask.report, agents: ask.report.agents.map((a, i) => (i === 0 ? { ...a, busy: true } : a)) } };
-    expect(buildView(busy, "de", T0).footer).toBe("läuft … · 2× = stoppen");
-    expect(buildView(busy, "en", T0).footer).toBe("running … · 2× = stop");
+    expect(buildView(busy, "de", T0).footer).toBe("Tippen = stoppen · 2× = zurück");
+    expect(buildView(busy, "en", T0).footer).toBe("Tap = stop · 2× = back");
     expect(buildView(createModel(demoReport()), "en", T0).footer).toContain("exit");
   });
 

@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.8.3] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks im Menü kommen auf der Brille nie an, und Halten öffnet sonst das Menü statt die App zu erreichen (Schrittprotokoll 15.10.2026). Die Seiten tragen kein Menü mehr; Menücode und `menuItemClickEvent`-Handler bleiben, damit es wieder eingeschaltet werden kann.
+- Wischen im Ruhebild wählt wieder die Art des nächsten Eintrags (Notiz · Mangel · Wichtig) und als letzte Station „Hilfe“; Tippen auf „Hilfe“ öffnet sie, 2× schließt sie.
+- Halten im Ruhebild macht wieder ein Foto; ohne Rundgang öffnet Halten die Hilfe. Bei „Behalten?“ springt Halten nur auf „Behalten + Foto“ (nichts wird dabei abgelegt, Tippen bestätigt, der Auslöser der Kamera ist die letzte Bestätigung).
+- Hilfetexte der Brille (de/en), Fußzeilen und Hinweise am Handy beschreiben wieder die Gesten statt des Menüs.
+- Tests: Seiten ohne `menuObject`, Wischen wählt die Art, Halten macht ein Foto bzw. öffnet die Hilfe ohne Rundgang, Halten bei „Behalten?“ springt auf „Behalten + Foto“.
+
+## [0.8.1] — 2026-10-15
+
+### Behoben
+
+- Die Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben. Jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s); danach wird die Seite neu aufgebaut.
+
+## [0.8.0] — 2026-10-14
+
+Bedienung nach QIS v1.2 (Audit 14.10.2026).
+
+### Geändert (QIS v1.2)
+
+- **Seitenmenü (Halten):** Hilfe, Art des nächsten Eintrags (Notiz · Mangel · WICHTIG) und Foto stehen im Menü der Brille (`menuObject`, Klicks über `menuItemClickEvent`; Vorlage Babel Glass). Die Hilfe ist keine Zeile der Art-Auswahl mehr und nicht mehr „Halten ohne Rundgang“.
+- **Wischen ändert die Art nicht mehr.** Auf dem Ruhebild bewegt Wischen nichts; die Art des nächsten Eintrags wird im Menü ausdrücklich gewählt (Klick). Die Zeile heißt „Nächster Eintrag: … · Art im Menü“.
+- **Halten legt keinen Eintrag mehr ab und öffnet die Kamera nicht mehr.** Unter „Behalten?“ gibt es die ausdrückliche Wahlzeile „Behalten + Foto“ (Wischen bewegt, Tippen führt aus, der Auslöser der Handy-Kamera bestätigt das Foto). Das Menü-„Foto“ unter „Behalten?“ springt nur auf diese Zeile. Während der Aufnahme tut das Menü nichts.
+- **Wortlaut:** „Tippen = Stopp“ heißt jetzt „Tippen = fertig“ (englisch „done“); „Stopp“ bleibt dem Abbrechen-Sinn erspart. Handytexte nennen Foto/Art im Menü der Brille.
+- Sprachwechsel am Handy baut die Brillenseite neu auf, damit das Menü die Sprache trägt.
+- Demo: FieldLog braucht keinen Server (Sprachserver ist optional), startet also ohne Einrichtung mit „Tippen = starten“; kein Demo-Hinweis nötig (v1.2 Nr. 7).
+
+## [0.7.0] — 2026-10-14
+
+Bedienung nach dem Quietglass-Bedienstandard (QIS v1).
+
+### Behoben (Sicherheit)
+
+- **Wischen warf den diktierten Text weg** (zweimal wischen). Wischen bewegt jetzt nur noch: bei „Behalten?“ zwischen den beiden Auswahlzeilen „Behalten“ und „Verwerfen“. Verwerfen ist die ausdrückliche Auswahl „Verwerfen“, wird mit Tippen vorgemerkt („Nochmal tippen = Text verwerfen · Wischen/2× = abbrechen“) und mit einem zweiten einzelnen Tippen innerhalb von 4 s ausgeführt. Wischen, 2× oder 4 s ohne Eingabe brechen ab. (Gespeicherte Einträge werden nur am Handy gelöscht.)
+- **2× stoppt keine Aufnahme mehr und verwirft keinen Text**: Während der Aufnahme und bei „Behalten?“ tut 2× nichts (ein vorgemerktes Verwerfen bricht es ab). Zum Beenden erst mit Tippen stoppen.
+
+### Neu
+
+- **Hilfeseite**: letzter Halt der Typ-Auswahl auf dem Ruhebild (Wischen: Notiz · Mangel · Wichtig · Hilfe); ohne offenen Rundgang öffnet Halten die Hilfe. 2× geht zurück.
+
+### Geändert
+
+- 2× geht eine Ebene zurück: Schnellnotiz-Liste → Ruhebild, Hilfe → Ruhebild; beendet wird nur auf dem Ruhebild (und auf dem Bild ohne Rundgang).
+- Kopfzeile `FIELDLOG · Zustand` (Bereich · Laufzeit, Mikrofon-Uhr mit TEST/Live-Hinweis, „Behalten?“). Fußzeile nur noch Gesten in der Reihenfolge Tippen → Wischen → Halten → 2×, endend auf `2× = Ende` bzw. `2× = zurück` (englisch Tap/Swipe/Hold/2×, exit/back). Passt sie nicht in die Zeile, entfällt der Wischen-Hinweis.
+- `invertScroll` (Handy, Tab „Brille“) gilt unverändert für jede Liste, auch Auswahl „Behalten/Verwerfen“ und die Typ-Auswahl.
+
+## [0.6.1] — 2026-10-13
+
+- Handy-Seite in Tabs statt einer langen Spalte: Rundgang · Archiv · Brille · Mehr (Tab-Leiste unten, gewählter Tab bleibt). Status-Chip oben zeigt den laufenden Rundgang. Der Sprachserver (früher eingeklappt unter „Erweitert“) steht als normale Karte unter „Mehr“.
+
+## [0.6.0] — 2026-10-13
+
+### Neu — Live-Diktat
+
+- **Text erscheint beim Sprechen auf der Brille** (fertige Sätze + der gerade erkannte Teil, die neuesten Wörter unten, höchstens alle 300 ms neu gezeichnet), wenn der private Build einen Live-Server mitbringt (`VITE_LIVE_STT_URL=wss://…`). Beim Stopp wird der ganze Text wie bisher zur Kontrolle gezeigt und als Eintrag gespeichert.
+- Aufnahme bis 10 min (Sicherheitsgrenze statt 30 s); die Fußzeile zeigt die Laufzeit.
+- **Rückfall ohne Verlust:** Der Ton bleibt während der Aufnahme am Handy. Öffnet der Live-Server nicht binnen 3 s oder bricht ab, läuft die Aufnahme weiter („Live-Text weg – Ton wird weiter aufgenommen.“) und geht beim Stopp als WAV an den Whisper-Server – nach einem Abbruch nur der Teil, den der Live-Text noch nicht fest hatte. Ist das mehr als ~30 s, gehen nur die letzten 30 s, und der Kontroll-Bildschirm sagt es („Behalten? · nur die letzten 30 s erkannt“).
+- Warum nicht wieder das Problem von 0.4: der WebSocket ist nur Vorschau, kein Neuverbinden, Ton vor dem Verbindungsaufbau wird nachgeschickt statt verworfen, die Adresse kommt nur aus dem privaten Build (Handy-Einstellung bleibt http(s), gespeicherte ws://-Adressen werden weiter verworfen).
+- Wartezeit auf den Whisper-Server wächst mit der Länge: 20 s + 1 s je 10 s Ton, höchstens 120 s.
+
 ## [0.5.0] — 2026-10-13
 
 ### Changed — dictation over HTTP

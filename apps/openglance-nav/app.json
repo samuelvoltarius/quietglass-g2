@@ -2,14 +2,14 @@
   "package_id": "glass.quiet.openglancenav",
   "edition": "202601",
   "name": "OpenGlance",
-  "version": "0.7.1",
+  "version": "0.17.13",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Routes from the free OpenStreetMap server of FOSSGIS e.V. (Valhalla), place search with Photon (komoot), overview streets and, only if switched on, charging stations from OpenStreetMap via the public Overpass API (overpass-api.de). Or your own servers.",
+      "desc": "Routes from the free OpenStreetMap server of FOSSGIS e.V. (Valhalla), place search with Photon (komoot), overview streets and, only if switched on, chargers, summits and fixed speed cameras from OpenStreetMap via the public Overpass API (overpass-api.de). Or your own servers.",
       "whitelist": [
         "https://valhalla1.openstreetmap.de",
         "https://photon.komoot.io",

@@ -42,11 +42,12 @@ your answers travel to that host — prefer `https://` / `wss://` then.
 | Access token | same | Only to that server |
 | Last opened session id | same | No |
 | Spoken-output settings (on/off, language, voice, speed) | same | No |
+| Session names given on the phone, ids of sessions removed from the list | same | No |
 
 Written through `setLocalStorage()` under `quietglass.agentglass.v1`.
 
-The agent's streamed text, tool names and pending decisions are held **in
-memory only** and are gone when the app closes.
+The agent's streamed text, tool names, pending decisions and the transcript on
+the phone page are held **in memory only** and are gone when the app closes.
 
 ## Credentials
 

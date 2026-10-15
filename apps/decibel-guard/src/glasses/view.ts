@@ -4,6 +4,7 @@ import {
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { fitView } from "./fit";
+import { armedFooter, footer, micFooter } from "./footer";
 
 /**
  * What the glasses show.
@@ -30,20 +31,54 @@ export interface ViewOptions {
   readonly locale?: Locale;
   /** The last attempt to open the microphone was refused. */
   readonly micError?: boolean;
-  /** A hold asked to clear today's dose; a second hold or a tap within a few seconds confirms. */
-  readonly confirmReset?: boolean;
+  /**
+   * A risky action waits for its confirming tap (QIS v1 section 2): `reset` = a hold asked to clear
+   * today's dose, `stop` = a tap asked to stop measuring. A second single tap within 4 s carries it out.
+   */
+  readonly armed?: "reset" | "stop" | null;
+  /** Zero-based help page, or null/undefined when the help is closed. */
+  readonly helpPage?: number | null;
 }
+
+/** Pages of the help. */
+export const HELP_PAGES = 2;
 
 export function buildView(
   dose: DoseState,
   settings: DoseSettings,
   options: ViewOptions,
 ): NoiseView {
-  const view = composeView(dose, settings, options);
-  if (!options.confirmReset) return fitView(view);
-  // The question replaces the gesture line; the microphone indicator stays in front.
-  const ask = t(options.locale ?? "en", "g.confirmReset");
-  return fitView({ ...view, footer: options.listening ? t(options.locale ?? "en", "g.micOn") + " · " + ask : ask });
+  const locale = options.locale ?? "en";
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+
+  // The help page replaces the readout; the microphone indicator stays in the footer while it is open.
+  if (options.helpPage !== null && options.helpPage !== undefined) {
+    const page = Math.min(HELP_PAGES, Math.max(1, options.helpPage + 1));
+    return fitView({
+      header: x("g.h.help", { page, pages: HELP_PAGES }),
+      body: [1, 2, 3].map((row) => x(`g.help.${page}.${row}`)),
+      footer: options.listening
+        ? micFooter(locale, { swipe: x("g.f.page") }, "back")
+        : footer(locale, { swipe: x("g.f.page") }, "back"),
+    });
+  }
+
+  // The question replaces the readout's gesture line; the microphone indicator stays in front.
+  if (options.armed === "reset") {
+    return fitView({
+      header: x("g.h.armed"),
+      body: [x("g.armed.1"), x("g.armed.2")],
+      footer: armedFooter(locale, x(options.listening ? "g.f.clear" : "g.f.clearDose"), options.listening === true),
+    });
+  }
+  if (options.armed === "stop") {
+    return fitView({
+      header: x("g.h.armedStop"),
+      body: [x("g.armedStop.1"), x("g.armedStop.2")],
+      footer: armedFooter(locale, x("g.f.stopAct"), options.listening === true),
+    });
+  }
+  return fitView(composeView(dose, settings, options));
 }
 
 /** The view before the safety cut; tests check it never needs one. */
@@ -55,21 +90,19 @@ export function composeView(dose: DoseState, settings: DoseSettings, options: Vi
     // A refused microphone is not a dead end: say what to try, and a tap retries.
     if (options.micError) {
       return {
-        header: x("g.title"),
+        header: x("g.h.micError"),
         body: [x("g.micError1"), x("g.micError2"), x("g.micError3")],
-        footer: x("g.footerRetry"),
+        footer: footer(locale, { tap: x("g.f.retry") }, "exit"),
       };
     }
     return {
-      header: x("g.title"),
+      header: x("g.h.idle"),
       body: [
-        x("g.idle"),
-        x("g.tapToStart"),
+        dose.fraction > 0 ? x("g.idleDose", { pct: percent(dose.fraction) }) : x("g.idle"),
+        x("g.hintHelp"),
         ...(options.calibrated ? [] : [x("g.estimated")]),
       ],
-      footer: dose.fraction > 0
-        ? x("g.footerResume", { pct: percent(dose.fraction) })
-        : x("g.footerStart"),
+      footer: footer(locale, { tap: x("g.f.measure"), hold: x("g.f.clearDose") }, "exit"),
     };
   }
 
@@ -94,15 +127,15 @@ export function composeView(dose: DoseState, settings: DoseSettings, options: Vi
     body,
     // The microphone indicator is part of this one footer string and has no
     // code path without it.
-    footer: x("g.footerListening"),
+    footer: micFooter(locale, { tap: x("g.f.stop"), hold: x("g.f.reset") }, "exit"),
   };
 }
 
 function headerFor(band: ReturnType<typeof doseLevel>, locale: Locale): string {
   switch (band) {
-    case "exceeded": return t(locale, "g.headerFull");
-    case "high": return t(locale, "g.headerHigh");
-    default: return "";
+    case "exceeded": return t(locale, "g.h.full");
+    case "high": return t(locale, "g.h.high");
+    default: return t(locale, "g.h.listening");
   }
 }
 

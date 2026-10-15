@@ -17,24 +17,28 @@ function fakeBridge() {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
-  const writes = { count: 0, body: "", footer: "" };
-  const pages = { creates: 0, rebuilds: 0 };
+  const writes = { count: 0, header: "", body: "", footer: "" };
+  const pages = { creates: 0, rebuilds: 0, menus: [] as Array<Array<[number, string]>> };
   let deviceHandler: ((status: unknown) => void) | undefined;
-  const camera = { next: null as null | { base64: string; mimeType: string; name: string } };
+  const camera = { calls: 0, next: null as null | { base64: string; mimeType: string; name: string }, gate: null as null | Promise<void> };
+  const config = { stored: JSON.stringify({ baseUrl: "http://lumen.test:8077", invertScroll: false }) };
   const bridge = {
-    getLocalStorage: async () => "",
+    getLocalStorage: async (key: string) => (key === "quietglass.lumenglass.v1" ? config.stored : ""),
     setLocalStorage: async () => true,
     rebuildPageContainer: async () => { pages.rebuilds += 1; return true; },
-    captureImageFromCamera: async () => camera.next,
-    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+    captureImageFromCamera: async () => { camera.calls += 1; if (camera.gate) await camera.gate; return camera.next; },
+    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[]; menuObject?: { menuItems?: Array<{ itemID: number; itemName: string }> } }) => {
       writes.count += 1;
       pages.creates += 1;
+      pages.menus.push((page.menuObject?.menuItems ?? []).map((item): [number, string] => [item.itemID, item.itemName]));
+      writes.header = (page.textObject ?? []).find((part) => part.containerID === 1)?.content ?? "";
       writes.body = (page.textObject ?? []).find((part) => part.containerID === 2)?.content ?? "";
       writes.footer = (page.textObject ?? []).find((part) => part.containerID === 3)?.content ?? "";
       return 0;
     },
     textContainerUpgrade: async (update: { containerID?: number; content?: string }) => {
       writes.count += 1;
+      if (update.containerID === 1) writes.header = update.content ?? "";
       if (update.containerID === 2) writes.body = update.content ?? "";
       if (update.containerID === 3) writes.footer = update.content ?? "";
       return true;
@@ -44,7 +48,7 @@ function fakeBridge() {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: (callback: (status: unknown) => void) => { deviceHandler = callback; return () => undefined; },
   };
-  return { bridge, shutdown, writes, pages, camera, reconnect: () => deviceHandler?.({ connectType: "connected" }), emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, pages, camera, config, menu: (itemID: number) => handler?.({ menuItemClickEvent: { itemID } }), reconnect: () => deviceHandler?.({ connectType: "connected" }), emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
 }
 
 const payload = (gesture: string) => ({
@@ -140,8 +144,8 @@ describe("lumen polling loop", () => {
     const fetchesAtCancel = lumen.fetchMock.mock.calls.length;
     await vi.advanceTimersByTimeAsync(130_000);
     expect(lumen.fetchMock.mock.calls.length).toBeGreaterThanOrEqual(fetchesAtCancel + 2);
-    fake.emit(1); // swipes still refresh
-    await vi.advanceTimersByTimeAsync(10);
+    fake.menu(1); // the menu opens the help; the poll goes on behind it
+    await vi.advanceTimersByTimeAsync(61_000);
     expect(lumen.fetchMock.mock.calls.length).toBeGreaterThanOrEqual(fetchesAtCancel + 3);
   });
 
@@ -255,9 +259,10 @@ describe("lumen gestures with an open quest", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  async function bootWith(fetchMock: unknown) {
+  async function bootWith(fetchMock: unknown, stored?: string) {
     vi.stubGlobal("fetch", fetchMock);
     const fake = fakeBridge();
+    if (stored !== undefined) fake.config.stored = stored;
     harness.bridge = fake.bridge;
     vi.resetModules();
     await import("../src/main");
@@ -266,27 +271,185 @@ describe("lumen gestures with an open quest", () => {
     return fake;
   }
 
-  it("one hold only arms the new quest and says so; a second hold within the window replaces it", async () => {
+  const newQuests = (lumen: ReturnType<typeof questLumen>): number => lumen.calls.filter((call) => call.includes("/api/quest/neu")).length;
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
     const lumen = questLumen({ tickOnUpload: true });
     const fake = await bootWith(lumen.fetchMock);
     fake.emit(9);
     await vi.advanceTimersByTimeAsync(50);
-    expect(lumen.calls.some((call) => call.includes("/api/quest/neu"))).toBe(false);
-    expect(fake.writes.footer).toContain("hold again");
-    fake.emit(9);
+    fake.emit(2);
     await vi.advanceTimersByTimeAsync(50);
-    expect(lumen.calls.filter((call) => call.includes("/api/quest/neu"))).toHaveLength(1);
+    expect(fake.pages.creates).toBeGreaterThan(0);
+    expect(fake.pages.menus.every((items) => items.length === 0)).toBe(true);
   });
 
-  it("an armed hold runs out: a late second hold only arms again", async () => {
+  it("QIS v1: a hold only arms the new quest and says so; one single tap after it replaces the quest (no side menu)", async () => {
     const lumen = questLumen({ tickOnUpload: true });
     const fake = await bootWith(lumen.fetchMock);
     fake.emit(9);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(fake.writes.footer).not.toContain("hold again");
-    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(newQuests(lumen)).toBe(0);
+    expect(fake.writes.header).toBe("LUMEN · New quest?");
+    expect(fake.writes.footer).toBe("Tap again = new quest · Swipe/2× = cancel");
+    fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
-    expect(lumen.calls.some((call) => call.includes("/api/quest/neu"))).toBe(false);
+    expect(newQuests(lumen)).toBe(1);
+    expect(fake.camera.calls).toBe(0);
+  });
+
+  it("QIS v1.2: the menu item only arms the new quest and says so; one single tap after it replaces the quest", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.menu(2);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(newQuests(lumen)).toBe(0);
+    expect(fake.writes.header).toBe("LUMEN · New quest?");
+    expect(fake.writes.footer).toBe("Tap again = new quest · Swipe/2× = cancel");
+    await vi.advanceTimersByTimeAsync(500); // past the moment the hold itself ends
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(newQuests(lumen)).toBe(1);
+    expect(fake.camera.calls).toBe(0);
+  });
+
+  it("QIS v1.2: a second click of the same menu item also replaces the quest", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.menu(2);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(newQuests(lumen)).toBe(0);
+    fake.menu(2);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(newQuests(lumen)).toBe(1);
+  });
+
+  it("QIS v1: a tap right after the menu click does not confirm", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.menu(2);
+    fake.emit(0); // within 0.4 s
+    await vi.advanceTimersByTimeAsync(50);
+    expect(newQuests(lumen)).toBe(0);
+    expect(fake.writes.footer).toBe("Tap again = new quest · Swipe/2× = cancel");
+  });
+
+  it("QIS v1: a swipe, 2× or a second hold cancels the question without replacing anything or leaving the app", async () => {
+    for (const cancel of [1, 2, 3, 9]) {
+      const lumen = questLumen({ tickOnUpload: true });
+      const fake = await bootWith(lumen.fetchMock);
+      fake.emit(9);
+      await vi.advanceTimersByTimeAsync(500);
+      fake.emit(cancel);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fake.writes.footer, "event " + cancel).toBe("Tap = photo · Swipe = help · Hold = quest · 2× = exit");
+      expect(newQuests(lumen), "event " + cancel).toBe(0);
+      expect(fake.shutdown.modes, "event " + cancel).toEqual([]);
+      fake.emit(0); // the next tap is a normal photo tap again, not a confirmation
+      await vi.advanceTimersByTimeAsync(50);
+      expect(newQuests(lumen), "event " + cancel).toBe(0);
+    }
+  });
+
+  it("QIS v1: an armed question runs out after 4 seconds; a late tap only takes a photo", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.menu(2);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fake.writes.footer).toContain("Tap again");
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(fake.writes.footer).not.toContain("Tap again");
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(newQuests(lumen)).toBe(0);
+  });
+
+  it("QIS v1: a swipe opens the help, a swipe, tap, hold or 2× close it; 2× never exits there", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.emit(2);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.writes.header).toBe("LUMEN · Help");
+    expect(fake.writes.footer).toBe("Tap = back · 2× = back");
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.writes.footer).toBe("Tap = photo · Swipe = help · Hold = quest · 2× = exit");
+    expect(fake.shutdown.modes).toEqual([]);
+    for (const close of [0, 1, 9]) {
+      fake.emit(2);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fake.writes.header).toBe("LUMEN · Help");
+      fake.emit(close);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fake.writes.header, "event " + close).not.toBe("LUMEN · Help");
+    }
+    expect(fake.camera.calls).toBe(0);
+  });
+
+  it("QIS v1.2 no. 2: 2× during the shot opens the exit dialog without stopping it; confirmed, the photo is never sent", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    let release!: () => void;
+    fake.camera.gate = new Promise<void>((done) => { release = done; });
+    fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.writes.header).toBe("LUMEN · photo");
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.modes).toEqual([1]);
+    release();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(lumen.calls.some((call) => call.startsWith("POST /quest/9/abgeben"))).toBe(false);
+  });
+
+  it("QIS v1.2 no. 2: when the exit dialog is cancelled, the shot carries on and is sent after the shutter", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock);
+    fake.shutdown.confirm = false;
+    let release!: () => void;
+    fake.camera.gate = new Promise<void>((done) => { release = done; });
+    fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.modes).toEqual([1]);
+    expect(fake.writes.header).toBe("LUMEN · photo");
+    release();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(lumen.calls.some((call) => call.startsWith("POST /quest/9/abgeben"))).toBe(true);
+    expect(fake.writes.body).toContain("Quest done");
+  });
+
+  it("QIS v1.2 no. 7: a first start (nothing saved) shows demo data with the hint line and talks to nobody", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock, "");
+    expect(fake.writes.body).toContain("Demo · set up the connection on your phone");
+    expect(fake.writes.body).toContain("Photograph a reflection");
+    expect(lumen.fetchMock).not.toHaveBeenCalled();
+    // The shutter is not needed in the demo: tapping shows what a ticked-off quest looks like.
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.writes.body).toContain("Quest done");
+    expect(fake.camera.calls).toBe(0);
+    // A new quest in the demo swaps the sample quest, again without a request.
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    fake.menu(2);
+    await vi.advanceTimersByTimeAsync(500);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.writes.body).toContain("shadow");
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(lumen.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a saved address (even the default) is no first start: no demo hint, real requests", async () => {
+    const lumen = questLumen({ tickOnUpload: true });
+    const fake = await bootWith(lumen.fetchMock, JSON.stringify({ baseUrl: "http://127.0.0.1:8077", invertScroll: false }));
+    expect(fake.writes.body).not.toContain("Demo");
+    expect(lumen.fetchMock).toHaveBeenCalled();
   });
 
   it("a photo LUMEN ticked off shows as done straight from its JSON answer", async () => {

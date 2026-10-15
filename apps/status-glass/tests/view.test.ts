@@ -23,16 +23,16 @@ describe("healthy display", () => {
   it("shows one quiet line when everything is fine", () => {
     const source = applyReport(createSource("s1", "nas"), healthy, 0);
     const view = buildView([source], {}, 0);
-    expect(view.header).toBe("");
+    expect(view.header).toBe("STATUS · all ok");
     expect(view.body).toEqual(["1 of 1 ok"]);
-    expect(view.footer).toBe("all ok");
+    expect(view.footer).toBe("Hold = menu · 2× = exit");
   });
 });
 
 describe("problem display", () => {
   it("names the severity and the count", () => {
     const source = applyReport(createSource("s1", "nas"), broken, 0);
-    expect(buildView([source], {}, 0).header).toBe("CRITICAL · 2");
+    expect(buildView([source], {}, 0).header).toBe("STATUS · CRITICAL · 2");
   });
 
   it("puts the worst problem first", () => {
@@ -71,7 +71,7 @@ describe("problem display", () => {
     const source = applyReport(createSource("s1", "nas"), many, 0);
     const view = buildView([source], { cursor: 10, maxRows: 3 }, 0);
     expect(view.body.some((line) => line.startsWith("> "))).toBe(true);
-    expect(view.footer).toContain("more");
+    expect(view.footer).toBe("Tap = seen · Swipe = list · Hold = menu · 2× = exit");
   });
 
   it("clamps an out-of-range cursor instead of showing nothing", () => {

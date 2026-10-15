@@ -26,6 +26,43 @@ export interface PhoneUi {
   readonly refresh: () => void;
 }
 
+/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
+const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "today", icon: "⏱️", key: "p.tabToday" },
+  { id: "projects", icon: "📁", key: "p.tabProjects" },
+  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
+  { id: "more", icon: "⚙️", key: "p.tabMore" },
+];
+const TAB_KEY = "quietglass.shift-clock.tab";
+
+function readTab(): string {
+  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "today"; } catch { return "today"; }
+}
+
+/** Shows only the active tab; the choice survives redraws and restarts. */
+function applyTab(root: HTMLElement, active: string): void {
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) => { el.hidden = el.dataset["tab"] !== active; });
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    const on = button.dataset["tabGo"] === active;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
+/** Applies the active tab after a redraw and wires the tab bar. */
+function bindTabs(root: HTMLElement, current: string, change: (next: string) => void): void {
+  applyTab(root, current);
+  root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = button.dataset["tabGo"] ?? "today";
+      change(next);
+      try { localStorage.setItem(TAB_KEY, next); } catch { /* private mode */ }
+      applyTab(root, next);
+      window.scrollTo({ top: 0 });
+    });
+  });
+}
+
 type Commit = (next: ClockData, options?: { readonly keepDraft?: boolean; readonly notice?: string }) => void;
 
 export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
@@ -36,6 +73,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   let locale: Locale = ports.locale?.() ?? getLocale();
   /** "Clear log" asks once before it deletes every entry. */
   let confirmClear = false;
+  let tab = readTab();
 
   // Re-rendered after every change. Handlers always read the current data:
   // the glasses start and stop the clock while this page is open, and a change
@@ -45,6 +83,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
     const draft = keepDraft ? root.querySelector<HTMLInputElement>("#project")?.value ?? "" : "";
     root.innerHTML = template(ports.getData(), notice, locale);
     notice = "";
+    bindTabs(root, tab, (next) => { tab = next; });
     const field = root.querySelector<HTMLInputElement>("#project");
     if (field && draft) field.value = draft;
     const notify = (message: string): void => { notice = message; render(); };
@@ -117,34 +156,22 @@ function template(data: ClockData, notice: string, locale: Locale): string {
   else next = L("p.nextNone", { name: escapeHtml(name) });
 
   return `
-  <header class="brand">
-    <span class="brand-mark">Quietglass</span>
-    <h1>ShiftClock</h1>
-    <p class="hint">${L("p.lede")}</p>
+  <header class="brand bar">
+    <div>
+      <span class="brand-mark">Quietglass</span>
+      <h1>ShiftClock</h1>
+    </div>
+    <span class="chip${running ? " on" : ""}">${escapeHtml(running ? data.open.project ?? "" : L("p.chipIdle"))}</span>
   </header>
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
+  <div class="tab" data-tab="today">
   <section class="card">
     <h2>${L("p.start")}</h2>
+    <p class="hint">${L("p.lede")}</p>
     <p>${next}</p>
     ${data.projects.length === 0 ? `<button id="add-default" type="button">${L("p.addDefault", { name: escapeHtml(name) })}</button>` : ""}
-    ${languageSelect(locale)}
-  </section>
-
-  <section class="card">
-    <h2>${L("p.projects")}</h2>
-    <label for="project">${L("p.addLabel")}</label>
-    <input id="project" type="text" placeholder="${L("p.addPlaceholder")}" />
-    <button id="add" type="button">${L("p.add")}</button>
-    <ul class="scripts">
-      ${data.projects.map((p) => `
-        <li>
-          <span>${escapeHtml(p)}</span>
-          <button type="button" class="remove" data-project="${escapeHtml(p)}">${L("p.remove")}</button>
-        </li>`).join("")}
-    </ul>
-    <p class="hint">${L("p.removeHint")}</p>
   </section>
 
   <section class="card">
@@ -162,6 +189,24 @@ function template(data: ClockData, notice: string, locale: Locale): string {
     <p class="hint">${L("p.targetHint")}</p>
   </section>
 
+  </div>
+
+  <div class="tab" data-tab="projects">
+  <section class="card">
+    <h2>${L("p.projects")}</h2>
+    <label for="project">${L("p.addLabel")}</label>
+    <input id="project" type="text" placeholder="${L("p.addPlaceholder")}" />
+    <button id="add" type="button">${L("p.add")}</button>
+    <ul class="scripts">
+      ${data.projects.map((p) => `
+        <li>
+          <span>${escapeHtml(p)}</span>
+          <button type="button" class="remove" data-project="${escapeHtml(p)}">${L("p.remove")}</button>
+        </li>`).join("")}
+    </ul>
+    <p class="hint">${L("p.removeHint")}</p>
+  </section>
+
   <section class="card">
     <h2>${L("p.allTime")}</h2>
     ${totals.length === 0 ? `<p class="hint">${L("p.nothing")}</p>` : `
@@ -176,20 +221,36 @@ function template(data: ClockData, notice: string, locale: Locale): string {
       <p class="hint">${L("p.exportHint")}</p>
       <button id="clear" type="button" class="secondary">${L("p.clear")}</button>`}
   </section>
+  </div>
 
+  <div class="tab" data-tab="glasses">
+  <section class="card">
+    <h2>${L("p.glasses")}</h2>
+    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+    <p class="hint">${L("p.invertHint")}</p>
+  </section>
+  </div>
+
+  <div class="tab" data-tab="more">
   <section class="card">
     <h2>${L("p.controls")}</h2>
     <table class="keys">
       <tr><td>${L("p.key.tap")}</td><td>${L("p.key.tapDo")}</td></tr>
       <tr><td>${L("p.key.swipe")}</td><td>${L("p.key.swipeDo")}</td></tr>
+      <tr><td>${L("p.key.hold")}</td><td>${L("p.key.holdDo")}</td></tr>
       <tr><td>${L("p.key.double")}</td><td>${L("p.key.doubleDo")}</td></tr>
     </table>
     <p class="hint">${L("p.controlsHint")}</p>
-    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
-    <p class="hint">${L("p.invertHint")}</p>
   </section>
 
-  <footer class="hint">${L("p.privacy")}</footer>`;
+  <section class="card">${languageSelect(locale)}</section>
+
+  <footer class="hint">${L("p.privacy")}</footer>
+  </div>
+
+  <nav class="tabbar" role="tablist">
+    ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${L(key)}</button>`).join("")}
+  </nav>`;
 }
 
 function wire(

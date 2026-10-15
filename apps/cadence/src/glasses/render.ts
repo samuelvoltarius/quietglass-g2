@@ -1,5 +1,7 @@
 import {
   CreateStartUpPageContainer,
+  MenuContainerProperty,
+  MenuItemProperty,
   TextContainerProperty,
   TextContainerUpgrade,
   RebuildPageContainer,
@@ -8,7 +10,8 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import type { CadenceView } from "./view";
 import type { Bitmap } from "./gfx";
-import { ImageLink, imageContainer, type ImageSlot } from "./images";
+import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, type ImageSlot } from "./images";
+export { PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS } from "./images";
 import { BPM_HEIGHT, BPM_WIDTH, PENDULUM_HEIGHT, PENDULUM_WIDTH } from "./charts";
 
 /**
@@ -45,6 +48,11 @@ export const ICON: ImageSlot = { id: 4, name: "pixel-icon", x: SCREEN_WIDTH - IC
 export const BPM: ImageSlot = { id: 5, name: "bpm", x: 0, y: 40, width: BPM_WIDTH, height: BPM_HEIGHT, z: 5 };
 export const PENDULUM: ImageSlot = { id: 6, name: "pendulum", x: BPM_WIDTH + 24, y: 36, width: PENDULUM_WIDTH, height: PENDULUM_HEIGHT, z: 6 };
 
+/** The glasses' side menu (QIS v1.2): ids are never 0, labels at most 32 bytes. */
+export interface MenuSpec {
+  readonly items: readonly { readonly id: number; readonly label: string }[];
+}
+
 export interface Frames {
   readonly icon: Bitmap;
   readonly bpm: Bitmap;
@@ -59,7 +67,7 @@ export interface RenderResult {
 
 const link = new ImageLink();
 
-export function buildPage(view: CadenceView): CreateStartUpPageContainer {
+export function buildPage(view: CadenceView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
   return new CreateStartUpPageContainer({
     containerTotalNum: 6,
     imageObject: [ICON, BPM, PENDULUM].map(imageContainer),
@@ -70,6 +78,9 @@ export function buildPage(view: CadenceView): CreateStartUpPageContainer {
       text(CONTAINER.body, view.body.join(NL), 2, true),
       text(CONTAINER.footer, view.footer, 3, false),
     ],
+    ...(menu !== null && menu.items.length > 0
+      ? { menuObject: new MenuContainerProperty({ menuItems: menu.items.map((item) => new MenuItemProperty({ itemName: item.label, itemID: item.id })) }) }
+      : {}),
   });
 }
 
@@ -103,22 +114,22 @@ function text(
  */
 const started = new WeakSet<EvenAppBridge>();
 
-export async function createPage(bridge: EvenAppBridge, view: CadenceView, frames: Frames): Promise<RenderResult> {
-  const page = buildPage(view);
+export async function createPage(bridge: EvenAppBridge, view: CadenceView, frames: Frames, menu: MenuSpec | null = null): Promise<RenderResult> {
+  const page = buildPage(view, menu);
   sentLength.clear();
   link.reset();
   try {
     if (!started.has(bridge)) {
       try {
-        await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       } catch {
         // Expected on current firmware; the creation below is the real path.
       }
-      const result = await bridge.createStartUpPageContainer(page);
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
       if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
       started.add(bridge);
     } else {
-      const ok = await bridge.rebuildPageContainer(new RebuildPageContainer({ ...page }));
+      const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
       if (!ok) return { ok: false, reason: "rebuild refused" };
     }
     return pushImages(bridge, frames);
@@ -167,11 +178,11 @@ export async function updatePage(
   try {
     for (const [spec, content, before] of updates) {
       if (before !== undefined && before === content) continue;
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+      await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
         ...guarded(spec.id, content),
-      }));
+      })), TEXT_CALL_MS, "text " + spec.name);
     }
     return await pushImages(bridge, frames);
   } catch (error) {

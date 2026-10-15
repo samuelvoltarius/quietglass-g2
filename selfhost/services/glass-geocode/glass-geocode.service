@@ -1,0 +1,16 @@
+[Unit]
+Description=glass-geocode (Ortssuche fuer OpenGlance: Photon + Nominatim parallel, wie Photon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/glass-geocode
+EnvironmentFile=/opt/glass-geocode/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -u /opt/glass-geocode/glass_geocode.py
+Restart=on-failure
+RestartSec=30
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

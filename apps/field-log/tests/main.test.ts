@@ -1,6 +1,7 @@
 import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
+import { FakeSocket } from "./fake-socket";
 
 // Boots the real app against a fake bridge, so the lifecycle can be checked without hardware.
 const harness = vi.hoisted(() => ({ bridge: null as unknown }));
@@ -34,6 +35,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null) {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
     audio: (bytes = 32) => handler?.({ audioEvent: { audioPcm: new Uint8Array(bytes) } }),
+    menu: (itemID: number) => handler?.({ menuItemClickEvent: { itemID } }),
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
@@ -160,32 +162,179 @@ describe("fieldlog dictation over HTTP", () => {
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
   });
 
-  it("the recording stops by itself after 30 s and is sent", async () => {
+  it("the recording stops by itself after the 10 min safety cap and is sent", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     vi.useFakeTimers();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
     fake.audio(SECOND_OF_AUDIO);
-    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.advanceTimersByTimeAsync(601_000);
     vi.useRealTimers();
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
     expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
   });
 
-  it("one swipe does not discard the text under review; a second swipe does", async () => {
-    const fake = fakeBridge(data());
+  async function toReview(fake: Fake): Promise<void> {
     await boot(fake);
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
     fake.audio(SECOND_OF_AUDIO);
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
-    fake.emit(2);
-    await vi.waitFor(() => expect(lastFooter(fake)).toContain("swipe again"));
+  }
+
+  it("QIS v1: a swipe under review only moves between Keep, Keep + photo and Discard, however often", async () => {
+    const fake = fakeBridge(data());
+    await toReview(fake);
+    for (const swipe of [2, 1, 2, 1, 2, 1]) { fake.emit(swipe); await sleep(30); }
     expect(lastBody(fake)).toContain("Window seal damaged");
-    fake.emit(1);
+    expect(lastBody(fake)).toContain("> Keep\n");
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Keep + photo"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Discard"));
+    expect(lastBody(fake)).toContain("Window seal damaged");
+    expect(fake.bridge.captureImageFromCamera).not.toHaveBeenCalled();
+  });
+
+  it("QIS v1.2: Keep + photo files the text first, then opens the camera (the shutter confirms)", async () => {
+    const fake = fakeBridge(data());
+    fake.bridge.captureImageFromCamera.mockResolvedValue({ base64: "AAAA", mimeType: "image/jpeg", size: 3 } as never);
+    await toReview(fake);
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Keep + photo"));
+    expect(fake.bridge.captureImageFromCamera).not.toHaveBeenCalled();
+    fake.emit(0);
+    await vi.waitFor(() => expect(fake.bridge.captureImageFromCamera).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("[photo]"));
+    expect(lastBody(fake)).toContain("Window seal damaged");
+  });
+
+  it("a hold under review only moves the cursor to Keep + photo (no side menu, step log 15.10.)", async () => {
+    const fake = fakeBridge(data());
+    await toReview(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Keep + photo"));
+    expect(fake.bridge.captureImageFromCamera).not.toHaveBeenCalled();
+  });
+
+  it("QIS v1: Discard is armed by one tap and carried out by a second single tap", async () => {
+    const fake = fakeBridge(data());
+    await toReview(fake);
+    fake.emit(1); // choice: Discard (the list wraps)
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Discard"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Tap again = discard text · Swipe/2× = cancel"));
+    expect(lastBody(fake)).toContain("Window seal damaged");
+    fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("No entries yet."));
+  });
+
+  it("QIS v1: a swipe, 2× or the timeout cancel an armed discard", async () => {
+    const fake = fakeBridge(data());
+    await toReview(fake);
+    fake.emit(1);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Discard"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastFooter(fake)).toContain("Tap again"));
+    fake.emit(1); // swipe back to Keep + photo: cancels
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Tap = keep + photo · Swipe = choice"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("> Discard"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastFooter(fake)).toContain("Tap again"));
+    fake.emit(3); // 2x: cancels, does not leave and does not discard
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Tap = discard · Swipe = choice"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    expect(lastBody(fake)).toContain("Window seal damaged");
+    // A second tap right after the cancel arms again instead of discarding.
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastFooter(fake)).toContain("Tap again"));
+    expect(lastBody(fake)).toContain("Window seal damaged");
+  });
+
+  it("QIS v1: tapping Keep files the text; 2× under review neither leaves nor discards", async () => {
+    const fake = fakeBridge(data());
+    await toReview(fake);
+    fake.emit(3);
+    await sleep(40);
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    expect(lastBody(fake)).toContain("Window seal damaged");
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
+    await vi.waitFor(() => expect(lastBody(fake)).not.toContain("Keep"));
+  });
+
+  it("QIS v1: the type selector ends in Help; 2× leaves the help page, not the app", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    // The stops are note, minor, major, help: three swipes from the first one.
+    for (let i = 0; i < 3 && !lastBody(fake).includes("Help · Tap = open"); i += 1) { fake.emit(2); await sleep(40); }
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Help · Tap = open"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("2× = back"));
+    expect(lastBody(fake)).toContain("Swipe never changes or deletes an entry");
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Help · Tap = open"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+  });
+
+  it("with no inspection open a hold opens the help; 2× leaves it", async () => {
+    const fake = fakeBridge(null);
+    await boot(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("2× = back"));
+    expect(lastBody(fake)).toContain("Hold: photo on the latest entry");
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastFooter(fake)).not.toBe("2× = back"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+  });
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(2); await sleep(40); // a swipe rebuilds nothing, but every page built so far must be menu-free
+    const pages = [
+      ...(fake.bridge.createStartUpPageContainer.mock.calls as unknown as unknown[][]),
+      ...(fake.bridge.rebuildPageContainer.mock.calls as unknown as unknown[][]),
+    ].map((call) => call[0] as { menuObject?: unknown });
+    expect(pages.length).toBeGreaterThan(0);
+    for (const page of pages) expect(page.menuObject).toBeUndefined();
+  });
+
+  it("a swipe on the resting screen picks the type of the next entry and saves it again (no side menu)", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    const saved = fake.bridge.setLocalStorage.mock.calls.length;
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("next entry: minor"));
+    await vi.waitFor(() => expect(fake.bridge.setLocalStorage.mock.calls.length).toBeGreaterThan(saved));
+  });
+
+  it("a hold on the resting screen takes a photo; during a recording it does nothing", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(9);
+    await vi.waitFor(() => expect(fake.bridge.captureImageFromCamera).toHaveBeenCalledTimes(1));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.emit(9);
+    await sleep(40);
+    expect(fake.bridge.captureImageFromCamera).toHaveBeenCalledTimes(1);
+    expect(lastFooter(fake)).toBe("Tap = done");
+  });
+
+  it("QIS v1: 2× during a recording does nothing; the recording is stopped by a tap", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    fake.emit(3);
+    await sleep(60);
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true]);
+    expect(lastBody(fake)).toContain("Listening");
   });
 
   it("regression: a failed exit call is not an unhandled rejection, asks once, and the app stays", async () => {
@@ -202,34 +351,19 @@ describe("fieldlog dictation over HTTP", () => {
     await vi.waitFor(() => expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn));
   });
 
-  it("leaving while recording pauses the microphone for the system dialog and draws nothing more after confirm", async () => {
+  it("leaving at the resting screen asks the system dialog and draws nothing more after confirm", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
-    fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
     fake.emit(3);
     await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
     await sleep(200);
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
     fake.emit(0);
     await sleep(30);
-    // Off once, for the dialog; a tap after leaving opens nothing.
-    expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false]);
+    // A tap after leaving opens nothing.
+    expect(fake.bridge.audioControl).not.toHaveBeenCalled();
     expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBe(drawn);
     expect(whisper.state.uploads).toHaveLength(0);
-  });
-
-  it("cancelling the exit dialog while recording turns the microphone back on and the dictation continues", async () => {
-    const fake = fakeBridge(data());
-    fake.bridge.shutDownPageContainer.mockResolvedValue(false);
-    await boot(fake);
-    fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
-    fake.emit(3);
-    await vi.waitFor(() => expect(fake.bridge.audioControl.mock.calls.map((call) => call[0])).toEqual([true, false, true]));
-    fake.audio(SECOND_OF_AUDIO);
-    fake.emit(0);
-    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
   });
 
   it("regression: gestures work while the first page is still being created", async () => {
@@ -301,6 +435,108 @@ describe("fieldlog dictation over HTTP", () => {
     fake.emit(0);
     await vi.waitFor(() => expect(lastBody(fake)).toContain("> OK"));
     expect(fake.bridge.audioControl).not.toHaveBeenCalled();
+  });
+});
+
+describe("fieldlog live dictation", () => {
+  let whisper: ReturnType<typeof fakeWhisper>;
+  beforeEach(() => {
+    resetGestureDedupe();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    whisper = fakeWhisper();
+    vi.stubGlobal("fetch", whisper.fetchMock);
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.stubEnv("VITE_LIVE_STT_URL", "wss://live.test:8449");
+    FakeSocket.last = null;
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  const startRecording = async (fake: Fake): Promise<FakeSocket> => {
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Listening"));
+    await vi.waitFor(() => expect(FakeSocket.last).not.toBeNull());
+    return FakeSocket.last!;
+  };
+
+  it("words appear on the glasses while speaking; the live transcript is the entry, no upload", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    const socket = await startRecording(fake);
+    expect(socket.url).toBe("wss://live.test:8449");
+    fake.audio(SECOND_OF_AUDIO);
+    socket.open();
+    // Audio from before the open is not lost: it goes right after the start frame.
+    expect(JSON.parse(socket.sent[0] as string)).toMatchObject({ type: "start", language: "en", stream: true });
+    expect((socket.sent[1] as Uint8Array).length).toBe(SECOND_OF_AUDIO);
+    socket.reply({ type: "final", text: "Window seal cracked.", final: true });
+    socket.reply({ type: "partial", text: "Lamp flickers", final: false });
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal cracked. Lamp flickers"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(JSON.parse(socket.sent.at(-1) as string)).toEqual({ type: "stop" }));
+    socket.reply({ type: "final", text: "Lamp flickers above desk.", final: true });
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal cracked. Lamp flickers above desk."));
+    expect(whisper.state.uploads).toHaveLength(0);
+  });
+
+  it("a live server that never answers: the whole recording goes as a file", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    await startRecording(fake);
+    fake.audio(SECOND_OF_AUDIO);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
+    expect(whisper.state.uploads).toHaveLength(1);
+    const file = (whisper.state.uploads[0]!.init.body as FormData).get("file") as Blob;
+    expect(file.size).toBe(44 + SECOND_OF_AUDIO);
+  });
+
+  it("a drop keeps the committed words and sends only the rest as a file", async () => {
+    whisper.state.text = "and the rest";
+    const fake = fakeBridge(data());
+    await boot(fake);
+    const socket = await startRecording(fake);
+    socket.open();
+    for (let i = 0; i < 3; i += 1) fake.audio(SECOND_OF_AUDIO);
+    socket.reply({ type: "final", text: "First part.", final: true });
+    socket.reply({ type: "partial", text: "half", final: false });
+    for (let i = 0; i < 2; i += 1) fake.audio(SECOND_OF_AUDIO);
+    socket.drop();
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Live text lost"));
+    expect(fake.bridge.textContainerUpgrade.mock.calls
+      .map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0])
+      .filter((upgrade) => upgrade.containerID === 1).at(-1)?.content).toContain("no live text");
+    fake.audio(SECOND_OF_AUDIO);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("First part. and the rest"));
+    const file = (whisper.state.uploads[0]!.init.body as FormData).get("file") as Blob;
+    // From one second before the final (3 s) to the end (6 s): 4 s of audio.
+    expect(file.size).toBe(44 + 4 * SECOND_OF_AUDIO);
+  });
+
+  it("a long recording without live text sends its last 30 s and says so", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    await startRecording(fake);
+    for (let i = 0; i < 40; i += 1) fake.audio(SECOND_OF_AUDIO);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Window seal damaged"));
+    const headers = fake.bridge.textContainerUpgrade.mock.calls
+      .map((call) => (call as unknown as [{ containerID?: number; content?: string }])[0])
+      .filter((upgrade) => upgrade.containerID === 1);
+    expect(headers.at(-1)?.content).toContain("last 30 s only");
+    const file = (whisper.state.uploads[0]!.init.body as FormData).get("file") as Blob;
+    expect(file.size).toBe(44 + 16_000 * 2 * 31);
+  });
+
+  it("leaving through the system closes the live socket too", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    const socket = await startRecording(fake);
+    socket.open();
+    fake.emit(5);
+    await sleep(20);
+    expect(socket.closed).toBe(true);
+    expect(whisper.state.uploads).toHaveLength(0);
   });
 });
 

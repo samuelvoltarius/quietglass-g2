@@ -90,9 +90,9 @@ describe("detail page", () => {
   it("names the page and the state in the header", () => {
     const source = applyReport(createSource("spark", "Spark"), spark(), NOW);
     const page = detailPage(source, 1, "de", NOW);
-    expect(page.view.header).toMatch(/^Spark · ok · 2\/\d$/);
+    expect(page.view.header).toMatch(/^STATUS · Spark · ok · 2\/\d$/);
     const offline = applyError(source, "unreachable", NOW);
-    expect(detailPage(offline, 0, "de", NOW).view.header).toMatch(/^Spark · offline/);
+    expect(detailPage(offline, 0, "de", NOW).view.header).toMatch(/^STATUS · Spark · offline/);
     expect(detailPage(offline, 0, "de", NOW).view.body[0]).toBe("! nicht erreichbar");
   });
 

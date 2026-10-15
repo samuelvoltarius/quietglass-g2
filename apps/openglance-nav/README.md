@@ -83,7 +83,7 @@ always in place.
 
 ## Two views: next turn, or the map
 
-**Swipe** on the glasses to switch between the turn view and the **map**. The
+Choose **View: map** (or **View: turns**) in the glasses' side menu. A swipe never switches the view. The
 map fills the **whole display** (four 288 x 144 images, 576 x 288 together),
 **heading-up**: it turns so that the direction of travel is up, with the car
 as a large chevron low on the picture, so the road ahead gets the room. The
@@ -97,7 +97,7 @@ the map is north-up when neither is known. The zoom moves in steps (150 m ...
 remembered and can also be picked on the phone.
 
 Switching between the views rebuilds the page on the glasses (the two use
-different image containers), which takes a moment - fine for a swipe you chose,
+different image containers), which takes a moment - fine for a menu entry you chose,
 and it never happens for an ordinary update. The map is sent when the route,
 the streets, the next turn or the zoom step change, and otherwise at most every
 4 s after you moved 12 m or the map has to turn 12 degrees; a tile that looks
@@ -196,7 +196,8 @@ The phone page shows, as both services' terms require:
 > Map data © OpenStreetMap contributors (ODbL) · report a map error ·
 > Routes: FOSSGIS e.V. · Valhalla · Search: Photon by komoot ·
 > Overview streets: OpenStreetMap via Overpass API ·
-> Charging stations: OpenStreetMap via Overpass API (ODbL) (when switched on)
+> Charging stations: OpenStreetMap via Overpass API (ODbL) (when switched on) ·
+> Peaks: © OpenStreetMap contributors (ODbL), via the Overpass API (peaks tab)
 
 With your own servers entered, the provider line names them instead.
 
@@ -271,6 +272,44 @@ second server only when the first fails, and every failure said in words. The
 route corridor is asked as a union of boxes of ~20 km each: an `around` along
 a 130 km line ran into the server's time limit when tested.
 
+## Peaks nearby (optional, off by default)
+
+Switch **Show "Peaks nearby" on the glasses list** on in the phone's **Peaks**
+tab. Named summits with an elevation (`natural=peak` with `name` and `ele`)
+come from OpenStreetMap through the public Overpass API.
+
+- **Glasses, compass band**: the upper half of the display is a compass band
+  (±60°, compass points written on the scale) with the facing direction in the
+  middle. Each peak is a triangle at its bearing, with name, elevation and
+  distance above it (up to three rows, never overlapping); peaks outside the
+  band are only counted, with an arrow at the edge. The seven nearest are
+  shown, **swipe** switches to the seven highest. Below the band: which way
+  the band faces and why, how many peaks, the highest one.
+- **Facing direction**: while moving (from ~1 m/s), the GPS course; standing
+  still, the **facing when standing still** set on the phone (N, NE … NW),
+  otherwise north up. *Head direction from the glasses' own motion sensor
+  (IMU) could come later; SDK 0.0.16 does not offer it to apps yet.*
+- **Glasses, list**: **tap** on the band opens the peaks sorted by distance
+  ("2.3 km · NE · Gaisberg 1287 m"); swipe chooses, tap navigates there (it
+  joins the recent destinations), hold goes back to the band, double tap back
+  to the destination list.
+- **Phone**: radius 10 / 25 / 50 km, the facing direction, **Load peaks**, and
+  the list with distance, bearing and elevation; **Go there** makes a peak the
+  destination the same way a spoken destination does.
+
+Asked sparingly: the world is cut into 5 km cells, and one request per cell
+asks for the radius plus 4 km around the cell's centre, so the answer covers
+every point of the cell. Answers are kept on the phone (Even app storage, up
+to four areas, 30 days; a larger radius serves a smaller one). Nothing is
+fetched in the background: only when the peaks page opens, on **Load peaks**,
+or once when you walk into a new cell while the page is open; at most one
+request every 20 s; a 30 s timeout; the next server only when one fails.
+Servers in turn: `overpass-api.de`, `overpass.private.coffee` (maps.mail.ru deliberately not used: a location must not go there).
+Checked with curl on 2026-10-14 (form POST with an `Origin`): overpass-api.de
+and other mirrors answer `Access-Control-Allow-Origin: *`; both also answered
+504 under load at times, and overpass-api.de 406 to a client without a
+browser Referer (see the table above).
+
 ## Advanced: your own servers
 
 Everything a beginner never needs sits under **Advanced** on the phone page:
@@ -297,15 +336,136 @@ The **demo route** is a fixed made-up route that exercises the whole pipeline
 without any network; the glasses mark it `DEMO` so it can never be mistaken for
 real navigation.
 
+## Glucose in the driving HUD (private build, optional)
+
+Information only, never advice. With `VITE_SUGAR_URL` set at build time (the
+address of your **own** Nightscout-compatible server) and the phone switch
+*Glucose in the driving HUD* on (Glasses tab; on by default only when the build
+has an address), the glasses show a small value with the trend arrow, e.g.
+`128↗`, while you drive with a route: in the footer of the turn page (dropped
+right at a turn, like the rest of the footer) and after the speed on the map.
+
+- Read only: `GET <url>/api/v1/entries/sgv.json?count=3`, once a minute, only
+  while navigating by car. Values come from your server only; no third party.
+  An optional `VITE_SUGAR_TOKEN` goes into the query (`?token=`), never a header.
+- A value older than 15 minutes is marked `128?` (no arrow, no warning), older
+  than an hour it is hidden.
+- Warning: below 80 mg/dl and falling (45°, down, double down), or below 70 mg/dl
+  in any direction: `! 72↓ low & falling` / `! 65→ low` replaces the footer (on
+  the map: the speed plate) until it clears, even right at a turn.
+- A failed request changes nothing on the glasses and rebuilds no page; the
+  text is updated in place through the normal draw.
+- Without the address: nothing shown, no request.
+- The server origin must be in the network whitelist of `app.private.json`
+  (generated by `selfhost/build-private.mjs`, never committed).
+
+## Today's appointments (private build, optional)
+
+With `VITE_BRIEF_URL` (the base address of your **own** Quiet Hub daemon) and
+`VITE_BRIEF_TOKEN` (its bearer token; private builds only) set at build time,
+and the phone switch *Appointments from the morning brief* on (Glasses tab; on
+by default only in such a build), today's appointments head the glasses list.
+
+- Source: `GET <url>/brief/appointments` on your daemon, which merges your
+  calendars and Shoot Day projects and geocodes the places. Asked at start and
+  every 5 min while the list is shown (6 s timeout, one request at a time);
+  a failure changes nothing. No third party is asked for appointments.
+- Shown: timed appointments with a place found, starting later or at most 30 min
+  ago, at most three, first in the list and marked `▸`, e.g.
+  `▸ 10:30 Customer … · Musterdorf`. Tap drives there (by car).
+- Before leaving: with a drive time from the normal router (at most one request
+  per appointment per 5 min, only while the list is open), the row says
+  `leave in 12 min` / `go now!` (start − drive time − 5 min).
+- Driving there: the turn page footer says `Arrive 10:22 · 8 min early` /
+  `· 5 min late` (a glucose warning wins); on the map a short chip after the
+  speed when it fits. On arrival one extra line `Appt: <title> · Babel: client talk`.
+- Without URL or token: nothing shown, no request.
+- The daemon origin must be in the network whitelist of `app.private.json`.
+
+## Choosing a route (car)
+
+Starting a car trip without stops asks the router for up to two other ways
+(Valhalla `alternates: 2`). When it offers more than one, the glasses show them
+before anything starts:
+
+```
+OPENGLANCE · Route wählen
+→ A 34 min · 41 km · A1 · +12 min Stau
+    B 38 min · 33 km · B158 · Akku −2 %
+    C 41 min · 39 km · Maut
+Tippen = los · Wischen = wählen · 2× = zurück
+```
+
+Each row shows time and distance, then what tells the ways apart, as far as it
+fits: the traffic delay (private build with the traffic service), the battery
+difference to the fastest way (car link only; consumption from the car, a bit
+more above 80 km/h average), toll when the router says so, and the road the way
+mostly follows. Swipe moves, tap starts, double tap goes back to the list. With
+one way only there is no picker. Reroutes, and a navigation picked up after the
+phone ended the app, take the fastest way without asking.
+
+## Traffic (private build, optional)
+
+With `VITE_TRAFFIC_URL` (your **own** glass-traffic service,
+`selfhost/services/glass-traffic`) set at build time:
+
+- **Before the start** the route picker shows each way's delay (`+12 min Stau`,
+  `Sperre` for a closure).
+- **While driving** the app asks every 2 minutes, and once after a new route
+  (never sooner than 15 s after the last request, one request at a time). The
+  hint line says `Stau in 4,2 km · +9 min`, `Sperre in 800 m`,
+  `Baustelle in …` (roadworks only when they cost time), up to 30 km ahead.
+- **Detour**: with 5 min or more of delay (or a closure) ahead, the router's
+  other ways from where you are are checked against their own traffic; if one
+  saves 5 min or more the line says `Umfahrung spart 7 min · Tippen` and a
+  **tap takes it**. The tap acts on the detour only while that line is what the
+  glasses show (otherwise tap keeps its usual meaning: reroute when off route,
+  charging nearby when the battery runs low). Trips with stops get no detour
+  offer (the router offers other ways only between two places).
+- What goes where: the app sends only the route line ahead to your own service.
+  The service asks TomTom (key on the server, never in the app) with boxes
+  around the route and a few points on it, and reads the ASFINAG DATEX II feed
+  for Austrian motorways if you registered for it. Your position is never sent
+  to TomTom as such. Details and setup: `selfhost/services/glass-traffic/README.md`.
+- Without the address: nothing shown, no request.
+
+## Speed hints at fixed enforcement points (on by default; off in Germany)
+
+While driving with a route, a neutral hint `Tempo beachten · 50`
+(`Mind your speed · 50`) appears in the hint line about 300 m before a fixed
+speed-enforcement point mapped in OpenStreetMap (`highway=speed_camera`, and the
+devices of `enforcement=maxspeed` relations); at speed at least 10 s ahead. The
+number is the point's own `maxspeed`, else the current limit. The points are
+asked once per route from the public Overpass servers (route corridor boxes,
+cached; not at all for a route wholly inside Germany). Priority: below glucose
+low & falling and the brake hint, below a jam or closure less than 3 km ahead,
+above the arrival battery, appointment and charger hints. Phone switch:
+*Speed hints (fixed enforcement points)*, Glasses tab.
+
+**Why it is off in Germany.** § 23 Abs. 1c StVO forbids drivers in Germany to
+operate or use a device intended to show or disrupt speed enforcement; the
+prohibition is commonly read to cover such a function in a navigation app
+while driving. OpenGlance therefore never shows the hint when it finds itself
+in Germany: a coarse outline of Germany decides away from the border, and
+within 20 km of it a reverse lookup on the place-search server (only the
+centre of a ~1 km cell is sent, and only when a point is actually ahead) - until
+that has answered, and if it fails, the hint stays off. In Austria and Italy
+such hints are, as far as we know, not forbidden; other countries have their
+own rules (Switzerland, for instance, also forbids warnings about traffic
+controls), and the setting is yours to switch off. This is a description of
+how the feature behaves, **not legal advice (keine Rechtsberatung)**. The
+outline is approximate; near borders the result can be off by about a kilometre.
+
 ## Controls
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | List: go to the chosen destination (on the last row: switch car / bike / on foot) · retry after an error · reroute when off route |
-| **Swipe** | List: choose a destination · navigating: switch between the turn view and the map |
-| **Hold** | List: say a destination (private build with a speech server) · navigating: stop and back to the list |
+| **Tap** | List: go to the chosen destination (on the last row: switch car / bike / on foot) · route choice: start the chosen way · retry after an error · reroute when off route · take the detour while `Umfahrung spart … · Tippen` is shown |
+| **Swipe** | Moves only, never changes anything: List: choose a destination (the last row is the travel mode) · route choice: choose a way · peaks band: nearest / highest. While navigating it does nothing |
+| **Hold** | List: say a destination (private build with a speech server). A hold never stops the navigation |
+| **Side menu** (glasses) | **Help** · **View: turns / View: map** · **Switch HUD layout** · **Speed hints on/off** (the last two while driving; from the list too) · **End navigation** — the first click **asks**, the footer says `Tap again = stop`; a second click on the entry or one tap within 4 s stops and goes back to the list; a swipe, a hold, a double tap, another entry or 4 s cancel |
 | **Hold** on spoken results | Save the chosen place as a favourite |
-| **Double tap** | Leave OpenGlance — the glasses ask to confirm; cancelling keeps navigating |
+| **2×** | Back (speaking, charging, peaks, help, route choice - nothing is guiding yet) · navigating: leave OpenGlance — the glasses ask to confirm; cancelling keeps navigating · cancels a pending stop instead of leaving |
 
 ## Install
 
@@ -325,6 +485,15 @@ device holds, and this app has no reason to keep it.
 
 The overview map sends the area around the route, rounded to about 10 m,
 once per route to the street server (Overpass), unless switched off.
+
+Peaks nearby send only the centre of the 5 km cell you are in (not your exact
+position) and the radius, once per cell, to the Overpass server; the answer is
+kept on the phone.
+
+Speed hints ask Overpass once per route with boxes around the route; near the
+German border the centre of a ~1 km cell goes to the place-search server to tell
+the country. Traffic (private build) sends only the route line ahead to your own
+service; it never sends your position to TomTom.
 
 Your position and destination go only to the routing server (the public
 FOSSGIS one unless you enter your own) when a route is calculated. A place
@@ -349,6 +518,7 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 ## Roadmap
 
 - Lane guidance where the router supplies it.
+- Peaks band turning with the head (glasses IMU), once the SDK offers it.
 - Offline route caching for a planned trip.
 
 ## License

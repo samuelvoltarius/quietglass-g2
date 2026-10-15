@@ -19,6 +19,24 @@ export interface XaventraApi {
    * `cardId` binds a spoken yes/no to the card that is on the glasses.
    */
   voice(wav: ArrayBuffer, cardId?: string): Promise<VoiceResult>;
+  /**
+   * The same as `voice`, but with text the glasses already transcribed live:
+   * `POST /hud/ask { text, cardId? }`, same reply shape. Servers without this
+   * endpoint answer 404/405 or fail the CORS preflight ("unreachable"); see
+   * `askUnsupported`.
+   */
+  ask(text: string, cardId?: string): Promise<VoiceResult>;
+}
+
+/**
+ * Whether a failed `ask` means "this server has no text endpoint" (so the
+ * recording may safely go the WAV way instead): the request was never
+ * processed — a 404/405/501, or a refused preflight, which the browser reports
+ * as a network error. A timeout, 401 or 503 is not: the server may have acted.
+ */
+export function askUnsupported(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  return error.code === "unreachable" || (error.code === "http" && [404, 405, 501].includes(error.status));
 }
 
 export type ApiErrorCode = "timeout" | "unreachable" | "auth" | "http" | "bad-reply" | "aborted";
@@ -102,6 +120,15 @@ export function createClient(options: ClientOptions): XaventraApi {
         method: "POST",
         headers: { "Content-Type": "audio/wav" },
         body: new Blob([wav], { type: "audio/wav" }),
+      }, options.voiceTimeoutMs ?? VOICE_TIMEOUT_MS));
+      if (!result) throw new ApiError("bad-reply");
+      return result;
+    },
+    ask: async (text, cardId) => {
+      const result = parseVoice(await request("/hud/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cardId ? { text, cardId } : { text }),
       }, options.voiceTimeoutMs ?? VOICE_TIMEOUT_MS));
       if (!result) throw new ApiError("bad-reply");
       return result;

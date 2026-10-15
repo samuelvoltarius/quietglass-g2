@@ -1,0 +1,65 @@
+/* PC layout on top of the phone page's styles: planner left, map right. */
+body.pc { padding: 20px 24px; }
+body.pc main { max-width: none; margin: 0; }
+
+.pc-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  max-width: 1500px; margin: 0 auto 16px;
+}
+.pc-head h1 { margin: 2px 0 0; font-size: 26px; font-weight: 650; }
+
+.sync-state {
+  margin: 0; font-size: 14px; color: var(--muted);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.sync-state::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.sync-state.ok::before { background: var(--accent); }
+.sync-state.busy::before { background: #e7c66e; animation: pulse 1s ease-in-out infinite; }
+.sync-state.error { color: #ff8a80; }
+.sync-state.error::before { background: #ff6b6b; }
+.sync-state button { width: auto; margin: 0; padding: 4px 10px; font-size: 13px; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+.pc-grid {
+  display: grid; grid-template-columns: minmax(360px, 520px) 1fr; gap: 20px;
+  max-width: 1500px; margin: 0 auto; align-items: start;
+}
+.pc-map-wrap { position: sticky; top: 16px; }
+.pc-map {
+  height: calc(100vh - 120px); min-height: 420px;
+  border-radius: 14px; border: 1px solid var(--line); overflow: hidden; background: var(--card);
+}
+.pc-map-wrap .hint { margin-top: 8px; }
+
+/* The map replaces the small line drawing of the phone page. */
+body.pc .route-svg { display: none; }
+
+#saved-routes li { transition: background 0.15s ease; border-radius: 8px; }
+#saved-routes li:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+/* Route on the map */
+.map-route { stroke: #2f80ed; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.map-route.saved { stroke: #2f80ed; opacity: 0.75; }
+.map-route-casing { stroke: #ffffff; opacity: 0.85; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+
+.pin {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  font: 700 12px/1 system-ui, sans-serif; color: #fff; border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  animation: drop 0.25s ease-out;
+}
+.pin.start { background: #0f9d58; width: 18px; height: 18px; margin: 4px; }
+.pin.stop { background: #f2994a; }
+.pin.end { background: #d63c3c; border-radius: 6px; font-size: 10px; }
+.pin.charger { background: #6c5ce7; width: 22px; height: 22px; margin: 2px; font-size: 11px; }
+@keyframes drop { from { transform: translateY(-8px); opacity: 0; } }
+
+@media (max-width: 900px) {
+  .pc-grid { grid-template-columns: 1fr; }
+  .pc-map-wrap { position: static; order: -1; }
+  .pc-map { height: 50vh; }
+  body.pc { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pin, .sync-state.busy::before { animation: none; }
+}

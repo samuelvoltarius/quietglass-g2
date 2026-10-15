@@ -148,11 +148,26 @@ describe("the phone page for a first-time user", () => {
     expect(data.glassView).toBe("overview");
   });
 
-  it("keeps jargon to the advanced section", () => {
-    const [everyday, advanced] = root.innerHTML.split("<summary>Erweitert</summary>");
+  it("QIS v1.2: the tabs run content, Brille, Verbindung, Mehr; the servers sit under Verbindung, the scroll direction under Brille", () => {
+    const html = root.innerHTML;
+    const bar = [...html.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1]);
+    expect(bar).toEqual(["go", "routes", "glasses", "connection", "more"]);
+    const at = (tab: string): number => html.indexOf('<div class="tab" data-tab="' + tab + '"');
+    expect(at("glasses")).toBeLessThan(at("connection"));
+    expect(at("connection")).toBeLessThan(at("more"));
+    expect(html.indexOf('id="url"')).toBeGreaterThan(at("connection"));
+    expect(html.indexOf('id="url"')).toBeLessThan(at("more"));
+    expect(html.indexOf('id="invert"')).toBeGreaterThan(at("glasses"));
+    expect(html.indexOf('id="invert"')).toBeLessThan(at("connection"));
+    expect(html).not.toMatch(/Doppelt tippen|Doppeltippen|Double tap/);
+  });
+
+  it("keeps jargon to the advanced section (tab \"Verbindung\")", () => {
+    const [everyday, advanced] = root.innerHTML.split('data-tab="connection"');
     expect(everyday).not.toMatch(/valhalla(?!1\.openstreetmap)/i);
     expect(everyday).not.toMatch(/costing|precision/i);
     expect(advanced).toContain("Routenserver (Valhalla)");
+    expect(root.innerHTML).toContain('data-tab-go="routes"');
   });
 
   it("switches to English", () => {

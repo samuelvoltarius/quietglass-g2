@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildView, createModel, decide, CONFIRM_MS, type HubModel } from "../src/hub/model";
+import { buildView, createModel, decide, withHomePending, type HubModel } from "../src/hub/model";
+import { initialZuhause } from "../src/hub/zuhause";
 import { demoReport } from "../src/api/demo";
 import type { HubReport } from "../src/api/types";
 import { ROW_WIDTH, MAX_BODY_ROWS } from "../src/glasses/screen";
@@ -12,11 +13,12 @@ function model(report: HubReport = demoReport()): HubModel {
 
 describe("decide", () => {
   it("swiping changes the selection and cancels a pending confirm", () => {
-    const home = { ...model(), screen: "home" as const };
-    const armed = decide(home, "click", T0).model;
+    const home = { ...model(), screen: "home" as const, zh: { ...initialZuhause(), index: 2 } };
+    const armed = withHomePending(home, "lock.haustuer", { token: "t1", label: "Haustür: aufsperren", expiresInMs: 30_000 }, T0);
     const next = decide(armed, "scrollDown", T0 + 100);
     expect(next.model.screen).toBe("home");
-    expect(next.model.report.home.selected).toBe(1);
+    expect(next.model.zh?.index).toBe(3);
+    expect(next.model.zh?.pending).toBeNull();
     expect(next.model.confirm).toBeNull();
   });
 
@@ -25,7 +27,7 @@ describe("decide", () => {
     const selectedHome = decide(root, "scrollDown", T0).model;
     expect(selectedHome.rootSelected).toBe(1);
     expect(decide(selectedHome, "click", T0).model.screen).toBe("home");
-    expect(decide(root, "scrollUp", T0).model.rootSelected).toBe(3);
+    expect(decide(root, "scrollUp", T0).model.rootSelected).toBe(5); // wraps to the last row (Hilfe; the side menu is off, so help is a row again)
   });
 
   it("uses the native Even exit dialog action on the root-page double tap", () => {
@@ -66,35 +68,23 @@ describe("decide", () => {
     expect(outcome.effect).toEqual({ kind: "ask", agentId: "hermes-spark", question: "Mehr Details" });
   });
 
-  it("switching a device needs a second double tap within the window", () => {
-    const onHome = { ...model(), screen: "home" as const };
-    const armed = decide(onHome, "click", T0);
-    expect(armed.effect).toBeUndefined();
-    expect(armed.model.confirm?.what).toBe("light_office");
-
-    const fired = decide(armed.model, "click", T0 + CONFIRM_MS - 1);
-    expect(fired.effect).toEqual({ kind: "toggle", device: "light_office" });
+  it("a light switches with one tap and shows the new state at once", () => {
+    const onHome = { ...model(), screen: "home" as const, zh: { ...initialZuhause(), index: 1 } };
+    const fired = decide(onHome, "click", T0);
+    expect(fired.effect).toEqual({ kind: "homeAction", target: "light.buero", action: "toggle" });
+    expect(fired.model.report.homeView?.entities["light.buero"]?.on).toBe(false);
   });
 
-  it("an expired confirm arms again instead of firing", () => {
-    const onHome = { ...model(), screen: "home" as const };
-    const armed = decide(onHome, "click", T0).model;
-    const reArmed = decide(armed, "click", T0 + CONFIRM_MS + 1);
-    expect(reArmed.effect).toBeUndefined();
-    expect(reArmed.model.confirm).not.toBeNull();
+  it("an expired lock confirm asks the daemon again instead of firing", () => {
+    const onHome = { ...model(), screen: "home" as const, zh: { ...initialZuhause(), index: 2 } };
+    const armed = withHomePending(onHome, "lock.haustuer", { token: "t1", label: "Haustür: aufsperren", expiresInMs: 30_000 }, T0);
+    expect(decide(armed, "click", T0 + 100).effect).toEqual({ kind: "homeConfirm", token: "t1" });
+    const late = decide(armed, "click", T0 + 10_001);
+    expect(late.effect).toEqual({ kind: "homeAction", target: "lock.haustuer", action: "toggle" });
   });
 
-  it("a read-only device can never be armed", () => {
-    const report = demoReport();
-    const readOnly = {
-      ...report,
-      home: {
-        ...report.home,
-        selected: 0,
-        devices: [{ ...report.home.devices[0]!, writable: false }],
-      },
-    };
-    const onHome = { ...model(readOnly), screen: "home" as const };
+  it("a read-only sensor can never be switched", () => {
+    const onHome = { ...model(), screen: "home" as const, zh: { ...initialZuhause(), index: 3 } };
     const outcome = decide(onHome, "click", T0);
     expect(outcome.effect).toBeUndefined();
     expect(outcome.model.confirm).toBeNull();
@@ -134,10 +124,10 @@ describe("buildView", () => {
   });
 
   it("shows the confirm line with a countdown while armed", () => {
-    const armed = decide({ ...model(), screen: "home" as const }, "click", T0).model;
+    const armed = withHomePending({ ...model(), screen: "home" as const, zh: { ...initialZuhause(), index: 2 } }, "lock.haustuer", { token: "t", label: "Haustür: aufsperren", expiresInMs: 4000 }, T0);
     const view = buildView(armed, "de", T0 + 1000);
-    expect(view.footer).toContain("Nochmals tippen");
-    expect(view.footer).toContain("(3s)");
+    expect(view.footer).toContain("Nochmal tippen = Haustür");
+    expect(view.footer).toContain("2× = abbrechen");
     expect(view.footer.length).toBeLessThanOrEqual(ROW_WIDTH);
   });
 
@@ -149,7 +139,7 @@ describe("buildView", () => {
     expect(text).toContain("72 %");
     expect(text).toContain("148 / 205");
     expect(view.body.some((row) => row.includes("Pause"))).toBe(true);
-    expect(view.body.some((row) => row.includes("Abbrechen"))).toBe(true);
+    expect(view.body.some((row) => row.includes("Druck abbrechen"))).toBe(true);
   });
 
   it("shows the streaming answer of the selected agent", () => {

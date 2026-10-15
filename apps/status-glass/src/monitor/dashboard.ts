@@ -1,5 +1,5 @@
 import {
-  metricState, severityOf, worstState, type Metric, type MetricState, type SourceReport,
+  metricState, severityOf, worstState, type Metric, type MetricState, type NetDevice, type NetworkInfo, type SourceReport,
 } from "../protocol/schema";
 
 /**
@@ -103,6 +103,17 @@ export function problems(sources: readonly SourceStatus[], now: number): Problem
         acknowledged: source.acknowledged.includes(metric.id),
       });
     }
+
+    const newcomers = netNewMetric(source.report.network);
+    if (newcomers) {
+      found.push({
+        sourceId: source.id,
+        sourceName: source.name,
+        metric: newcomers,
+        state: "warn",
+        acknowledged: source.acknowledged.includes(newcomers.id),
+      });
+    }
   }
 
   return found.sort((a, b) => {
@@ -120,13 +131,56 @@ export function acknowledge(source: SourceStatus, metricId: string): SourceStatu
   return { ...source, acknowledged: [...source.acknowledged, metricId] };
 }
 
+/** Prefix of the made-up problem "new devices in the home network". */
+export const NET_NEW_PREFIX = "__netnew:";
+
+/** The devices of a network block that are new (first seen in the last 24 h, not known). */
+export function newDevices(network: NetworkInfo | undefined): NetDevice[] {
+  return (network?.devices ?? []).filter((d) => d.new && !d.known);
+}
+
+/** What a person calls a device: its DNS name, else its address, else its MAC. */
+export function deviceLabel(device: NetDevice): string {
+  return device.name ?? device.ip ?? device.mac;
+}
+
+/**
+ * New devices as a warning. The id carries a fingerprint of exactly which
+ * devices are new, so "seen" holds for them and a further newcomer shouts
+ * again. `value` is the count, `detail` the first one's name.
+ */
+export function netNewMetric(network: NetworkInfo | undefined): Metric | null {
+  const fresh = newDevices(network);
+  const count = fresh.length > 0 ? fresh.length : network && network.devices.length === 0 ? network.new : 0;
+  if (count <= 0) return null;
+  const key = fresh.map((d) => d.mac).sort().join(",") || "n" + count;
+  return {
+    id: NET_NEW_PREFIX + fingerprint(key),
+    label: "new devices",
+    value: count,
+    ...(fresh[0] ? { detail: deviceLabel(fresh[0]) } : {}),
+  };
+}
+
+/** A short, stable hash (FNV-1a, 32 bit), only to tell device sets apart. */
+function fingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 /** Acknowledgements are cleared when a metric recovers, so it can shout again. */
 export function clearRecovered(source: SourceStatus): SourceStatus {
   if (source.acknowledged.length === 0 || !source.report) return source;
   const stillBad = new Set(
     source.report.metrics.filter((m) => metricState(m) !== "ok").map((m) => m.id),
   );
-  const kept = source.acknowledged.filter((id) => stillBad.has(id) || id.startsWith("__"));
+  const newcomers = netNewMetric(source.report.network);
+  if (newcomers) stillBad.add(newcomers.id);
+  const kept = source.acknowledged.filter((id) => stillBad.has(id) || (id.startsWith("__") && !id.startsWith(NET_NEW_PREFIX)));
   return kept.length === source.acknowledged.length ? source : { ...source, acknowledged: kept };
 }
 

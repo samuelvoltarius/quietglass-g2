@@ -35,6 +35,14 @@ describe("phone page", () => {
     expect(saved).toEqual([{ bridgeUrl: "https://bridge.example", token: "abcdef", invertScroll: false }]);
   });
 
+  it("is split into tabs with a tab bar and keeps every control", () => {
+    const { root } = mount({ bridgeUrl: "", invertScroll: false });
+    expect(root.innerHTML).toContain('class="tabbar"');
+    // QIS v1, section 5: content tabs, then Brille, Verbindung, Mehr (a missing one is simply left out).
+    expect([...root.innerHTML.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1])).toEqual(["printer", "glasses", "bridge", "more"]);
+    for (const id of ["#url", "#token", "#save", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
+  });
+
   it("refuses an invalid address", async () => {
     const { root, saved } = mount({ bridgeUrl: "", invertScroll: false });
     root.get("#url").value = "file:///etc/passwd";

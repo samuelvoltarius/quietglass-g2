@@ -1,3 +1,5 @@
+import { parseSlots, type PrecipSlot } from "../cockpit/nowcast";
+
 export type WeatherKind = "clear" | "cloud" | "fog" | "rain" | "snow" | "storm";
 
 export interface CurrentWeather {
@@ -5,9 +7,15 @@ export interface CurrentWeather {
   readonly precipitation: number; readonly weatherCode: number; readonly cloudCover: number; readonly windSpeed: number;
   readonly windDirection: number; readonly windGusts: number; readonly isDay: boolean;
 }
-export interface HourWeather { readonly time: string; readonly temperature: number; readonly precipitationProbability: number; readonly precipitation: number; readonly weatherCode: number; readonly windSpeed: number; }
+export interface HourWeather { readonly time: string; readonly temperature: number; readonly precipitationProbability: number; readonly precipitation: number; readonly weatherCode: number; readonly windSpeed: number; readonly windGusts?: number; }
 export interface DayWeather { readonly date: string; readonly minimum: number; readonly maximum: number; readonly precipitationProbability: number; readonly weatherCode: number; readonly sunrise: string; readonly sunset: string; }
-export interface WeatherForecast { readonly current: CurrentWeather; readonly hourly: readonly HourWeather[]; readonly daily: readonly DayWeather[]; readonly source: "live" | "demo"; }
+export interface WeatherForecast {
+  readonly current: CurrentWeather; readonly hourly: readonly HourWeather[]; readonly daily: readonly DayWeather[]; readonly source: "live" | "demo";
+  /** 15-minute precipitation for the cockpit's nowcast (empty when the service sent none). */
+  readonly minutely?: readonly PrecipSlot[];
+  /** Offset of the place's local times from UTC, seconds (Open-Meteo `utc_offset_seconds`). */
+  readonly utcOffsetSeconds?: number;
+}
 
 type NumericRecord = Record<string, unknown>;
 // Open-Meteo sends null for values a model does not cover; Number(null) is 0, so only real numbers count.
@@ -17,7 +25,7 @@ function strings(value: unknown): readonly string[] { return Array.isArray(value
 function numbers(value: unknown): readonly number[] { return Array.isArray(value) ? value.map(toNumber) : []; }
 
 export function parseOpenMeteo(value: unknown): WeatherForecast {
-  const root = value as { current?: NumericRecord; hourly?: NumericRecord; daily?: NumericRecord };
+  const root = value as { current?: NumericRecord; hourly?: NumericRecord; daily?: NumericRecord; minutely_15?: NumericRecord; utc_offset_seconds?: unknown };
   if (!root?.current || typeof root.current.time !== "string") throw new Error("forecast has no current weather");
   const current: CurrentWeather = {
     time: root.current.time, temperature: finite(root.current, "temperature_2m"), feelsLike: finite(root.current, "apparent_temperature"),
@@ -27,13 +35,14 @@ export function parseOpenMeteo(value: unknown): WeatherForecast {
   };
   const hourly = root.hourly ?? {}; const hourTimes = strings(hourly.time); const hourTemperature = numbers(hourly.temperature_2m);
   const hourRainChance = numbers(hourly.precipitation_probability); const hourRain = numbers(hourly.precipitation);
-  const hourCodes = numbers(hourly.weather_code); const hourWind = numbers(hourly.wind_speed_10m); const hours: HourWeather[] = [];
+  const hourCodes = numbers(hourly.weather_code); const hourWind = numbers(hourly.wind_speed_10m); const hourGusts = numbers(hourly.wind_gusts_10m); const hours: HourWeather[] = [];
   for (let index = 0; index < hourTimes.length && hours.length < 12; index += 1) {
     // Compare whole hours: current.time comes in 15-minute steps ("11:15"), and the 11:00 hour is still the current one.
     const time = hourTimes[index]; if (!time || time.slice(0, 13) < current.time.slice(0, 13)) continue;
     const values = [hourTemperature[index], hourRainChance[index], hourRain[index], hourCodes[index], hourWind[index]];
     if (!values.every(Number.isFinite)) continue;
-    hours.push({ time, temperature: values[0]!, precipitationProbability: values[1]!, precipitation: values[2]!, weatherCode: values[3]!, windSpeed: values[4]! });
+    const gusts = hourGusts[index];
+    hours.push({ time, temperature: values[0]!, precipitationProbability: values[1]!, precipitation: values[2]!, weatherCode: values[3]!, windSpeed: values[4]!, ...(gusts !== undefined && Number.isFinite(gusts) ? { windGusts: gusts } : {}) });
   }
   if (hours.length === 0) throw new Error("forecast has no hourly weather");
   const daily = root.daily ?? {}; const dayDates = strings(daily.time); const dayMin = numbers(daily.temperature_2m_min); const dayMax = numbers(daily.temperature_2m_max);
@@ -44,14 +53,23 @@ export function parseOpenMeteo(value: unknown): WeatherForecast {
     days.push({ date, minimum: values[0]!, maximum: values[1]!, precipitationProbability: values[2]!, weatherCode: values[3]!, sunrise, sunset });
   }
   if (days.length === 0) throw new Error("forecast has no daily weather");
-  return { current, hourly: hours, daily: days, source: "live" };
+  const offset = typeof root.utc_offset_seconds === "number" && Number.isFinite(root.utc_offset_seconds) ? root.utc_offset_seconds : 0;
+  const quarter = root.minutely_15 ?? {};
+  const minutely = parseSlots(quarter.time, quarter.precipitation, quarter.weather_code, offset, 15);
+  return { current, hourly: hours, daily: days, source: "live", minutely, utcOffsetSeconds: offset };
 }
 
 export function demoWeather(now = new Date()): WeatherForecast {
   const hour = new Date(now); hour.setMinutes(0, 0, 0);
-  const hourly = Array.from({ length: 12 }, (_, index): HourWeather => ({ time: new Date(hour.valueOf() + index * 3_600_000).toISOString(), temperature: 14 + Math.sin(index / 3) * 3, precipitationProbability: [15, 20, 35, 60, 75, 55, 30, 20, 10, 10, 5, 5][index] ?? 0, precipitation: [0, 0, 0, 0.4, 1.2, 0.6, 0.1, 0, 0, 0, 0, 0][index] ?? 0, weatherCode: [2, 2, 3, 61, 63, 61, 3, 2, 1, 1, 0, 0][index] ?? 0, windSpeed: 12 + index }));
+  const hourly = Array.from({ length: 12 }, (_, index): HourWeather => ({ time: new Date(hour.valueOf() + index * 3_600_000).toISOString(), temperature: 14 + Math.sin(index / 3) * 3, precipitationProbability: [15, 20, 35, 60, 75, 55, 30, 20, 10, 10, 5, 5][index] ?? 0, precipitation: [0, 0, 0, 0.4, 1.2, 0.6, 0.1, 0, 0, 0, 0, 0][index] ?? 0, weatherCode: [2, 2, 3, 61, 63, 61, 3, 2, 1, 1, 0, 0][index] ?? 0, windSpeed: 12 + index, windGusts: 22 + index * 2 }));
   const daily = Array.from({ length: 3 }, (_, index): DayWeather => { const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index); const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`; return { date, minimum: 8 + index, maximum: 18 + index, precipitationProbability: [75, 25, 10][index] ?? 0, weatherCode: [61, 2, 1][index] ?? 0, sunrise: `${date}T07:08`, sunset: `${date}T18:42` }; });
-  return { source: "demo", current: { time: now.toISOString(), temperature: 14.8, feelsLike: 13.6, humidity: 72, precipitation: 0, weatherCode: 2, cloudCover: 55, windSpeed: 14, windDirection: 245, windGusts: 24, isDay: true }, hourly, daily };
+  // 15-minute rain for the cockpit: dry now, a shower from about half an hour on.
+  const quarter = Math.floor(now.valueOf() / 900_000) * 900_000;
+  const minutely = [0, 0, 0.05, 0.2, 0.5, 0.8, 0.6, 0.3, 0.1, 0, 0, 0, 0, 0, 0, 0].map((precipitation, index): PrecipSlot => {
+    const start = new Date(quarter + index * 900_000);
+    return { start: start.valueOf(), minutes: 15, precipitation, weatherCode: precipitation >= 0.1 ? 61 : 3, local: `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}` };
+  });
+  return { source: "demo", current: { time: now.toISOString(), temperature: 14.8, feelsLike: 13.6, humidity: 72, precipitation: 0, weatherCode: 2, cloudCover: 55, windSpeed: 14, windDirection: 245, windGusts: 24, isDay: true }, hourly, daily, minutely, utcOffsetSeconds: -now.getTimezoneOffset() * 60 };
 }
 
 export function weatherKind(code: number): WeatherKind {

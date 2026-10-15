@@ -241,22 +241,24 @@ describe("beat display", () => {
     expect(view.body[1]).toContain("bar 1");
   });
 
-  it("names the practised item in the header", () => {
+  it("names the practised item in the body and the state in the header", () => {
     const view = buildView(createState(), settings, { item: "Scales" }, 0);
-    expect(view.header).toBe("Scales");
+    expect(view.header).toBe("CADENCE · ready");
+    expect(view.body).toContain("Scales");
   });
 
-  it("keeps a long item name on the one header line", () => {
-    // Regression: the user's item went to the header unshortened and wrapped off the 32 px header.
+  it("keeps a long item name on one body row", () => {
+    // Regression: the user's item went to the header unshortened and wrapped off the 32 px header; it now sits in the body.
     const item = "Bach Partita No. 2 in D minor, Chaconne, bars 1 to 132 slowly";
     const view = buildView(createState(), settings, { item }, 0);
     expect(view.header.length).toBeLessThanOrEqual(48);
-    expect(view.header.endsWith("…")).toBe(true);
-    expect(view.header.startsWith("Bach Partita")).toBe(true);
+    const row = view.body.find((line) => line.startsWith("Bach Partita")) ?? "";
+    expect(row.length).toBeLessThanOrEqual(30);
+    expect(row.endsWith("…")).toBe(true);
   });
 
   it("states the transport in the footer", () => {
-    expect(buildView(createState(), settings, {}, 0).footer).toContain("tap = start");
-    expect(buildView(start(createState(), 0), settings, {}, 0).footer).toContain("tap = pause");
+    expect(buildView(createState(), settings, {}, 0).footer).toContain("Tap = start");
+    expect(buildView(start(createState(), 0), settings, {}, 0).footer).toContain("Tap = pause");
   });
 });

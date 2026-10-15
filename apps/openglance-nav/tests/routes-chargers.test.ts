@@ -3,7 +3,8 @@ import fixture from "./fixtures/overpass-chargers-salzburg.json";
 import { decodePolyline, encodePolyline, simplifyTo, type LatLng } from "../src/geo/geometry";
 import { createValhallaProvider, createMockProvider, parseValhalla } from "../src/routing/provider";
 import {
-  addRoute, makeSavedRoute, nameStops, parseRoutes, planFrom, removeRoute, renameRoute, stopsPassed, type SavedRoute,
+  addRoute, forgetRoute, makeSavedRoute, MAX_ROUTES, mergeRoutes, nameStops, nextRouteId, parseRoutes, parseTombstones, planFrom,
+  removeRoute, renameRoute, stopsPassed, TOMBSTONE_KEEP_MS, type SavedRoute,
 } from "../src/trip/saved";
 import {
   buildCorridorQuery, buildNearbyQuery, chargersAlong, createChargerSource, nearestFast, nextAhead, parseChargers, parsePower,
@@ -73,24 +74,49 @@ describe("saved routes", () => {
   const shape = north(41);
 
   it("are saved, renamed, deleted and read back; malformed ones are dropped", () => {
-    const saved = makeSavedRoute([], plan, { shape, distance: 4444.4, duration: 333.3 });
-    expect(saved).toMatchObject({ id: "s1", name: "Büro", distance: 4444, duration: 333 });
+    const saved = makeSavedRoute([], plan, { shape, distance: 4444.4, duration: 333.3 }, 1_000);
+    expect(saved).toMatchObject({ name: "Büro", distance: 4444, duration: 333, updated: 1_000 });
+    expect(saved.id).toMatch(/^r[0-9a-z]+$/);
     expect(decodePolyline(saved.line!, 5).length).toBeGreaterThanOrEqual(2);
     let routes = addRoute([], saved);
-    routes = addRoute(routes, makeSavedRoute(routes, { ...plan, name: "" }, { shape, distance: 1, duration: 1 }));
-    expect(routes.map((r) => r.id)).toEqual(["s1", "s2"]);
+    routes = addRoute(routes, makeSavedRoute(routes, { ...plan, name: "" }, { shape, distance: 1, duration: 1 }, 1_000));
+    const [first, second] = routes.map((r) => r.id);
+    expect(new Set([first, second]).size).toBe(2);
     expect(routes[1]!.name).toBe("Zuhause – Büro");
-    routes = renameRoute(routes, "s2", "Morgens");
-    expect(routes[1]!.name).toBe("Morgens");
-    expect(renameRoute(routes, "s2", "   ")[1]!.name).toBe("Morgens");
+    routes = renameRoute(routes, second!, "Morgens", 2_000);
+    expect(routes[1]).toMatchObject({ name: "Morgens", updated: 2_000 });
+    expect(renameRoute(routes, second!, "   ")[1]!.name).toBe("Morgens");
 
-    const data: NavData = { ...EMPTY_DATA, routes, destinationId: "s2" };
+    const data: NavData = { ...EMPTY_DATA, routes, destinationId: second! };
     const back = parseData(JSON.stringify({ ...data, routes: [...routes, { id: "bad" }, { id: "s9", to: { at: { lat: 99, lon: 0 } } }] }));
     expect(back.routes).toEqual(routes);
-    expect(back.destinationId).toBe("s2");
+    expect(back.destinationId).toBe(second);
     expect(selectedRoute(back)?.name).toBe("Morgens");
     expect(selectionLabel(back)).toBe("Morgens");
-    expect(removeRoute(routes, "s1").map((r) => r.id)).toEqual(["s2"]);
+    expect(removeRoute(routes, first!).map((r) => r.id)).toEqual([second]);
+  });
+
+  it("merge phone and PC copies: newest change wins, deletions travel, ids never clash", () => {
+    const base = makeSavedRoute([], plan, { shape, distance: 1, duration: 1 }, 1_000);
+    const now = 10_000;
+    const ids = new Set(Array.from({ length: 50 }, () => nextRouteId([], now)));
+    expect(ids.size).toBe(50);
+    const phone = { routes: [renameRoute([base], base.id, "Handy", 3_000)[0]!], deleted: [] };
+    const pc = { routes: [renameRoute([base], base.id, "PC", 2_000)[0]!, { ...base, id: "pc1", updated: 2_500 }], deleted: [] };
+    const merged = mergeRoutes(phone, pc, now);
+    expect(merged.routes.map((r) => r.name)).toEqual(["Büro", "Handy"]);
+    expect(mergeRoutes(pc, phone, now)).toEqual(merged);
+    // Deleted on the PC after the last change: gone here too, and the deletion is kept.
+    const afterDelete = mergeRoutes(merged, { routes: [], deleted: forgetRoute([], base.id, 4_000) }, now);
+    expect(afterDelete.routes.map((r) => r.id)).toEqual(["pc1"]);
+    expect(afterDelete.deleted).toEqual([{ id: base.id, at: 4_000 }]);
+    // Old deletions are forgotten; malformed ones dropped.
+    expect(parseTombstones([{ id: "x", at: 1 }, { id: 3, at: 5 }, { id: "y", at: now }], now + TOMBSTONE_KEEP_MS - 10)).toEqual([{ id: "y", at: now }]);
+    // At most MAX_ROUTES, the ones changed last.
+    const many = Array.from({ length: MAX_ROUTES + 5 }, (_, i) => ({ ...base, id: "m" + i, updated: 100 + i }));
+    const capped = mergeRoutes({ routes: many, deleted: [] }, { routes: [], deleted: [] }, now).routes;
+    expect(capped.length).toBe(MAX_ROUTES);
+    expect(capped[0]!.id).toBe("m5");
   });
 
   it("from my position store neither the position nor the line", () => {
@@ -116,7 +142,7 @@ describe("saved routes", () => {
 
   it("show on the glasses list with their stops, and are selected like places", () => {
     const routes = [makeSavedRoute([], plan, { shape, distance: 4000, duration: 300 })];
-    const data: NavData = { ...EMPTY_DATA, places: [{ id: "p1", label: "Zuhause", at: { lat: 47, lon: 13 } }], routes, destinationId: "s1", chargers: true };
+    const data: NavData = { ...EMPTY_DATA, places: [{ id: "p1", label: "Zuhause", at: { lat: 47, lon: 13 } }], routes, destinationId: routes[0]!.id, chargers: true };
     expect(listItems(data).map((i) => i.kind)).toEqual(["place", "route", "chargers"]);
     expect(cursorFor(data)).toBe(1);
     const view = listView(data, 1, "de");
@@ -268,7 +294,7 @@ describe("charging stations from OpenStreetMap", () => {
     const here = { lat: 47.8, lon: 13.04 };
     const list = nearestFast(parseChargers(fixture)!, { lat: 47.8164, lon: 12.9864 });
     const view = chargerView({ phase: "results", list, selected: 0 }, "de");
-    expect(view.header).toBe("OpenGlance · Laden in der Nähe");
+    expect(view.header).toBe("OPENGLANCE · Laden in der Nähe");
     expect(view.body[0]).toMatch(/^→ \d+ m · 150 kW · Moon Power$/);
     expect(view.body[1]).toBe("      CCS · Typ 2 · 2 Plätze");
     for (const line of view.body) expect(line.length).toBeLessThanOrEqual(46);

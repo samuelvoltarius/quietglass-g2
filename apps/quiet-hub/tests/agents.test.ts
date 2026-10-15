@@ -71,16 +71,21 @@ describe("agent list", () => {
     expect(decide(list, "doubleClick", T0).model.screen).toBe("root");
   });
 
-  it("a busy agent is stopped with double tap instead of leaving the page", () => {
+  it("a busy agent is NOT stopped by double tap (QIS v1): 2× only goes back; tap arms, the second tap stops", () => {
     const ask = openAsk(onAgents());
     const busy = { ...ask, report: { ...ask.report, agents: ask.report.agents.map((a, i) => (i === 0 ? { ...a, busy: true } : a)) } };
-    const stop = decide(busy, "doubleClick", T0);
+    const back = decide(busy, "doubleClick", T0);
+    expect(back.effect).toEqual({ kind: "loadSessions", agentId: "hermes-spark" });
+    expect(back.model.report.agents[0]).toMatchObject({ busy: true });
+    const armed = decide(busy, "click", T0);
+    expect(armed.effect).toBeUndefined();
+    expect(buildView(armed.model, "de", T0 + 1000).footer).toBe("Nochmal tippen = stoppen · Wischen/2× = abbrechen");
+    const stop = decide(armed.model, "click", T0 + 1000);
     expect(stop.effect).toEqual({ kind: "cancel", agentId: "hermes-spark" });
     // The stop shows at once: not busy any more, marked as stopped.
     expect(stop.model.report.agents[0]).toMatchObject({ busy: false, stopped: true });
     expect(buildView(stop.model, "de", T0).footer).toContain("gestoppt");
     expect(buildView(stop.model, "de", T0).body.join(" ")).toContain("[gestoppt]");
-    expect(decide(busy, "click", T0).effect).toBeUndefined();
   });
 
   it("asking targets the selected agent", () => {
@@ -93,10 +98,14 @@ describe("agent list", () => {
 describe("approval cards", () => {
   const withCard = (): HubModel => onAgents({ ...demoReport(), approvals: [card] });
 
-  it("tap allows; swipe to Ablehnen + tap denies; double tap only goes back (0.6.5)", () => {
-    expect(decide(withCard(), "click", T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
+  it("tap arms Erlauben, the second tap allows; swipe to Ablehnen + two taps denies; double tap only goes back (QIS v1)", () => {
+    const armedAllow = decide(withCard(), "click", T0);
+    expect(armedAllow.effect).toBeUndefined();
+    expect(decide(armedAllow.model, "click", T0 + 1000).effect).toEqual({ kind: "approve", cardId: "c1", decision: "allow" });
     const onDeny = decide(withCard(), "scrollDown", T0).model;
-    expect(decide(onDeny, "click", T0).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
+    const armedDeny = decide(onDeny, "click", T0);
+    expect(armedDeny.effect).toBeUndefined();
+    expect(decide(armedDeny.model, "click", T0 + 1000).effect).toEqual({ kind: "approve", cardId: "c1", decision: "deny" });
     const back = decide(withCard(), "doubleClick", T0);
     expect(back.effect).toBeUndefined();
     expect(back.model.screen).toBe("root");

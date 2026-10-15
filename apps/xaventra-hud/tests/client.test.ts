@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createClient, isLoopback, isPlainHttp, validateServerUrl } from "../src/api/client";
+import { ApiError, askUnsupported, createClient, isLoopback, isPlainHttp, validateServerUrl } from "../src/api/client";
 import { parseFeed, parseVoice } from "../src/api/types";
-import { errorText } from "../src/hud/errors";
+import { errorDetail, errorText } from "../src/hud/errors";
 import { pcmToWav, toPcm } from "../src/voice/wav";
 
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status });
@@ -33,6 +33,28 @@ describe("client", () => {
     await client.voice(wav, "k 1");
     expect(fetchImpl.mock.calls[2]?.[0]).toBe("https://x.example/hud/voice?cardId=k%201");
     expect(fetchImpl.mock.calls[1]?.[0]).toBe("https://x.example/hud/voice");
+  });
+
+  it("sends live text as JSON to /hud/ask, with the shown card", async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => json({ transcript: "Wie ist der Stand?", action: "message", reply: "Ruhig." }));
+    const client = createClient({ baseUrl: "https://x.example", token: "t", fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(await client.ask("Wie ist der Stand?", "k1")).toEqual({ transcript: "Wie ist der Stand?", action: "message", cardId: "", reply: "Ruhig." });
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(url).toBe("https://x.example/hud/ask");
+    expect(JSON.parse(String(init?.body))).toEqual({ text: "Wie ist der Stand?", cardId: "k1" });
+    expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    await client.ask("hallo");
+    expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({ text: "hallo" });
+  });
+
+  it("treats only never-processed failures of /hud/ask as 'no text endpoint'", () => {
+    expect(askUnsupported(new ApiError("http", 404))).toBe(true);
+    expect(askUnsupported(new ApiError("http", 405))).toBe(true);
+    expect(askUnsupported(new ApiError("unreachable"))).toBe(true);
+    expect(askUnsupported(new ApiError("timeout"))).toBe(false);
+    expect(askUnsupported(new ApiError("auth", 401))).toBe(false);
+    expect(askUnsupported(new ApiError("http", 503))).toBe(false);
+    expect(askUnsupported(new Error("x"))).toBe(false);
   });
 
   it("maps failures to short codes", async () => {
@@ -68,7 +90,11 @@ describe("client", () => {
     const error = new ApiError("http", 503);
     expect(error.message).toBe("HTTP 503");
     expect(errorText("de", error)).toBe("Dienst nicht bereit");
-    expect(errorText("en", new ApiError("http", 418))).toBe("Error 418");
+    // QIS v1.2 #8: no HTTP status code on the glasses; the phone gets it via errorDetail.
+    expect(errorText("en", new ApiError("http", 418))).toBe("Server reported an error");
+    expect(errorText("de", new ApiError("auth", 401))).toBe("Token abgelehnt");
+    expect(errorDetail(new ApiError("http", 418))).toBe("HTTP 418");
+    expect(errorDetail(new ApiError("unreachable"))).toBe("");
     expect(errorText("de", new Error("https://secret.example tok"))).toBe("Xaventra nicht erreichbar");
   });
 });

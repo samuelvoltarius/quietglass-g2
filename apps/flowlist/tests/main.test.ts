@@ -38,6 +38,7 @@ function fakeBridge(stored: Record<string, unknown> | null = null, storage = new
   return {
     bridge,
     reconnect: () => statusHandler?.({ connectType: "connected" }),
+    menu: (itemID: number) => handler?.({ menuItemClickEvent: { itemID } }),
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
     storage,
@@ -264,6 +265,8 @@ describe("flowlist lifecycle", () => {
       fake.bridge.setLocalStorage.mockClear();
       fake.emit(5);
       await vi.waitFor(() => expect(fake.bridge.setLocalStorage).toHaveBeenCalled());
+      // Every call into the glasses is bounded (a few more ticks): let a draw already running finish first.
+      await vi.advanceTimersByTimeAsync(100);
       const calls = drawCount(fake);
       await vi.advanceTimersByTimeAsync(5000);
       expect(drawCount(fake)).toBe(calls);
@@ -288,5 +291,193 @@ describe("flowlist lifecycle", () => {
     await sleep(1200);
     expect(drawCount(fake)).toBe(calls);
     expect(fake.storage.get("quietglass.flowlist.run.v1")).toContain('"currentId":"s2"');
+  });
+});
+
+/** Newest text sent to one container (page creation or upgrade). */
+function lastText(fake: Fake, containerID: number): string {
+  const sent: string[] = [];
+  for (const call of fake.bridge.createStartUpPageContainer.mock.calls) {
+    const page = (call as unknown as [{ textObject?: Array<{ containerID?: number; content?: string }> }])[0];
+    const text = page.textObject?.find((t) => t.containerID === containerID)?.content;
+    if (text !== undefined) sent.push(text);
+  }
+  for (const call of fake.bridge.textContainerUpgrade.mock.calls) {
+    const upgrade = (call as unknown as [{ containerID?: number; content?: string }])[0];
+    if (upgrade.containerID === containerID) sent.push(upgrade.content ?? "");
+  }
+  return sent[sent.length - 1] ?? "";
+}
+
+describe("flowlist QIS v1", () => {
+  beforeEach(() => { resetGestureDedupe(); vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const optionalData = (): ReturnType<typeof data> => data({}, [
+    { id: "s1", text: "Sunscreen", kind: "optional" },
+    { id: "s2", text: "Second step", kind: "normal" },
+  ]);
+  const runStep = (fake: Fake): string => fake.storage.get("quietglass.flowlist.run.v1") ?? "";
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/12"));
+    const pages = [
+      ...(fake.bridge.createStartUpPageContainer.mock.calls as unknown as unknown[][]),
+      ...(fake.bridge.rebuildPageContainer.mock.calls as unknown as unknown[][]),
+    ].map((call) => call[0] as { menuObject?: unknown });
+    expect(pages.length).toBeGreaterThan(0);
+    for (const page of pages) expect(page.menuObject).toBeUndefined();
+  });
+
+  it("a swipe down on an optional step asks to skip; the second tap skips it, a swipe cancels (no side menu)", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastText(fake, 3)).toBe("Nochmal tippen = auslassen · Wischen/2× = abbrechen"));
+    expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?");
+    expect(runStep(fake)).not.toContain("skipped");
+    fake.emit(1); // swipe: cancels
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?"));
+    fake.emit(0); // the confirming tap
+    await vi.waitFor(() => expect(runStep(fake)).toContain('"s1":"skipped"'));
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+  });
+
+  it("a swipe up asks to go a step back; the second tap does it, a swipe cancels (no side menu)", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.emit(1); // first step: nothing to undo
+    await sleep(60);
+    expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2");
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+    fake.emit(1);
+    await vi.waitFor(() => expect(lastText(fake, 3)).toBe("Nochmal tippen = Schritt zurück · Wischen/2× = abbrechen"));
+    expect(runStep(fake)).toContain('"s1":"done"');
+    fake.emit(2); // swipe: cancels, changes nothing
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+    expect(runStep(fake)).toContain('"s1":"done"');
+    fake.emit(1);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Zurück?"));
+    fake.emit(0); // the confirming tap
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+    expect(runStep(fake)).not.toContain('"s1":"done"');
+  });
+
+  it("QIS v1.2: menu Step back is armed; a tap carries it out, a swipe cancels it", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+    fake.menu(3);
+    await vi.waitFor(() => expect(lastText(fake, 3)).toBe("Nochmal tippen = Schritt zurück · Wischen/2× = abbrechen"));
+    expect(lastText(fake, 1)).toBe("FLOWLIST · Zurück?");
+    expect(runStep(fake)).toContain('"s1":"done"');
+    fake.emit(1); // swipe: cancels
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+    expect(runStep(fake)).toContain('"s1":"done"');
+    fake.menu(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Zurück?"));
+    fake.emit(0); // the confirming tap
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+    expect(runStep(fake)).not.toContain('"s1":"done"');
+  });
+
+  it("QIS v1.2: a second click of the menu item also carries it out", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+    fake.menu(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Zurück?"));
+    fake.menu(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+  });
+
+  it("QIS v1.2: menu Step back at the first step does nothing", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.menu(3);
+    await sleep(60);
+    expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2");
+    expect(lastText(fake, 3)).not.toContain("Nochmal");
+  });
+
+  it("menu Skip step on an optional step only asks; the second tap skips it", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.menu(4);
+    await vi.waitFor(() => expect(lastText(fake, 3)).toBe("Nochmal tippen = auslassen · Wischen/2× = abbrechen"));
+    expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?");
+    expect(runStep(fake)).not.toContain('"currentId":"s2"');
+    fake.emit(0); // the confirming tap
+    await vi.waitFor(() => expect(runStep(fake)).toContain('"currentId":"s2"'));
+    expect(runStep(fake)).toContain('"s1":"skipped"');
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 2/2"));
+  });
+
+  it("a swipe or 2× cancels the question; 2× does not leave the app", async () => {
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.menu(4);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?"));
+    fake.emit(3); // 2×
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    fake.menu(4);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?"));
+    fake.emit(1); // swipe up
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+    expect(runStep(fake)).not.toContain('"s1":"skipped"');
+  });
+
+  it("the question lapses after 4 seconds without input", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fake = fakeBridge(optionalData());
+    await boot(fake);
+    fake.menu(4);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?"));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(lastText(fake, 1)).toBe("FLOWLIST · Auslassen?");
+    await vi.advanceTimersByTimeAsync(2500);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/2"));
+    fake.emit(0); // a late tap now completes the step normally instead of skipping it
+    await vi.waitFor(() => expect(runStep(fake)).toContain('"s1":"done"'));
+  });
+
+  it("a hold on a step without detail opens the help; tap, 2× or hold close it, 2× never exits there", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    expect(lastText(fake, 1)).toBe("FLOWLIST · 1/12");
+    fake.emit(9);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Hilfe"));
+    await vi.waitFor(() => expect(lastText(fake, 3)).toBe("Tippen = zurück · 2× = zurück"));
+    fake.emit(2); // swipes change nothing in the help
+    await sleep(30);
+    expect(lastText(fake, 1)).toBe("FLOWLIST · Hilfe");
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/12"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    expect(runStep(fake)).not.toContain('"currentId":"s2"');
+  });
+
+  it("finishing and tapping again asks before it starts over", async () => {
+    const fake = fakeBridge(data({}, [{ id: "s1", text: "Only step", kind: "normal" }]));
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · fertig"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 3)).toBe("Nochmal tippen = neu starten · Wischen/2× = abbrechen"));
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · fertig"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Neustart?"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/1"));
   });
 });

@@ -56,7 +56,8 @@ the glucose alerts also label the value picture:
 |---|---|
 | Swipe | glucose ↔ pump |
 | Tap | refresh now |
-| Double tap | asks to close the app |
+| Hold | opens the help (the glasses' side menu is off, `SIDE_MENU`); refresh is Tap, the swipe direction is set on the phone |
+| 2× | back (from help); on the values: asks to close the app |
 
 The app asks once a minute (a sensor reports every 5 min); the pictures are only
 re-sent when a new value arrives.

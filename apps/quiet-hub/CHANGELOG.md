@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.9.2] — 2026-10-15
+
+### Geändert (auf echter Brille gemessen)
+
+- Seitenmenü vorerst aus (`SIDE_MENU = false`): Die Klicks aus dem Menü kommen auf der Brille nie an, und Halten öffnet bei einer Seite mit Menü nur das Menü (auch das Sprechen auf der Agent-Seite und die Zuhause-Details waren damit nicht erreichbar). Die Seiten tragen kein `menuObject` mehr; der Menü-Code und der `menuItemClickEvent`-Handler bleiben für später.
+- Halten tut wieder, was es vor dem Menü tat: in der Sitzung sprechen, bei Licht/Rollo die Details, sonst aktualisieren.
+- Hilfe: wieder die letzte Zeile der Übersicht („Hilfe — Bedienung“); jede Geste schließt sie.
+- Sprachnotiz verwerfen: Halten auf der Abschrift schärft das Verwerfen („Nochmal tippen = verwerfen“), ein Tippen verwirft, Wischen/2×/Zeit brechen ab. Fußzeile der Abschrift: `Tippen = senden · Halten = verwerfen · 2× = zurück`.
+- Nur am Handy (hatte nie eine Geste): „Ruhe während der Agent arbeitet“ und „Alle Meldungen gelesen“.
+
+## 0.9.1 — 2026-10-15
+### Behoben
+- Anzeige konnte bei einer verlorenen Antwort der Brille für immer auf der letzten Seite stehen bleiben; jetzt hat jeder Aufruf ein Zeitlimit (Seite 8 s, Text 5 s, Bild 10 s), danach wird die Seite neu aufgebaut.
+
+## 0.9.0
+QIS v1.2 (Quietglass Interaction Standard, `docs/BEDIENSTANDARD.md`, Abschnitt „QIS v1.2 rulings“) – Quiet Hub ist jetzt konform.
+- **Zuhause-Detail: Wischen schaltet nie mehr** (v1.2 #5). Halten auf Licht oder Rollo öffnet wie bisher das Detail; dort wechselt Wischen nur noch zum nächsten Licht/Rollo derselben Liste (Raum bzw. Favoriten, rundum; die Listenauswahl folgt, 2× landet auf dem Gerät). Tippen öffnet eine kleine Auswahl: Licht `Aus · 30 % · 60 % · 100 %` (dazu `An`, wenn das Licht keine Helligkeit meldet – evtl. nur an/aus), Rollo `Auf · Zu · Stopp`. Wischen wählt darin, Tippen führt aus, 2× schließt ohne Aktion. Dieselben Daemon-Aufrufe wie vorher (`brightness` 0/30/60/100, `turn_on`, `open`/`close`/`stop`). Schlösser, Alarm und Garage: unverändert zweistufig, ohne Detail. Fußzeile `Tippen = Auswahl · Wischen = Gerät · 2× = zurück`, in der Auswahl `Tippen = ausführen · Wischen = wählen · 2× = zurück`. Menü-Eintrag heißt jetzt „Details“.
+- **2× verwirft keine Aufnahme mehr** (v1.2 #2). 2× während der Aufnahme beendet sie, behält sie und geht eine Ebene zurück (Gespräch → Sitzungen, aus einer Meldung → Übersicht); Hinweis „Sprachnotiz bleibt · im Gespräch senden“. Auch 2× auf „Verstanden: …“ geht zurück und behält die Abschrift. Öffnet man das Gespräch wieder, steht sie da; Tippen sendet. Eine neue Aufnahme überschreibt sie nicht („Sprachnotiz wartet · erst senden/verwerfen“).
+- **Verwerfen ist eine geschärfte Aktion** (v1.2 #3): Brillen-Menü auf der Abschrift = `Verwerfen · Hilfe`. Der erste Klick schärft („Nochmal tippen = verwerfen · Wischen/2× = abbrechen“), ein Tippen oder ein zweiter Klick innerhalb 4 s verwirft. Wischen, 2× oder 4 s ohne Eingabe brechen ab; dann sendet Tippen wie gewohnt.
+- **Hilfe nur noch im Seitenmenü** (v1.2 #1): die letzte Zeile „Hilfe — Bedienung“ der Übersicht entfällt (fünf Seitenzeilen, darunter zwei Hinweiszeilen). „Hilfe“ steht in jedem Brillen-Menü.
+- **Erster Start = Demo** (v1.2 #7): ohne Server-Adresse zeigt die Brille die Demo-Daten mit der Zeile `Demo · Verbindung am Handy einrichten` statt einer leeren „nicht verbunden“-Seite. Sobald am Handy ein Server gespeichert ist, gilt nur noch der echte Hub (keine Demo-Daten mehr, ein Fehler zeigt sich sofort); wird die Adresse gelöscht, kommt die Demo zurück. `?demo=1` bleibt die Demo ohne Hinweis.
+- **Fehler ohne Codes** (v1.2 #8): eine fehlgeschlagene Aktion meldet „Fehlgeschlagen: Hub meldet einen Fehler“ statt „Hub-Fehler 500“; der genaue Fehler steht im Handy-Tab „Mehr“ (Technisch).
+- **Wörter** (v1.2 #9): Zuhause-Hinweise rechts mit „=“ statt Doppelpunkt („Tippen = an/aus“, „Halten = Details“). Handy: „2× = Seitenwahl“ statt „2× tippen“/„double tap“, die Sprachnotiz-Zeile nennt 10 min und „2× = zurück, die Sprachnotiz bleibt“; der Zuhause-Tab erklärt Detail und Auswahl. Demo-Antwort ohne „Doppeltippen“.
+- Tests: `tests/qis12.test.ts` (Aufnahme behalten, Verwerfen geschärft, Hilfe, Demo-Hinweis, keine HTTP-Codes, Glossar) und `tests/zuhause.test.ts` (Auswahl je Licht/Rollo, Wischen wechselt nur das Gerät, **kein Wischen löst je einen Home-Assistant-Aufruf aus** – Liste, Raum, Detail, Auswahl).
+
+## 0.8.2 – Nachtrag: Daemon-Beispiele (ohne neue App-Version) – Termine für OpenGlance
+- **Termine mit Koordinaten.** Jeder Termin im Kalenderblock von `/brief` trägt `startIso` (ISO mit Offset der `BRIEF_TZ`) und `allDay`; findet die Ortssuche seinen Ort, außerdem `lat`, `lon`, `placeLabel`. Gleicher Ortsspeicher wie das Wetter am Terminort (7 Tage); gleichzeitige Fragen nach demselben Ort teilen sich eine Anfrage. Die Ortssuche wartet höchstens 3 s; das Wetter wartet nicht auf sie.
+- **Neuer Endpunkt `GET /brief/appointments`** (gleiche Anmeldung wie `/report`): nur `{date, at, status, events}`, für die Navigations-App OpenGlance. Aus der letzten Liste, solange sie jünger als 2 min ist (auch aus einem vollen `/brief`), sonst Kalender + Ortssuche neu – kein Wetter, keine anderen Blöcke, eine Abfrage zur Zeit. Ohne Kalenderquelle `status: "off"`, Kalender weg `status: "error"` mit leerer Liste, `BRIEF=off` → 404.
+- Koordinaten und Titel stehen in keinem Protokoll. Tests: `tests/brief-appointments.test.mjs`.
+- Die Brillen-App (`src/`) ist unverändert; Deploy = `examples/quiet-hub-brief.mjs` und `examples/quiet-hub-daemon.mjs` + Neustart des Daemons.
+
+## 0.8.2
+Tagesstart: das Wetter folgt dir – und deinen Terminen.
+- **Wetter am aktuellen Standort.** Die App fragt das Handy beim Laden des Tagesstarts nach dem Standort (gleicher Weg wie Shoot Day: Brücke `getAppLocation`, Berechtigung `location` in `app.json` mit ehrlicher Beschreibung). Gerundet auf 2 Nachkommastellen (~1 km), 30 min gemerkt, 4 s Zeitlimit – der Tagesstart wartet nie länger und geht sonst ohne Koordinaten los. Gesendet als `GET /brief?lat=..&lon=..` (`refresh=1` geht weiter). `BRIEF_LAT`/`BRIEF_LON` sind jetzt nur noch der **Ausweichort**; ohne beides bleibt „Wetter“ aus. Der Wetterblock meldet `place: "here"|"default"`, die Brille zeigt „Wetter hier“ bzw. „Wetter (Standard)“.
+- **Daemon:** `lat`/`lon` werden geprüft (Zahlen, −90..90 / −180..180, beide oder keins; sonst `400`), erneut auf ~1 km gerundet, Wetter je gerundetem Ort ~2 min zwischengespeichert. Koordinaten stehen **nicht** im Zugriffsprotokoll (es enthält keinen Query).
+- **Wetter am Terminort.** Heutige Termine mit Ort (ICS `LOCATION`, Shoot-Day-Projektort; Online-Links/Zoom werden übergangen) bekommen die Vorhersage zur Terminstunde, bis zu 3, z. B. `10:30 Musterdorf 9° · Regen 60%` (Wind ab 30 km/h). Termine < 10 km vom Standort bekommen keine Zeile, eine Vorhersage je Ort (~10 min gemerkt). Der Ort wird mit der Open-Meteo-Ortssuche (`BRIEF_GEOCODE_URL`) gefunden: ganzer Text, dann Teil nach dem letzten Komma, dann Ort ohne PLZ; nur der Ortstext verlässt den Daemon; Treffer 7 Tage im Speicher.
+- **Neue Quelle Shoot Day** (`BRIEF_SHOOT_URL`, optional `BRIEF_SHOOT_TOKEN`): heutige Projekte (Datum `2026-10-14 10:30`, `2026-10-14`, `14.10.2026 10:30`) als „Kunde – Projekt“, mit den ICS-Terminen gemischt und sortiert; gleiche Zeit + ähnlicher Titel zählt einmal. Ein Ausfall von Geokodierung, Vorhersage oder Shoot Day lässt die anderen Blöcke unberührt.
+- **Handy-Tab „Tagesstart“:** eine Zeile sagt, ob der Standort genutzt wird; ohne Freigabe: „Standort nicht freigegeben – Wetter für den Standardort“.
+- Neue Berechtigung im Paket: `location`. (`app.private.json` ist nicht Teil des Repos und braucht denselben Eintrag.)
+
+## 0.8.1
+QIS v1 (Quietglass Interaction Standard, `docs/BEDIENSTANDARD.md`) – Quiet Hub ist jetzt konform.
+- **Sicherheit: 2× stoppt nie mehr.** In der Agent-Sitzung (auch aus einer Meldung geöffnet) geht 2× nur noch zurück. Stoppen ist eine bewusste Aktion: Tippen auf den laufenden Agenten (oder Menü „Stoppen“) schärft sie, die Fußzeile sagt „Nochmal tippen = stoppen · Wischen/2× = abbrechen“, ein zweites Tippen innerhalb von 4 s stoppt. Wischen, 2× oder 4 s ohne Eingabe brechen ab (die Fußzeile kommt von selbst zurück). Beendet der Agent inzwischen, passiert nichts.
+- **Freigabe-Karten, Menü Erlauben/Ablehnen:** Tippen schärft nur die gewählte Zeile (Erlauben, Ablehnen oder eine vLLM-Antwort), erst das zweite Tippen auf dieselbe Zeile sendet. Wischen wählt und entschärft; 2× lässt die Karte unbeantwortet offen. Das Brillen-Menü wählt die Zeile und schärft sie, der Tipp danach sendet. Home-Assistant-Schloss/Alarm/Garage: das zweite Tippen gilt ebenfalls nur 4 s (vorher bis 10 s).
+- Schon vorher zweistufig und unverändert: Drucker pausieren/abbrechen, Gerät schalten (alte Daemons). Bewusst nicht geschärft: Frage aus der Vorschlagsliste senden (die Frage steht markiert da, Hauptaktion), bestätigte Sprachnotiz senden (Abschrift wird erst angezeigt), Licht/Szene im Zuhause, Rollo-Stopp im Detail.
+- **Fußzeilen und Kopf:** Kopf `QUIET HUB · Seite · Zustand`, Fußzeile immer in der Reihenfolge Tippen → Wischen → Halten → 2×, endet mit `2× = zurück` (Unterseite) bzw. `2× = Ende` (Übersicht). Gebaut mit dem gemeinsamen `footer()` (`src/glasses/footer.ts`); ist die Zeile zu breit, entfällt zuerst „Wischen“, dann „Halten“. Wörter nach Glossar: „2×“, „Tippen/Wischen/Halten“, englisch Tap/Swipe/Hold/back/exit. Tests prüfen jede Seite in Deutsch und Englisch auf Reihenfolge, Ende und Breite.
+- **Hilfe:** letzter Eintrag der Übersichtsliste (Tippen öffnet), außerdem in jedem Brillen-Menü. Die Seite nennt Tippen, Wischen, Halten, 2× in dieser Reihenfolge, Menü/Ring und „Braucht: Hub-Daemon“. Der Hinweis auf wartende/arbeitende Agenten auf der Übersicht ist dafür eine Zeile (Karte, sonst Meldung, sonst Arbeitender); die Agent-Zeile zählt sie weiterhin.
+- **Handy-Tabs:** `[Tagesstart · Zuhause] · Brille · Verbindung · Mehr` (Verbindung stand zuerst). Ohne gemerkten Tab (erster Start) öffnet weiterhin „Verbindung“. Die Steuerungstabelle in „Brille“ folgt der Reihenfolge Tippen, Wischen, Halten, 2×.
+- **Wischrichtung umkehren** gilt an einer einzigen Stelle für alle Listen (Übersicht, Agenten, Sitzungen, Karten, Zuhause, Drucker, Meldungen, Tagesstart); neuer Test.
+- Druckseite: Aktion heißt „Druck abbrechen“ statt „Abbrechen“ (eindeutig neben „abbrechen“ als Entschärfen).
+
+## 0.8.0
+- **Neue Seite „Tagesstart“ (Morgen-Briefing):** ein Tippen zeigt alles auf einen Blick – Termine heute, Wetter mit „Regen ab 14:00“, Zucker der letzten Nacht, Auto, Drucker und Server. Kompakte Zeilen mit festen Trennern „ · “ (die Brillenschrift ist proportional). Passt nicht alles auf eine Seite, blättert Wischen blockweise weiter (Fußzeile „1/2“); Tippen oder Halten lädt neu, 2× zurück. Menü: „Neu laden“. Auch als fünfte Zeile der Übersicht mit Kurzfassung („nächster 09:00 · 9° Regen ab 14:00“), im Brillen-Menü der Übersicht und in der Seitenwahl (Ring).
+- **Der Daemon sammelt alles selbst** (`GET /brief`, gleiche Anmeldung wie `/report`; `?refresh=1` fragt alle Quellen neu), die Brille hält keine fremden Adressen oder Tokens. Jeder Block ist optional, hat sein eigenes Zeitlimit und eigene Fehlermeldung, Ergebnisse werden ~2 min zwischengespeichert; fällt eine Quelle aus, bleiben ihre letzten Werte bis 30 min sichtbar (markiert „alt“). Im `/report` steht der zuletzt gesammelte Stand (`brief`), so kommt eine Aktualisierung über den bestehenden Long-Poll.
+  - Termine: ICS-Adressen (`BRIEF_ICS_URLS`, mehrere), ganztägige und mehrtägige Termine, Zeitzonen (TZID inkl. Outlook-Namen), Serien DAILY/WEEKLY (INTERVAL, COUNT, UNTIL, BYDAY), einfache MONTHLY/YEARLY, EXDATE und verschobene Einzeltermine. Ohne Quelle: „keine Kalenderquelle“.
+  - Wetter: Open-Meteo für `BRIEF_LAT`/`BRIEF_LON` – jetzt, Min/Max, Regen aus 15-Minuten-Werten, danach stündlich („Regen ab 14:00“, „Regen bis 15:30“, „kein Regen“).
+  - Auto: BYD-Bridge `/state` (`BRIEF_BYD_URL`) – Akku %, Reichweite, lädt/geladen, verriegelt.
+  - Zucker: Sugar-Bridge (Nightscout nur lesen, `BRIEF_SUGAR_URL`) – aktueller Wert mit Trend und Alter, letzte Nacht 22–07 Uhr Min/Max, Minuten unter 70 / über 180 (Sensorlücken zählen nicht). „keine Werte“, wenn leer. **Nur zur Information.**
+  - Drucker: Klipper-Bridge `/api/printer` (`BRIEF_KLIPPER_URL`), sonst der vorhandene Moonraker des Daemons.
+  - Server: Status-Glass-Server (`BRIEF_STATUS_URLS` „Name|URL,…“) – ok/weg je Rechner und neue Geräte im Heimnetz.
+- Handy: neuer Tab „Tagesstart“ mit denselben Blöcken und „Neu laden“, dazu die Einstellung **„Tagesstart als Startseite bis 11:00“** (aus = wie bisher).
+- Ältere Daemons: die Seite sagt „Daemon auf Quiet Hub 0.8.0 aktualisieren“. Demo (`?demo=1`) mit allen Blöcken.
+- Brillen-Menü der Übersicht: „Aktualisieren“ entfällt zugunsten von „Tagesstart öffnen“ (höchstens sechs Einträge; Halten aktualisiert weiterhin).
+
+## 0.7.0
+- **Neue Seite „Zuhause“ für Home Assistant:** links die Liste (zuerst Favoriten, dann Räume), rechts der Zustand der gewählten Zeile. Pro Raum „Alle Lichter“ und „Alle Rollos“ (ab zwei Geräten), Sensoren nur zur Anzeige (Temperatur, Feuchte, Bewegung, Akku – schwacher Akku steht in der Raum-Zusammenfassung).
+- Tippen schaltet sofort (Zustand wechselt gleich auf der Brille), Szenen starten, ein Raum öffnet sich. Halten auf einem Licht öffnet das Detail: Wischen dimmt in 10-%-Schritten, Tippen an/aus. Halten auf einem Rollo: Wischen auf/zu, Tippen Stopp. 2× geht Detail → Raum → Liste → Übersicht. Menü: „Dimmen / Details“.
+- Schlösser, Alarm und Garagentor sind ausgeblendet, außer `HA_SENSITIVE` nennt sie – dann immer zweistufig: der Daemon gibt beim ersten Tippen nur einen einmaligen Code (30 s), erst das zweite Tippen auf dieselbe Zeile führt aus.
+- Daemon: `GET /home`, `POST /home/action`, `POST /home/confirm`; Ansicht auch im `/report` (`homeView`), Home Assistant wird alle 5 s abgefragt (`HA_POLL_MS`), Änderungen gehen über den bestehenden Long-Poll an die Brille. Konfiguration: `HA_FAVORITES`, `HA_AREAS`, `HA_EXCLUDE`, `HA_SENSITIVE`, `HA_HOME=off`. URL und Token bleiben im Daemon.
+- Handy: neuer Tab „Zuhause“ mit derselben Liste; Favoriten und Reihenfolge werden im Daemon festgelegt (Hinweis im Tab).
+- Ältere Daemons: die alte Geräteliste geht weiter (Tippen schaltet jetzt sofort statt nach zweitem Tippen).
+- Demo (`?demo=1`): Favoriten, drei Räume, Gruppen, Sensoren und ein Demo-Schloss mit Bestätigung.
+
+## 0.6.9
+- Handy-Seite in Tabs statt einer langen Spalte: Verbindung · Brille · Mehr (Tab-Leiste unten, gewählter Tab bleibt), Status-Chip „verbunden/offline“ oben, Meldungen immer sichtbar über den Tabs.
+
+## 0.6.8
+- **Live-Abschrift beim Sprechen:** Während man den Touchpad hält, erscheint der Text sofort auf der Brille („● Ich höre …“, neueste Wörter unten). Beim Loslassen geht er direkt zur Bestätigung – kein Hochladen, keine zweite Erkennung. Live-Erkennung über WebSocket (privater Build: `VITE_LIVE_STT_URL`); ohne sie, bei Verbindungsabbruch oder leerer Abschrift wird wie bisher die WAV-Aufnahme hochgeladen.
+- Sprachnachrichten bis 10 Minuten (vorher 2); Daemon nimmt bis 24 MB Audio an, Wartezeit auf Whisper wächst mit der Länge.
+- **Antworten Wort für Wort:** Der Daemon hält `GET /report?since=<rev>&boot=<id>&wait=25` offen und antwortet, sobald sich etwas ändert (Long-Poll, gzip). Die Brille nutzt das, wenn der Daemon es in `/report`/`/health` (`live.longPoll`) anbietet, sonst wie bisher alle 1,5/5 s. Relay schickt Zwischenstände alle 250 ms statt 800 ms.
+
+## 0.6.7
+- Sprachnachrichten bis 2 Minuten (vorher 18 s, lange Sätze wurden abgeschnitten); Wartezeit auf die Abschrift bis 90 s.
+
 ## 0.6.6
 
 Quiet while the agent works.

@@ -1,0 +1,26 @@
+# glass-traffic: traffic along a route for OpenGlance (TomTom + ASFINAG DATEX II), tailnet only.
+# systemd --user unit, suggested host: ns1 next to glass-routes.
+#   mkdir -p ~/glass-traffic
+#   cp glass_traffic.py ~/glass-traffic/
+#   install -m 600 glass-traffic.env.example ~/glass-traffic/.env      # then fill it in (keys stay here)
+#   cp glass-traffic.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now glass-traffic
+#   tailscale serve --bg --https=8474 http://127.0.0.1:8475            # never "serve reset"
+[Unit]
+Description=glass-traffic (Stau/Sperren entlang der Route fuer OpenGlance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/glass-traffic/.env
+Environment=PYTHONPATH=
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 %h/glass-traffic/glass_traffic.py
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

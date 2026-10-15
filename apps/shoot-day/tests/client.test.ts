@@ -93,6 +93,25 @@ describe("audio", () => {
   });
 });
 
+describe("deleting a take (QIS v1.2)", () => {
+  it("posts scene, shot and number to /api/take/delete", async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ ok: true }));
+    await createClient({ baseUrl: "https://x.example", fetchImpl }).deleteTake("2", "B", 3);
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(String(url)).toBe("https://x.example/api/take/delete");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ scene: "2", shot: "B", n: 3 });
+  });
+
+  it("the demo removes the take in memory", async () => {
+    const api = createDemoApi("de");
+    const saved = await api.addTake({ scene: "1", shot: "A", status: "OK", note: "" });
+    expect((await api.takes()).some((take) => take.scene === "1" && take.shot === "A" && take.n === saved.n)).toBe(true);
+    await api.deleteTake("1", "A", saved.n);
+    expect((await api.takes()).some((take) => take.scene === "1" && take.shot === "A" && take.n === saved.n)).toBe(false);
+  });
+});
+
 describe("demo data", () => {
   it("is marked as demo and needs no network", async () => {
     const api = createDemoApi("de");

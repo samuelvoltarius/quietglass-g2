@@ -60,7 +60,7 @@ describe("hold-to-speak", () => {
     expect(out.effect).toEqual({ kind: "recordStop", agentId: "hermes-spark" });
   });
 
-  it("swipes are swallowed while recording; tap sends, double tap discards", () => {
+  it("swipes are swallowed while recording; tap sends, double tap goes back and keeps it", () => {
     const model = agentModel();
     const recording = decide(model, "longPress", 1000).model;
     for (const gesture of ["scrollDown", "scrollUp"] as const) {
@@ -73,10 +73,11 @@ describe("hold-to-speak", () => {
     const sent = decide(recording, "click", 1100);
     expect(sent.effect).toEqual({ kind: "recordStop", agentId: "hermes-spark" });
     expect(sent.model.recording).toBe(false);
-    const discarded = decide(recording, "doubleClick", 1100);
-    expect(discarded.effect).toEqual({ kind: "recordAbort" });
-    expect(discarded.model.recording).toBe(false);
-    expect(discarded.model.screen).toBe("agent");
+    // QIS v1.2 #2: 2x never discards - the recording is finished and kept, the page goes back.
+    const back = decide(recording, "doubleClick", 1100);
+    expect(back.effect).toEqual({ kind: "recordStop", agentId: "hermes-spark" });
+    expect(back.model.recording).toBe(false);
+    expect(back.model.voice).toMatchObject({ state: "transcribing", agentId: "hermes-spark", parked: true });
   });
 
   it("shows the recording line over everything else", () => {

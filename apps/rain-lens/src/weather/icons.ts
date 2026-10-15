@@ -1,7 +1,8 @@
 import { columnDivider, createBitmap, drawPattern, MAX_LEVEL, type Bitmap } from "../glasses/bitmap";
 import { weatherKind, type WeatherForecast, type WeatherKind } from "../rain/model";
 
-const icons: Record<WeatherKind, readonly string[]> = {
+/** The 12 x 12 weather pictograms (also drawn large on the cockpit). */
+export const ICON_PATTERNS: Readonly<Record<WeatherKind, readonly string[]>> = {
   clear: [".....##.....", "..#..##..#..", "...#....#...", "............", ".#...####...#", "....######..", "##..######..", "##..######..", "....######..", ".#...####...#", "...#....#...", "..#..##..#.."],
   cloud: ["............", "............", ".....####...", "...########.", "..##########", ".###########", "############", "############", "############", ".###########", "............", "............"],
   fog: ["............", "...######...", ".##########.", "############", "............", ".##########.", "............", "..########..", "............", ".##########.", "............", "............"],
@@ -29,9 +30,9 @@ export function drawWeatherIcons(forecast: WeatherForecast, page: number): Bitma
   const bitmap = createBitmap(ICONS.width, ICONS.height);
   columnDivider(bitmap);
   const kinds = iconKinds(forecast, page);
-  if (page === 0) kinds.forEach((kind) => drawPattern(bitmap, icons[kind], 18, 42, 5, MAX_LEVEL));
+  if (page === 0) kinds.forEach((kind) => drawPattern(bitmap, ICON_PATTERNS[kind], 18, 42, 5, MAX_LEVEL));
   // One icon per body row: the hourly view lists every third hour.
-  if (page === 1) kinds.forEach((kind, index) => drawPattern(bitmap, icons[kind], 30, 6 + index * 25, 2, MAX_LEVEL));
-  if (page === 2) kinds.forEach((kind, index) => drawPattern(bitmap, icons[kind], 36, 4 + index * 25, 2, MAX_LEVEL));
+  if (page === 1) kinds.forEach((kind, index) => drawPattern(bitmap, ICON_PATTERNS[kind], 30, 6 + index * 25, 2, MAX_LEVEL));
+  if (page === 2) kinds.forEach((kind, index) => drawPattern(bitmap, ICON_PATTERNS[kind], 36, 4 + index * 25, 2, MAX_LEVEL));
   return bitmap;
 }

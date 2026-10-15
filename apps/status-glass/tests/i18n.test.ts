@@ -53,10 +53,15 @@ describe("translations", () => {
   it("says the app's own failure reasons in the chosen language, and leaves foreign text alone", () => {
     expect(describeIssue("unreachable", "de")).toBe("nicht erreichbar");
     expect(describeIssue("timed out", "de")).toBe("keine Antwort");
-    expect(describeIssue("HTTP 503", "de")).toBe("Fehler 503");
-    expect(describeIssue("HTTP 503", "en")).toBe("HTTP 503");
+    // QIS v1.2: no HTTP code on the glasses, the phone keeps it.
+    expect(describeIssue("HTTP 503", "de")).toBe("Server meldet einen Fehler");
+    expect(describeIssue("HTTP 503", "en")).toBe("Server reports an error");
+    expect(describeIssue("HTTP 503", "de", { detail: true })).toBe("Fehler 503");
+    expect(describeIssue("HTTP 503", "en", { detail: true })).toBe("HTTP 503");
     expect(describeIssue("Response was not valid JSON.", "de")).toBe("Antwort nicht lesbar");
-    expect(describeIssue("ECONNRESET by peer", "de")).toBe("ECONNRESET by peer");
+    // Exception text never reaches the glasses; the phone still shows it.
+    expect(describeIssue("ECONNRESET by peer", "de")).toBe("fehlgeschlagen");
+    expect(describeIssue("ECONNRESET by peer", "de", { detail: true })).toBe("ECONNRESET by peer");
   });
 
   it("writes numbers the German way, keeping the source's label and unit", () => {
@@ -203,27 +208,28 @@ describe("glasses text budget", () => {
     const [empty, ok, , broken, , , failures, acked, never] = statusScreens("de");
     expect(empty!.body).toEqual(["Keine Quellen eingerichtet.", "Füge auf dem Handy eine hinzu."]);
     expect(ok!.body).toEqual(["1 von 1 ok"]);
-    expect(ok!.footer).toBe("alles ok");
-    expect(broken!.header).toBe("KRITISCH · 2");
+    expect(ok!.footer).toBe("Halten = Menü · 2× = Ende");
+    expect(broken!.header).toBe("STATUS · KRITISCH · 2");
     expect(broken!.body[0]).toBe("> ! pi Disk 99,5%");
-    expect(broken!.footer).toBe("Tippen = gesehen");
-    expect(failures!.header).toBe("KEINE DATEN · 9");
-    expect(failures!.body.join("\n")).toContain("host3 Fehler 503");
+    // Too long with the swipe hint: the swipe part gives way, the way out stays.
+    expect(broken!.footer).toBe("Tippen = gesehen · Halten = Menü · 2× = Ende");
+    expect(failures!.header).toBe("STATUS · KEINE DATEN · 9");
+    expect(failures!.body.join("\n")).toContain("host3 Server meldet einen Fehler");
     expect(failures!.body.join("\n")).toContain("host2 fehlgeschlagen");
     expect(acked!.body.some((line) => line.endsWith("(gesehen)"))).toBe(true);
     expect(never!.body[0]).toBe("> ? never-answered nicht erreichbar");
 
     const [none, list, confirmFirst, confirm, , , busy, done, , failed] = actionScreens("de");
-    expect(none!.body).toEqual(["Keine Quelle bietet Aktionen an.", "Nur Anzeige – Aktionen schaltet der Server frei."]);
-    expect(list!.header).toBe("Aktionen");
-    expect(list!.footer).toBe("Tippen = erst bestätigen  ·  Halten = zurück");
-    expect(confirmFirst!.footer).toBe("Tippen = erst bestätigen  ·  Halten = zurück");
+    expect(none!.body).toEqual([">   Alle Quellen neu abfragen", "    Hilfe"]);
+    expect(list!.header).toBe("STATUS · Aktionen");
+    expect(list!.footer).toBe("Tippen = wählen · Wischen = Liste · 2× = zurück");
+    expect(confirmFirst!.footer).toBe("Tippen = wählen · Wischen = Liste · 2× = zurück");
     expect(confirm!.body[1]).toBe("> ! SICHER? home Front door");
-    expect(confirm!.footer).toBe("Nochmal tippen = los  ·  Wischen = abbrechen");
-    expect(busy!.header).toBe("Läuft…");
-    expect(done!.header).toBe("Erledigt");
-    expect(failed!.header).toBe("Fehlgeschlagen");
-    expect(failed!.footer).toBe("Fehler 403  ·  Halten = zurück");
+    expect(confirm!.footer).toBe("Nochmal tippen = ausführen · Wischen/2× = abbrechen");
+    expect(busy!.header).toBe("STATUS · Läuft…");
+    expect(done!.header).toBe("STATUS · Erledigt");
+    expect(failed!.header).toBe("STATUS · Fehlgeschlagen");
+    expect(failed!.footer).toBe("Server meldet einen Fehler · 2× = zurück");
   });
 
   it("marks a stale source as such in both languages", () => {
@@ -253,15 +259,17 @@ describe("phone page", () => {
     return html;
   }
 
-  it("is German throughout, with the picker on top and jargon folded away", () => {
+  it("is German throughout, with a tab bar and jargon folded away", () => {
     const html = render("de");
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf('id="language"')).toBeLessThan(html.indexOf("Quelle hinzufügen"));
+    expect(html).toContain('id="language"');
+    expect(html).toContain('<nav class="tabbar"');
+    for (const label of ["Verbindung", "Brille", "Mehr"]) expect(html).toContain("</span>" + label + "</button>");
     expect(html).toContain("Token: gesetzt (6 Zeichen)");
     expect(html).toContain("unverschlüsselt (http)");
     expect(html).toContain("Bedienung an der Brille");
     expect(html).toContain("Alle <output id=\"poll-out\">30</output> s nachsehen");
-    // The token field and the header talk sit under "Erweitert".
+    // The token field sits under "Erweitert".
     expect(html.indexOf("<summary>Erweitert</summary>")).toBeLessThan(html.indexOf('id="token"'));
     for (const english of ["Add a source", "Remove", "Controls on the glasses", "Nothing configured", "Leave Status Glass"]) {
       expect(html).not.toContain(english);

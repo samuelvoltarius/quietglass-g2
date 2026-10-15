@@ -281,7 +281,7 @@ async function readJson(response: Response): Promise<Record<string, unknown> | n
 export function describeError(error: unknown): string {
   if (error instanceof DOMException && error.name === "AbortError") return "LUMEN timed out";
   if (error instanceof TypeError) return "LUMEN unreachable";
-  if (error instanceof Error && error.message) return error.message.slice(0, 50);
+  // No exception text on the glasses (QIS v1.2 no. 8).
   return "failed";
 }
 

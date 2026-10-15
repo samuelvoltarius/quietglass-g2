@@ -25,6 +25,14 @@ function addList(root: FakeRoot, source: string): void {
 describe("phone page", () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+  it("is split into tabs with a tab bar and keeps every control", () => {
+    const { root } = mount();
+    expect(root.innerHTML).toContain('class="tabbar"');
+    // QIS v1, section 5: content tabs, then Brille, Verbindung, Mehr (a missing one is simply left out).
+    expect([...root.innerHTML.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1])).toEqual(["lists", "add", "glasses", "more"]);
+    for (const id of ["#source", "#add", "#next", "#width", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
+  });
+
   it("regression: a setting changed after adding a checklist does not drop that checklist", () => {
     // Handlers kept the data of the first render, so the second change was
     // computed from a state without the new list and silently removed it.

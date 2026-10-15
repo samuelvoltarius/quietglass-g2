@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampCursor, cursorFor, listView, nextMode, rowCount, VISIBLE_ITEMS, voiceView } from "../src/glasses/picker";
+import { CAR_DESTINATION_ID, clampCursor, cursorFor, listItems, listView, nextMode, rowCount, setCarSpot, VISIBLE_ITEMS, voiceView } from "../src/glasses/picker";
 import { chooseDestination, destinationOf, EMPTY_DATA, MAX_RECENT, parseData, saveFavorite, type NavData } from "../src/storage/persist";
 
 const place = (id: string, label: string, lat = 47, lon = 13) => ({ id, label, at: { lat, lon } });
@@ -12,17 +12,34 @@ describe("destination list on the glasses", () => {
     destinationId: "p2",
   };
 
-  it("marks the cursor and the active destination, names recent ones and the travel mode", () => {
+  it("marks the cursor and the active destination and the travel mode; recent places are no rows (favourites instead)", () => {
     const view = listView(data, cursorFor(data), "de");
-    expect(view.header).toBe("OpenGlance · Wohin?");
+    expect(view.header).toBe("OPENGLANCE · wohin?");
     expect(view.body).toEqual([
       "    ○ Zuhause",
       "→ ● Tamsweg",
-      "    ○ Mirabellplatz · zuletzt",
       "",
       "    Unterwegs: zu Fuß (tippen = ändern)",
     ]);
-    expect(view.footer).toBe("Tippen los · Wischen wählen · Halten sprechen");
+    expect(view.footer).toBe("Tippen = los · Halten = sprechen · 2× = Ende");
+  });
+
+  it("keeps only the active recent destination (a spoken one can be started again)", () => {
+    const view = listView({ ...data, destinationId: "r1" }, 2, "de");
+    expect(view.body).toContain("→ ● Mirabellplatz · zuletzt");
+  });
+
+  it("offers \"Wo ist mein Auto\" when the car link knows its place, never the car destination itself as a recent row", () => {
+    setCarSpot({ at: { lat: 47.8, lon: 13.04 }, ageMin: 12 });
+    try {
+      const withCar: NavData = { ...data, recent: [place(CAR_DESTINATION_ID, "Mein Auto", 47.8, 13.04), ...data.recent], destinationId: CAR_DESTINATION_ID };
+      const items = listItems(withCar);
+      expect(items.map((item) => item.kind)).toEqual(["place", "place", "car"]);
+      expect(listView(withCar, 2, "de").body).toContain("→ ● Wo ist mein Auto · vor 12 min");
+    } finally {
+      setCarSpot(null);
+    }
+    expect(listItems(data).some((item) => item.kind === "car")).toBe(false);
   });
 
   it("shows at most five destinations around the cursor and counts them", () => {
@@ -88,14 +105,14 @@ describe("speaking a destination", () => {
       phase: "results", heard: "Tamsweg", selected: 1, saved: false,
       results: [{ label: "Tamsweg", detail: "5580 Tamsweg, Österreich", at: { lat: 47.1, lon: 13.8 } }, { label: "Tamsweg Bahnhof", detail: "", at: { lat: 47.1, lon: 13.8 } }],
     }, "de");
-    expect(view.header).toBe("Gehört: „Tamsweg“");
+    expect(view.header).toBe("OPENGLANCE · gehört: „Tamsweg“");
     expect(view.body).toEqual(["    Tamsweg", "      5580 Tamsweg, Österreich", "→ Tamsweg Bahnhof"]);
-    expect(view.footer).toBe("Tippen los · Wischen wählen · Halten merken");
+    expect(view.footer).toBe("Tippen = los · Halten = merken · 2× = zurück");
   });
 
   it("explains a failure with what to do", () => {
     const view = voiceView({ phase: "error", key: "v.sttFailed" }, "de");
     expect(view.body).toEqual(["Sprach-Server nicht erreichbar.", "", "Tailscale am Handy an?"]);
-    expect(view.footer).toBe("Halten = nochmal · Tippen = zurück");
+    expect(view.footer).toBe("Halten = nochmal · 2× = zurück");
   });
 });

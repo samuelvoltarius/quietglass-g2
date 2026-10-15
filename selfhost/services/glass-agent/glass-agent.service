@@ -1,0 +1,13 @@
+[Unit]
+Description=Brillen-Agent (Even G2 Agent -> eigener KI-Agent)
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/glass-agent/.env
+Environment=PYTHONPATH=
+ExecStart=/usr/bin/python3 %h/glass-agent/glass_agent.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

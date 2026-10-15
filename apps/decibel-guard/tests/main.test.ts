@@ -22,6 +22,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
   const mic: boolean[] = [];
   const texts: string[] = [];
   const images: string[] = [];
+  const pages: { menuObject?: { menuItems?: { itemName?: string; itemID?: number }[] } }[] = [];
   let refusals = options.micRefusals ?? 0;
   const writes = { count: 0, inFlight: 0, maxInFlight: 0 };
   const write = async (): Promise<void> => {
@@ -35,7 +36,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
     getLocalStorage: async (key: string) => storage.get(key) ?? "",
     setLocalStorage: async (key: string, value: string) => { storage.set(key, value); return true; },
     rebuildPageContainer: async () => true,
-    createStartUpPageContainer: async (page: { textObject?: { content?: string }[] }) => { texts.push(...(page.textObject ?? []).map((part) => part.content ?? "")); await write(); return 0; },
+    createStartUpPageContainer: async (page: { textObject?: { content?: string }[]; menuObject?: { menuItems?: { itemName?: string; itemID?: number }[] } }) => { pages.push(page); texts.push(...(page.textObject ?? []).map((part) => part.content ?? "")); await write(); return 0; },
     textContainerUpgrade: async (update: { content?: string }) => { texts.push(update.content ?? ""); await write(); return true; },
     updateImageRawData: async (update: { containerName?: string }) => {
       if (options.imageDelayMs) await new Promise((resolve) => setTimeout(resolve, options.imageDelayMs));
@@ -53,8 +54,9 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, shutdown, mic, writes, texts, images, storage,
+    bridge, shutdown, mic, writes, texts, images, storage, pages,
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
+    menu: (itemID: number) => (resetGestureDedupe(), handler?.({ menuItemClickEvent: { itemID } })),
     audio: (amplitude: number) => {
       const pcm = new Uint8Array(320);
       for (let i = 0; i < pcm.length; i += 2) { pcm[i] = amplitude & 0xff; pcm[i + 1] = (amplitude >> 8) & 0x7f; }
@@ -124,7 +126,21 @@ describe("decibelguard loop", () => {
     expect(fake.writes.count).toBe(writesAtClose);
   });
 
-  it("reopens the microphone and keeps measuring when the exit dialog is cancelled", async () => {
+  it("QIS v1.2: the exit dialog opens without stopping first; measuring ends only once it is confirmed", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    let microphoneDuringDialog: boolean[] = [];
+    fake.shutdown.confirm = true;
+    const original = fake.bridge.shutDownPageContainer;
+    fake.bridge.shutDownPageContainer = (mode?: number) => { microphoneDuringDialog = [...fake.mic]; return original(mode); };
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(microphoneDuringDialog).toEqual([true]);
+    expect(fake.mic).toEqual([true, false]);
+  });
+
+  it("keeps measuring, without reopening anything, when the exit dialog is cancelled", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(100);
@@ -132,7 +148,7 @@ describe("decibelguard loop", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.shutdown.modes).toEqual([1]);
-    expect(fake.mic).toEqual([true, false, true]);
+    expect(fake.mic).toEqual([true]);
     const writesAtCancel = fake.writes.count + fake.images.length;
     fake.audio(20000);
     await vi.advanceTimersByTimeAsync(3000);
@@ -149,7 +165,7 @@ describe("decibelguard loop", () => {
     expect(fake.mic).toEqual([]);
   });
 
-  it("restores the microphone when the exit call rejects, without an unhandled rejection", async () => {
+  it("keeps measuring when the exit call rejects, without an unhandled rejection", async () => {
     // Regression: the shutdown rejection after stopListening() was unhandled.
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
@@ -165,7 +181,7 @@ describe("decibelguard loop", () => {
     nodeProcess.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.calls).toBe(1);
-    expect(fake.mic).toEqual([true, false, true]);
+    expect(fake.mic).toEqual([true]);
   });
 
   it("says what to do when the microphone is refused, and a tap retries", async () => {
@@ -175,7 +191,7 @@ describe("decibelguard loop", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.mic).toEqual([]);
     expect(fake.texts.join(" | ")).toContain("Microphone not available.");
-    expect(fake.texts.join(" | ")).toContain("tap = try again");
+    expect(fake.texts.join(" | ")).toContain("Tap = try again");
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.mic).toEqual([true]);
@@ -230,38 +246,164 @@ describe("decibelguard loop", () => {
     }
   }
 
-  it("a single hold does not clear today's dose; a second hold within 4 s does", async () => {
+  const savedFraction = (fake: { storage: Map<string, string> }): number =>
+    JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}").fraction ?? 0;
+
+  it("QIS v1: a plain tap, a hold, or two holds never clear today's dose", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
     await loud(fake, 20);
-    const before = JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}").fraction ?? 0;
-    fake.emit(9);
+    fake.emit(5); // background: persists the dose
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.some((text) => /Nochmal halten = Tagesdosis löschen|hold again = clear today's dose/.test(text))).toBe(true);
+    fake.emit(4); // and back
+    await vi.advanceTimersByTimeAsync(100);
+    const before = savedFraction(fake);
+    expect(before).toBeGreaterThan(0);
+
+    fake.emit(9); // hold: only asks
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.some((text) => /Nochmal tippen = (Dosis )?löschen|Tap again = clear dose/.test(text))).toBe(true);
     // Left alone, the question goes away and nothing is cleared.
     await vi.advanceTimersByTimeAsync(4500);
-    fake.emit(1); // swipe: nothing
+    expect(fake.texts.at(-1)).not.toMatch(/Nochmal tippen|Tap again/);
+    expect(savedFraction(fake)).toBe(before);
+    // A second hold while armed cancels instead of confirming.
     fake.emit(9);
     await vi.advanceTimersByTimeAsync(500);
     fake.emit(9);
     await vi.advanceTimersByTimeAsync(50);
-    const after = JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}");
-    expect(after.fraction).toBe(0);
-    expect(before).toBeGreaterThanOrEqual(0);
+    expect(savedFraction(fake)).toBe(before);
   });
 
-  it("a hold followed by a tap within 4 s clears the dose and does not stop measuring", async () => {
+  it("QIS v1: a swipe or a double tap cancels the question; a later tap does not clear", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await loud(fake, 10);
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(100);
+    const before = savedFraction(fake);
+    for (const cancel of [1, 3]) {
+      fake.emit(9);
+      await vi.advanceTimersByTimeAsync(600);
+      fake.emit(cancel);
+      await vi.advanceTimersByTimeAsync(600);
+      fake.emit(0); // a plain tap: only asks to stop measuring, never clears
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(savedFraction(fake)).toBe(before);
+    }
+    expect(fake.shutdown.calls).toBe(0);
+    expect(fake.mic).toEqual([true, false, true]);
+  });
+
+  it("QIS v1: a hold followed by ONE tap within 4 s clears the dose and does not stop measuring", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
     await loud(fake, 5);
     fake.emit(9);
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(600);
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.mic).toEqual([true]);
-    expect(JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}").fraction).toBe(0);
+    expect(savedFraction(fake)).toBe(0);
+  });
+
+  it("QIS v1: a tap right on the heels of the hold is not a confirmation", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await loud(fake, 5);
+    fake.emit(5);
+    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(4);
+    await vi.advanceTimersByTimeAsync(100);
+    const before = savedFraction(fake);
+    fake.emit(9);
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(savedFraction(fake)).toBe(before);
+  });
+
+  it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
+    const fake = await boot();
+    expect(fake.pages.length).toBeGreaterThan(0);
+    for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
+    // A menu click that might still arrive does not break anything.
+    fake.menu(1);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.some((text) => /(help|Hilfe) 1\/2/.test(text))).toBe(true);
+  });
+
+  it("the help opens by a swipe on the main screen, a swipe turns the page, 2× goes back and only then leaves", async () => {
+    const fake = await boot();
+    fake.emit(1); // swipe on the main screen
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.some((text) => /DECIBELGUARD · (help|Hilfe) 1\/2/.test(text))).toBe(true);
+    fake.emit(2); // scroll bottom = next page
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.some((text) => /(help|Hilfe) 2\/2/.test(text))).toBe(true);
+    fake.emit(0); // a tap in the help does nothing
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic).toEqual([]);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.calls).toBe(0);
+    expect(fake.texts.at(-1)).toMatch(/(Tap|Tippen) = (start|messen)/);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.calls).toBe(1);
+  });
+
+  it("the help pages follow the invertScroll setting", async () => {
+    const storage = new Map<string, string>([["quietglass.decibelguard.v1", JSON.stringify({ invertScroll: true })]]);
+    const fake = await boot({ storage });
+    fake.emit(1); // swipe: opens the help
+    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(1); // SCROLL_TOP arrives as "down" when inverted: next page
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.some((text) => /(help|Hilfe) 2\/2/.test(text))).toBe(true);
+    fake.emit(2); // and SCROLL_BOTTOM goes back
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.texts.at(-1)).toMatch(/Wischen = blättern|Swipe = page/);
+    expect(fake.texts.filter((text) => /(help|Hilfe) 1\/2/.test(text)).length).toBeGreaterThan(1);
+  });
+
+  it("QIS v1.2: a tap while measuring only asks; a second tap within 4 s stops", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([true]);
+    fake.emit(0); // asks
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([true]);
+    expect(fake.texts.some((text) => /Tap again = stop|Nochmal tippen = stoppen/.test(text))).toBe(true);
+    fake.emit(0); // confirms
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([true, false]);
+  });
+
+  it("QIS v1.2: the stop question lapses after 4 s, and a swipe or 2× cancels it", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(4500);
+    fake.emit(0); // a new question, not a confirmation
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([true]);
+    fake.emit(1); // swipe cancels
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(0); // asks again
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(3); // 2× cancels (does not open the exit dialog)
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.shutdown.calls).toBe(0);
+    expect(fake.mic).toEqual([true]);
   });
 
   it("keeps today's dose across a restart (phone locked, app unloaded)", async () => {
@@ -277,7 +419,7 @@ describe("decibelguard loop", () => {
 
     const second = await boot({ storage });
     await vi.advanceTimersByTimeAsync(1100);
-    expect(second.texts.some((text) => /Heute \d+% vom Limit|dose \d+%/.test(text))).toBe(true);
+    expect(second.texts.some((text) => /heute \d+% vom Limit|today \d+% of limit/.test(text))).toBe(true);
     // The microphone opens only on a tap.
     expect(second.mic).toEqual([]);
   });

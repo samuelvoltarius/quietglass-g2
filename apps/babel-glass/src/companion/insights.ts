@@ -12,7 +12,16 @@ export interface InsightWatcherOptions {
   readonly llm: () => CompanionLlm | null;
   readonly locale: () => Locale;
   readonly onInsight: (insight: Insight) => void;
+  /** The explanation while it is still being written (terms already shown are skipped). */
+  readonly onPartial?: (insight: Insight) => void;
+  /** A partial explanation was shown, but the finished answer brought none. */
+  readonly onPartialDropped?: () => void;
   readonly onError?: (error: string) => void;
+  /**
+   * Hits from Babel's own memory for these lines ("Notizen des Nutzers"), or "".
+   * Asked right before each explanation; a failure just means no notes.
+   */
+  readonly notes?: (recent: readonly TranscriptEntry[]) => Promise<string>;
   readonly debounceMs?: number;
   readonly minGapMs?: number;
   readonly context?: number;
@@ -54,12 +63,25 @@ export function createInsightWatcher(options: InsightWatcherOptions): InsightWat
     askedFor = latest.length;
     busy = true;
     lastAsked = now();
-    const result = await llm.explain(latest.slice(-context), known, options.locale()).catch(() => ({ ok: false as const, error: "failed" }));
+    let shownPartial = false;
+    const isKnown = (term: string): boolean => known.some((k) => k.toLowerCase() === term.toLowerCase());
+    const onProgress = options.onPartial
+      ? (partial: Insight): void => {
+          if (stopped || isKnown(partial.term)) return;
+          shownPartial = true;
+          options.onPartial?.(partial);
+        }
+      : undefined;
+    const recent = latest.slice(-context);
+    const notes = options.notes ? await options.notes(recent).catch(() => "") : "";
+    const result = await llm.explain(recent, known, options.locale(), onProgress, notes || undefined)
+      .catch(() => ({ ok: false as const, error: "failed" }));
     busy = false;
     if (stopped) return;
+    const insight = result.ok ? result.value : null;
+    if (shownPartial && (!insight || isKnown(insight.term))) options.onPartialDropped?.();
     if (!result.ok) { options.onError?.(result.error); return; }
-    const insight = result.value;
-    if (insight && !known.some((term) => term.toLowerCase() === insight.term.toLowerCase())) {
+    if (insight && !isKnown(insight.term)) {
       known = [...known, insight.term].slice(-40);
       options.onInsight(insight);
     }

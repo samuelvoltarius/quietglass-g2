@@ -9,29 +9,49 @@
  *    OUTWARD with quiet-hub-relay.mjs (HTTPS long-poll), register their agents
  *    and receive prompts. Permission questions of Claude Code become cards.
  *  - Home Assistant (HA_URL + HA_TOKEN + HA_DEVICES) or a labelled DEMO.
+ *    "Zuhause" view: HA_FAVORITES, HA_AREAS, HA_EXCLUDE, HA_SENSITIVE, HA_POLL_MS
+ *    (see quiet-hub-home.mjs); GET /home, POST /home/action, POST /home/confirm.
  *  - Moonraker (MOONRAKER_URL) or a labelled DEMO.
+ *  - Tagesstart (morning briefing, GET /brief, also in /report as `brief`):
+ *    calendar, weather, car, glucose, printer and servers, collected here
+ *    (see quiet-hub-brief.mjs; BRIEF_* env). GET /brief/appointments: only
+ *    today's appointments with coordinates (navigation app), same auth.
  *
  *   node quiet-hub-daemon.mjs        # listens on :8787 (PORT env to change)
  *
  * Env (see .env-hub.example): PORT, HOST, HUB_TOKEN, HERMES_BIN, LOCAL_AGENT_ID,
  * ASK_TIMEOUT_MS, APPROVAL_TIMEOUT_MS, WHISPER_URL, VLLM_URL, HA_URL, HA_TOKEN,
- * HA_DEVICES, MOONRAKER_URL, QUIET_HUB_STATE_FILE, HUB_TAILSCALE_USERS.
+ * HA_DEVICES, HA_FAVORITES, HA_AREAS, HA_EXCLUDE, HA_SENSITIVE, HA_POLL_MS, HA_HOME, MOONRAKER_URL, QUIET_HUB_STATE_FILE, HUB_TAILSCALE_USERS,
+ * BRIEF_ICS_URLS, BRIEF_LAT/BRIEF_LON (fallback place; GET /brief?lat=&lon= wins), BRIEF_TZ, BRIEF_BYD_URL, BRIEF_SUGAR_URL, BRIEF_KLIPPER_URL, BRIEF_STATUS_URLS (+ BRIEF_*_TOKEN, BRIEF_CACHE_MS, BRIEF_TIMEOUT_MS, BRIEF=off).
  */
 import { createServer } from "node:http";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHomeAssistant, createMoonraker, parseDevices } from "./quiet-hub-adapters.mjs";
 import { createController, nodeSpawn } from "./quiet-hub-agents.mjs";
+import { createHomeView, parseHomeConfig } from "./quiet-hub-home.mjs";
+import { createBrief, parseBriefConfig, parsePlace } from "./quiet-hub-brief.mjs";
 
 const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den Tag zusammen"];
-const MAX_AUDIO = 12 * 1024 * 1024;
+// 10 min of 16 kHz s16le mono = 19.2 MB (the glasses cap a voice note there).
+const MAX_AUDIO = 24 * 1024 * 1024;
 // A suggestion is one body row on the glasses (~46 characters); the prompt asks for 28.
 const MAX_SUGGESTION_CHARS = 38;
 const RELAY_STALE_MS = 45_000;
 const POLL_HOLD_MS = 25_000;
+/**
+ * Long-poll for the glasses: GET /report?since=<rev>&boot=<id>&wait=<s> is held
+ * until the report changes (or `wait` runs out, at most 25 s - below the 30 s
+ * many proxies allow and the relay's 40 s). Changes are collected for a moment
+ * so a fast token stream does not turn into one request per token.
+ */
+const REPORT_WAIT_MAX_S = 25;
+const REPORT_COALESCE_MS = 120;
+const REPORT_TICK_MS = 1000;
 const RPC_TIMEOUT_MS = 45_000; // a CLI that updates itself on start (seen on one Hermes host) needs ~30 s
 
 const digest = (text) => createHash("sha256").update(text).digest();
@@ -103,6 +123,7 @@ export function createHub(options = {}) {
     };
     state.events = [event, ...state.events].slice(0, 50);
     saveEvents();
+    changed();
     // Only things that need the user go to the phone; answers are on the glasses already.
     if (status === "waiting") void notifyPhone(`${event.provider}: wartet`, event.title);
     return event;
@@ -171,7 +192,12 @@ export function createHub(options = {}) {
       devices: options.haDevices ?? parseDevices(env.HA_DEVICES), fetchImpl, lang: cfg.lang,
     })
     : null;
-  if (ha && parseDevices(env.HA_DEVICES).length === 0 && !options.haDevices) log("HA_URL set but HA_DEVICES is empty: no devices are exposed");
+  if (ha && parseDevices(env.HA_DEVICES).length === 0 && !options.haDevices) log("HA_URL set but HA_DEVICES is empty: no devices are exposed on the legacy list");
+  // "Zuhause": favourites, areas, groups, sensors. Same URL/token, which stay in this process.
+  const homeConfig = parseHomeConfig({ ...env, ...(options.homeEnv ?? {}) });
+  const homeView = haConfigured && String(options.homeEnv?.HA_HOME ?? env.HA_HOME ?? "on") !== "off"
+    ? createHomeView({ url: options.haUrl ?? env.HA_URL, token: options.haToken ?? env.HA_TOKEN, config: homeConfig, fetchImpl, lang: cfg.lang, now, log })
+    : null;
   const demoDevices = [
     { id: "light_office", label: "DEMO · Büro Licht", kind: "switch", state: "an", on: true, writable: true },
     { id: "light_living", label: "DEMO · Wohnzimmer Licht", kind: "switch", state: "aus", on: false, writable: true },
@@ -181,6 +207,11 @@ export function createHub(options = {}) {
 
   const moonUrl = options.moonrakerUrl ?? env.MOONRAKER_URL;
   const moon = moonUrl ? createMoonraker({ url: moonUrl, fetchImpl }) : null;
+  // Tagesstart: every block optional; URLs and tokens of the sources stay in here.
+  const briefConfig = parseBriefConfig({ ...env, ...(options.briefEnv ?? {}) });
+  const brief = briefConfig.enabled
+    ? createBrief({ config: briefConfig, fetchImpl: options.briefFetch ?? fetchImpl, now, moon, log, onChange: () => changed() })
+    : null;
   let printerDemo = { job: "DEMO esp32_gehaeuse.stl", state: "printing", layer: 148, layers: 205, progress: 72, etaMin: 41, nozzleC: 210, bedC: 60, selected: 0, demo: true };
 
   // ------------------------------------------------------------- phone mirror (optional)
@@ -224,6 +255,8 @@ export function createHub(options = {}) {
   const timers = [];
   function startBackground() {
     if (ha) { void ha.refresh(); timers.push(setInterval(() => void ha.refresh(), 10_000)); }
+    // Polled server-side every few seconds; the report revision (long-poll) carries changes to the glasses.
+    if (homeView) { void homeView.refresh().then(changed); timers.push(setInterval(() => void homeView.refresh().then(changed), homeConfig.pollMs)); }
     if (moon) { void moon.refresh().then(watchPrinter); timers.push(setInterval(() => void moon.refresh().then(watchPrinter), options.moonPollMs ?? 5_000)); }
     timers.push(setInterval(sweep, 10_000));
     for (const t of timers) t.unref?.();
@@ -253,6 +286,7 @@ export function createHub(options = {}) {
       // The question as title, the answer itself as detail, plus where it lives.
       addEvent(agent.id, status, String(job.question ?? "").replace(/\s+/g, " ").trim() || "Antwort", status === "error" ? (agent.error ?? "Fehler") : (agent.answer ?? ""), { agentId: agent.id, sessionId: agent.session?.id ?? null });
     }
+    changed();
     job.waiters.forEach((resolve) => resolve({ status, text: agent?.answer ?? text ?? "" }));
     job.waiters.length = 0;
     // A card answered with "no, do this instead": that instruction is the next message.
@@ -373,6 +407,7 @@ export function createHub(options = {}) {
       if (job.done) return;
       agent.answer = clipTail(String(update.text ?? ""), 4000);
       noteActivity(agent, update.activity);
+      changed();
     };
     localController.run({ prompt, sessionId: job.sessionId, fresh: job.fresh, title: job.question.slice(0, 40), signal: abort.signal }, emit)
       .catch((error) => ({ status: "error", text: "", error: String(error?.message ?? error) }))
@@ -452,6 +487,7 @@ export function createHub(options = {}) {
     };
     const promise = new Promise((resolve) => { card.resolve = resolve; });
     approvals.set(card.id, card);
+    changed();
     addEvent(agentId, "waiting", `Freigabe: ${card.title}`.slice(0, 180), null);
     const timer = setTimeout(() => settleApproval(card.id, "deny"), cfg.approvalTimeoutMs);
     timer.unref?.();
@@ -466,6 +502,7 @@ export function createHub(options = {}) {
         card.options = list;
         card.suggestions = list.map((option) => option.text);
         if (list.length > 0) lastCardOptions = card.suggestions.slice(0, 3);
+        changed();
       });
     }
     return { card, promise };
@@ -483,6 +520,7 @@ export function createHub(options = {}) {
     const agent = agents.get(card.agentId);
     if (verdict === "deny" && text !== "" && agent) agent.followUp = text;
     card.resolve(verdict);
+    changed();
     return true;
   }
 
@@ -615,6 +653,7 @@ export function createHub(options = {}) {
       agent.suggestions = list;
       agent.suggesting = false;
       if (list.length > 0) agent.lastShown = list.slice(0, 3);
+      changed();
     });
   }
   /** Drops whatever was shown or on its way (new question, other session). */
@@ -630,7 +669,8 @@ export function createHub(options = {}) {
     form.append("file", new Blob([bytes], { type: mime || "audio/wav" }), mime?.includes("wav") || !mime ? "voice.wav" : "voice-note");
     form.append("model", cfg.whisperModel);
     form.append("language", cfg.whisperLang);
-    const res = await fetchImpl(cfg.whisperUrl, { method: "POST", body: form, signal: AbortSignal.timeout(60_000) });
+    // Long dictations (up to 10 min) need longer: 60 s plus half the audio length (16 kHz s16le = 32 bytes/ms).
+    const res = await fetchImpl(cfg.whisperUrl, { method: "POST", body: form, signal: AbortSignal.timeout(60_000 + Math.round(bytes.length / 32 / 2)) });
     if (!res.ok) throw new Error(`whisper http ${res.status}`);
     const data = await res.json();
     return String(data.text ?? "").trim();
@@ -646,7 +686,7 @@ export function createHub(options = {}) {
     stopped: agent.stopped, stopConfirmed: agent.stopConfirmed,
   });
 
-  function report() {
+  function snapshot() {
     const list = [...agents.values()].map(agentInfo);
     const main = agents.get(defaultAgentId() ?? "");
     return {
@@ -663,13 +703,76 @@ export function createHub(options = {}) {
       agents: list,
       approvals: [...approvals.values()].map(({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: texts, options: choices }) => ({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: texts ?? [], options: choices ?? [] })),
       home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
+      ...(homeView ? { homeView: homeView.view() } : {}),
       printer: moon ? moon.printer() : printerDemo,
       inbox: { events: state.events, selected: 0 },
+      // Only what is already cached (cheap); the page asks GET /brief itself.
+      ...(brief ? { brief: brief.peek() } : {}),
     };
   }
 
+  // ------------------------------------------------------------- report revisions + long-poll
+  // `rev` counts real changes of the report (content compared, so no mutation point
+  // can be forgotten); `boot` tells the glasses the daemon restarted (rev starts over).
+  const boot = randomUUID().slice(0, 8);
+  const live = { longPoll: true, maxWaitS: REPORT_WAIT_MAX_S };
+  let rev = 0;
+  let revSig = "";
+  function report() {
+    const body = snapshot();
+    const sig = JSON.stringify(body);
+    if (sig !== revSig) { revSig = sig; rev += 1; }
+    return { ...body, rev, boot, live };
+  }
+
+  /** Held GET /report?since= requests: {since, boot, req, res, timer}. */
+  const reportWaiters = new Set();
+  let flushTimer = null;
+  let reportTicker = null;
+  function answerWaiter(waiter, body) {
+    reportWaiters.delete(waiter);
+    clearTimeout(waiter.timer);
+    if (!waiter.res.writableEnded && !waiter.res.destroyed) sendJson(waiter.res, 200, body, waiter.req);
+  }
+  function stopTickerIfIdle() {
+    if (reportWaiters.size === 0 && reportTicker !== null) { clearInterval(reportTicker); reportTicker = null; }
+  }
+  /** Answers every held long-poll whose revision is out of date. */
+  function flushWaiters() {
+    flushTimer = null;
+    if (reportWaiters.size === 0) { stopTickerIfIdle(); return; }
+    const body = report();
+    for (const waiter of [...reportWaiters]) if (waiter.since !== body.rev || waiter.boot !== boot) answerWaiter(waiter, body);
+    stopTickerIfIdle();
+  }
+  /** Something may have changed: held long-polls get the new report after a short collect window. */
+  function changed() {
+    if (reportWaiters.size === 0 || flushTimer !== null) return;
+    flushTimer = setTimeout(flushWaiters, options.reportCoalesceMs ?? REPORT_COALESCE_MS);
+    flushTimer.unref?.();
+  }
+  /** GET /report with since/boot/wait: answered at once when stale, else held until a change. */
+  function waitReport(req, res, url) {
+    const body = report();
+    const since = Number(url.searchParams.get("since"));
+    const waitS = Math.min(REPORT_WAIT_MAX_S, Math.max(0, Number(url.searchParams.get("wait") ?? 0) || 0));
+    const theirBoot = url.searchParams.get("boot") ?? boot;
+    if (!Number.isFinite(since) || waitS <= 0 || theirBoot !== boot || since !== body.rev) { sendJson(res, 200, body, req); return; }
+    const waiter = { since, boot: theirBoot, req, res, timer: null };
+    waiter.timer = setTimeout(() => answerWaiter(waiter, report()), options.reportWaitMs ?? waitS * 1000);
+    waiter.timer.unref?.();
+    reportWaiters.add(waiter);
+    res.on("close", () => { if (reportWaiters.delete(waiter)) { clearTimeout(waiter.timer); stopTickerIfIdle(); } });
+    // Changes without a hook of their own (Home Assistant, Moonraker, a relay going stale) are seen by this tick.
+    if (reportTicker === null) {
+      reportTicker = setInterval(changed, options.reportTickMs ?? REPORT_TICK_MS);
+      reportTicker.unref?.();
+    }
+  }
+
   // ------------------------------------------------------------- HTTP
-  function sendJson(res, status, body) {
+  /** `req` given: a large body is gzipped when the client accepts it (a streamed report is sent many times). */
+  function sendJson(res, status, body, req = null) {
     const cors = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -681,6 +784,12 @@ export function createHub(options = {}) {
     // WebKit rejects the malformed preflight and the real request never follows.
     if (status === 204) { res.writeHead(204, cors); res.end(); return; }
     const data = JSON.stringify(body);
+    if (req !== null && data.length > 2048 && /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""))) {
+      const packed = gzipSync(data);
+      res.writeHead(status, { "Content-Type": "application/json", "Content-Encoding": "gzip", Vary: "Accept-Encoding", "Content-Length": packed.length, ...cors });
+      res.end(packed);
+      return;
+    }
     res.writeHead(status, {
       "Content-Type": "application/json",
       "Content-Length": Buffer.byteLength(data),
@@ -729,9 +838,28 @@ export function createHub(options = {}) {
     if (req.method === "OPTIONS") { sendJson(res, 204, {}); return; }
     if (!authorized(req)) { sendJson(res, 401, { error: "unauthorized" }); return; }
 
-    if (req.method === "GET" && path === "/report") { sendJson(res, 200, report()); return; }
+    if (req.method === "GET" && path === "/report") {
+      if (url.searchParams.has("since")) waitReport(req, res, url);
+      else sendJson(res, 200, report(), req);
+      return;
+    }
     if (req.method === "GET" && path === "/health") {
-      sendJson(res, 200, { ok: true, events: state.events.length, agents: agents.size, busy: [...agents.values()].some((a) => a.busy) });
+      sendJson(res, 200, { ok: true, events: state.events.length, agents: agents.size, busy: [...agents.values()].some((a) => a.busy), live });
+      return;
+    }
+    if (req.method === "GET" && path === "/brief/appointments") {
+      // Today's appointments with coordinates for the navigation app: calendar + geocoding only, never the weather.
+      if (!brief) { sendJson(res, 404, { error: "brief is off (BRIEF=off)" }); return; }
+      sendJson(res, 200, await brief.appointments(), req);
+      return;
+    }
+    if (req.method === "GET" && path === "/brief") {
+      if (!brief) { sendJson(res, 404, { error: "brief is off (BRIEF=off)" }); return; }
+      const force = url.searchParams.get("refresh") === "1";
+      // The wearer's position (rounded by the app, again here). Never logged: the access log has no query.
+      const place = parsePlace(url.searchParams.get("lat"), url.searchParams.get("lon"));
+      if (place === "invalid") { sendJson(res, 400, { error: "lat/lon must be numbers (lat -90..90, lon -180..180)" }); return; }
+      sendJson(res, 200, await brief.get(force, place), req);
       return;
     }
     if (req.method === "GET" && path === "/agents") { sendJson(res, 200, { agents: [...agents.values()].map(agentInfo) }); return; }
@@ -1011,6 +1139,29 @@ export function createHub(options = {}) {
       return;
     }
 
+    if (req.method === "GET" && path === "/home") {
+      if (!homeView) { sendJson(res, 200, { configured: false }); return; }
+      sendJson(res, 200, { configured: true, view: homeView.view() }, req);
+      return;
+    }
+
+    if (post && path === "/home/action") {
+      if (!homeView) { sendJson(res, 503, { error: "Home Assistant not configured" }); return; }
+      const { target, action, value } = await readJson(req, 4096);
+      const outcome = await homeView.action(target, action, value);
+      if (outcome.confirm) log("home: confirm requested for", String(target).slice(0, 60));
+      sendJson(res, outcome.status, outcome.ok ? { ok: true, ...(outcome.confirm ? { confirm: outcome.confirm } : {}) } : { error: outcome.error });
+      return;
+    }
+
+    if (post && path === "/home/confirm") {
+      if (!homeView) { sendJson(res, 503, { error: "Home Assistant not configured" }); return; }
+      const { token } = await readJson(req, 4096);
+      const outcome = await homeView.confirm(token);
+      sendJson(res, outcome.status, outcome.ok ? { ok: true } : { error: outcome.error });
+      return;
+    }
+
     if (post && path === "/printer") {
       const { action } = await readJson(req);
       if (moon) {
@@ -1053,6 +1204,8 @@ export function createHub(options = {}) {
         accessLog(`${new Date(started).toISOString()} ${clientIp(req)} ${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms ${authShape}`);
       });
     }
+    // Every POST may change what the glasses see (ask, relay result, approval, session ...).
+    if (req.method === "POST") res.on("finish", changed);
     handle(req, res).catch((error) => {
       console.error("[daemon] handler error:", String(error).slice(0, 200));
       if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
@@ -1076,10 +1229,16 @@ export function createHub(options = {}) {
       for (const pending of rpcs.values()) clearTimeout(pending.timer);
       for (const relay of relays.values()) if (relay.waiter) clearTimeout(relay.waiter.timer);
       for (const card of approvals.values()) clearTimeout(card.timer);
+      for (const waiter of reportWaiters) clearTimeout(waiter.timer);
+      reportWaiters.clear();
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      if (reportTicker !== null) clearInterval(reportTicker);
       server.closeAllConnections?.();
       return new Promise((resolve) => server.close(() => resolve()));
     },
-    describe: () => ({ whisper: cfg.whisperUrl, ha: ha !== null, moonraker: moon !== null, localAgent: cfg.localAgent ? cfg.localAgentId : null, auth: cfg.token !== "" }),
+    homeView,
+    brief,
+    describe: () => ({ whisper: cfg.whisperUrl, ha: ha !== null, home: homeView !== null, moonraker: moon !== null, brief: brief ? brief.configured() : [], localAgent: cfg.localAgent ? cfg.localAgentId : null, auth: cfg.token !== "" }),
   };
 }
 
@@ -1090,6 +1249,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const hub = createHub();
   hub.listen(port, host).then(() => {
     const d = hub.describe();
-    console.log(`[daemon] Quiet Hub daemon on http://${host}:${port} (local agent: ${d.localAgent ?? "off"}, whisper: ${d.whisper}, home: ${d.ha ? "Home Assistant" : "DEMO"}, printer: ${d.moonraker ? "Moonraker" : "DEMO"}, auth: ${d.auth ? "bearer" : "none"})`);
+    console.log(`[daemon] Quiet Hub daemon on http://${host}:${port} (local agent: ${d.localAgent ?? "off"}, whisper: ${d.whisper}, home: ${d.ha ? "Home Assistant" : "DEMO"}, printer: ${d.moonraker ? "Moonraker" : "DEMO"}, brief: ${d.brief.length > 0 ? d.brief.join("+") : "-"}, auth: ${d.auth ? "bearer" : "none"})`);
   });
 }

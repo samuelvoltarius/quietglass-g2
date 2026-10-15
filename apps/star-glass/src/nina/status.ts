@@ -80,6 +80,39 @@ export interface History {
   readonly rms: readonly number[];
 }
 
+/**
+ * The weather station N.I.N.A. knows (ASCOM ObservingConditions through the
+ * Advanced API), already in the units the glasses show: wind in km/h.
+ * Null when no weather device is connected.
+ */
+export interface StationWeather {
+  readonly name: string | null;
+  /** Percent. */
+  readonly cloudCover: number | null;
+  /** mm/h; above zero means it rains. */
+  readonly rainRate: number | null;
+  readonly humidity: number | null;
+  readonly dewPoint: number | null;
+  readonly temperature: number | null;
+  /** km/h. */
+  readonly windSpeed: number | null;
+  readonly windGust: number | null;
+  /** mag/arcsec². */
+  readonly skyQuality: number | null;
+}
+
+/** N.I.N.A.'s safety monitor: `safe` is null when connected but silent. */
+export interface Safety {
+  readonly connected: boolean;
+  readonly safe: boolean | null;
+}
+
+/** The site from N.I.N.A. (rounded to 2 decimals by the bridge, only if it shares it). */
+export interface Site {
+  readonly latitude: number;
+  readonly longitude: number;
+}
+
 export type StarStatus =
   | {
     readonly online: true;
@@ -98,6 +131,9 @@ export type StarStatus =
     /** Key of the bridge's current preview picture; null when there is none. */
     readonly preview: string | null;
     readonly controllable: boolean;
+    readonly weather: StationWeather | null;
+    readonly safety: Safety;
+    readonly site: Site | null;
   }
   | { readonly online: false; readonly reason: string; readonly controllable: boolean };
 
@@ -113,6 +149,31 @@ const num = (value: unknown): number | null => (typeof value === "number" && Num
 const str = (value: unknown): string | null => (typeof value === "string" && value.trim() !== "" ? value.trim() : null);
 const bool = (value: unknown): boolean => value === true;
 const nums = (value: unknown, max = 60): number[] => (Array.isArray(value) ? value.filter((v): v is number => typeof v === "number" && Number.isFinite(v)).slice(-max) : []);
+
+function parseWeather(value: unknown): StationWeather | null {
+  const w = rec(value);
+  if (w["connected"] !== true) return null;
+  const pct = (v: unknown): number | null => { const n = num(v); return n === null ? null : Math.max(0, Math.min(100, n)); };
+  return {
+    name: str(w["name"]),
+    cloudCover: pct(w["cloudCover"]),
+    rainRate: num(w["rainRate"]),
+    humidity: pct(w["humidity"]),
+    dewPoint: num(w["dewPoint"]),
+    temperature: num(w["temperature"]),
+    windSpeed: num(w["windSpeed"]),
+    windGust: num(w["windGust"]),
+    skyQuality: num(w["skyQuality"]),
+  };
+}
+
+function parseSite(value: unknown): Site | null {
+  const s = rec(value);
+  const lat = num(s["lat"] ?? s["latitude"]);
+  const lon = num(s["lon"] ?? s["longitude"]);
+  if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat === 0 && lon === 0)) return null;
+  return { latitude: Math.round(lat * 100) / 100, longitude: Math.round(lon * 100) / 100 };
+}
 
 const SEQUENCE_STATES: readonly SequenceState[] = ["running", "idle", "finished", "none"];
 
@@ -192,6 +253,12 @@ export function parseStatus(input: unknown): StarStatus {
     events: (Array.isArray(raw["events"]) ? raw["events"] : []).slice(-12).map((e) => ({ name: str(rec(e)["name"]) ?? "", ageSeconds: num(rec(e)["ageSeconds"]) })).filter((e) => e.name),
     preview: str(raw["preview"]),
     controllable,
+    weather: parseWeather(raw["weather"]),
+    safety: (() => {
+      const sm = rec(raw["safety"]);
+      return { connected: bool(sm["connected"]), safe: sm["connected"] === true && typeof sm["safe"] === "boolean" ? sm["safe"] : null };
+    })(),
+    site: parseSite(raw["site"]),
   };
 }
 
