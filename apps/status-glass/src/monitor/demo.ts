@@ -1,4 +1,4 @@
-import type { NetDevice, NetworkInfo, SourceReport } from "../protocol/schema";
+import type { Action, NetDevice, NetworkInfo, SourceReport } from "../protocol/schema";
 
 /** Readings of the NAS demo, step 0..11 (oldest first), per scene. */
 export function demoNasReport(scene: string | null, step: number): SourceReport {
@@ -27,6 +27,10 @@ export interface DemoMachine {
   readonly ram: number;
   /** More than 0: the machine has been unreachable for this many minutes. */
   readonly offlineMinutes: number;
+  /** Fullest disk in percent; the machine's default when omitted. */
+  readonly disk?: number;
+  /** What the machine offers to run. */
+  readonly actions?: readonly Action[];
 }
 
 /** Four machines for `?demo=1&scene=fleet`: fine, warning, critical, offline. */
@@ -43,7 +47,26 @@ const DEMO_EXTRAS: Readonly<Record<string, { disk: number; temp: number; gpu?: b
   pi5: { disk: 34, temp: 48, failed: ["systemd-networkd-wait-online"] },
   ns1: { disk: 93, temp: 46, docker: 31 },
   samuel: { disk: 33, temp: 53 },
+  pi: { disk: 34, temp: 48 },
+  nas: { disk: 52, temp: 44 },
 };
+
+/** The ns1 disk of the first-start demo: full enough for exactly one problem, or fine. */
+export const DEMO_DISK_PROBLEM = 93;
+export const DEMO_DISK_FINE = 61;
+
+/**
+ * The first-start demo (QUS v1): four servers, calm, and - with `problem` - one
+ * nearly full disk on ns1 to show what a problem looks like. One machine offers an action.
+ */
+export function demoStartFleet(problem = true): DemoMachine[] {
+  return [
+    { id: "spark", name: "Spark", cpu: 22, ram: 48, offlineMinutes: 0, actions: [{ id: "docker-cleanup", label: "Docker cleanup", confirm: true }] },
+    { id: "pi", name: "Pi5", cpu: 18, ram: 41, offlineMinutes: 0 },
+    { id: "ns1", name: "ns1", cpu: 31, ram: 55, offlineMinutes: 0, disk: problem ? DEMO_DISK_PROBLEM : DEMO_DISK_FINE },
+    { id: "nas", name: "NAS", cpu: 12, ram: 36, offlineMinutes: 0 },
+  ];
+}
 
 export function demoFleetReport(machine: DemoMachine, step: number): SourceReport {
   const wave = (base: number, amp: number, phase: number): number => Math.min(99, Math.max(1, Math.round(base + amp * Math.sin(step * 0.8 + phase))));
@@ -56,7 +79,7 @@ export function demoFleetReport(machine: DemoMachine, step: number): SourceRepor
       { id: "load", label: "Load", value: wave(machine.cpu - 5, 6, 0.4), unit: "%", warn: 70, critical: 90, detail: "1.20 0.98 0.85" },
       { id: "memory", label: "RAM", value: wave(machine.ram, 3, 1), unit: "%", warn: 85, critical: 95, detail: "54/119 GB" },
       { id: "swap", label: "Swap", value: 4, unit: "%", warn: 80, critical: 95, detail: "0.3/8.0 GB" },
-      { id: "disk:/", label: "/", value: extra.disk, unit: "%", warn: 90, critical: 95, detail: "539/916 GB" },
+      { id: "disk:/", label: "/", value: machine.disk ?? extra.disk, unit: "%", warn: 90, critical: 95, detail: "539/916 GB" },
       ...(machine.id === "spark" ? [{ id: "disk:/data", label: "/data", value: 71, unit: "%", warn: 90, critical: 95, detail: "2.8/4.0 TB" }] : []),
       { id: "temp", label: "Temp", value: wave(extra.temp, 3, 2), unit: "°C", warn: 80, critical: 90 },
       ...(extra.gpu ? [
@@ -71,6 +94,7 @@ export function demoFleetReport(machine: DemoMachine, step: number): SourceRepor
       { id: "tailscale", label: "Tailscale", state: "ok", detail: "13/18 peers online" },
       { id: "uptime", label: "Up", value: 345, unit: "h" },
     ],
+    ...(machine.actions ? { actions: machine.actions } : {}),
   };
 }
 

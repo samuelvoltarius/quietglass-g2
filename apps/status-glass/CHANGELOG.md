@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.0.0] — 2026-10-17
+
+Neu aufgebaut nach dem Quietglass UI Standard (QUS v1): keine Textwand mehr.
+
+### Brille
+
+- **Startseite mit höchstens drei Einträgen:** *Alle Server* (bei zwei oder mehr Servern stehen die einzelnen Server eingerückt darunter), *Probleme* (nur solange etwas nicht stimmt) und *Aktionen* (nur wenn eine Quelle welche anbietet). Wischen wählt, Tippen öffnet, 2× fragt nach dem Beenden. Der Cursor ist ein `●`.
+- **Übersicht und Server als Cockpit-Bild** (Muster Rain Lens): das ganze Display ist ein Bild aus vier Kacheln (`src/screen/*` aus Rain Lens). Links ein Ring mit einem Bogen je Server und „3/4“ in der Mitte (bei einem Server CPU-, RAM- und Disk-Balken), rechts der Kopf `STATUS  14:05`, **eine** Überschrift („ALLES OK“, „1 PROBLEM“, „2 PROBLEME“, „1 GESEHEN“, „OFFLINE“; bei einem Server der Name darüber) und sechs Werte in drei Spalten (OK / WARN / OFFLINE und höchste CPU / RAM / Disk, bzw. CPU / RAM / DISK / LAST / TEMP / LÄUFT). Ein Wert über der Grenze bekommt einen Rahmen. Darunter die eine Hinweiszeile. Helligkeit statt Farbe (Text 15, Label 8, gedimmt 4).
+- **Nur geänderte Kacheln werden gesendet** (Schlüssel je Kachel): derselbe Zustand sendet nichts, die Uhr ändert nur die Kachel oben rechts. Während der Beenden-Dialog offen sein kann, wird keine Kachel geschrieben (und nach Verlassen des Cockpits auch nicht mehr).
+- **Laufansichten ruhig:** Kopfzeile `Probleme · ● live` / `Aktionen · ● live` (`offline` bzw. `Demo` als Wort), unten eine Hinweiszeile, höchstens fünf Zeilen. Gesehen/Ausführen bleibt armiert (Tippen, nochmal Tippen innerhalb von 4 s).
+- Entfallen: die Detailseiten mit Textseiten und Kurven, die Hilfe-Seite, die Zeilen „Alle Quellen neu abfragen“/„Hilfe“ in den Aktionen, das Statussymbol im Kopf, Halten als Menü/„gesehen“. Neu laden ist Tippen im Cockpit, alle Details stehen am Handy.
+- Beibehalten: `SIDE_MENU = false`, die Beenden-Dialog-Logik unverändert (`src/exit.ts`, 4 = Dialog oben, 5 = Dialog weg, kein Zeichnen solange er offen sein kann), Zeitlimits für jeden Aufruf an die Brille, erste Seite mit Rebuild + Create. Beim ersten Start laufen vier Beispiel-Server mit einem Problem und dem Hinweis „Demo · Verbindung am Handy einrichten“ (ohne etwas zu speichern).
+
+### Handy
+
+- **Genau drei Tabs in einer Zeile: Jetzt / Server / Einstellungen** im Rain-Look: Kicker `QUIETGLASS / STATUS`, Titel, Status-Pille, Statusbanner mit der einen Meldung, Hero-Karte mit einem großen Wert („4/4 OK“), 2×2-Kennzahlen (Probleme, Offline, CPU max, Disk max), ein Hauptknopf („Jetzt neu laden“) und eine waagrechte Kartenleiste je Server. *Server* zeigt je Server die Werte und Probleme, dazu den Heimnetz-Wächter. *Einstellungen* sind gruppierte Karten; die Quellen-Karte klappt zu, sobald eine Quelle eingerichtet ist; beim ersten Start steht eine Drei-Schritte-Checkliste oben und die Karte ist offen.
+- Quelle entfernen fragt nach (erster Tipp fragt, zweiter innerhalb von 4 s entfernt).
+- Die Seite folgt jeder Abfrage, ohne Eingaben oder Scrollstand zu stören.
+
+### Technik
+
+- Reine Modellfunktionen mit Tests: `src/cockpit/model.ts` (Zellen, Überschrift, Grafik, Hinweis), `src/glasses/view.ts` (Startzeilen, Problemliste), `src/cockpit/compose.ts` (nur Layout). Neue Tests: Zellen, Überschrift, Startzeilen, Fußzeilen, Kachel-Diff, Beenden-Dialog ohne Kachel-Sendungen.
+- Vorschau-Skript (nicht ausgeliefert): `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit*.png`.
+
+QIS: Fußzeilen über den gemeinsamen Helfer, `2× = zurück|Ende`, Halten ohne Funktion.
+
+## [0.11.6] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Beenden-Dialog: die Systemereignisse 4/5 direkt nach dem Aufruf werden als Anzeigen/Schließen des Dialogs gelesen.** Hardware-Protokoll: 4 = der Dialog ist aufgegangen (es wird nichts gezeichnet), 5 = der Dialog ist weg (nach „Nein“ war die App nie weg). Nach „Nein“ kommt die Seite sofort und ohne Geste wieder; Timer, Polls und Streams laufen ununterbrochen weiter, nichts wird pausiert.
+- Ein 2× auf der Startseite, während die App sich im Hintergrund glaubt, holt sie zurück und fragt den Dialog erneut (er wartet auf den Wiederaufbau), statt zu verpuffen.
+
+## [0.11.5] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Nach „Nein“ im Beenden-Dialog tat das erste 2× nichts.** Das erste 2× ist selbst das Signal „App ist wieder da“: es startet den Wiederaufbau der Seite (rebuild + create), und im selben Augenblick ging der Dialog-Aufruf los, solange die Seite noch entstand, und ging verloren. Jetzt wartet der Dialog-Aufruf auf den Wiederaufbau (höchstens 10 s) und danach 300 ms, und fragt erst dann. Ein einzelnes 2× nach „Nein“ öffnet den Dialog also wieder.
+- Während der Dialog offen sein könnte, zeichnen Timer, Polls und Streams nicht mehr auf die Brille (Seitenaufrufe könnten ihn überdecken); die Daten werden weiter gesammelt, die Seite kommt beim nächsten Tippen/Wischen/2× komplett zurück.
+
+## [0.11.4] — 2026-10-17
+
+### Behoben (Store-Prüfung, Wiederholung)
+
+- **Beenden-Dialog: das Ergebnis von `shutDownPageContainer(1)` beendet die App nicht mehr.** Auf der Brille kommt `true` schon, wenn der Dialog *angezeigt* wird (am Gerät gemessen: ca. 58 ms nach dem 2×), nicht erst bei „Ja“. Die App hielt das für eine Bestätigung und stellte sich tot; nach „Nein“ öffnete ein weiteres 2× den Dialog nicht mehr (Prüfer, Even Hub). Jetzt läuft die App weiter, ganz gleich was der Aufruf liefert; beendet wird sie nur vom System (App wird geschlossen und/oder Systemereignis 6/7). Die Seite wird nicht sofort neu gezeichnet (der Dialog könnte noch offen sein und von einem Seitenaufruf überdeckt werden), sondern beim nächsten Tippen, Wischen oder 2× bzw. bei FOREGROUND_ENTER wie beim ersten Start neu aufgebaut; dann wird das Ereignis normal verarbeitet, also öffnet 2× direkt nach „Nein“ den Dialog wieder.
+
+## [0.11.3] — 2026-10-16
+
+### Behoben (Store-Prüfung)
+
+- Nach „Nein“ im Beenden-Dialog öffnete 2× den Dialog nicht mehr – die App baut die Seite jetzt wie beim ersten Start neu auf.
+
 ## [0.11.2] — 2026-10-15
 
 ### Geändert (auf echter Brille gemessen)

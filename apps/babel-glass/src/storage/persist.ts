@@ -6,6 +6,7 @@ import { t } from "../messages";
 import type { TranscriptEntry } from "../companion/transcript";
 import type { SpeakerChoice } from "../companion/wordfinder";
 import { clampPersons, PERSONS_DEFAULT } from "../stt/voice";
+import { parseVocab, VOCAB_CAP, type VocabEntry } from "../companion/vocab";
 
 /**
  * Configuration, stored in the Even app's per-app storage on the phone.
@@ -65,7 +66,7 @@ export interface BabelData {
    * Kundengespräch, "translate" = Übersetzen). Absent = not picked yet: client
    * when Shoot Day reports a customer, else translate (see companion/talkmode).
    */
-  readonly talkMode?: "client" | "translate";
+  readonly talkMode?: "client" | "translate" | "learn";
   /** Tipp-Karten (Kundengespräch): short live tip cards on the glasses. Absent = on; only `false` is stored. */
   readonly cueCards?: boolean;
   /** 0.8.0: people in the conversation, the user included ("Personen: 2-5" in the side menu). */
@@ -75,6 +76,10 @@ export interface BabelData {
    * Only this flag lives here; the voice print itself stays on the server.
    */
   readonly voiceEnrolled: boolean;
+  /** 0.9.0: "Wortfinder automatisch": look for the word by itself when the user gets stuck. On by default. */
+  readonly wordAuto: boolean;
+  /** 1.0.0 "Englisch sprechen": translate the other person into German on the glasses. On by default. */
+  readonly learnTranslate: boolean;
 }
 
 /**
@@ -104,6 +109,8 @@ export const EMPTY_DATA: BabelData = {
   translateOwn: false,
   persons: PERSONS_DEFAULT,
   voiceEnrolled: false,
+  wordAuto: true,
+  learnTranslate: true,
 };
 
 export function usesMockStt(data: BabelData): boolean {
@@ -125,6 +132,8 @@ export function companionConfigured(data: BabelData): boolean {
 
 export function translationEnabled(data: BabelData): boolean {
   // 0.6.3: Kundengespräch shows the German captions only, never a translation.
+  // 1.0.0: "Englisch sprechen" translates the other person into German only when the phone switch says so.
+  if (data.talkMode === "learn" && !data.learnTranslate) return false;
   return data.talkMode !== "client" && data.mode !== "captionOnly" && translationConfigured(data);
 }
 
@@ -254,12 +263,16 @@ export function parseData(raw: string): BabelData {
       replySuggestions: value.replySuggestions !== false,
       translateOwn: value.translateOwn === true,
       // New in 0.6.3: absent = not picked yet.
-      ...(value.talkMode === "client" || value.talkMode === "translate" ? { talkMode: value.talkMode } : {}),
+      ...(value.talkMode === "client" || value.talkMode === "translate" || value.talkMode === "learn" ? { talkMode: value.talkMode } : {}),
       // Tipp-Karten: absent = on.
       ...(value.cueCards === false ? { cueCards: false } : {}),
       // New in 0.8.0.
       persons: clampPersons(value.persons),
       voiceEnrolled: value.voiceEnrolled === true,
+      // New in 0.9.0: absent = on.
+      wordAuto: value.wordAuto !== false,
+      // New in 1.0.0: absent = on.
+      learnTranslate: value.learnTranslate !== false,
     };
   } catch {
     return EMPTY_DATA;
@@ -322,6 +335,20 @@ export function parseConversation(raw: string): KeptConversation | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 0.9.0 "Meine Wörter": the words the word finder found, newest first, capped.
+ * Kept on the phone until the user deletes them (one by one or all).
+ */
+const VOCAB_KEY = "quietglass.babelglass.words.v1";
+
+export async function saveVocab(bridge: EvenAppBridge, words: readonly VocabEntry[]): Promise<void> {
+  await bridge.setLocalStorage(VOCAB_KEY, words.length === 0 ? "" : JSON.stringify(words.slice(0, VOCAB_CAP)));
+}
+
+export async function loadVocab(bridge: EvenAppBridge): Promise<VocabEntry[]> {
+  return parseVocab(await bridge.getLocalStorage(VOCAB_KEY));
 }
 
 function isMode(value: unknown): value is CaptionMode {

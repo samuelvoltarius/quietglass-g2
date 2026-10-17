@@ -1,4 +1,5 @@
 import { AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { settleRestore } from "./exit";
 import { ApiError, askUnsupported, createClient, type XaventraApi } from "./api/client";
 import { createDemoApi } from "./api/demo";
 import type { HudCard, HudFeed, VoiceResult } from "./api/types";
@@ -7,7 +8,7 @@ import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/ges
 import { errorDetail, errorText } from "./hud/errors";
 import { t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, faceKey, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, faceKey, forgetPage, updatePage, type MenuSpec } from "./glasses/render";
 import { MASCOT_STEP_MS, headerIcon } from "./glasses/face";
 import type { ScreenView } from "./glasses/screen";
 import {
@@ -92,7 +93,18 @@ async function boot(): Promise<void> {
   let redrawQueued = false;
   let refreshPhone: () => void = () => undefined;
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitDialogAsked = false;
+  /**
+   * The system dialog's own lifecycle (step log, Klipper 0.5.11): right after shutDownPageContainer(1) the glasses
+   * send FOREGROUND_ENTER (4) when the dialog comes up and FOREGROUND_EXIT (5) when it goes away after "No" - not
+   * the app entering or leaving. Between the call and the 5 nothing is drawn; the 5 puts the page up again.
+   */
+  let dialogPending = false;
+  let dialogShown = false;
   const drawOnce = async (): Promise<void> => {
+    if (exitDialogAsked) return;
     if (paused) return;
     // A page lost with the link (or while in the background) is rebuilt even
     // when nothing changed; the flag is read here so a reconnect during a
@@ -118,6 +130,7 @@ async function boot(): Promise<void> {
   /** One draw at a time; requests made meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
     refreshPhone();
+    if (exitDialogAsked) return Promise.resolve();
     if (closed) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
@@ -447,11 +460,41 @@ async function boot(): Promise<void> {
    * Leaving asks the system first (exit mode 1). Until the system confirms,
    * the app keeps running: the user may still cancel.
    */
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN (hardware: ~58 ms after the double tap), not when
+  // the user answered, so the result never tears the app down. If the user confirms, the system ends the app
+  // (sysEvent 6/7 below). After "No" the app has to be alive: on the next signal that it is back (any input,
+  // FOREGROUND_ENTER) the page is put up again the way of the first one, then the event is handled normally.
+  /** The restore started by the last exitBack(), while it is still running. */
+  let restoring: Promise<void> | null = null;
+  const exitBack = (): void => {
+    if (!exitDialogAsked) return;
+    exitDialogAsked = false;
+    if (closed) return;
+    pageReady = false;
+    lastView = null;
+    forgetPage(bridge);
+    const run = draw().catch(() => undefined);
+    restoring = run;
+    void run.then(() => { if (restoring === run) restoring = null; });
+  };
   const requestExit = (): void => {
-    bridge.shutDownPageContainer(1).then(
-      (left) => { if (left === true) shutDown(); },
-      (error: unknown) => { console.warn("[xaventrahud] exit failed:", error); },
-    );
+    // A second double tap before any restore: put the page back first, then ask again.
+    exitBack();
+    // The first double tap after "No" is the back signal itself: a dialog call issued while the page is still being
+    // created is lost (hardware, Klipper 0.5.8). So it waits for the restore and a short settle delay.
+    const restore = restoring;
+    const ask = async (): Promise<void> => {
+      dialogPending = true;
+      try {
+        await bridge.shutDownPageContainer(1);
+      } catch (error: unknown) {
+        console.warn("[xaventrahud] exit failed:", error);
+      }
+      exitDialogAsked = true;
+    };
+    // Without a restore in flight the host is called at once, in this very event.
+    if (restore) void settleRestore(restore).then(ask);
+    else void ask();
   };
 
   const shutDown = (): void => {
@@ -518,6 +561,25 @@ async function boot(): Promise<void> {
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     const step = lifecycleFromEvent(event);
+    if (step === "foregroundEnter" && dialogPending) {
+      // The exit dialog came up: stay still, it is on screen now.
+      dialogPending = false;
+      dialogShown = true;
+      exitDialogAsked = true;
+      return;
+    }
+    if (step === "foregroundExit" && dialogShown) {
+      // "No": the dialog went away. The app never left - page up again the way of the first one, nothing is paused.
+      dialogShown = false;
+      exitDialogAsked = true;
+      exitBack();
+      return;
+    }
+    // Not the microphone stream: PCM keeps flowing while the dialog is open and says nothing about the user.
+    const isAudio = (event as { audioEvent?: unknown }).audioEvent !== undefined;
+    const sysType = (event as { sysEvent?: { eventType?: number } }).sysEvent?.eventType;
+    if (!isAudio && sysType !== 8) { dialogPending = false; dialogShown = false; }
+    if (step !== "foregroundExit" && !isFinalExit(step) && !isAudio) exitBack();
     if (step === "foregroundExit") {
       // Out of sight: no microphone, no long poll; the cards stay as they are.
       paused = true;
@@ -560,6 +622,18 @@ async function boot(): Promise<void> {
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
     const gesture = parsed.gesture;
+
+    // A gesture means the app is on the glasses again, even if no "foreground" came first. A 2x still asks to leave:
+    // swallowing it after "No" left the dialog closed (store review); the ask waits for this restore draw.
+    if (paused) {
+      paused = false;
+      rebuildWanted = true;
+      const run = draw().catch(() => undefined);
+      restoring = run;
+      void run.then(() => { if (restoring === run) restoring = null; });
+      startPoll();
+      if (gesture !== "doubleClick") return;
+    }
 
     if (rec) {
       if (gesture === "doubleClick") cancelRec(true);

@@ -24,8 +24,13 @@
       "name": "camera",
       "why_en": "Opens the phone camera only when you tap Scan QR, to read the private Quiet Hub setup code.",
       "why_de": "Öffnet die Handykamera nur, wenn du QR scannen tippst, um den privaten Quiet-Hub-Einrichtungscode zu lesen."
+    },
+    {
+      "name": "location",
+      "why_en": "Optionally sends a roughly 1 km rounded phone position to your own daemon for Day Start weather. The app does not store it.",
+      "why_de": "Sendet optional einen auf etwa 1 km gerundeten Handy-Standort an deinen eigenen Daemon für das Tagesstart-Wetter. Die App speichert ihn nicht."
     }
   ],
-  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/quiet-hub/README.md",
-  "screenshot": "release/quiet-hub/screenshot.png"
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/quiet-hub/docs/PRIVACY.md",
+  "screenshot": "apps/quiet-hub/store/screenshot.png"
 }

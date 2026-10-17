@@ -49,11 +49,12 @@ describe("QIS v1.2 #3: armed side-menu items", () => {
 });
 
 describe("QIS v1.2 #2 / stale texts", () => {
-  it("the phone describes 2× as asking first, with captions running until the exit is confirmed", () => {
-    expect(messages.de["p.doubleDo"]).not.toMatch(/Stoppt nie Untertitel/);
-    expect(messages.de["p.doubleDo"]).toMatch(/bestätigst/);
-    expect(messages.en["p.doubleDo"]).not.toMatch(/Never stops captions/);
-    expect(messages.en["p.doubleDo"]).toMatch(/confirm/);
+  it("1.0.0: nothing on the glasses or the phone promises a hold, or help on the glasses", () => {
+    for (const locale of ["de", "en"] as const) {
+      for (const [key, text] of Object.entries(messages[locale])) {
+        if (key.startsWith("g.f.") || key.startsWith("g.start.") || key.startsWith("g.run.")) expect(text, key).not.toMatch(/Halten|Hold/);
+      }
+    }
   });
 
   it("no glasses or phone text offers help on a swipe or on a plain hold", () => {
@@ -61,7 +62,6 @@ describe("QIS v1.2 #2 / stale texts", () => {
       for (const [key, text] of Object.entries(messages[locale])) {
         expect(text, key).not.toMatch(/Wischen = Hilfe|Swipe = help|runter = Hilfe|down = help/);
       }
-      expect(messages[locale]["p.holdDo"]).not.toMatch(/Sonst: Hilfe\.|Otherwise: help\./);
     }
   });
 });

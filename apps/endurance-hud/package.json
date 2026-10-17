@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/endurance-hud",
-  "version": "0.5.2",
+  "version": "0.5.6",
   "description": "Quietglass Endurance HUD — Live run and bike metrics from Garmin or any telemetry source",
   "author": "Quietglass",
   "license": "MIT",

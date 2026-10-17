@@ -1,2 +1,2 @@
-Turn-by-turn navigation on OpenStreetMap.
-Navigation mit OpenStreetMap auf der Brille.
+Turn-by-turn navigation with a clear pixel arrow.
+Abbiegehinweise mit einem klaren Pixelpfeil.

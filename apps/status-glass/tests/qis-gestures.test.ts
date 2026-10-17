@@ -1,62 +1,19 @@
-import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CLICK, DOUBLE_TAP, FakeRoot, HOLD, SCROLL_DOWN, SCROLL_UP, fakeBridge } from "./fake-bridge";
 
-// QIS v1 on the real app against a fake bridge: the menu arms before it runs, 2x goes back.
+// QIS v1 on the real app against a fake bridge: the actions arm before they run, 2x goes back, hold does nothing.
 const harness = vi.hoisted(() => ({ bridge: null as unknown }));
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
 
-class FakeRoot {
-  innerHTML = "";
-  querySelector(): { value: string; checked: boolean; addEventListener(): void } {
-    return { value: "", checked: false, addEventListener: () => undefined };
-  }
-  querySelectorAll(): never[] { return []; }
-}
-
-function fakeBridge(sources: { id: string; name: string; url: string }[] = [{ id: "s1", name: "nas", url: "https://nas.test/status" }]) {
-  let onEvent: ((event: unknown) => void) | undefined;
-  const state = { shutdowns: 0, body: "", footer: "" };
-  const record = (id: number | undefined, content: string | undefined): void => {
-    if (id === 2) state.body = content ?? "";
-    if (id === 3) state.footer = content ?? "";
-  };
-  const pages: { menuObject?: { menuItems?: { itemName?: string; itemID?: number }[] } }[] = [];
-  const page = async (p: { textObject?: { containerID?: number; content?: string }[] }): Promise<boolean> => {
-    for (const text of p.textObject ?? []) record(text.containerID, text.content);
-    return true;
-  };
-  const bridge = {
-    getLocalStorage: async (key: string) => key === "quietglass.statusglass.ui.v1" ? "" : JSON.stringify({ sources, pollSeconds: 30, invertScroll: false }),
-    setLocalStorage: async () => true,
-    rebuildPageContainer: page,
-    createStartUpPageContainer: async (p: { textObject?: { containerID?: number; content?: string }[]; menuObject?: { menuItems?: { itemName?: string; itemID?: number }[] } }) => { pages.push(p); await page(p); return 0; },
-    updateImageRawData: async () => "success",
-    textContainerUpgrade: async (upgrade: { containerID?: number; content?: string }) => { record(upgrade.containerID, upgrade.content); return true; },
-    shutDownPageContainer: (): Promise<boolean> => { state.shutdowns += 1; return Promise.resolve(true); },
-    onEvenHubEvent: (callback: (event: unknown) => void) => { onEvent = callback; return () => undefined; },
-    onDeviceStatusChanged: () => () => undefined,
-  };
-  return {
-    bridge, state, pages,
-    menu: (itemID: number) => { resetGestureDedupe(); onEvent?.({ menuItemClickEvent: { itemID } }); },
-    ready: () => onEvent !== undefined,
-    gesture: (eventType: number) => { resetGestureDedupe(); onEvent?.({ sysEvent: { eventType, eventSource: 1 } }); },
-  };
-}
-
-const CLICK = 0;
-const SCROLL_UP = 1;
-const SCROLL_DOWN = 2;
-const DOUBLE_TAP = 3;
-const HOLD = 9;
 const REPORT = {
   name: "nas",
   metrics: [{ id: "cpu", label: "CPU", value: 10, unit: "%", warn: 85, critical: 95 }],
   actions: [{ id: "door", label: "Lock door", confirm: true }],
 };
+const FAKE_TIMERS: { toFake: ("setTimeout" | "clearTimeout" | "setInterval" | "clearInterval")[] } = { toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] };
 
 describe("QIS v1: actions are armed, 2× goes back", () => {
   let replies: ((body: unknown) => void)[];
@@ -86,7 +43,8 @@ describe("QIS v1: actions are armed, 2× goes back", () => {
     vi.restoreAllMocks();
   });
 
-  async function openMenu(): Promise<ReturnType<typeof fakeBridge>> {
+  /** Boots, lets the source answer, and opens the actions page from the start page. */
+  async function openActions(): Promise<ReturnType<typeof fakeBridge>> {
     const fake = fakeBridge();
     harness.bridge = fake.bridge;
     vi.resetModules();
@@ -94,40 +52,58 @@ describe("QIS v1: actions are armed, 2× goes back", () => {
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.(REPORT);
-    await vi.waitFor(() => expect(fake.state.body).toContain("nas"));
-    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Actions"));
+    expect(fake.state.body.split("\n")).toEqual(["● nas", "  Actions"]);
+    fake.gesture(SCROLL_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("● Actions"));
+    fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.body).toContain("nas Lock door"));
     return fake;
   }
 
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 30));
 
-  it("2× in the menu goes back to the overview and never leaves the app", async () => {
-    const fake = await openMenu();
+  it("the start page offers at most three entries: overview, problems, actions", async () => {
+    const fake = await openActions();
+    expect(fake.state.header).toBe("Actions · ● live");
+    fake.gesture(DOUBLE_TAP);
+    await vi.waitFor(() => expect(fake.state.header).toBe("Status · ● live"));
+    expect(fake.state.body.split("\n").length).toBeLessThanOrEqual(3);
+  });
+
+  it("2× on the actions page goes back to the start page and never leaves the app", async () => {
+    const fake = await openActions();
     fake.gesture(DOUBLE_TAP);
     await vi.waitFor(() => expect(fake.state.footer).toContain("exit"));
     expect(fake.state.shutdowns).toBe(0);
     expect(actionPosts).toBe(0);
   });
 
-  it("hold in the menu does nothing", async () => {
-    const fake = await openMenu();
+  it("hold does nothing, on the actions page and on the start page", async () => {
+    const fake = await openActions();
     fake.gesture(HOLD);
     await settle();
     expect(fake.state.body).toContain("nas Lock door");
     expect(actionPosts).toBe(0);
+    fake.gesture(DOUBLE_TAP);
+    // The footer is written last: once it says "exit" the start page is complete.
+    await vi.waitFor(() => expect(fake.state.footer).toContain("exit"));
+    const body = fake.state.body;
+    fake.gesture(HOLD);
+    await settle();
+    expect(fake.state.body).toBe(body);
+    expect(fake.state.shutdowns).toBe(0);
   });
 
   it("the first tap only arms, a swipe cancels, the second single tap runs", async () => {
-    const fake = await openMenu();
+    const fake = await openActions();
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.footer).toBe("Tap again = run · Swipe/2× = cancel"));
     expect(actionPosts).toBe(0);
 
     fake.gesture(SCROLL_DOWN);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Tap = open · Swipe = list · 2× = back"));
-    fake.gesture(SCROLL_UP);
     await vi.waitFor(() => expect(fake.state.footer).toBe("Tap = choose · Swipe = list · 2× = back"));
+    fake.gesture(SCROLL_UP);
     expect(actionPosts).toBe(0);
 
     fake.gesture(CLICK);
@@ -137,8 +113,8 @@ describe("QIS v1: actions are armed, 2× goes back", () => {
   });
 
   it("an armed action lapses after 4 s, and 2× cancels it without leaving", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
-    const fake = await openMenu();
+    vi.useFakeTimers({ ...FAKE_TIMERS });
+    const fake = await openActions();
     fake.gesture(CLICK);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.state.footer).toBe("Tap again = run · Swipe/2× = cancel");
@@ -154,27 +130,10 @@ describe("QIS v1: actions are armed, 2× goes back", () => {
     expect(actionPosts).toBe(0);
   });
 
-  it("the actions list ends with refresh and a help row; a tap on it opens the help, 2× goes back to the actions", async () => {
-    const fake = await openMenu();
-    fake.gesture(SCROLL_DOWN); // refresh
-    fake.gesture(SCROLL_DOWN); // help
-    await vi.waitFor(() => expect(fake.state.body).toContain("> " + "  Help"));
-    fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("2× = back"));
-    expect(fake.state.body).toContain("Hold: menu (actions, help) · details: seen");
-    fake.gesture(CLICK);
-    await settle();
-    expect(fake.state.footer).toBe("2× = back");
-    fake.gesture(DOUBLE_TAP);
-    await vi.waitFor(() => expect(fake.state.body).toContain("nas Lock door"));
-    expect(fake.state.shutdowns).toBe(0);
-    expect(actionPosts).toBe(0);
-  });
-
   it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
-    const fake = await openMenu();
-    expect(fake.pages.length).toBeGreaterThan(0);
-    for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
+    const fake = await openActions();
+    expect(fake.state.pages.length).toBeGreaterThan(0);
+    for (const page of fake.state.pages) expect(page.menuObject).toBeUndefined();
   });
 });
 
@@ -197,7 +156,7 @@ describe("QIS v1.2: marking a problem as seen is armed", () => {
   const PROBLEM = { name: "nas", metrics: [{ id: "disk", label: "Disk", value: 97, unit: "%", warn: 85, critical: 95 }] };
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 30));
 
-  async function overview(): Promise<ReturnType<typeof fakeBridge>> {
+  async function problemList(): Promise<ReturnType<typeof fakeBridge>> {
     const fake = fakeBridge();
     harness.bridge = fake.bridge;
     vi.resetModules();
@@ -205,12 +164,16 @@ describe("QIS v1.2: marking a problem as seen is armed", () => {
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     replies[0]?.(PROBLEM);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Problems · 1"));
+    fake.gesture(SCROLL_DOWN);
+    fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.body).toContain("nas Disk 97%"));
     return fake;
   }
 
   it("the first tap only asks; the second tap within 4 s acknowledges", async () => {
-    const fake = await overview();
+    const fake = await problemList();
+    expect(fake.state.footer).toBe("Tap = seen · Swipe = list · 2× = back");
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.footer).toBe("Tap again = seen · Swipe/2× = cancel"));
     expect(fake.state.body).not.toContain("(ack)");
@@ -219,28 +182,31 @@ describe("QIS v1.2: marking a problem as seen is armed", () => {
   });
 
   it("2× and a swipe cancel the question, and 2× does not leave the app", async () => {
-    const fake = await overview();
+    const fake = await problemList();
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
     fake.gesture(DOUBLE_TAP);
     await vi.waitFor(() => expect(fake.state.footer).toContain("exit"));
     expect(fake.state.shutdowns).toBe(0);
+    fake.gesture(SCROLL_DOWN); // to Problems again
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.header).toBe("Problems · ● live"));
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.footer).toContain("Tap again"));
     fake.gesture(SCROLL_DOWN);
-    await vi.waitFor(() => expect(fake.state.footer).toContain("exit"));
+    await vi.waitFor(() => expect(fake.state.footer).toBe("Tap = seen · Swipe = list · 2× = back"));
     await settle();
     expect(fake.state.body).not.toContain("(ack)");
   });
 
   it("the question lapses after 4 s", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
-    const fake = await overview();
+    vi.useFakeTimers({ ...FAKE_TIMERS });
+    const fake = await problemList();
     fake.gesture(CLICK);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.state.footer).toBe("Tap again = seen · Swipe/2× = cancel");
     await vi.advanceTimersByTimeAsync(4100);
-    expect(fake.state.footer).toContain("exit");
+    expect(fake.state.footer).toBe("Tap = seen · Swipe = list · 2× = back");
     fake.gesture(CLICK); // a new question, not a confirmation
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.state.body).not.toContain("(ack)");
@@ -265,8 +231,25 @@ describe("QIS v1.2: first start is a demo", () => {
     await import("../src/main");
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
     await vi.waitFor(() => expect(fake.state.body).toContain("Demo · set up the connection on the phone"));
-    expect(fake.state.body).toContain("Front door unlocked");
+    expect(fake.state.header).toBe("Status · Demo");
+    // Four sample servers, one problem, one action offered: the servers hang under the overview, the rest scrolls.
+    expect(fake.state.body.split("\n")).toEqual([
+      "● All servers · 3/4 ok", "    Spark · ok", "    Pi5 · ok", "    ns1 · warning", "Demo · set up the connection on the phone",
+    ]);
     expect(fake.state.body).not.toContain("No sources configured.");
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("the sample opens as a cockpit too, and the demo never writes sources", async () => {
+    const fake = fakeBridge([]);
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    await vi.waitFor(() => expect(fake.state.body).toContain("All servers"));
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.kind).toBe("cockpit"));
+    await vi.waitFor(() => expect(fake.state.images).toBe(4));
+    expect(fake.kv.has("quietglass.statusglass.v1")).toBe(false);
   });
 });

@@ -37,6 +37,71 @@ const NAME_MAX = 20;
 // an inline pattern of "#" (lit) and "." (dark) rows.
 
 const APPS = {
+  "byd-glass": {
+    name: "BYD Glass",
+    tagline: ["Speed, battery, charging and tyres at a glance.", "Tempo, Akku, Laden und Reifen auf einen Blick."],
+    // A neutral side-view car, matching the vehicle pictogram in the app.
+    icon: [
+      "............",
+      "....####....",
+      "...######...",
+      ".##########.",
+      "############",
+      "##........##",
+      ".##..##..##.",
+      "..##....##..",
+    ],
+  },
+  "openglance-nav": {
+    name: "OpenGlance",
+    tagline: ["Turn-by-turn navigation with a clear pixel arrow.", "Abbiegehinweise mit einem klaren Pixelpfeil."],
+    icon: [
+      ".....####...",
+      "....#####...",
+      "...######...",
+      "..#######...",
+      ".###########",
+      "############",
+      ".###########",
+      "..#######...",
+      "...###......",
+      "...###......",
+      "...###......",
+      "...###......",
+    ],
+  },
+  "quiet-hub": {
+    name: "Quiet Hub",
+    tagline: ["Agents, home and printer in one calm dashboard.", "Agenten, Zuhause und Drucker in einer ruhigen Übersicht."],
+    icon: [
+      "#####.#####",
+      "#####.#####",
+      "#####.#####",
+      "#####.#####",
+      "...........",
+      "#####.#####",
+      "#####.#####",
+      "#####.#####",
+      "#####.#####",
+    ],
+  },
+  "shoot-day": {
+    name: "Shoot Day",
+    tagline: ["Takes, script, schedule and kit for a smooth shoot.", "Takes, Drehbuch, Zeitplan und Ausrüstung am Drehtag."],
+    icon: [
+      ".##..##..##.",
+      "##..##..##..",
+      "############",
+      "............",
+      "############",
+      "#..........#",
+      "#..######..#",
+      "#..#....#..#",
+      "#..######..#",
+      "#..........#",
+      "############",
+    ],
+  },
   "agent-glass": {
     name: "Agent Glass",
     tagline: ["Watch and answer your coding agent from your glasses.", "Deinen Coding-Agenten auf der Brille verfolgen und steuern."],
@@ -73,7 +138,7 @@ const APPS = {
   cadence: {
     name: "Cadence",
     tagline: ["A visual metronome and practice log for musicians.", "Visuelles Metronom und Übungsprotokoll für Musiker."],
-    icon: { file: "src/main.ts", name: "PIXEL_ICON" },
+    icon: { file: "src/main.ts", name: "METRONOME_SIGN" },
   },
   "decibel-guard": {
     name: "DecibelGuard",
@@ -561,8 +626,8 @@ regenerate rather than editing these files.
 | \`background.png\` | ${options.bg[0]}×${options.bg[1]} | Greyscale, name and tagline |
 | \`tagline.txt\` | — | Line 1 English, line 2 German, each ≤ ${TAGLINE_MAX} characters |
 
-Screenshot: the simulator capture is kept at [\`../docs/screenshot.png\`](../docs/screenshot.png)
-and is not duplicated here.
+Screenshot: [\`screenshot.png\`](screenshot.png) is a direct 576×288 capture from
+the official Even Hub simulator.
 `;
 }
 

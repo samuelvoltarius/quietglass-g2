@@ -6,7 +6,7 @@ import { addSession, nextSessionId, type PracticeSession } from "./practice/log"
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { ARM_MS, buildView, type CadenceView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage, ICON_HEIGHT, ICON_WIDTH, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, updatePage, ICON_HEIGHT, ICON_WIDTH, type MenuSpec } from "./glasses/render";
 import { PENDULUM_MIDSWING_MAX_BPM, bpmFrame, pendulumFrame, pendulumSwing } from "./glasses/charts";
 import { bitmapKey, iconBitmap } from "./glasses/gfx";
 import { load, loadRunRaw, parseRun, RUN_RESUME_MS, save, saveRun, setSettings, type CadenceData } from "./storage/persist";
@@ -14,7 +14,7 @@ import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
-import { createExitRequest } from "./exit";
+import { createExitRequest, settleRestore } from "./exit";
 
 const METRONOME_SIGN = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
 
@@ -70,7 +70,11 @@ async function boot(): Promise<void> {
         : {}),
     });
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed || paused) return;
     const view = currentView();
     // Pictures are pure in (tempo) and (state, now); they are only sent when they differ from what is shown.
@@ -99,6 +103,7 @@ async function boot(): Promise<void> {
    * recorded as the last one shown. A request during a write redraws once after.
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -204,28 +209,44 @@ async function boot(): Promise<void> {
     void draw();
   };
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: its result never
+  // ends the session. If the user confirms, the system ends the app (sysEvent 6/7, handled below).
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => {
-      endSession();
-      state = createState();
-      persistRun();
-      closed = true;
-      clearTimeout(timer);
-      clearTimeout(midTimer);
-      clearInterval(tick);
-      disarm();
+    onBack: () => {
+      // The dialog took the page away. On the next input put it up again the way of the first one,
+      // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      lastFrames = "";
+      forgetPage(bridge);
+      return draw();
     },
   }, "cadence");
+  exitAsked = requestExit.asked;
 
   await draw();
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle !== "background" && lifecycle !== "exit") requestExit.back();
     if (lifecycle === "foreground") { paused = true; resume(); return; }
     if (lifecycle === "background") { persistRun(); paused = true; disarm(); stopTimers(); return; }
-    if (lifecycle === "exit") { persistRun(); closed = true; stopTimers(); return; }
+    if (lifecycle === "exit") {
+      // The system ends the app (the user confirmed the exit dialog): close the session like the dialog used to.
+      endSession();
+      state = createState();
+      persistRun();
+      closed = true;
+      stopTimers();
+      disarm();
+      return;
+    }
     // A gesture means the app is on the glasses again, even if no "foreground" came.
+    const wasPaused = paused;
     resume();
     // The side menu: Hilfe. It cancels a pending pause like any other input; the beat keeps running.
     const menuId = menuItemIdFromEvent(event);
@@ -296,7 +317,9 @@ async function boot(): Promise<void> {
         break;
       case "doubleClick":
         // Back one level; on the main screen it leaves: system exit dialog, the beat keeps running until the user confirms. It never pauses.
-        void requestExit();
+        // Coming back from the background with this very 2x: ask only after the restore draw (a dialog call while the page is being created is lost).
+        if (wasPaused) void settleRestore(draw()).then(() => requestExit());
+        else void requestExit();
         return;
       default:
         return;

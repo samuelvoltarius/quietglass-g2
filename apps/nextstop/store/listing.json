@@ -19,6 +19,11 @@
       "name": "location",
       "why_en": "Finds the stops near you and the next stop while you ride. Your position is sent only to the chosen service and never stored.",
       "why_de": "Findet Haltestellen in deiner Nähe und den nächsten Halt während der Fahrt. Die Position geht nur an den gewählten Dienst und wird nie gespeichert."
+    },
+    {
+      "name": "g2-microphone",
+      "why_en": "Optionally records a destination only while you hold the touchpad. Audio goes only to the speech-to-text server you configured and is not stored.",
+      "why_de": "Nimmt optional ein Ziel nur auf, solange du das Touchpad hältst. Audio geht nur an deinen eingerichteten Spracherkennungsserver und wird nicht gespeichert."
     }
   ],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/nextstop/docs/PRIVACY.md",

@@ -621,7 +621,7 @@ describe("QIS phone tabs and the swipe-direction switch", () => {
   });
 
   it("the version is the one of this release", () => {
-    expect(VERSION).toBe("0.7.2");
+    expect(VERSION).toBe("0.7.6");
   });
 });
 

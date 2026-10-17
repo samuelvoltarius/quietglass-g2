@@ -7,18 +7,20 @@
 ## Kurz auf Deutsch
 
 Status Glass zeigt dir auf der G2, ob bei deinen Geräten und Diensten zu Hause
-alles läuft – NAS, Server, Home Assistant. Ist alles in Ordnung, siehst du nur
-eine Zeile. Gibt es ein Problem, steht das Wichtigste ganz oben.
+alles läuft – NAS, Server, Home Assistant. Keine Textwand: die Übersicht ist ein
+**Bild** mit einem Ring (ein Bogen je Server), **einer** Überschrift („ALLES OK“,
+„1 PROBLEM“) und sechs Werten (CPU, RAM, Disk …).
 
-1. Auf der Handy-Seite eine Quelle hinzufügen (Name und Adresse).
-2. Brille aufsetzen: **Tippen** markiert ein Problem als gesehen, **Wischen**
-   blättert, **Halten** öffnet das Menü (Aktionen wie „Licht aus“, neu laden,
-   Hilfe), **2×** beendet die App (im Menü: eine Ebene zurück).
-3. Mit mehreren Rechnern zeigt die Übersicht je Rechner CPU, RAM, die vollste
-   Platte und die Temperatur; die schlimmste Warnung (z. B. fehlgeschlagene
-   Dienste, Platte über 90 %) steht oben. **Tippen** öffnet die Details eines
-   Rechners mit allen Werten und Verlaufskurven, **Wischen** blättert dort,
-   **Halten** markiert seine Probleme als gesehen, **2×** führt zurück.
+1. Auf der Handy-Seite (Tab *Einstellungen*) eine Quelle hinzufügen (Name und
+   Adresse). Ohne Quelle läuft eine Demo mit Beispieldaten.
+2. Brille aufsetzen. Die **Startseite** hat höchstens drei Einträge: *Alle
+   Server* (mit den einzelnen Servern eingerückt darunter), *Probleme* (nur wenn
+   etwas nicht stimmt) und *Aktionen* (nur wenn eine Quelle welche anbietet).
+   **Wischen** wählt, **Tippen** öffnet, **2×** beendet (nach Rückfrage).
+3. Im Cockpit-Bild: **Wischen** wechselt zwischen Übersicht und Servern,
+   **Tippen** fragt alle Quellen neu ab, **2×** geht zurück. In *Probleme*
+   markiert Tippen das Problem vor, nochmal Tippen (innerhalb von 4 s) = gesehen.
+   In *Aktionen* gilt dasselbe für das Ausführen.
 
 **Heimnetz-Wächter (neu in 0.9):** Startest du den Beispiel-Server mit
 `STATUS_NETWATCH=1`, meldet er die Geräte in deinem eigenen Heimnetz – passiv,
@@ -73,23 +75,32 @@ function and point the app at it.
 
 ## What you see
 
-**Everything healthy:**
+The overview and every server are drawn as one **picture** over the whole display
+(QUS v1, the Rain Lens cockpit): on the left a ring with one arc per server (or CPU,
+RAM and disk bars for one server), on the right a small head `STATUS 14:05`, **one**
+headline and a grid of six figures. Only the image tiles that changed cross Bluetooth.
 
 ```
-4 of 4 ok
-                                                    all ok
+ ring: one arc per server        STATUS                            14:05
+ "3/4" inside                    1 PROBLEM
+                                 OK       WARN      OFFLINE
+                                 3        1         0
+                                 CPU MAX  RAM MAX   DISK MAX
+ Stand 14:05                     36%      54%       93%
+ Tippen = neu laden · Wischen = Server · 2× = zurück
 ```
 
-**Something wrong:**
+The start page, the problem list and the actions are short text pages with the
+header `Title · ● live` and one footer line:
 
 ```
-CRITICAL  3
+Probleme · ● live
 
-> ! nas Disk 99%
-  · nas RAM 85%
-  ? pi unreachable
+●  ! nas Disk 99%
+   · nas RAM 85%
+   ? pi unreachable
 
-+1 more  ·  tap = acknowledge
+Tippen = gesehen · Wischen = Liste · 2× = zurück
 ```
 
 Worst first. Acknowledged problems sink to the bottom with `(ack)` — **they are
@@ -112,20 +123,19 @@ matters most.
 ## Controlling things, not just watching them
 
 A source can offer **actions** — toggle a light, run a scene, restart a
-service. They live on a **separate screen**, reached by holding the temple pad,
+service. They live on their **own page** (start page entry *Aktionen*),
 because monitoring is something you glance at and switching your lights is
 something you do deliberately. A stray tap on the dashboard can never trigger
 anything.
 
 ```
-STATUS · Actions
+Aktionen · ● live
 
-> ! home Everything off
+● ! home Everything off
     home Kitchen light
     nas  Restart media server
-    Refresh every source
 
-Tap = choose · Swipe = list · 2× = back
+Tippen = wählen · Wischen = Liste · 2× = zurück
 ```
 
 Every action is **armed first** (QIS v1): the first tap shows
@@ -169,21 +179,18 @@ against a stand-in Home Assistant, including both refusal paths.
 
 ## Controls
 
-| Gesture | Status screen | Actions screen |
-|---|---|---|
-| **Tap** | Ask to acknowledge the highlighted problem; a second tap within 4 s does it | Arm the action; a second tap within 4 s runs it |
-| **Swipe** | Move through the problem list | Move through the actions |
-| **Hold** | Open the menu: actions, refresh, help | — |
-| **2×** | Leave Status Glass (cancels a pending "seen" first) | Back to status (never leaves the app) |
+| Gesture | Start page | Cockpit (overview / one server) | Problems | Actions |
+|---|---|---|---|---|
+| **Tap** | Open the entry | Ask every source again | Ask to acknowledge; a second tap within 4 s does it | Arm the action; a second tap within 4 s runs it |
+| **Swipe** | Choose an entry | Overview, server 1, server 2 … | Move through the list | Move through the actions |
+| **Hold** | — | — | — | — |
+| **2×** | Leave Status Glass (system dialog) | Back to the start page | Back (cancels a pending "seen") | Back (cancels a pending action) |
 
-The glasses' side menu (Help · Actions · Refresh) is off (`SIDE_MENU = false`): its clicks do not arrive on the real glasses (step log 15.10.2026), so help and refresh are rows of the actions list.
+The start page has at most three entries (*Alle Server*, *Probleme*, *Aktionen*); with two or more
+servers they hang indented under *Alle Server*. Hold does nothing: it can never run, cancel or leave anything.
 
-With two or more sources the status screen is an overview of machines: one row
-each with light, name, CPU line and the key figures (CPU, RAM, fullest disk,
-temperature), the worst unseen warning in the header. There **tap** opens the
-highlighted machine in detail (every value, warnings first, CPU/RAM/GPU or
-temperature sparklines), **swipe** turns its pages, **hold** asks to acknowledge its
-problems (one tap within 4 s confirms) and **2×** goes back to the overview.
+The glasses' side menu is off (`SIDE_MENU = false`): its clicks do not arrive on the real glasses
+(step log 15.10.2026), so every page is reached by swipe and tap.
 
 ## Polling and failure
 

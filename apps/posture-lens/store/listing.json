@@ -11,5 +11,5 @@
   ],
   "permissions": [],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/posture-lens/docs/PRIVACY.md",
-  "screenshot": "release/posture-lens/screenshot.png"
+  "screenshot": "apps/posture-lens/store/screenshot.png"
 }

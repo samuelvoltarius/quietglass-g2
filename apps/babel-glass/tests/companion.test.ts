@@ -195,22 +195,21 @@ describe("glasses view (companion)", () => {
     expect(buildView(buffer, { ...base, speakers: false }).body[0]).toBe("Guten Morgen");
   });
 
-  it("shows the microphone, what is active and the time in the header", () => {
+  it("1.0.0: the header holds the mode and the state, nothing else (no helper list, no clock)", () => {
     const now = new Date(2026, 9, 13, 14, 5).getTime();
-    expect(buildView(createBuffer(), { ...base, now }).header).toBe("BABEL · ● MIKRO · 14:05");
-    expect(buildView(createBuffer(), { ...base, now, active: { pair: "RU→DE", speakers: true, replies: true } }).header)
-      // The app name takes room: the clock goes first, the microphone and the pair stay.
-      .toBe("BABEL · ● MIKRO · RU→DE · A/B · Antworten");
+    expect(buildView(createBuffer(), { ...base, now }).header).toBe("BABEL · ● live");
+    expect(buildView(createBuffer(), { ...base, now, modeLabel: "Übersetzen" }).header).toBe("Übersetzen · ● live");
+    expect(buildView(createBuffer(), { ...base, now, modeLabel: "Englisch sprechen", mock: true }).header).toBe("Englisch sprechen · ● live · DEMO");
   });
 
   it("puts an explanation above the newest captions", () => {
     const buffer = applyTranscript(createBuffer(), { text: "Was ist JAZ?", final: true, speaker: "A" }, 0);
     const view = buildView(buffer, { ...base, speakers: true, popup: { term: "JAZ", info: "Jahresarbeitszahl einer Wärmepumpe." } });
-    expect(view.header.startsWith("BABEL · ● MIKRO")).toBe(true);
+    expect(view.header.startsWith("BABEL · ● live")).toBe(true);
     expect(view.body[0]).toBe("Info: JAZ");
     expect(view.body).toContain("A: Was ist JAZ?");
     expect(view.body.length).toBeLessThanOrEqual(7);
-    expect(view.footer).toBe("Tippen = schließen · 2× = zurück");
+    expect(view.footer).toBe("Tippen: schließen");
   });
 
   it("shows the short summary after stopping", () => {

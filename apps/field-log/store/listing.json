@@ -22,5 +22,5 @@
     }
   ],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/field-log/docs/PRIVACY.md",
-  "screenshot": "release/field-log/screenshot.png"
+  "screenshot": "apps/field-log/store/screenshot.png"
 }

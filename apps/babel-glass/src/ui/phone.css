@@ -157,7 +157,7 @@ body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 @keyframes tab-in { from { opacity: 0; transform: translateY(4px); } }
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(3, 1fr);
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -165,7 +165,7 @@ body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 }
 .tabbar button {
   all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 6px 0; border-radius: 10px; font-size: 12px; color: var(--muted);
+  min-height: 48px; padding: 6px 0; border-radius: 10px; font-size: 12px; color: var(--muted);
 }
 .tabbar button span { font-size: 20px; line-height: 1; filter: grayscale(1); opacity: 0.7; }
 .tabbar button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -188,3 +188,53 @@ button.small { padding: 4px 10px; font-size: 12px; margin-top: 6px; }
 .overview input { margin: 0; }
 .line small.own { font-size: 15px; font-weight: 600; }
 .line small.reply { font-style: italic; }
+
+/* ---- 1.0.0: three tabs, big targets, calm cards ---- */
+button, select, input[type="text"], input[type="password"] { min-height: 44px; }
+label.check { min-height: 44px; }
+.card h2 { font-size: 17px; }
+
+/* Jetzt: state, the three modes, the customer */
+.state { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.state .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.state.live .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+.tag {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); font-weight: 400;
+}
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.modes button { margin: 0; padding: 12px 6px; font-size: 14px; line-height: 1.25; min-height: 56px; }
+.modes button.secondary { margin-right: 0; }
+#now select { margin-top: 2px; }
+
+/* Meine Stimme */
+button.big { display: block; width: 100%; margin: 14px 0 0; padding: 16px; font-size: 17px; min-height: 56px; }
+#voice button.secondary { display: block; width: 100%; margin: 10px 0 0; }
+.progress { margin: 8px 0; font-weight: 600; }
+p.ok { color: var(--accent); margin: 8px 0; }
+p.warn { color: #e0a33e; margin: 8px 0; }
+
+/* First-run checklist */
+.card.setup { border-color: var(--accent); }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: none; }
+.steps li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.steps li:last-child { border-bottom: 0; }
+.steps .num {
+  flex: none; width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 14px; font-weight: 600;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.steps li.done { color: var(--muted); }
+.steps li.done .num { background: var(--accent); border-color: var(--accent); color: #0b1f14; }
+
+/* Folded cards (server, memory, options, display) */
+details.fold > summary {
+  cursor: pointer; list-style: none; min-height: 44px; display: flex; align-items: center; gap: 10px; font-size: 16px;
+}
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::after { content: "›"; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
+details.fold[open] > summary::after { transform: rotate(90deg); }
+
+/* Meine Wörter */
+.count { margin: 0 0 8px; font-size: 14px; color: var(--muted); }
+#words ul.memory li { padding: 12px 0; }

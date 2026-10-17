@@ -5,7 +5,6 @@ import type { SttStatus } from "../stt/provider";
 import { transliterate } from "../text/translit";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import type { ActiveHelpers } from "../companion/overview";
 import { armedFooter, footer as gestureFooter, menuArmedFooter, ROW_WIDTH } from "./footer";
 import { SIDE_MENU, type MenuArmed } from "../input/menu-confirm";
 
@@ -85,8 +84,6 @@ export interface ViewOptions {
   readonly now?: number;
   /** A short explanation (or, kind "word", the Wortfinder result) shown on top of the captions. */
   readonly popup?: ViewPopup | null;
-  /** Holding finds a word (0.4.0): the footer says so while captions run. */
-  readonly wordFinder?: boolean;
   /** End-of-conversation summary (shown while not listening). */
   readonly summary?: SummaryState | null;
   /** Page of a finished summary that is longer than one screen (0 = first). */
@@ -103,8 +100,6 @@ export interface ViewOptions {
    * "restart" = Kunde wechseln / Modus / Personen while captions run). The footer says what the second click does.
    */
   readonly menuArmed?: MenuArmed | null;
-  /** 0.5.0: what is active, for the compact header line while listening. */
-  readonly active?: ActiveHelpers;
   /**
    * 0.5.0: the help screen ("what runs when"), already as rows, and the page shown.
    * 0.6.2: also the "Kunde" page (`title` = header label); the view appends the end row.
@@ -114,13 +109,13 @@ export interface ViewOptions {
     /** 0.6.3 (Kunde page): what a tap on the first page does (the mode row); a one-page sheet's end row then says 2× = schließen. */
     readonly tapLabel?: string;
   } | null;
-  /** 0.6.3: the mode name for the idle header ("BABEL · Mikro aus · Kundengespräch"). */
-  readonly talkModeLabel?: string | null;
+  /** 1.0.0: the mode's name, first part of the running header ("Übersetzen · ● live"). */
+  readonly modeLabel?: string | null;
   /**
-   * 0.7.0: the start screen is the customer list (rows already marked "> " at the cursor).
-   * Shown whenever captions are stopped and no notice, summary or help is on screen (0.8.1: also when absent, then empty).
+   * 1.0.0: the start screen (rows already marked "> " at the cursor, see glasses/start.ts).
+   * Shown whenever captions are stopped and no notice, summary or help is on screen.
    */
-  readonly picker?: { readonly rows: readonly string[] } | null;
+  readonly start?: { readonly rows: readonly string[] } | null;
 }
 
 /** A paged popup's rows with the closing row ("— Ende · Tippen = schließen —") at the very end. */
@@ -253,23 +248,21 @@ function composeView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
 
   if (!listeningNow) {
     const mark = options.mock ? [x("g.mock")] : [];
-    // 0.6.3: stopped, the header names the mode ("BABEL · Kundengespräch").
-    // "Mikro aus" stays first: the microphone state is never hidden behind the mode.
-    const idleHead = (): string => clip(head(x("g.s.off"), ...(options.talkModeLabel ? [options.talkModeLabel] : []), ...mark), GLASS_COLS);
+    // "Mikro aus" stays: the microphone state is never hidden.
+    const idleHead = (): string => clip(head(x("g.s.off"), ...mark), GLASS_COLS);
     if (options.notice) {
       return {
         header: idleHead(),
         body: [...noticeLines(options.notice, options.locale), "", x("g.tapToStart")],
-        footer: gestureFooter(options.locale, { tap: x("g.a.start") }, "exit"),
+        footer: gestureFooter(options.locale, { tap: x("g.a.more") }, "exit"),
       };
     }
     if (options.summary) return summaryView(options.summary, options);
-    // 0.7.0: "BABEL · Kunde wählen"; swipe moves the cursor, tap starts with that row. Help lives in the side menu.
-    // 0.8.1: the start screen is always this list (the old swipe-for-help idle screen could no longer be reached and was removed).
+    // 1.0.0: three entries (Übersetzen, Englisch sprechen, Gespräch), customers under "Gespräch".
     return {
-      header: clip(head(x("g.s.pick"), ...mark), GLASS_COLS),
-      body: (options.picker?.rows ?? []).slice(0, BODY_ROWS),
-      footer: SIDE_MENU ? x("g.f.pick") : gestureFooter(options.locale, { tap: x("g.a.start"), swipe: x("g.a.choose"), hold: x("g.a.help") }, "exit"),
+      header: idleHead(),
+      body: (options.start?.rows ?? []).slice(0, BODY_ROWS),
+      footer: x("g.f.start"),
     };
   }
 
@@ -297,11 +290,12 @@ function composeView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
 
   if (body.length === 0) body.push(statusLabel(options.status, options.locale));
 
+  const history = !isFollowingLive(buffer, preset.rows, options.offset);
   const header = liveHeader({
-    locale: options.locale, status: options.status, ...(options.active ? { active: options.active } : {}),
-    ...(options.now === undefined ? {} : { now: options.now }), mock: options.mock, translating: options.translating,
+    locale: options.locale, status: options.status, modeLabel: options.modeLabel ?? "",
+    mock: options.mock, translating: options.translating,
     ...(options.translateError ? { translateError: options.translateError } : {}),
-    history: !isFollowingLive(buffer, preset.rows, options.offset), armedStop: armed === "stop",
+    history, armedStop: armed === "stop",
   });
 
   if (options.popup) {
@@ -313,7 +307,7 @@ function composeView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
     return {
       header,
       body: room >= 1 ? [...rows, "—".repeat(26), ...body.slice(-room)] : rows.slice(0, BODY_ROWS),
-      footer: armed === "stop" ? armedFooter(options.locale, x("g.a.stopLong")) : gestureFooter(options.locale, { tap: x("g.a.close") }, "back"),
+      footer: armed === "stop" ? armedFooter(options.locale, x("g.a.stopLong")) : x("g.f.popup"),
     };
   }
 
@@ -322,28 +316,30 @@ function composeView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
     // Keep the newest lines: the body clips at the bottom, so sending more
     // than BODY_ROWS would hide exactly the caption being spoken right now.
     body: body.slice(-Math.min(preset.rows * 2, BODY_ROWS)),
-    footer: armed === "stop" ? armedFooter(options.locale, x("g.a.stopLong")) : liveFooter(options),
+    footer: armed === "stop" ? armedFooter(options.locale, x("g.a.stopLong")) : x(history ? "g.f.runHistory" : "g.f.run"),
   };
 }
 
 /**
- * The header while listening: "BABEL · ● MIKRO · RU→DE · A/B · Antworten · Gedächtnis".
- * Only what is active; when it does not fit, the least important parts go
- * first (clock, info, memory …) — the app name and the microphone always stay.
- * The header also carries what used to crowd the footer: demo marker,
- * translation error, history marker, and the armed "Stopp?".
+ * The header while listening (1.0.0): "Übersetzen · ● live". Mode name and state only; what
+ * else the glasses must not hide stays: the demo marker, a translation error, the armed "Stopp?".
+ * When it does not fit, the least important parts go first — the mode and the state always stay.
  */
-export function liveHeader(options: Pick<ViewOptions, "locale" | "status" | "active" | "now"> & Partial<Pick<ViewOptions, "mock" | "translating" | "translateError">> & {
+export function liveHeader(options: Pick<ViewOptions, "locale" | "status"> & Partial<Pick<ViewOptions, "mock" | "translating" | "translateError">> & {
+  readonly modeLabel?: string;
   readonly history?: boolean;
   readonly armedStop?: boolean;
 }): string {
   const x = (key: string): string => t(options.locale, key);
-  const a = options.active ?? {};
-  const parts: Array<{ text: string; keep: number }> = [{ text: NAME, keep: 1000 }, { text: x("g.mic"), keep: 100 }];
+  const parts: Array<{ text: string; keep: number }> = [
+    { text: options.modeLabel || NAME, keep: 1000 },
+    { text: runStatus(options.status, options.locale), keep: 100 },
+  ];
   if (options.armedStop) parts.push({ text: x("g.s.stopAsk"), keep: 95 });
-  // The demo marker and the connection state are never traded for anything below them.
+  // Scrolled back: the view stands still, the microphone does not (its "●" stays in the state part).
+  if (options.history) parts.push({ text: x("g.run.history"), keep: 90 });
+  // The demo marker is never traded for anything below it.
   if (options.mock) parts.push({ text: x("g.mock"), keep: 92 });
-  if (options.status !== "ready") parts.push({ text: statusLabel(options.status, options.locale), keep: 90 });
   if (options.translating && options.translateError) {
     // The error gets whatever room the fixed parts leave, shortened rather than dropped.
     const room = GLASS_COLS - length(parts.map((part) => part.text).join(SEP) + SEP);
@@ -351,15 +347,6 @@ export function liveHeader(options: Pick<ViewOptions, "locale" | "status" | "act
       parts.push({ text: clip(t(options.locale, "g.translateError", { error: translateErrorLabel(options.translateError, options.locale) }), room), keep: 85 });
     }
   }
-  if (a.pair) parts.push({ text: a.pair, keep: 80 });
-  if (a.speakers) parts.push({ text: x("g.st.speakers"), keep: 50 });
-  if (a.replies) parts.push({ text: x("g.st.replies"), keep: 60 });
-  if (a.own) parts.push({ text: x("g.st.own"), keep: 70 });
-  if (options.history) parts.push({ text: x("g.history"), keep: 45 });
-  if (a.info) parts.push({ text: x("g.st.info"), keep: 30 });
-  if (a.memory) parts.push({ text: x("g.st.memory"), keep: 40 });
-  const time = clock(options.now);
-  if (time) parts.push({ text: time, keep: 20 });
   const text = (): string => parts.map((part) => part.text).join(SEP);
   while (length(text()) > GLASS_COLS && parts.length > 2) {
     let lowest = 2;
@@ -369,14 +356,10 @@ export function liveHeader(options: Pick<ViewOptions, "locale" | "status" | "act
   return text();
 }
 
-/** Captions running: Tippen = Stopp (armed first), Wischen = Verlauf, Halten = Wort, 2× = Ende. */
-function liveFooter(options: ViewOptions): string {
-  const x = (key: string): string => t(options.locale, key);
-  return gestureFooter(options.locale, {
-    tap: x("g.a.stop"),
-    swipe: x("g.a.history"),
-    ...(options.wordFinder ? { hold: x("g.a.word") } : {}),
-  }, "exit");
+/** The small state of the running screen: live, connecting or offline. The microphone is open in all three, so all carry the "●". */
+export function runStatus(status: SttStatus, locale: Locale): string {
+  if (status === "ready") return t(locale, "g.run.live");
+  return t(locale, status === "connecting" ? "g.run.connecting" : "g.run.offline");
 }
 
 /** Separator between the short and the detailed summary. */
@@ -405,8 +388,7 @@ function summaryView(summary: SummaryState, options: ViewOptions): CaptionView {
   const x = (key: string, vars: Record<string, string> = {}): string => t(options.locale, key, vars);
   const mark = options.mock ? [x("g.mock")] : [];
   const head = (...extra: string[]): string => [NAME, x("g.head.summary"), ...extra, ...mark].join(SEP);
-  // 0.7.0: no "Halten = Hilfe" while the help lives in the side menu; without it (SIDE_MENU off) the hold opens the help again.
-  const plainFooter = gestureFooter(options.locale, { tap: x("g.a.more"), ...(SIDE_MENU ? {} : { hold: x("g.a.help") }) }, "exit");
+  const plainFooter = gestureFooter(options.locale, { tap: x("g.a.more") }, "exit");
   if (summary.state === "working") {
     // Streaming: the text grows at the bottom, so the newest rows stay in view.
     const rows = summaryRows(summary.short ?? [], summary.long ?? []);

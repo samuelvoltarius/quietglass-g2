@@ -5,14 +5,14 @@ import { dispatch, dispatchMenu, MENU, type Armed, type DispatchResult } from ".
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, progressBarFor, type FlowView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendProgressBar, sendStepImage, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, sendProgressBar, sendStepImage, updatePage, type MenuSpec } from "./glasses/render";
 import { browserMeasure, layoutStep, sameLayout, type Measure, type StepLayout } from "./glasses/stepimage";
 import { drawProgressBar, sameProgressBar, type ProgressBarState } from "./glasses/progressbar";
 import { createImageSync } from "./glasses/image-sync";
 import { activeList, load, loadRun, restoreRun, save, saveRun, type FlowListData } from "./storage/persist";
 import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 
@@ -100,7 +100,11 @@ async function boot(): Promise<void> {
     return result.ok;
   });
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     const view = currentView();
     if (pageReady) { bar.request(progressBarFor(list, state)); requestStepImage(view); }
     if (sameView(lastView, view)) return;
@@ -128,6 +132,7 @@ async function boot(): Promise<void> {
    * view land after a newer one. Requests made meanwhile collapse into one.
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (closed) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
@@ -196,14 +201,40 @@ async function boot(): Promise<void> {
 
   /**
    * Double tap asks the system exit dialog. The run carries on while it is
-   * open; only a confirmed exit stops the clock and the drawing.
+   * open; the system ends the app on a confirmed exit (sysEvent 6/7). The call resolves when the dialog is
+   * SHOWN, not when the user answered, so its result never stops the clock.
    */
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { persistRun(); closed = true; stopClock(); },
+    onBack: () => {
+      // The dialog took the page away. On the next input put it up again the way of the
+      // first one (create), so the glasses deliver input - and the next 2x - to the app again.
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
+    },
   }, "flowlist");
+  exitAsked = requestExit.asked;
+  /** True after a real FOREGROUND_EXIT (5 without the exit dialog): the page and the clock are not running. */
+  let backgrounded = false;
+  /** The page rebuild started by the first input after a real background. */
+  let comingBack: Promise<void> | null = null;
+  const comeBack = (): void => {
+    if (!backgrounded) return;
+    backgrounded = false;
+    pageReady = false;
+    lastView = null;
+    startClock();
+    comingBack = draw();
+  };
   const close = (): void => {
     if (closed) return;
-    void requestExit();
+    void (async () => {
+      // Coming back from the background: the page must be up before the dialog is asked (a call during creation is lost).
+      if (comingBack) { await comingBack.catch(() => undefined); comingBack = null; if (closed) return; }
+      await requestExit();
+    })();
   };
 
   /** Applies what a gesture or a menu click decided. */
@@ -228,22 +259,27 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     // Left or reopened through the system rather than by a double tap.
     const lifecycle = lifecycleFromEvent(event);
+    if (isBackSignal(event)) requestExit.back();
     if (lifecycle === "foreground") {
+      backgrounded = false;
       pageReady = false;
       lastView = null;
       startClock();
       void draw();
       return;
     }
-    if (lifecycle === "background") { persistRun(); stopClock(); return; }
+    if (lifecycle === "background") { backgrounded = true; persistRun(); stopClock(); return; }
     if (lifecycle === "exit") { persistRun(); stopClock(); closed = true; return; }
     if (clock === undefined) startClock();
 
     // QIS v1.2: a click in the side menu. Stepping back and skipping are armed first.
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
+      comeBack();
       const now = Date.now();
       expireArm(now);
       if (helpOpen) return;
@@ -253,6 +289,7 @@ async function boot(): Promise<void> {
 
     const gesture = gestureFromEvent(event, { invertScroll: data.settings.invertScroll });
     if (!gesture) return;
+    comeBack();
 
     const now = Date.now();
     expireArm(now);

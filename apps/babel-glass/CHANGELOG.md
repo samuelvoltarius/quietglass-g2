@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.0.3] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Beenden-Dialog: die Systemereignisse 4 und 5 direkt nach dem Aufruf gelten als Anzeigen und Schließen des Dialogs.** Am Gerät gemessen: 4 (FOREGROUND_ENTER) kommt ca. 150 ms nach dem Aufruf, wenn der Dialog erscheint; bei „Nein“ folgt 5 (FOREGROUND_EXIT), der Dialog ist weg, die App war nie fort; bei „Ja“ folgt auf 5 nach ca. 0,5 s die 7 (SYSTEM_EXIT). Die App hielt 4/5 bisher für Vorder-/Hintergrund und pausierte.
+- Nach „Nein“ kommt die Seite jetzt sofort ohne Geste zurück; nichts wird pausiert, Timer, Mikrofon und Untertitel laufen weiter.
+- Ein 2× auf der Startseite, das ankommt, während die App als im Hintergrund gilt (ein echtes 5 ohne Dialog), holt die Seite zurück und fragt danach erneut (nach dem Wiederaufbau), statt ohne Seite den Dialog zu rufen.
+
+## [1.0.2] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Nach „Nein“ im Beenden-Dialog tat das erste 2× nichts.** Das erste 2× ist selbst das Signal „App ist wieder da“: es startet den Wiederaufbau der Seite (rebuild + create), und im selben Augenblick ging der Dialog-Aufruf los, solange die Seite noch entstand, und ging verloren. Jetzt wartet der Dialog-Aufruf auf den Wiederaufbau (höchstens 10 s) und danach 300 ms, und fragt erst dann. Ein einzelnes 2× nach „Nein“ öffnet den Dialog also wieder.
+- Während der Dialog offen sein könnte, zeichnen Timer, Polls und Streams nicht mehr auf die Brille (Seitenaufrufe könnten ihn überdecken); die Daten werden weiter gesammelt, die Seite kommt beim nächsten Tippen/Wischen/2× komplett zurück.
+
+## [1.0.1] — 2026-10-17
+
+### Behoben (Store-Prüfung, Wiederholung)
+
+- **Beenden-Dialog: das Ergebnis von `shutDownPageContainer(1)` beendet die App nicht mehr.** Auf der Brille kommt `true` schon, wenn der Dialog *angezeigt* wird (am Gerät gemessen: ca. 58 ms nach dem 2×), nicht erst bei „Ja“. Die App hielt das für eine Bestätigung und stellte sich tot; nach „Nein“ öffnete ein weiteres 2× den Dialog nicht mehr (Prüfer, Even Hub). Jetzt läuft die App weiter, ganz gleich was der Aufruf liefert; beendet wird sie nur vom System (App wird geschlossen und/oder Systemereignis 6/7). Die Seite wird nicht sofort neu gezeichnet (der Dialog könnte noch offen sein und von einem Seitenaufruf überdeckt werden), sondern beim nächsten Tippen, Wischen oder 2× bzw. bei FOREGROUND_ENTER wie beim ersten Start neu aufgebaut; dann wird das Ereignis normal verarbeitet, also öffnet 2× direkt nach „Nein“ den Dialog wieder.
+- Nichts wird vor dem Dialog angehalten: laufende Untertitel und Mikrofon enden erst, wenn das System die App beendet.
+## [1.0.0] — 2026-10-16
+
+Neu geordnet, damit man auf der Brille und am Handy nicht mehr suchen muss. Alle Funktionen bleiben.
+
+### Brille
+
+- **Startbild**: genau drei Einträge – **Übersetzen**, **Englisch sprechen**, **Gespräch** – und, nur wenn die Kundenliste da ist, die Kunden eingerückt darunter. Wischen bewegt den Cursor, Tippen startet; der Cursor steht auf dem zuletzt benutzten Modus. Ohne gelernte Stimme steht unten eine Zeile „Tipp: Stimme am Handy lernen“ (nicht wählbar).
+- **Englisch sprechen** (neu): Gesprächssprache Englisch, Untertitel des Gesagten, der automatische Wortfinder ist immer an (mit Sprachmodell), das Gegenüber wird auf Wunsch ins Deutsche übersetzt (Schalter am Handy, Standard an); deine eigenen Zeilen („Ich:“) werden nicht übersetzt.
+- **Laufendes Bild** ruhiger: oben „Modus · ● live“ (oder „● verbinde …“, „● offline“, bei zurückgeblättertem Verlauf zusätzlich „‖ Verlauf“), unten eine einzige Hinweiszeile („Tippen: Stopp · Wischen: zurück“). Das ● bleibt, solange das Mikrofon offen ist. DEMO-Marke, Übersetzungsfehler und „Stopp?“ bleiben in der Kopfzeile.
+- **2×** schließt zuerst Blatt oder Popup, **stoppt dann und geht zurück zum Start** (mit Zusammenfassung, falls an); erst 2× auf dem Startbild öffnet den Beenden-Dialog (danach unverändert neu aufgebaut). „Mein letzter Satz“ per Wischen am neuesten Stand gibt es nur noch in Übersetzen.
+- **Entfernt**: Hilfe (Halten) samt Übersichtsseiten, Kundeninfo-Blatt, Zeilen „Meine Stimme lernen/löschen“ und „Personen“ in der Liste, Zeile „Ohne Kunde – Übersetzen“, Uhrzeit und Helferliste („A/B · Antworten · Info · Gedächtnis · RU→DE“) in der Kopfzeile, Fußzeile mit „Halten = …“. Seitenmenü bleibt aus.
+- Ein Tipp nach einer Meldung („Mikrofon nicht freigegeben“ …) nimmt nur die Meldung weg und führt zum Startbild zurück.
+
+### Handy
+
+- **Drei Tabs**: **Jetzt** (Zustand, Modus-Knöpfe, Kunde für „Gespräch“, Mitschrift, Zusammenfassung, Info/Antworten/Tipp-Karten), **Meine Wörter** (Liste mit Anzahl, einzeln oder alle löschen) und **Einstellungen** in Karten: Meine Stimme (großer Knopf „Stimme lernen“ – die Brille zeigt den Text zum Vorlesen – und „Stimme löschen“ mit Rückfrage), Sprachen, Personen im Gespräch, Wortfinder, Server (eingeklappt, sobald eingerichtet), Gedächtnis, weitere Optionen, Anzeige.
+- **Erster Start** (nichts eingerichtet): Einstellungen öffnet mit einer 3-Schritte-Liste (Server → Stimme → fertig); die Demo läuft weiter ohne Server.
+- Personen und Modus lassen sich am Handy ändern; laufende Untertitel starten dann mit den neuen Werten neu.
+
+### Behoben
+
+- **Wortfinder mit gelernter Stimme**: Er springt nur noch bei deinen eigenen **fertigen** Zeilen („Ich:“) an, nie bei einer vorläufigen Zeile, deren Sprecher noch unbekannt ist (sonst suchte er Wörter für das Gegenüber). Ohne Stimmprofil bleibt es wie vorher.
+
+## [0.9.0] — 2026-10-16
+
+### Neu
+
+- **Wortfinder automatisch**: Auf der echten Brille kommt Halten nie in der App an. Jetzt sucht Babel das Wort von selbst, wenn du hängen bleibst: Satz ohne Schlusszeichen und 2,5 s keine neue Erkennung, ein „ähm“/„äh“/„wie sagt man“/„how do you say“ am Ende (nach 1 s Pause), oder im englischen Gespräch ein deutsches Wort. Höchstens alle 8 s, nie doppelt für denselben Text, nie während einer Suche oder 2 s nach einem geschlossenen Popup. Schalter „Wortfinder automatisch“ am Handy (Standard an); Halten geht weiterhin.
+- **Englisch-Lerner**: Spricht der Nutzer Englisch (Gesprächssprache Englisch oder überwiegend englischer Text), liefert der Wortfinder das englische Wort plus 2–3 englische Alternativen und in der zweiten Zeile die deutsche Bedeutung („→ DE: …“). Sagte er ein deutsches Wort, ist das erste englische Wort dessen Übersetzung.
+- **Meine Wörter** (Tab Gedächtnis): jedes gefundene Wort bleibt am Handy (Wort → Bedeutung, neueste zuerst, höchstens 300, kein Wort doppelt), einzeln oder alle löschbar.
+
+## [0.8.4] — 2026-10-16
+
+### Behoben (Store-Prüfung)
+
+- Nach „Nein“ im Beenden-Dialog öffnete 2× den Dialog nicht mehr – die App baut die Seite jetzt wie beim ersten Start neu auf.
+
 ## [0.8.3] — 2026-10-15
 
 ### Geändert (auf echter Brille gemessen)

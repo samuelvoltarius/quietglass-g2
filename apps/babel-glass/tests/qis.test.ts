@@ -39,19 +39,20 @@ function everyView(locale: Locale): Array<[string, CaptionView]> {
     ["help", view(createBuffer(), { help: { rows: helpRows.slice(0, 5), page: 0 } })],
     ["help listening", view(createBuffer(), { listening: true, now: new Date(2026, 9, 14, 23, 59).getTime(), help: { rows: helpRows, page: 1 } })],
     ["listening", view(createBuffer(), { listening: true })],
-    ["listening word finder", view(line("Hallo"), { listening: true, wordFinder: true })],
-    ["listening mock", view(line("Hallo"), { listening: true, mock: true, wordFinder: true })],
-    ["armed stop", view(line("Hallo"), { listening: true, armed: "stop", wordFinder: true })],
+    ["start", view(createBuffer(), { start: { rows: ["> Übersetzen", "  Englisch sprechen", "  Gespräch"] } })],
+    ["listening mode", view(line("Hallo"), { listening: true, modeLabel: t(locale, "g.mode.learn") })],
+    ["listening mock", view(line("Hallo"), { listening: true, mock: true })],
+    ["armed stop", view(line("Hallo"), { listening: true, armed: "stop" })],
     ["popup", view(line("Hallo"), { listening: true, popup: { term: "JAZ", info: "Jahresarbeitszahl" } })],
-    ["history", view(history(), { listening: true, offset: 10, wordFinder: true })],
+    ["history", view(history(), { listening: true, offset: 10 })],
   ];
   for (let page = 0; page < 3; page++) {
     out.push([`summary page ${page}`, view(createBuffer(), { summaryPage: page, summary: { state: "done", short: long.slice(0, 3), long } })]);
   }
   for (const error of ["timed out", "unreachable", "a very long raw error message from somewhere deep in the network stack"]) {
     out.push(["worst " + error, view(history(), {
-      listening: true, translating: true, translateError: error, status: "reconnecting", mock: true, offset: 10, wordFinder: true,
-      now: new Date(2026, 9, 14, 23, 59).getTime(), active: { pair: "RU→DE", speakers: true, replies: true, own: true, info: true, memory: true },
+      listening: true, translating: true, translateError: error, status: "reconnecting", mock: true, offset: 10,
+      modeLabel: t(locale, "g.mode.learn"), now: new Date(2026, 9, 14, 23, 59).getTime(),
     })]);
   }
   return out;
@@ -64,13 +65,19 @@ describe("footers follow QIS v1", () => {
       for (const [name, view] of everyView(locale)) {
         const row = view.footer;
         const label = `${name}: ${row}`;
-        expect(view.header, name).toMatch(/^BABEL · \S/);
+        expect(view.header, name).toMatch(/^\S+/);
         expect(chars(view.header), name).toBeLessThanOrEqual(GLASS_COLS);
         expect(chars(row), label).toBeLessThanOrEqual(ROW_WIDTH);
         expect(row, label).not.toMatch(BANNED[locale]);
         const armed = row.startsWith(locale === "de" ? "Nochmal tippen = " : "Tap again = ");
         if (armed) {
           expect(row, label).toMatch(locale === "de" ? /^Nochmal tippen = .+ · (Wischen\/)?2× = abbrechen$/ : /^Tap again = .+ · (Swipe\/)?2× = cancel$/);
+          continue;
+        }
+        // 1.0.0: the start and running screens carry ONE hint line ("Tippen: Stopp · Wischen: zurück"), no hold.
+        if (/^(idle|start|listening|history|popup|worst)/.test(name) && !name.startsWith("help")) {
+          expect(row, label).toMatch(locale === "de" ? /^Tippen: / : /^Tap: /);
+          expect(row, label).not.toContain(hold);
           continue;
         }
         // Tippen -> Wischen -> Halten -> 2x, and the 2x part is never dropped.
@@ -85,40 +92,43 @@ describe("footers follow QIS v1", () => {
     for (const locale of locales) {
       for (const [name, view] of everyView(locale)) {
         const open = /^(listening|armed stop|popup|history|worst)/.test(name) || name === "help listening";
-        if (open) expect(view.header.startsWith("BABEL · " + (name === "help listening" ? messages[locale]["g.s.help"] + " · " : "") + messages[locale]["g.mic"]), name).toBe(true);
-        else expect(view.header, name).not.toContain(messages[locale]["g.mic"]!);
+        if (open) {
+          const head = name === "help listening" ? messages[locale]["g.s.help"] + " · " + messages[locale]["g.mic"] : "";
+          if (head) expect(view.header.startsWith("BABEL · " + head), name).toBe(true);
+          else expect(view.header, name).toContain("●");
+        } else expect(view.header, name).not.toContain("●");
       }
     }
   });
 
   it("a tap never stops running captions in one go: the footer arms first", () => {
-    const base: ViewOptions = { mode: "conversation", listening: true, status: "ready", translating: false, offset: 0, mock: false, locale: "de", wordFinder: true };
-    expect(buildView(line("Hallo"), base).footer).toBe("Tippen = Stopp · Halten = Wort · 2× = Ende");
+    const base: ViewOptions = { mode: "conversation", listening: true, status: "ready", translating: false, offset: 0, mock: false, locale: "de", modeLabel: "Übersetzen" };
+    expect(buildView(line("Hallo"), base).footer).toBe("Tippen: Stopp · Wischen: zurück");
     const armed = buildView(line("Hallo"), { ...base, armed: "stop" });
-    expect(armed.header).toBe("BABEL · ● MIKRO · Stopp?");
+    expect(armed.header).toBe("Übersetzen · ● live · Stopp?");
     expect(armed.footer).toBe("Nochmal tippen = stoppen · 2× = abbrechen");
     expect(buildView(line("Hallo"), { ...base, locale: "en", armed: "stop" }).footer).toBe("Tap again = stop · Swipe/2× = cancel");
   });
 
   it("an armed stop only counts while captions run", () => {
     const base: ViewOptions = { mode: "conversation", listening: false, status: "ready", translating: false, offset: 0, mock: false, locale: "de" };
-    expect(buildView(createBuffer(), { ...base, armed: "stop" }).footer).toBe("Tippen = Start · Halten = Hilfe · 2× = Ende");
+    expect(buildView(createBuffer(), { ...base, armed: "stop" }).footer).toBe("Tippen: Start · Wischen: wählen · 2×: Ende");
   });
 
-  it("2× is zurück on the help page and when a popup is open, Ende on the main screens", () => {
+  it("2× is zurück on the sheet, Ende on the main screens; a popup says what a tap does", () => {
     const base: ViewOptions = { mode: "conversation", listening: false, status: "ready", translating: false, offset: 0, mock: false, locale: "de" };
-    expect(buildView(createBuffer(), base).footer).toMatch(/2× = Ende$/);
+    expect(buildView(createBuffer(), { ...base, summary: { state: "working" } }).footer).toMatch(/2× = Ende$/);
     expect(buildView(createBuffer(), { ...base, help: { rows: ["a"], page: 0 } }).footer).toBe("Seite 1/1 · Tippen = schließen · 2× = zurück");
-    expect(buildView(line("x"), { ...base, listening: true, popup: { term: "JAZ", info: "x" } }).footer).toBe("Tippen = schließen · 2× = zurück");
+    expect(buildView(line("x"), { ...base, listening: true, popup: { term: "JAZ", info: "x" } }).footer).toBe("Tippen: schließen");
   });
 
   it("no footer or help text offers clearing on the glasses (0.6.1)", () => {
     const base: ViewOptions = { mode: "conversation", listening: false, status: "ready", translating: false, offset: 0, mock: false, locale: "en" };
-    expect(buildView(createBuffer(), base).footer).toBe("Tap = start · Hold = help · 2× = exit");
+    expect(buildView(createBuffer(), base).footer).toBe("Tap: start · Swipe: choose · 2×: exit");
     for (const locale of ["de", "en"] as const) {
       const summary = buildView(createBuffer(), { ...base, locale, summary: { state: "done", short: ["Termin Dienstag"] } });
       expect(summary.footer).not.toMatch(/lösch|clear/i);
-      for (const n of [1, 2, 3, 4, 5]) expect(t(locale, "g.hg." + n)).not.toMatch(/lösch|clear/i);
+      for (const key of Object.keys(messages[locale])) if (key.startsWith("g.f.")) expect(t(locale, key)).not.toMatch(/lösch|clear/i);
     }
   });
 
@@ -146,7 +156,7 @@ describe("footers follow QIS v1", () => {
   it("uses the glossary in every glasses and gesture string", () => {
     for (const locale of locales) {
       for (const [key, text] of Object.entries(messages[locale])) {
-        if (key.startsWith("g.") || key.startsWith("p.tap") || key.startsWith("p.hold") || key.startsWith("p.double")) {
+        if (key.startsWith("g.")) {
           expect(text, key).not.toMatch(BANNED[locale]);
         }
       }

@@ -149,7 +149,7 @@ service and no account.
 | Needs CORS on LUMEN | See above. A one-time setup. |
 | Video quests | Can be seen but not answered from the glasses; flagged on the display. |
 | No feed, no shop, no series | Those are rich screens that belong on the phone. This shows the moth, the quest and the light. |
-| Not verified on hardware | Built and tested against SDK 0.0.16 and the simulator — but against a **live LUMEN**, not a mock. |
+| Hardware status | Verified on physical G2 hardware and against a **live LUMEN**, not only a mock. |
 
 ## Roadmap
 

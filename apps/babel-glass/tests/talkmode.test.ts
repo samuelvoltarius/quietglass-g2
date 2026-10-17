@@ -5,7 +5,6 @@ import { CLIENT_REPLY_TIMING, effectiveTalkMode, modeData, replyTimingFor } from
 import { EMPTY_DATA, parseData, translationEnabled } from "../src/storage/persist";
 import { buildView, GLASS_COLS } from "../src/glasses/view";
 import { createBuffer } from "../src/captions/buffer";
-import { ROW_WIDTH } from "../src/glasses/footer";
 import { t } from "../src/messages";
 import type { TranscriptEntry } from "../src/companion/transcript";
 
@@ -117,12 +116,13 @@ describe("0.6.3 talk mode on the glasses", () => {
     return fake;
   }
 
-  it("0.7.0: a tap on a customer row switches to client talk, persists it, starts with language de, never translates", async () => {
+  it("1.0.0: a tap on a customer row switches to Gespräch, persists it, starts with language de, never translates", async () => {
     stubFetch(true);
     const fake = await boot(fakeBridge({ ...SERVERS, talkMode: "translate" }));
-    expect(fake.header()).toBe("BABEL · pick customer");
-    expect(fake.body().split("\n")[0]).toBe("> Beispiel Café");
-    fake.emit(0); // tap: Kundengespräch with this customer + start
+    expect(fake.header()).toBe("BABEL · mic off");
+    expect(fake.body().split("\n")).toEqual(["> Translate", "  Speak English", "  Conversation", "    Beispiel Café", "Tip: learn your voice on the phone"]);
+    fake.emit(2); fake.emit(2); fake.emit(2); // down to the customer under "Conversation"
+    fake.emit(0); // tap: Gespräch with this customer + start
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.mic.open).toBe(true);
     expect(fake.stored()["talkMode"]).toBe("client");
@@ -136,12 +136,14 @@ describe("0.6.3 talk mode on the glasses", () => {
     expect(fake.body()).toContain("Wie lange dauert der Dreh?");
   });
 
-  it("0.7.0: the last row starts the translate mode, which still translates", async () => {
+  it("1.0.0: the first row starts Übersetzen, which still translates", async () => {
     stubFetch(true);
     const fake = await boot(fakeBridge({ ...SERVERS, talkMode: "client" }));
-    fake.emit(2);
+    expect(fake.body().split("\n")[2]).toBe("> Conversation"); // the cursor sits on the mode used last
+    fake.emit(1);
+    fake.emit(1);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.body().split("\n")[1]).toBe("> No customer – translate");
+    expect(fake.body().split("\n")[0]).toBe("> Translate");
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.stored()["talkMode"]).toBe("translate");
@@ -151,35 +153,35 @@ describe("0.6.3 talk mode on the glasses", () => {
     expect(chatCalls).toBeGreaterThan(0);
   });
 
-  it("0.7.0: the side menu toggles the mode and names the mode in force; a pick is kept on the next start", async () => {
+  it("1.0.0 Englisch sprechen: the recogniser hears English, the other person is translated into German, the user's own line is not", async () => {
     stubFetch(false);
-    const fake = await boot(fakeBridge({ ...SERVERS, talkMode: "translate" }));
-    expect(fake.menus.every((menu) => menu.length === 0)).toBe(true); // no side menu on the pages
-    fake.menu(3); // the click handler is kept for the day the menu comes back
+    const fake = await boot(fakeBridge({ ...SERVERS, voiceEnrolled: true }));
+    fake.emit(2); // Speak English
+    fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.stored()["talkMode"]).toBe("client");
-    expect(fake.mic.open).toBe(false); // switching the mode never starts the microphone
-    const again = await boot(fakeBridge({ ...SERVERS, talkMode: "client" }));
-    expect(again.menus.every((menu) => menu.length === 0)).toBe(true);
+    expect(fake.stored()["talkMode"]).toBe("learn");
+    expect(fake.mic.open).toBe(true);
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toMatchObject({ type: "start", language: "en" });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ text: "How are you doing today?", final: true, language: "en", speaker: "A" }) });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(chatCalls).toBe(1); // the other person: translated into German
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ text: "I am fine, thank you.", final: true, language: "en", speaker: "ME" }) });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(chatCalls).toBe(1); // the user's own English stays as it is
+    expect(fake.body()).toContain("Me: I am fine, thank you.");
   });
 
-  it("0.7.0: switching the mode while listening restarts the recogniser with the new language", async () => {
+  it("1.0.0 Englisch sprechen: without the phone switch there is no translation at all", async () => {
     stubFetch(false);
-    const fake = await boot(fakeBridge({ ...SERVERS, talkMode: "translate" }));
-    fake.emit(2);
-    fake.emit(0); // "No customer – translate"
+    const fake = await boot(fakeBridge({ ...SERVERS, talkMode: "learn", learnTranslate: false }));
+    fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
-    expect((JSON.parse(sockets[0]!.sent[0]!) as { language: string }).language).toBe("auto");
-    // QIS v1.2 #3: while captions run, the first click only arms the restart.
-    fake.menu(3);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.stored()["talkMode"]).toBe("translate");
-    expect(fake.footer()).toMatch(/^Tap again = restart captions/);
-    fake.menu(3);
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(fake.mic.open).toBe(true);
-    expect((JSON.parse(sockets.at(-1)!.sent[0]!) as { language: string }).language).toBe("de");
+    sockets[0]!.say("How are you doing today?", "en");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(chatCalls).toBe(0);
+    expect(fake.body()).toContain("How are you doing today?");
   });
+
 });
 
 describe("0.6.3 talk mode units", () => {
@@ -188,6 +190,20 @@ describe("0.6.3 talk mode units", () => {
     expect(effectiveTalkMode(EMPTY_DATA, true)).toBe("client");
     expect(effectiveTalkMode({ ...EMPTY_DATA, talkMode: "translate" }, true)).toBe("translate");
     expect(effectiveTalkMode({ ...EMPTY_DATA, talkMode: "client" }, false)).toBe("client");
+    expect(effectiveTalkMode({ ...EMPTY_DATA, talkMode: "learn" }, false)).toBe("learn");
+  });
+
+  it("learn mode: English in, German out; the other person is translated only with the phone switch", () => {
+    const data = { ...EMPTY_DATA, translateUrl: "https://lt.example", sourceLanguage: "ru", targetLanguage: "pl", talkMode: "learn" as const };
+    const on = modeData(data, false);
+    expect(on.sourceLanguage).toBe("en");
+    expect(on.targetLanguage).toBe("de");
+    expect(translationEnabled(on)).toBe(true);
+    expect(translationEnabled(modeData({ ...data, learnTranslate: false }, false))).toBe(false);
+    // The setting is on by default and survives a round trip.
+    expect(EMPTY_DATA.learnTranslate).toBe(true);
+    expect(parseData("{}").learnTranslate).toBe(true);
+    expect(parseData(JSON.stringify({ learnTranslate: false })).learnTranslate).toBe(false);
   });
 
   it("client mode: source de, translation off, even with a translator configured", () => {
@@ -202,6 +218,7 @@ describe("0.6.3 talk mode units", () => {
   it("persists the mode; unknown values are dropped", () => {
     expect(parseData(JSON.stringify({ talkMode: "client" })).talkMode).toBe("client");
     expect(parseData(JSON.stringify({ talkMode: "translate" })).talkMode).toBe("translate");
+    expect(parseData(JSON.stringify({ talkMode: "learn" })).talkMode).toBe("learn");
     expect(parseData(JSON.stringify({ talkMode: "x" })).talkMode).toBeUndefined();
     expect(parseData("").talkMode).toBeUndefined();
   });
@@ -240,28 +257,15 @@ describe("0.6.3 talk mode units", () => {
     }
   });
 
-  it("idle header and Kunde footer fit the 46-character rows in both languages", () => {
+  it("the mode names fit the header and the start rows in both languages", () => {
     for (const locale of ["de", "en"] as const) {
-      for (const key of ["g.mode.client", "g.mode.translate"]) {
+      for (const key of ["g.mode.client", "g.mode.translate", "g.mode.learn"]) {
         const view = buildView(createBuffer(), {
-          mode: "conversation", listening: false, status: "idle", translating: false, offset: 0, mock: true, locale,
-          talkModeLabel: t(locale, key), notice: { kind: "noServer" },
+          mode: "conversation", listening: true, status: "ready", translating: false, offset: 0, mock: true, locale,
+          modeLabel: t(locale, key), translateError: "x",
         });
         expect(view.header.length).toBeLessThanOrEqual(GLASS_COLS);
         expect(view.header).toContain(t(locale, key));
-        expect(view.footer.length).toBeLessThanOrEqual(ROW_WIDTH);
-      }
-      for (const [row, tap] of [["g.mode.startClient", "g.a.startClient"], ["g.mode.toTranslate", "g.a.toTranslate"]] as const) {
-        expect(t(locale, row).length).toBeLessThanOrEqual(ROW_WIDTH);
-        for (const rows of [[t(locale, row)], Array.from({ length: 20 }, () => "x")]) {
-          const view = buildView(createBuffer(), {
-            mode: "conversation", listening: false, status: "idle", translating: false, offset: 0, mock: false, locale,
-            help: { rows, page: 0, title: t(locale, "g.s.cust"), tapLabel: t(locale, tap) },
-          });
-          expect(view.footer.length).toBeLessThanOrEqual(ROW_WIDTH);
-          expect(view.footer).toContain(t(locale, tap));
-          expect(view.header.length).toBeLessThanOrEqual(GLASS_COLS);
-        }
       }
     }
   });

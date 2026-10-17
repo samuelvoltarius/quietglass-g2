@@ -6,7 +6,7 @@ import { accumulate, createDose, resetDose, type DoseState } from "./noise/dose"
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, HELP_PAGES, type NoiseView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
 import { quantize } from "./glasses/bitmap";
 import { DOSE_BAR, METER, doseKey, dosePercent, drawDoseBar, drawMeter, meterKey, meterLevel, type MeterState } from "./glasses/gauge";
 import { createImageLane } from "./glasses/lane";
@@ -16,7 +16,7 @@ import { encodePng } from "./glasses/pixel";
 import { effectiveOffset, isCalibrated, load, loadDoseRaw, parseDose, save, saveDose, type NoiseData } from "./storage/persist";
 import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
-import { createExitRequest } from "./exit";
+import { createExitRequest, settleRestore } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 
@@ -90,7 +90,7 @@ async function boot(): Promise<void> {
   let digitsDb: number | null = null;
   let peak: Peak | null = null;
   /** Images are written at most every 700 ms and only when their picture changes. */
-  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
+  const lane = createImageLane((target, imageData) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, target, imageData)), 700);
 
   const displayLevel = (): number | null =>
     smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, effectiveOffset(data));
@@ -152,7 +152,11 @@ async function boot(): Promise<void> {
     lane.request(DOSE_BAR, doseKey(percent), () => encodePng(drawDoseBar(percent)));
   };
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed || backgrounded) return;
     const view = currentView();
     const menu = menuSpec();
@@ -181,6 +185,7 @@ async function boot(): Promise<void> {
    * A request during a write redraws once after it, with the newest level.
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -233,24 +238,22 @@ async function boot(): Promise<void> {
   };
 
   /**
-   * The exit is confirmed: only now measuring ends (QIS v1.2 ruling 2). `closed` goes first, so a
-   * microphone that is still opening closes itself again.
+   * Measuring ends only when the system ends the app (sysEvent 6/7 -> shutDown, QIS v1.2 ruling 2).
+   * shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered, so its
+   * result never stops anything.
    */
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: async () => {
-      persistDose();
-      closed = true;
-      clearInterval(tick);
-      clearInterval(demoTimer);
-      disarmReset();
-      lane.close();
-      if (opening) await opening.catch(() => undefined);
-      if (listening) {
-        listening = false;
-        await bridge.audioControl(false).catch(() => undefined);
-      }
+    onBack: () => {
+      // The dialog took the page away. On the next input put it up again the way of the first one,
+      // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
     },
   }, "decibelguard");
+  exitAsked = requestExit.asked;
 
   /**
    * Double tap asks the system exit dialog. Measuring goes on while the user decides, so cancelling
@@ -305,7 +308,11 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     const lifecycle = lifecycleFromEvent(event);
+    // Not the microphone stream: PCM keeps flowing while the dialog is open and says nothing about the user.
+    if (lifecycle !== "background" && lifecycle !== "exit" && (event as { audioEvent?: unknown }).audioEvent === undefined) requestExit.back();
     if (lifecycle === "foreground") { void comeBack(); return; }
     if (lifecycle === "background") { void goBackground(); return; }
     if (lifecycle === "exit") { void shutDown(); return; }
@@ -344,7 +351,13 @@ async function boot(): Promise<void> {
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
     // A gesture means the app is visible again, even if no "foreground" came first.
-    if (backgrounded) { void comeBack(); return; }
+    if (backgrounded) {
+      const restore = comeBack();
+      if (!(gesture.gesture === "doubleClick" && helpPage === null)) { void restore; return; }
+      // A 2x on the main screen while backgrounded comes back AND asks again, after the restore draw.
+      void settleRestore(restore).then(exitWithDialog);
+      return;
+    }
 
     // Risky actions take two steps (QIS v1 section 2): a hold asks to clear today's dose, a tap asks to
     // stop measuring; ONE single tap within 4 s confirms. Anything else (a second hold, a swipe, 2×) or

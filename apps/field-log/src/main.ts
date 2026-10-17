@@ -8,10 +8,10 @@ import {
 import { createLiveStt, liveSttUrl, LiveTranscript, redrawDelay, type LiveStt } from "./stt/live";
 import { buildWav } from "./audio/wav";
 import { addEntry, attachToLatest, startInspection, type Inspection, type Severity } from "./log/entries";
-import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
+import { gestureFromCode, gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, type FieldNotice, type LiveView, type LogView, type Phase, type ReviewChoice } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, updatePage, type MenuSpec } from "./glasses/render";
 import {
   activeInspection, hasSpeechServer, load, nextInspectionId, save, speechServer, upsertInspection, usesMockStt,
   type FieldLogData,
@@ -156,7 +156,25 @@ async function boot(): Promise<void> {
   /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
   let refreshPhone: () => void = () => undefined;
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
+  /** The page rebuild started by the first input after a real background (5 without a dialog). */
+  let comingBack: Promise<void> | null = null;
+  /** A gesture or menu click, read without touching the gesture de-duplication that gestureFromEvent keeps. */
+  const isUserInput = (event: unknown): boolean => {
+    if (menuItemIdFromEvent(event) !== null) return true;
+    const record = (event && typeof event === "object" ? event : {}) as Record<string, unknown>;
+    return ["textEvent", "listEvent", "sysEvent"].some((key) => {
+      const payload = record[key];
+      if (!payload || typeof payload !== "object") return false;
+      const part = payload as Record<string, unknown>;
+      const raw = part["eventType"] ?? part["event_type"] ?? part["type"];
+      return gestureFromCode(typeof raw === "number" ? raw : raw === undefined ? 0 : NaN) !== null;
+    });
+  };
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (paused) return;
     // A page lost with the link (or in the background) is rebuilt even when
     // nothing changed; read here, so a draw already running cannot undo it.
@@ -178,6 +196,7 @@ async function boot(): Promise<void> {
    * collapse into one redraw.
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (closed) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
@@ -468,12 +487,19 @@ async function boot(): Promise<void> {
     if (wasRecording && micMayBeOn) void bridge.audioControl(false).catch(() => undefined);
   };
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // shuts anything down. A confirmed exit arrives as sysEvent 6/7 (shutDown below). The paused microphone
+  // comes back on the next input, which is the signal that the user stayed.
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => {
-      // A recording was already paused (microphone off) before the dialog opened.
-      shutDown(false);
-    },
-    onStayed: async () => {
+    onBack: async () => {
+      // The dialog took the page away. Put it up again the way of the first one (create),
+      // so the glasses deliver input - and the next 2x - to the app again.
+      if (!closed) {
+        pageReady = false;
+        lastView = null;
+        forgetPage(bridge);
+        await draw();
+      }
       if (!micPausedForExit) return;
       micPausedForExit = false;
       if (phase !== "recording") return;
@@ -485,6 +511,7 @@ async function boot(): Promise<void> {
       }
     },
   }, "fieldlog");
+  exitAsked = requestExit.asked;
 
   /**
    * Double tap asks the system exit dialog. The microphone goes off before
@@ -493,6 +520,8 @@ async function boot(): Promise<void> {
    */
   const close = async (): Promise<void> => {
     if (closed) return;
+    // Coming back from the background: the page must be up before the dialog is asked (a call during creation is lost).
+    if (comingBack) { await comingBack.catch(() => undefined); comingBack = null; if (closed) return; }
     if (phase === "recording" && !micPausedForExit) {
       micPausedForExit = true;
       await micOff();
@@ -528,7 +557,19 @@ async function boot(): Promise<void> {
   // Gestures first: the first page and everything native come after this.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     const step = lifecycleFromEvent(event);
+    // A real input while the app thinks it is in the background (a genuine 5 without a dialog): it is back. Draws
+    // were silent while paused, so the page is rebuilt before the input is handled (a root 2x then restores and asks).
+    if (paused && step === null && (event as { audioEvent?: unknown }).audioEvent === undefined
+      && isUserInput(event)) {
+      paused = false;
+      rebuildWanted = true;
+      comingBack = draw();
+    }
+    // Not the microphone stream: PCM keeps flowing while the dialog is open and says nothing about the user.
+    if (step !== "foregroundExit" && !isFinalExit(step) && (event as { audioEvent?: unknown }).audioEvent === undefined) requestExit.back();
     if (step === "foregroundExit") {
       // Out of sight: a dictation in progress is dropped and the microphone
       // closes; a text under review stays for when the user comes back.

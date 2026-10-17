@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.6] — 2026-10-17
+
+### Behoben (Hardware-Protokoll)
+
+- **Beenden-Dialog: 4/5 direkt nach dem Aufruf sind Anzeigen/Schließen des Dialogs, nicht „App im Vordergrund/Hintergrund“.** Am Gerät gemessen: nach `shutDownPageContainer(1)` kommt Ereignis 4 (FOREGROUND_ENTER), wenn der Dialog erscheint, und 5 (FOREGROUND_EXIT), wenn er nach „Nein“ wieder weg ist; bei „Ja“ folgt erst 5, rund 0,5 s später 7. Die App liest das jetzt so: bei 4 bleibt sie still (nichts wird über den Dialog gezeichnet), bei 5 kommt die Seite sofort und ohne Geste wie beim ersten Start zurück. Dabei wird nichts pausiert: Mikrofon-Zustand, Feed-Abfrage und Anzeige laufen weiter. Audio-Ereignisse und Ereignis 8 ändern den Dialog-Zustand nicht.
+- Ein 2× auf der Startseite, das ankommt, während die App sich pausiert glaubt, holt die App zurück und fragt danach erneut (es wartet auf den Wiederaufbau der Seite und wird nicht mehr verschluckt).
+
+## [0.6.5] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Nach „Nein“ im Beenden-Dialog tat das erste 2× nichts.** Das erste 2× ist selbst das Signal „App ist wieder da“: es startet den Wiederaufbau der Seite (rebuild + create), und im selben Augenblick ging der Dialog-Aufruf los, solange die Seite noch entstand, und ging verloren. Jetzt wartet der Dialog-Aufruf auf den Wiederaufbau (höchstens 10 s) und danach 300 ms, und fragt erst dann. Ein einzelnes 2× nach „Nein“ öffnet den Dialog also wieder.
+- Während der Dialog offen sein könnte, zeichnen Timer, Polls und Streams nicht mehr auf die Brille (Seitenaufrufe könnten ihn überdecken); die Daten werden weiter gesammelt, die Seite kommt beim nächsten Tippen/Wischen/2× komplett zurück.
+
+## [0.6.4] — 2026-10-17
+
+### Behoben (Store-Prüfung, Wiederholung)
+
+- **Beenden-Dialog: das Ergebnis von `shutDownPageContainer(1)` beendet die App nicht mehr.** Auf der Brille kommt `true` schon, wenn der Dialog *angezeigt* wird (am Gerät gemessen: ca. 58 ms nach dem 2×), nicht erst bei „Ja“. Die App hielt das für eine Bestätigung und stellte sich tot; nach „Nein“ öffnete ein weiteres 2× den Dialog nicht mehr (Prüfer, Even Hub). Jetzt läuft die App weiter, ganz gleich was der Aufruf liefert; beendet wird sie nur vom System (App wird geschlossen und/oder Systemereignis 6/7). Die Seite wird nicht sofort neu gezeichnet (der Dialog könnte noch offen sein und von einem Seitenaufruf überdeckt werden), sondern beim nächsten Tippen, Wischen oder 2× bzw. bei FOREGROUND_ENTER wie beim ersten Start neu aufgebaut; dann wird das Ereignis normal verarbeitet, also öffnet 2× direkt nach „Nein“ den Dialog wieder.
+
+## [0.6.3] — 2026-10-16
+
+### Behoben (Store-Prüfung)
+
+- Nach „Nein“ im Beenden-Dialog öffnete 2× den Dialog nicht mehr – die App baut die Seite jetzt wie beim ersten Start neu auf.
+
 ## [0.6.2] — 2026-10-15
 
 ### Geändert (auf echter Brille gemessen)

@@ -297,9 +297,9 @@ the storyboard proposal) next to it.
 
 ## Status
 
-Verified in tests and the Even Hub simulator only. **Not yet verified on
-physical G2 hardware** — in particular the long-press/release timing for
-speaking, microphone quality on set, and the phone location in the Light view.
+Verified in tests, the Even Hub simulator and on physical G2 hardware,
+including the glasses controls and the phone-side setup flow. Speech quality
+and location accuracy still depend on the environment and phone permissions.
 
 ## Privacy
 

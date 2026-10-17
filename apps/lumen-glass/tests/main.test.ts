@@ -113,7 +113,19 @@ describe("lumen polling loop", () => {
     expect(lumen.fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("asks for the system dialog and stops polling and drawing once the user confirms, even during a request", async () => {
+  it("the exit call resolving true (dialog shown) does not stop polling", async () => {
+    const lumen = fakeLumen(10);
+    vi.stubGlobal("fetch", lumen.fetchMock);
+    const fake = await boot();
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const fetchesAtAsk = lumen.fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(lumen.fetchMock.mock.calls.length).toBeGreaterThanOrEqual(fetchesAtAsk + 2);
+  });
+
+  it("asks for the system dialog and stops polling and drawing once the system ends the app (sysEvent 7), even during a request", async () => {
     // Regression: a refresh in flight at the double tap re-armed the 60 s poll via
     // `.then(schedule)` and drew to the closed page.
     const lumen = fakeLumen(3000);
@@ -125,6 +137,8 @@ describe("lumen polling loop", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(7);
+    await vi.advanceTimersByTimeAsync(10);
     const writesAtClose = fake.writes.count;
     lumen.setGesture("after close");
     await vi.advanceTimersByTimeAsync(200_000);
@@ -147,6 +161,62 @@ describe("lumen polling loop", () => {
     fake.menu(1); // the menu opens the help; the poll goes on behind it
     await vi.advanceTimersByTimeAsync(61_000);
     expect(lumen.fetchMock.mock.calls.length).toBeGreaterThanOrEqual(fetchesAtCancel + 3);
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    vi.stubGlobal("fetch", fakeLumen(10).fetchMock);
+    const fake = await boot();
+    await vi.advanceTimersByTimeAsync(50);
+    const creates = fake.pages.creates;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.shutdown.confirm = true;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const callsAtAsk = fake.writes.count + fake.pages.creates;
+    await vi.advanceTimersByTimeAsync(130_000);
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(fake.writes.count + fake.pages.creates).toBe(callsAtAsk);
+    expect(fake.pages.creates).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, polling on, next 2x asks", async () => {
+    const lumen = fakeLumen(10);
+    vi.stubGlobal("fetch", lumen.fetchMock);
+    const fake = await boot();
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(4);                                            // the dialog is on screen
+    const atShown = fake.writes.count + fake.pages.rebuilds;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(fake.writes.count + fake.pages.rebuilds).toBe(atShown); // nothing drawn over the dialog
+    const creates = fake.pages.creates;
+    const fetches = lumen.fetchMock.mock.calls.length;
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.pages.creates).toBeGreaterThan(creates);     // page created again, no gesture needed
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(lumen.fetchMock.mock.calls.length).toBeGreaterThan(fetches); // the poll was never paused
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.shutdown.modes).toEqual([1, 1]);             // the very first 2x opens the dialog again
   });
 
   it("keeps polling when the exit call rejects, without an unhandled rejection", async () => {
@@ -398,6 +468,7 @@ describe("lumen gestures with an open quest", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(7); // the user confirmed: the system ends the app
     release();
     await vi.advanceTimersByTimeAsync(200);
     expect(lumen.calls.some((call) => call.startsWith("POST /quest/9/abgeben"))).toBe(false);
@@ -416,6 +487,7 @@ describe("lumen gestures with an open quest", () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.modes).toEqual([1]);
     expect(fake.writes.header).toBe("LUMEN · photo");
+    fake.emit(1); // "No": the next input restores the page
     release();
     await vi.advanceTimersByTimeAsync(200);
     expect(lumen.calls.some((call) => call.startsWith("POST /quest/9/abgeben"))).toBe(true);

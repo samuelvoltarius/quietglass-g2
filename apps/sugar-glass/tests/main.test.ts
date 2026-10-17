@@ -19,7 +19,7 @@ function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage
   const storage = new Map(Object.entries(stored));
   const screen = new Map<number, string>();
   const pages: Page[] = [];
-  const exit = { calls: [] as unknown[] };
+  const exit = { calls: [] as unknown[], answer: true };
   const show = (page: Page): void => {
     pages.push(page);
     for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
@@ -32,7 +32,7 @@ function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage
     rebuildPageContainer: vi.fn(async (page: Page) => { show(page); return true; }),
     createStartUpPageContainer: vi.fn(async (page: Page) => { show(page); return 0; }),
     textContainerUpgrade: vi.fn(async (update: { containerID?: number; content?: string }) => { screen.set(update.containerID ?? 0, update.content ?? ""); return true; }),
-    shutDownPageContainer: (mode?: number): Promise<boolean> => { exit.calls.push(mode); return Promise.resolve(true); },
+    shutDownPageContainer: (mode?: number): Promise<boolean> => { exit.calls.push(mode); return Promise.resolve(exit.answer); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
@@ -116,6 +116,82 @@ describe("Sugar Glass lifecycle", () => {
     const fake = fakeGlasses({}, { hangStorage: true });
     await boot(fake, false);
     fake.emit(DOUBLE);
+    expect(fake.exit.calls).toEqual([1]);
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).not.toBe(""));
+    await new Promise((done) => setTimeout(done, 20));
+    const creates = fake.bridge.createStartUpPageContainer.mock.calls.length;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + ((fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>)[name]?.mock?.calls.length ?? 0), 0);
+    const callsAtAsk = pageCalls();
+    await new Promise((done) => setTimeout(done, 1500));
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(pageCalls()).toBe(callsAtAsk);
+    expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(DOUBLE);
+    await new Promise((done) => setTimeout(done, 500));
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await new Promise((done) => setTimeout(done, 1500));
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log 0.5.11): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again, polling on, next 2x asks", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.advanceTimersByTimeAsync(10);
+    const host = fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>;
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + (host[name]?.mock?.calls.length ?? 0), 0);
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.exit.calls).toEqual([1]);
+    fake.emit(4);                                            // the dialog is on screen
+    const atShown = pageCalls();
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(pageCalls()).toBe(atShown);                       // nothing drawn over the dialog
+    const pagesBefore = fake.pages.length;
+    const polls = server.fetchMock.mock.calls.length;
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.pages.length).toBeGreaterThan(pagesBefore);  // page up again at once, no gesture needed
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(server.fetchMock.mock.calls.length).toBeGreaterThan(polls); // still polling Nightscout
+    fake.emit(DOUBLE);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.exit.calls).toEqual([1, 1]);                 // the very first 2x opens the dialog again
+  });
+
+  it("the system ending the app (sysEvent 7) after the dialog shuts it down: a further double tap does nothing", async () => {
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).not.toBe(""));
+    await new Promise((done) => setTimeout(done, 20));
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    fake.emit(7);
+    await new Promise((done) => setTimeout(done, 20));
+    fake.emit(DOUBLE);
+    await new Promise((done) => setTimeout(done, 50));
     expect(fake.exit.calls).toEqual([1]);
   });
 

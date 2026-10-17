@@ -660,11 +660,94 @@ describe("Xaventra HUD lifecycle", () => {
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
       // Still alive: a new card arrives and can be answered.
       server.change([inner], "v3");
+      await new Promise((done) => setTimeout(done, 100));
+      // The card is polled but not drawn while the dialog may be on screen.
+      expect(fake.body()).not.toContain("Neues Modell testen?");
+      fake.emit(CLICK); // the next input restores the page (and arms the answer)
       await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
-      fake.emit(CLICK);
       await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen"));
       fake.emit(CLICK);
       await vi.waitFor(() => expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(true));
+    });
+
+    it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+      const fake = fakeBridge(configured());
+      await boot(fake);
+      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await new Promise((done) => setTimeout(done, 20));
+      const creates = fake.bridge.createStartUpPageContainer.mock.calls.length;
+      // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+      fake.exit.answer = true;
+      fake.emit(DOUBLE);
+      await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+      const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + ((fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>)[name]?.mock?.calls.length ?? 0), 0);
+      const callsAtAsk = pageCalls();
+      await new Promise((done) => setTimeout(done, 1500));
+      // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+      expect(pageCalls()).toBe(callsAtAsk);
+      expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBe(creates);
+      // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+      // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+      const order: string[] = [];
+      let releaseCreate!: () => void;
+      const gate = new Promise<void>((done) => { releaseCreate = done; });
+      const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+      const realCreate = host["createStartUpPageContainer"]!;
+      const realShutDown = host["shutDownPageContainer"]!;
+      host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+      host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+      fake.emit(DOUBLE);
+      await new Promise((done) => setTimeout(done, 500));
+      expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+      releaseCreate();
+      await new Promise((done) => setTimeout(done, 1500));
+      expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+    });
+
+    it("5 right after the exit call (no 4): the app counts as paused, and the first 2x after that is not swallowed - it restores and asks again", async () => {
+      const fake = fakeBridge(configured());
+      await boot(fake);
+      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      fake.exit.answer = true;
+      fake.emit(DOUBLE);
+      await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+      await new Promise((done) => setTimeout(done, 20));
+      fake.emit(5);
+      await new Promise((done) => setTimeout(done, 20));
+      const pagesBefore = fake.bridge.createStartUpPageContainer.mock.calls.length;
+      fake.emit(DOUBLE);
+      await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1]), { timeout: 3000 });
+      expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBeGreaterThan(pagesBefore);
+    });
+
+    it("hardware order (step log 0.5.11): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again, feed on, next 2x asks", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      const fake = fakeBridge(configured());
+      await boot(fake);
+      await vi.advanceTimersByTimeAsync(100);
+      const host = fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>;
+      const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + (host[name]?.mock?.calls.length ?? 0), 0);
+      fake.exit.answer = true;
+      fake.emit(DOUBLE);
+      await vi.advanceTimersByTimeAsync(70);
+      expect(fake.exit.calls).toEqual([1]);
+      fake.emit(4);                                            // the dialog is on screen
+      const atShown = pageCalls();
+      server.change([inner], "v3");
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(pageCalls()).toBe(atShown);                       // nothing drawn over the dialog
+      const pagesBefore = fake.bridge.createStartUpPageContainer.mock.calls.length;
+      fake.emit(5);                                            // "No": the dialog is gone
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBeGreaterThan(pagesBefore);  // page up again at once, no gesture needed
+      expect(fake.body()).toContain("Neues Modell testen?");   // with the card that arrived meanwhile
+      const calls = server.state.calls.length;
+      server.change([], "v4");
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(server.state.calls.length).toBeGreaterThan(calls); // the feed is still polled, nothing was paused
+      fake.emit(DOUBLE);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fake.exit.calls).toEqual([1, 1]);                 // the very first 2x opens the dialog again
     });
 
     it("a failing exit call does not crash the app", async () => {
@@ -677,13 +760,14 @@ describe("Xaventra HUD lifecycle", () => {
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     });
 
-    it("after the system confirms the exit, the feed is no longer polled", async () => {
+    it("after the system ends the app (sysEvent 7) following the exit dialog, the feed is no longer polled", async () => {
       server.change([], "v2");
       const fake = fakeBridge(configured());
       await boot(fake);
       await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
       fake.emit(DOUBLE);
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+      fake.emit(7);
       await new Promise((done) => setTimeout(done, 10));
       const before = server.state.calls.length;
       server.change([inner], "v3");

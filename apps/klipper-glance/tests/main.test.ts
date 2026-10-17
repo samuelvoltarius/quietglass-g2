@@ -134,7 +134,88 @@ describe("Klipper Glance lifecycle", () => {
     await vi.waitFor(() => expect(fake.header()).toContain("KLIPPER · Steuern"));
   });
 
-  it("a confirmed exit stops polling; a rejected one leaves no unhandled rejection", async () => {
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    // The store reviewer's case: the 5 s poll keeps running behind the dialog and must not touch the glasses.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.advanceTimersByTimeAsync(10);
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + ((fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>)[name]?.mock?.calls.length ?? 0), 0);
+    fake.exit.answer = true; // resolves as soon as the dialog is shown
+    fake.emit(DOUBLE);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.exit.calls).toEqual([1]);
+    const callsAtAsk = pageCalls();
+    const polls = server.state.statusCalls;
+    // The printer moves on: every poll would change the HUD.
+    server.state.printer = { ...server.state.printer, progress: 43, nozzle: { now: 221, target: 220 } };
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(server.state.statusCalls).toBeGreaterThan(polls); // the poll ran ...
+    expect(pageCalls()).toBe(callsAtAsk); // ... but drew nothing
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(DOUBLE);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("the dialog sends the app to the background (5): after No the very first 2x is not swallowed, it restores and asks again", async () => {
+    // Hardware, Klipper 0.5.10: the first 2x after "No" only brought the app back; a swipe and a second 2x were needed.
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    await new Promise((done) => setTimeout(done, 20));
+    fake.emit(5);                                            // the dialog: FOREGROUND_EXIT
+    await new Promise((done) => setTimeout(done, 20));
+    const creates = fake.pages.length;
+    fake.emit(DOUBLE);                                       // "No", then one 2x as the first thing
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1]), { timeout: 3000 });
+    expect(fake.pages.length).toBeGreaterThan(creates);      // the page went up again before the dialog
+  });
+
+  it("hardware order (step log 0.5.11): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again, polling on, next 2x asks", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await vi.advanceTimersByTimeAsync(10);
+    const host = fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>;
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + (host[name]?.mock?.calls.length ?? 0), 0);
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.exit.calls).toEqual([1]);
+    fake.emit(4);                                            // the dialog is on screen
+    const atShown = pageCalls();
+    server.state.printer = { ...server.state.printer, progress: 44 };
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(pageCalls()).toBe(atShown);                       // nothing drawn over the dialog
+    const pagesBefore = fake.pages.length;
+    const polls = server.state.statusCalls;
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.pages.length).toBeGreaterThan(pagesBefore);  // page up again at once, no gesture needed
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(server.state.statusCalls).toBeGreaterThan(polls); // still polling the printer
+    fake.emit(DOUBLE);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.exit.calls).toEqual([1, 1]);                 // the very first 2x opens the dialog again
+  });
+
+  it("polling goes on after the exit call resolved; the system ending the app (sysEvent 7) stops it; a rejected call leaves no unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     nodeProcess.on("unhandledRejection", onUnhandled);
@@ -148,11 +229,17 @@ describe("Klipper Glance lifecycle", () => {
       await vi.advanceTimersByTimeAsync(10);
       fake.exit.answer = true;
       fake.emit(DOUBLE);
-      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(1000); // restore first, then the dialog
       expect(fake.exit.calls).toEqual([1, 1]);
+      // Resolving true only means the dialog is shown: still polling.
       const calls = server.state.statusCalls;
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(server.state.statusCalls).toBe(calls);
+      expect(server.state.statusCalls).toBeGreaterThan(calls);
+      fake.emit(7); // the user confirmed: the system ends the app
+      await vi.advanceTimersByTimeAsync(10);
+      const callsAtExit = server.state.statusCalls;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(server.state.statusCalls).toBe(callsAtExit);
     } finally {
       nodeProcess.off("unhandledRejection", onUnhandled);
     }

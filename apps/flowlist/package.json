@@ -1,7 +1,7 @@
 {
   "name": "@quietglass/flowlist",
-  "version": "0.5.2",
-  "description": "Quietglass FlowList \u2014 hands-free checklists and workflows",
+  "version": "0.5.6",
+  "description": "Quietglass FlowList — hands-free checklists and workflows",
   "author": "Quietglass",
   "license": "MIT",
   "private": false,

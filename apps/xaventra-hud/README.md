@@ -124,12 +124,11 @@ npm run pack       # → xaventra-hud.ehpk
 
 ## What has and has not been verified
 
-Verified in tests and the Even Hub simulator: the feed, answers, the
-confirming tap, voice hold/release against a mocked endpoint, the exit
-request, German and English text within the display limits. **Not verified on
-physical G2 hardware**, and not verified against a running Xaventra daemon
-with its speech recognition — the endpoint contract is taken from the daemon's
-documentation and tested with a mock.
+Verified in tests, the Even Hub simulator and on physical G2 hardware: the
+feed, answers, confirming tap, voice hold/release, exit request, and German and
+English text within the display limits. The app has not yet been verified
+against a running Xaventra daemon with its speech recognition; that endpoint
+contract is taken from the daemon's documentation and tested with a mock.
 
 ## Privacy
 

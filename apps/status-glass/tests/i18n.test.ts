@@ -1,19 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr, type Locale } from "../src/i18n";
 import { describeIssue, messages } from "../src/messages";
-import { buildView, LINE_WIDTH, type StatusView } from "../src/glasses/view";
+import { LINE_WIDTH, VISIBLE_ROWS, problemsView, startView, type StatusView } from "../src/glasses/view";
 import { availableActions, buildActionsView } from "../src/glasses/actions-view";
 import {
-  acknowledge, applyError, applyReport, createSource, STALE_AFTER_MS, type SourceStatus,
+  acknowledge, applyError, applyReport, createSource, problems, STALE_AFTER_MS, type SourceStatus,
 } from "../src/monitor/dashboard";
 import { formatMetric, type Action, type Metric } from "../src/protocol/schema";
 import { EMPTY_DATA, maskToken, validateUrl } from "../src/storage/persist";
 import { mountPhoneUi } from "../src/ui/phone";
+import { cockpitModel, cockpitPages } from "../src/cockpit/model";
+import { CELL_WIDTH, cellValueLayout, headlineLayout } from "../src/cockpit/compose";
+import { pixelBackend } from "../src/screen/text";
+import { DEMO_FLEET, demoFleetReport, demoStartFleet } from "../src/monitor/demo";
 
 const vars = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
-
-/** The body container holds 7 rows; header and footer have their own containers. */
-const BODY_ROWS = 7;
 
 describe("translations", () => {
   it("has every key in German and English", () => {
@@ -42,9 +43,9 @@ describe("translations", () => {
     for (const locale of locales) {
       for (const [key, text] of Object.entries(messages[locale])) {
         if (!key.startsWith("g.")) continue;
-        expect(text, key).not.toMatch(/[▸◆]/);
-        // Plain text plus the glyphs the G2 renders.
-        expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○×–]*$/);
+        expect(text, key).not.toMatch(/[▸◆‖]/);
+        // Plain text plus the glyphs the G2 renders (QUS 1.3).
+        expect(text, key).toMatch(/^[\x20-\x7EäöüÄÖÜß●→…·○×–|]*$/);
         expect(text.length, key).toBeLessThanOrEqual(LINE_WIDTH);
       }
     }
@@ -105,7 +106,7 @@ const metric = (over: Partial<Metric>): Metric => ({ id: "cpu", label: "CPU", ..
 const LONG_NAME = "living-room-raspberry-pi-4-model-b-upstairs";
 const LONG_LABEL = "Temperature of the attic sensor near the chimney";
 
-function statusScreens(locale: Locale): StatusView[] {
+function textScreens(locale: Locale): StatusView[] {
   const healthy = applyReport(createSource("s1", "nas"), { name: "nas", metrics: [metric({ value: 10, warn: 80 })] }, 0);
   const broken = applyReport(createSource("s2", "pi"), {
     name: "pi",
@@ -129,21 +130,33 @@ function statusScreens(locale: Locale): StatusView[] {
   }, 0);
   const ackAll = (s: SourceStatus): SourceStatus => [...(s.report?.metrics ?? []).map((m) => m.id), "__source", "__stale"]
     .reduce(acknowledge, s);
+  const hundred = Array.from({ length: 120 }, (_, i) => applyReport(createSource("h" + i, LONG_NAME + i), { name: "h", metrics: [] }, 0));
 
-  const at = (sources: SourceStatus[], cursor = 0, now = 0): StatusView => buildView(sources, { cursor, locale }, now);
+  const start = (sources: SourceStatus[], cursor = 0, now = 0, demo = false, actions = 3): StatusView =>
+    startView(sources, cursor, now, { locale, demo, problemCount: problems(sources, now).length, actionCount: actions });
+  const list = (sources: SourceStatus[], cursor = 0, now = 0, armed = false): StatusView =>
+    problemsView(sources, problems(sources, now), cursor, now, { locale, demo: false, armed });
   return [
-    at([]),
-    at([healthy]),
-    at(Array.from({ length: 120 }, (_, i) => applyReport(createSource("h" + i, "h" + i), { name: "h", metrics: [] }, 0))),
-    at([broken]),
-    at([broken], 1),
-    at([long, ackAll(long)]),
-    at(failures),
-    at(failures.map(ackAll), 4),
-    at([never]),
-    at([healthy], 0, STALE_AFTER_MS + 1),
-    at([many], 60),
-    at([many, ...failures.map(ackAll), long], 999),
+    start([]),
+    start([healthy], 0, 0, false, 0),
+    start([healthy, broken]),
+    start(hundred, 60),
+    start([healthy, broken], 1, 0, true),
+    start([long, ackAll(long)], 2),
+    start(failures, 4),
+    start([never]),
+    start([healthy], 0, STALE_AFTER_MS + 1),
+    list([broken]),
+    list([broken], 1),
+    list([broken], 0, 0, true),
+    list([long, ackAll(long)]),
+    list(failures),
+    list(failures.map(ackAll), 4),
+    list([never]),
+    list([healthy], 0, STALE_AFTER_MS + 1),
+    list([many], 60),
+    list([many, ...failures.map(ackAll), long], 999),
+    list([healthy]),
   ];
 }
 
@@ -179,11 +192,11 @@ function actionScreens(locale: Locale): StatusView[] {
 
 describe("glasses text budget", () => {
   for (const locale of locales) {
-    it(`fits every ${locale} screen into 7 rows of ${LINE_WIDTH} characters`, () => {
-      for (const view of [...statusScreens(locale), ...actionScreens(locale)]) {
+    it(`fits every ${locale} text page into ${VISIBLE_ROWS} rows of ${LINE_WIDTH} characters`, () => {
+      for (const view of [...textScreens(locale), ...actionScreens(locale)]) {
         expect(view.header.length, view.header).toBeLessThanOrEqual(LINE_WIDTH);
         expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_WIDTH);
-        expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
+        expect(view.body.length).toBeLessThanOrEqual(VISIBLE_ROWS);
         for (const line of [view.header, view.footer, ...view.body]) {
           expect(line, line).not.toContain("\n");
           expect(line.length, line).toBeLessThanOrEqual(LINE_WIDTH);
@@ -191,58 +204,88 @@ describe("glasses text budget", () => {
       }
     });
 
-    it(`never cuts the app's own ${locale} words, only text from sources`, () => {
-      const [empty, ok, , broken, , , failures] = statusScreens(locale);
-      const [none, list, , confirm] = actionScreens(locale);
-      for (const view of [empty, ok, broken, failures, none, list, confirm]) {
-        for (const line of [view!.header, view!.footer]) expect(line, line).not.toContain("…");
-      }
-      for (const line of [...empty!.body, ...none!.body]) expect(line).not.toMatch(/…$/);
-      for (const line of failures!.body.slice(1)) {
-        if (!line.includes("xxxx")) expect(line, line).not.toMatch(/…$/);
+    it(`never cuts the app's own ${locale} words in header and footer`, () => {
+      for (const view of [...textScreens(locale), ...actionScreens(locale)]) {
+        for (const line of [view.header, view.footer]) {
+          // Text from a source may be cut; "Läuft…" / "Running…" carry the ellipsis as part of the word.
+          if (line.includes("y".repeat(20)) || line.includes("Temperature") || /Läuft…|Running…/.test(line)) continue;
+          expect(line, line).not.toContain("…");
+        }
       }
     });
   }
 
-  it("speaks German on every German screen", () => {
-    const [empty, ok, , broken, , , failures, acked, never] = statusScreens("de");
+  it("speaks German on every German page", () => {
+    const [empty, ok, two, , demo, , , never, , broken, , armed, , failures] = textScreens("de");
     expect(empty!.body).toEqual(["Keine Quellen eingerichtet.", "Füge auf dem Handy eine hinzu."]);
-    expect(ok!.body).toEqual(["1 von 1 ok"]);
-    expect(ok!.footer).toBe("Halten = Menü · 2× = Ende");
-    expect(broken!.header).toBe("STATUS · KRITISCH · 2");
-    expect(broken!.body[0]).toBe("> ! pi Disk 99,5%");
-    // Too long with the swipe hint: the swipe part gives way, the way out stays.
-    expect(broken!.footer).toBe("Tippen = gesehen · Halten = Menü · 2× = Ende");
-    expect(failures!.header).toBe("STATUS · KEINE DATEN · 9");
+    expect(empty!.header).toBe("Status · offline");
+    expect(ok!.body).toEqual(["● nas"]);
+    expect(ok!.header).toBe("Status · ● live");
+    expect(ok!.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
+    // The overview first, the servers indented under it, then the problem list and the actions.
+    expect(two!.body).toEqual([
+      "● Alle Server · 1/2 ok", "    nas · ok", "    pi · KRITISCH", "  Probleme · 2", "  Aktionen",
+    ]);
+    expect(demo!.body.at(-1)).toBe("Demo · Verbindung am Handy einrichten");
+    expect(demo!.header).toBe("Status · Demo");
+    expect(never!.body[0]).toBe("● never-answered");
+    expect(broken!.header).toBe("Probleme · ● live");
+    expect(broken!.body[0]).toBe("● ! pi Disk 99,5%");
+    expect(armed!.footer).toBe("Nochmal tippen = gesehen · Wischen/2× = abbrechen");
     expect(failures!.body.join("\n")).toContain("host3 Server meldet einen Fehler");
     expect(failures!.body.join("\n")).toContain("host2 fehlgeschlagen");
-    expect(acked!.body.some((line) => line.endsWith("(gesehen)"))).toBe(true);
-    expect(never!.body[0]).toBe("> ? never-answered nicht erreichbar");
 
     const [none, list, confirmFirst, confirm, , , busy, done, , failed] = actionScreens("de");
-    expect(none!.body).toEqual([">   Alle Quellen neu abfragen", "    Hilfe"]);
-    expect(list!.header).toBe("STATUS · Aktionen");
+    expect(none!.body).toEqual(["Keine Aktionen angeboten."]);
+    expect(list!.header).toBe("Aktionen · ● live");
     expect(list!.footer).toBe("Tippen = wählen · Wischen = Liste · 2× = zurück");
     expect(confirmFirst!.footer).toBe("Tippen = wählen · Wischen = Liste · 2× = zurück");
-    expect(confirm!.body[1]).toBe("> ! SICHER? home Front door");
+    expect(confirm!.body[1]).toBe("● ! SICHER? home Front door");
     expect(confirm!.footer).toBe("Nochmal tippen = ausführen · Wischen/2× = abbrechen");
-    expect(busy!.header).toBe("STATUS · Läuft…");
-    expect(done!.header).toBe("STATUS · Erledigt");
-    expect(failed!.header).toBe("STATUS · Fehlgeschlagen");
+    expect(busy!.header).toBe("Aktionen · Läuft…");
+    expect(done!.header).toBe("Aktionen · Erledigt");
+    expect(failed!.header).toBe("Aktionen · Fehlgeschlagen");
     expect(failed!.footer).toBe("Server meldet einen Fehler · 2× = zurück");
   });
 
   it("marks a stale source as such in both languages", () => {
     const quiet = applyReport(createSource("s1", "nas"), { name: "nas", metrics: [] }, 0);
-    expect(buildView([quiet], { locale: "de" }, STALE_AFTER_MS + 1).body[0]).toBe("> ? nas keine neuen Daten");
-    expect(buildView([quiet], { locale: "en" }, STALE_AFTER_MS + 1).body[0]).toBe("> ? nas no data");
+    const now = STALE_AFTER_MS + 1;
+    const row = (locale: Locale): string => problemsView([quiet], problems([quiet], now), 0, now, { locale, demo: false, armed: false }).body[0]!;
+    expect(row("de")).toBe("● ? nas keine neuen Daten");
+    expect(row("en")).toBe("● ? nas no data");
   });
+});
+
+describe("cockpit text budget", () => {
+  const backend = pixelBackend();
+  const NOW = 100_000;
+  const sources = (machines = demoStartFleet(true)): SourceStatus[] =>
+    machines.map((machine) => applyReport(createSource(machine.id, machine.name), demoFleetReport(machine, 11), NOW));
+
+  for (const locale of locales) {
+    it(`draws the app's own ${locale} words whole: headline, labels and values are never cut`, () => {
+      for (const list of [sources(), sources(DEMO_FLEET.map((m) => ({ ...m, offlineMinutes: 0 }))), [], [createSource("x", "never")]]) {
+        for (const page of cockpitPages(list)) {
+          const model = cockpitModel({ sources: list, page, now: NOW, locale, demo: false });
+          const headline = headlineLayout(backend, model.headline.filter((_, index) => !(page.kind === "host" && index === 0)));
+          for (const line of headline.lines) expect(line, line).not.toContain("…");
+          for (const cell of model.cells) {
+            expect(cell.label.length, cell.label).toBeLessThanOrEqual(10);
+            expect(cellValueLayout(backend, cell.value, CELL_WIDTH).text, cell.value).toBe(cell.value);
+          }
+          expect(model.hint.length).toBeLessThanOrEqual(LINE_WIDTH);
+          expect(model.hint.endsWith(locale === "de" ? "2× = zurück" : "2× = back")).toBe(true);
+        }
+      }
+    });
+  }
 });
 
 describe("phone page", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  function render(locale: Locale): string {
+  function render(locale: Locale, sources = [{ id: "s1", name: "nas", url: "http://nas.local/status", token: "abcdef" }]): string {
     let html = "";
     const root = {
       set innerHTML(value: string) { html = value; },
@@ -252,35 +295,49 @@ describe("phone page", () => {
     };
     vi.stubGlobal("document", { getElementById: () => root });
     mountPhoneUi({
-      getData: () => ({ ...EMPTY_DATA, sources: [{ id: "s1", name: "nas", url: "http://nas.local/status", token: "abcdef" }] }),
+      getData: () => ({ ...EMPTY_DATA, sources }),
       setData: async () => undefined,
       getLocale: () => locale,
     });
     return html;
   }
 
-  it("is German throughout, with a tab bar and jargon folded away", () => {
+  it("is German throughout, with exactly three tabs in one bar and jargon folded away", () => {
     const html = render("de");
     expect(html).toContain('<option value="de" selected>');
     expect(html).toContain('id="language"');
     expect(html).toContain('<nav class="tabbar"');
-    for (const label of ["Verbindung", "Brille", "Mehr"]) expect(html).toContain("</span>" + label + "</button>");
+    expect(html.match(/data-tab-go=/g)).toHaveLength(3);
+    for (const label of ["Jetzt", "Server", "Einstellungen"]) expect(html).toContain("</span>" + label + "</button>");
+    expect(html).toContain("QUIETGLASS / STATUS");
     expect(html).toContain("Token: gesetzt (6 Zeichen)");
     expect(html).toContain("unverschlüsselt (http)");
     expect(html).toContain("Bedienung an der Brille");
     expect(html).toContain("Alle <output id=\"poll-out\">30</output> s nachsehen");
     // The token field sits under "Erweitert".
     expect(html.indexOf("<summary>Erweitert</summary>")).toBeLessThan(html.indexOf('id="token"'));
-    for (const english of ["Add a source", "Remove", "Controls on the glasses", "Nothing configured", "Leave Status Glass"]) {
+    for (const english of ["Add a source", "Controls on the glasses", "Nothing configured", "Leave Status Glass"]) {
       expect(html).not.toContain(english);
     }
   });
 
   it("stays English when English is chosen", () => {
     const html = render("en");
-    expect(html).toContain("Add a source");
+    expect(html).toContain("Sources · 1");
     expect(html).toContain("token: set (6 chars)");
     expect(html).toContain('<option value="en" selected>');
+    expect(html.match(/data-tab-go=/g)).toHaveLength(3);
+  });
+
+  it("folds the source card once a source is set up, and opens it with a checklist on the first run", () => {
+    const configured = render("de");
+    expect(configured).toContain('<details class="fold card">');
+    expect(configured).not.toContain('class="steps"');
+    const first = render("de", []);
+    expect(first).toContain('<details class="fold card" open>');
+    expect(first).toContain('class="steps"');
+    expect(first).toContain("In drei Schritten");
+    expect(first).toContain("Bis dahin zeigt die Brille Demo-Daten.");
   });
 
   it("explains a bad address in the chosen language", () => {

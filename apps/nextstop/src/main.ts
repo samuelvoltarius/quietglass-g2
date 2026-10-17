@@ -10,14 +10,14 @@ import { boardingIndex, followRide } from "./ride/follow";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { boardScene, bySoonest, followLoadingScene, followScene, messageScene } from "./glasses/board";
 import { sameScene } from "./glasses/diff";
-import { createPage, rebuildPage, updatePage } from "./glasses/render";
+import { createPage, forgetPage, rebuildPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
 import { loadSession, saveSession, type SavedSession } from "./storage/session";
 import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi } from "./ui/phone";
 import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 import { Companion } from "./speech/companion";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal, settleRestore } from "./exit";
 import { explainFailure, glassesText, noStopsHint, type Explanation } from "./text";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
@@ -345,7 +345,11 @@ async function boot(): Promise<void> {
     return boardPage();
   };
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     // After the double tap the page is gone; drawing again would bring it back.
     if (closed || backgrounded) return;
     const scene = currentScene();
@@ -384,6 +388,7 @@ async function boot(): Promise<void> {
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
       do {
@@ -1132,10 +1137,22 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving:
+    // they must neither stop GPS, timers and the microphone nor redraw over the dialog.
+    if (requestExit.onLifecycle(event) !== null) return;
     const lifecycle = lifecycleFromEvent(event);
+    if (isBackSignal(event)) requestExit.back();
     if (lifecycle === "foreground") { comeBack(); return; }
     if (lifecycle === "background") { void goBackground(); return; }
-    if (lifecycle === "exit") { void goBackground().then(() => { void shutDown(); }); return; }
+    if (lifecycle === "exit") {
+      // Left on purpose (the user confirmed the exit dialog): a guide or a followed bus is over, the next start begins on the board.
+      following = null;
+      guide = null;
+      screen = "board";
+      persistSession();
+      void goBackground().then(() => { void shutDown(); });
+      return;
+    }
     // Native contextual menu: arrives on its own event, whatever container captures input.
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
@@ -1161,7 +1178,16 @@ async function boot(): Promise<void> {
     const gesture = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!gesture) return;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
-    if (backgrounded) { comeBack(); return; }
+    if (backgrounded) {
+      const restore = comeBack();
+      // A double tap on a root page (board, running guide) that arrives while the app thinks it is backgrounded
+      // comes back AND asks the exit dialog; it waits for the restore draw like the exit helper does for its own.
+      if (gesture.gesture === "doubleClick" && (screen === "board" || screen === "guide")) {
+        disarm();
+        void settleRestore(restore).then(() => requestExit());
+      }
+      return;
+    }
     // QIS v1: an armed action takes the next single tap; any other gesture only cancels it.
     if (armed && gesture.gesture !== "longPressRelease") {
       const pending = armed;
@@ -1201,16 +1227,21 @@ async function boot(): Promise<void> {
     if (typeof stopListening === "function") stopListening();
     await bridge.stopAppLocationUpdates().catch(() => undefined);
   };
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: async () => {
-      // Left on purpose: a guide or a followed bus is over, the next start begins on the board.
-      following = null;
-      guide = null;
-      screen = "board";
-      persistSession();
-      await shutDown();
+    onBack: () => {
+      // The dialog took the page away. Put it up again the way of the
+      // first one (create), so the glasses deliver input - and the next 2x - to the app again.
+      if (closed) return;
+      pageReady = false;
+      menuKey = "";
+      lastScene = null;
+      forgetPage(bridge);
+      return draw();
     },
   }, "nextstop");
+  exitAsked = requestExit.asked;
 
   /**
    * Left through the system (not by the double tap): GPS, microphone and the
@@ -1234,8 +1265,9 @@ async function boot(): Promise<void> {
     await bridge.stopAppLocationUpdates().catch(() => undefined);
   };
 
-  const comeBack = (): void => {
-    if (!backgrounded || closed) return;
+  /** Returns the restore draw (null if nothing was backgrounded), so a following exit request can wait for it. */
+  const comeBack = (): Promise<void> | null => {
+    if (!backgrounded || closed) return null;
     backgrounded = false;
     if (screen === "voice") { voice = null; screen = "places"; }
     pageReady = false;
@@ -1249,11 +1281,12 @@ async function boot(): Promise<void> {
       void refreshGuide();
       void ensureWalk();
     }
-    void draw();
+    const restore = draw();
     if (screen === "board") {
       if (following?.status === "ready") void refreshFollow();
       else if (!following) void loadDepartures();
     }
+    return restore;
   };
 
   bridge.onDeviceStatusChanged((status) => {

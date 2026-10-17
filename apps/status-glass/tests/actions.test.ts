@@ -134,11 +134,14 @@ describe("actions screen", () => {
     { id: "door", label: "Front door", confirm: true },
   ])]);
 
-  it("explains that sources are read-only by default when there are none", () => {
-    // Without actions the menu still offers refresh and the help row (the side menu is off).
+  it("says so when no source offers an action, with a way back and nothing else", () => {
     const view = buildActionsView([], base);
-    expect(view.body.join(" ")).toContain("Refresh every source");
-    expect(view.body.join(" ")).toContain("Help");
+    expect(view.body).toEqual(["No actions offered."]);
+    expect(view.footer).toBe("2× = back");
+  });
+
+  it("carries the header Actions · ● live", () => {
+    expect(buildActionsView(actions, base).header).toBe("Actions · ● live");
   });
 
   it("lists actions with their source", () => {
@@ -155,9 +158,9 @@ describe("actions screen", () => {
     expect(buildActionsView(actions, base).footer).toBe("Tap = choose · Swipe = list · 2× = back");
   });
 
-  it("ends the menu with refresh and the help row", () => {
-    const view = buildActionsView(actions, { ...base, cursor: 3 });
-    expect(view.body.map((l) => l.replace(/^[> ]+/, "").replace(/^! /, "").trim())).toEqual(["home Kitchen light", "home Front door", "Refresh every source", "Help"]);
+  it("lists only the actions: no refresh row, no help row", () => {
+    const view = buildActionsView(actions, { ...base, cursor: 1 });
+    expect(view.body.map((l) => l.replace(/^[● ]+/, "").replace(/^! /, "").trim())).toEqual(["home Kitchen light", "home Front door"]);
   });
 
   it("asks plainly once confirmation is pending", () => {
@@ -167,24 +170,25 @@ describe("actions screen", () => {
   });
 
   it("shows progress and the outcome", () => {
-    expect(buildActionsView(actions, { ...base, busy: true }).header).toBe("STATUS · Running…");
+    expect(buildActionsView(actions, { ...base, busy: true }).header).toBe("Actions · Running…");
     expect(buildActionsView(actions, { ...base, result: { label: "Kitchen light", ok: true } }).header)
-      .toBe("STATUS · Done");
+      .toBe("Actions · Done");
     expect(buildActionsView(actions, { ...base, result: { label: "HTTP 403", ok: false } }).header)
-      .toBe("STATUS · Failed");
+      .toBe("Actions · Failed");
   });
 
-  it("keeps the selection on screen in a long list", () => {
+  it("keeps the selection on screen in a long list, five rows at most", () => {
     const many = availableActions([sourceWith(
       Array.from({ length: 12 }, (_, i) => ({ id: "a" + i, label: "Action " + i })),
     )]);
-    const view = buildActionsView(many, { ...base, cursor: 10, maxRows: 3 });
-    expect(view.body.some((l) => l.startsWith("> "))).toBe(true);
-    expect(view.body).toHaveLength(3);
+    const view = buildActionsView(many, { ...base, cursor: 10 });
+    expect(view.body.filter((l) => l.startsWith("● "))).toHaveLength(1);
+    expect(view.body).toHaveLength(5);
+    expect(view.body.at(-2)).toContain("Action 10");
   });
 
   it("clamps an out-of-range cursor", () => {
-    expect(buildActionsView(actions, { ...base, cursor: 99 }).body.some((l) => l.startsWith("> ")))
+    expect(buildActionsView(actions, { ...base, cursor: 99 }).body.some((l) => l.startsWith("● ")))
       .toBe(true);
   });
 });

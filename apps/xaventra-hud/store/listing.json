@@ -22,5 +22,5 @@
     }
   ],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/xaventra-hud/docs/PRIVACY.md",
-  "screenshot": "release/xaventra-hud/screenshot.png"
+  "screenshot": "apps/xaventra-hud/store/screenshot.png"
 }

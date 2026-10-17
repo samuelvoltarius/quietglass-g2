@@ -5,8 +5,8 @@ import { t } from "../messages";
  * 0.7.0: the start screen is a customer list. The rows come from the
  * babel-llm-proxy (`GET /context/customers`, read-only, same auth as the
  * model), which reads Shoot Day: every customer (unassigned skipped) with its
- * next project. Today's customers come first (by time), then the rest by name;
- * the last row is always "Ohne Kunde – Übersetzen".
+ * next project. Today's customers come first (by time), then the rest by name.
+ * 1.0.0: they are listed under "Gespräch" on the start screen (glasses/start.ts).
  */
 export interface CustomerEntry {
   readonly id: string;
@@ -122,49 +122,9 @@ export async function fetchCustomers(config: CustomersFetchConfig): Promise<Cust
   }
 }
 
-/** A row of the start screen. */
-export type PickRow =
-  | { readonly kind: "customer"; readonly entry: CustomerEntry }
-  | { readonly kind: "retry" }
-  | { readonly kind: "loading" }
-  | { readonly kind: "none" }
-  /** Without the side menu: an entry that used to live there (Meine Stimme lernen/löschen, Personen), at the end of the list. */
-  | { readonly kind: "menu"; readonly id: number; readonly label: string };
-
-/** A row for the end of the list: the id of the side menu entry it stands for, and its label. */
-export interface MenuRow { readonly id: number; readonly label: string }
-
-/** What the list holds: still loading, loaded, failed, or no proxy at all (then only "Ohne Kunde"). */
+/** What the list holds: still loading, loaded, failed, or no proxy at all (then no customer rows). */
 export type CustomerListState =
   | { readonly state: "off" }
   | { readonly state: "loading" }
   | { readonly state: "failed" }
   | { readonly state: "ready"; readonly entries: readonly CustomerEntry[] };
-
-export function pickRows(list: CustomerListState, now: Date, extras: readonly MenuRow[] = []): PickRow[] {
-  const none: PickRow = { kind: "none" };
-  const tail = extras.map((extra): PickRow => ({ kind: "menu", id: extra.id, label: extra.label }));
-  switch (list.state) {
-    case "off": return [none, ...tail];
-    case "loading": return [{ kind: "loading" }, none, ...tail];
-    case "failed": return [{ kind: "retry" }, none, ...tail];
-    case "ready": return [...orderCustomers(list.entries, now).map((entry): PickRow => ({ kind: "customer", entry })), none, ...tail];
-  }
-}
-
-/** The list as glasses rows: "> " marks the cursor; scrolled so the cursor stays visible. */
-export function pickBody(rows: readonly PickRow[], cursor: number, now: Date, locale: Locale, width: number, visible: number): string[] {
-  const label = (row: PickRow): string => {
-    switch (row.kind) {
-      case "customer": return customerListRow(row.entry, now, locale, width - 2);
-      case "retry": return t(locale, "g.pick.failed");
-      case "loading": return t(locale, "g.pick.loading");
-      case "none": return t(locale, "g.pick.none");
-      case "menu": return fit(row.label, width - 2);
-    }
-  };
-  const at = Math.min(Math.max(0, cursor), rows.length - 1);
-  const start = Math.max(0, Math.min(at - visible + 1, rows.length - visible));
-  const first = Math.max(0, Math.min(start, at));
-  return rows.slice(first, first + visible).map((row, i) => (first + i === at ? "> " : "  ") + label(row));
-}

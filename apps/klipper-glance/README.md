@@ -145,9 +145,9 @@ npm run bridge
 
 ## Status
 
-Verified in tests (against the mock Moonraker) and the Even Hub simulator only.
-**Not yet verified on physical G2 hardware, and not yet against every Klipper
-distribution** — the bridge reads Moonraker's standard `print_stats`,
+Verified in tests (against the mock Moonraker), the Even Hub simulator and on
+physical G2 hardware. It has not yet been verified against every Klipper
+distribution — the bridge reads Moonraker's standard `print_stats`,
 `display_status`, `virtual_sdcard`, `extruder`, `heater_bed` and `gcode_move`
 objects. Layer numbers appear only when the slicer reports them.
 

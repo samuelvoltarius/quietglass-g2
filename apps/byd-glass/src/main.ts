@@ -1,10 +1,11 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { settleRestore } from "./exit";
 import { LONG_POLL_S, createClient, toApiError, type CarApi } from "./car/client";
 import { createDemo, DEMO_SCENES, type DemoScene } from "./car/demo";
 import { sortWarnings, warningKey, type Action, type CarState, type CarWarning } from "./car/model";
 import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
-import { installPage, updatePage, type MenuSpec } from "./glasses/render";
+import { forgetPage, installPage, updatePage, type MenuSpec } from "./glasses/render";
 import { bitmapKey } from "./glasses/gfx";
 import { ICON_STEP_MS } from "./glasses/pics";
 import { t } from "./messages";
@@ -18,7 +19,7 @@ import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.4.3";
+export const BUILD = "0.4.7";
 
 /** Side menu id (QIS v1.2): Hilfe. The app has no settings of its own on the glasses. */
 export const MENU_HELP = 1;
@@ -76,7 +77,15 @@ async function boot(): Promise<void> {
 
   const frameKey = (f: Frames): string => [f.icon, f.a, f.b, f.c].map((b) => (b ? bitmapKey(b) : "-")).join("|");
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitDialogAsked = false;
+  // The system dialog's own lifecycle (step log, Klipper 0.5.11): right after shutDownPageContainer(1) the glasses
+  // send FOREGROUND_ENTER (4) when the dialog comes up and FOREGROUND_EXIT (5) when it goes away after "No".
+  let dialogPending = false;
+  let dialogShown = false;
   const drawOnce = async (): Promise<void> => {
+    if (exitDialogAsked) return;
     const state = viewState();
     const view = buildView(state);
     const frames = buildFrames(state, view.layout);
@@ -95,6 +104,7 @@ async function boot(): Promise<void> {
 
   /** One draw at a time; requests meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
+    if (exitDialogAsked) return Promise.resolve();
     if (closed || !ready) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
@@ -203,11 +213,41 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN (hardware: ~58 ms after the double tap), not when
+  // the user answered, so the result never tears the app down. If the user confirms, the system ends the app
+  // (sysEvent 6/7 below). After "No" the app has to be alive: on the next signal that it is back (any input,
+  // FOREGROUND_ENTER) the page is put up again the way of the first one, then the event is handled normally.
+  /** The restore started by the last exitBack(), while it is still running. */
+  let restoring: Promise<void> | null = null;
+  const exitBack = (): void => {
+    if (!exitDialogAsked) return;
+    exitDialogAsked = false;
+    if (closed) return;
+    pageReady = false;
+    lastView = null;
+    forgetPage(bridge);
+    const run = draw().catch(() => undefined);
+    restoring = run;
+    void run.then(() => { if (restoring === run) restoring = null; });
+  };
   const requestExit = (): void => {
-    bridge.shutDownPageContainer(1).then(
-      (left) => { if (left === true) shutDown(); },
-      (error: unknown) => { console.warn("[bydglass] exit failed:", error); },
-    );
+    // A second double tap before any restore: put the page back first, then ask again.
+    exitBack();
+    // The first double tap after "No" is the back signal itself: a dialog call issued while the page is still being
+    // created is lost (hardware, Klipper 0.5.8). So it waits for the restore and a short settle delay.
+    const restore = restoring;
+    const ask = async (): Promise<void> => {
+      dialogPending = true;
+      try {
+        await bridge.shutDownPageContainer(1);
+      } catch (error: unknown) {
+        console.warn("[bydglass] exit failed:", error);
+      }
+      exitDialogAsked = true;
+    };
+    // Without a restore in flight the host is called at once, in this very event.
+    if (restore) void settleRestore(restore).then(ask);
+    else void ask();
   };
   const shutDown = (): void => {
     if (closed) return;
@@ -296,6 +336,25 @@ async function boot(): Promise<void> {
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    const systemType = (event as { sysEvent?: { eventType?: number } }).sysEvent?.eventType;
+    if (systemType === 6 || systemType === 7) { shutDown(); return; }
+    if (systemType === 4 && dialogPending) {
+      // The exit dialog came up: stay still, it is on screen now.
+      dialogPending = false;
+      dialogShown = true;
+      exitDialogAsked = true;
+      return;
+    }
+    if (systemType === 5 && dialogShown) {
+      // "No": the dialog went away. The app never left - page up again the way of the first one.
+      dialogShown = false;
+      exitDialogAsked = true;
+      exitBack();
+      return;
+    }
+    dialogPending = false;
+    dialogShown = false;
+    if (systemType !== 5) exitBack();
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
       if (menuId === MENU_HELP && ready) {

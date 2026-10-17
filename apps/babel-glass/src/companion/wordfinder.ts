@@ -11,6 +11,10 @@ import { OWNER_SPEAKER } from "../stt/voice";
  * model, which guesses the word and 2–3 alternatives. The answer pops up on
  * the glasses in one line (plus, with a translation target, the word in that
  * language). Fast on purpose: few tokens, low temperature, no thinking, 8 s.
+ *
+ * 0.9.0: a hold never reaches the app on the real glasses, so the lookup also
+ * starts by itself when the user is stuck (`stuckReason`), and a German user
+ * who speaks English gets the English word plus its German meaning.
  */
 
 /** "Ich bin Sprecher": auto = whoever spoke last before the hold. */
@@ -27,8 +31,10 @@ export const WORD_MAX = 4;
 export interface WordResult {
   /** The likely word first, then the alternatives. */
   readonly words: readonly string[];
-  /** The first word in the translation target, when asked for. */
+  /** The first word in the translation target, when asked for (0.9.0: in the learner case its German meaning). */
   readonly translation?: string;
+  /** 0.9.0: answered with the learner prompt (German speaker, English conversation). */
+  readonly learner?: boolean;
 }
 
 export interface WordRequest {
@@ -38,6 +44,8 @@ export interface WordRequest {
   readonly language: string;
   /** Translation target, if the user translates into another language. */
   readonly target?: string;
+  /** 0.9.0: force or forbid the learner prompt; absent = decided by `isLearnerCase`. */
+  readonly learner?: boolean;
 }
 
 /**
@@ -92,7 +100,30 @@ export function conversationLanguage(log: readonly TranscriptEntry[], configured
   return "de";
 }
 
-export function wordFinderPrompt(language: string, target?: string): string {
+/**
+ * 0.9.0: the learner case. The user is a German native who talks ENGLISH and
+ * gets stuck: the conversation language is English, or what he said so far is
+ * mostly English although the setting says otherwise.
+ */
+export function isLearnerCase(language: string, context: string): boolean {
+  if (language === "en") return true;
+  const words = context.toLowerCase().match(/[a-zäöüß']+/g) ?? [];
+  if (words.length < 4) return false;
+  const english = words.filter((w) => ENGLISH_WORDS.has(w)).length;
+  const german = words.filter((w) => GERMAN_WORDS.has(w) || /[äöüß]/.test(w)).length;
+  return english >= 2 && english > german * 2;
+}
+
+export function wordFinderPrompt(language: string, target?: string, learner = false): string {
+  if (learner) {
+    return [
+      "The speaker is a German native speaker talking English and is stuck for a word.",
+      "Give the English word he most likely needs and 2–3 English alternatives, only the words, separated by ' · '.",
+      "If he said a German word, the first English word must be its translation.",
+      "On a second line only the German meaning of the first word.",
+      "No sentences, no explanation, no numbers.",
+    ].join(" ");
+  }
   const withTarget = target && target.split("-")[0] !== language ? target : undefined;
   if (language === "de") {
     return [
@@ -146,9 +177,10 @@ function clip(text: string, max: number): string {
 
 /**
  * The popup lines: as many words as fit one line of `width` characters
- * (the first one always, cut if it must), then "→ translation" if there is one.
+ * (the first one always, cut if it must), then "→ translation" if there is one
+ * (0.9.0: "→ DE: meaning" in the learner case, with `translationLabel` "DE:").
  */
-export function wordPopupLines(result: WordResult, width = WORD_LINE_CHARS): string[] {
+export function wordPopupLines(result: WordResult, width = WORD_LINE_CHARS, translationLabel = ""): string[] {
   let line = "";
   for (const word of result.words) {
     const next = line ? line + " · " + word : word;
@@ -159,7 +191,7 @@ export function wordPopupLines(result: WordResult, width = WORD_LINE_CHARS): str
     line = next;
   }
   const out = [line];
-  if (result.translation) out.push(clip("→ " + result.translation, width));
+  if (result.translation) out.push(clip("→ " + (translationLabel ? translationLabel + " " : "") + result.translation, width));
   return out;
 }
 
@@ -175,7 +207,8 @@ export interface WordFinderConfig {
 export async function findWord(config: WordFinderConfig, request: WordRequest): Promise<Result<WordResult>> {
   if (!request.context.trim()) return { ok: false, error: "empty" };
   const wait = config.timeoutMs ?? WORD_TIMEOUT_MS;
-  const withTranslation = Boolean(request.target && request.target.split("-")[0] !== request.language);
+  const learner = request.learner ?? isLearnerCase(request.language, request.context);
+  const withTranslation = learner || Boolean(request.target && request.target.split("-")[0] !== request.language);
   const reply = await streamChat({
     endpoint: chatCompletionsUrl(config.url),
     ...(config.apiKey ? { apiKey: config.apiKey } : {}),
@@ -186,7 +219,7 @@ export async function findWord(config: WordFinderConfig, request: WordRequest): 
       max_tokens: WORD_MAX_TOKENS,
       chat_template_kwargs: { enable_thinking: false },
       messages: [
-        { role: "system", content: wordFinderPrompt(request.language, request.target) },
+        { role: "system", content: wordFinderPrompt(request.language, request.target, learner) },
         { role: "user", content: request.context },
       ],
     },
@@ -196,5 +229,113 @@ export async function findWord(config: WordFinderConfig, request: WordRequest): 
   });
   if (!reply.ok) return reply;
   const words = parseWords(reply.text, withTranslation);
-  return words ? { ok: true, value: words } : { ok: false, error: "empty response" };
+  return words ? { ok: true, value: learner ? { ...words, learner: true } : words } : { ok: false, error: "empty response" };
+}
+
+// ---- Automatic trigger (0.9.0): the user is stuck ----
+
+/** At most one automatic lookup in this time. */
+export const AUTO_MIN_GAP_MS = 8_000;
+/** An unfinished sentence counts as "stuck" after this much silence from the recogniser. */
+export const STUCK_QUIET_MS = 2_500;
+/** A hesitation or a German word needs a short pause too, so the sentence can go on. */
+export const HESITATION_QUIET_MS = 1_000;
+/** No automatic lookup this soon after a popup closed. */
+export const AUTO_AFTER_POPUP_MS = 2_000;
+
+export type StuckReason = "unfinished" | "hesitation" | "german";
+
+export interface StuckInput {
+  readonly now: number;
+  readonly log: readonly TranscriptEntry[];
+  /** The provisional line the recogniser is still writing, if any. */
+  readonly pending: string | null;
+  /** When the recogniser last delivered any text (partial or final); 0 = never. */
+  readonly lastTextAt: number;
+  /** The user's speaker letter; null = speakers are off, all speech is the user's. */
+  readonly speaker: string | null;
+  /** Conversation language (primary code). */
+  readonly language: string;
+  /** Start of the last automatic lookup; 0 = none yet. */
+  readonly lastAutoAt: number;
+  /** Text of the last lookup, so the same text is never asked twice. */
+  readonly lastText: string | null;
+  /**
+   * 1.0.0: the user's voice is known (enrolled on the server). The check also holds when the log
+   * already holds "ME" lines. Then only the user's own FINAL lines can make him "stuck".
+   */
+  readonly voiceProfile?: boolean;
+  /** A lookup is running. */
+  readonly busy: boolean;
+  /** A popup is on the glasses now. */
+  readonly popupOpen: boolean;
+  /** When the last popup closed; 0 = none yet. */
+  readonly popupClosedAt: number;
+}
+
+const HESITATIONS = [
+  "ähm", "äh", "öhm", "öh", "ehm", "hm", "hmm", "mhm", "uh", "um", "uhm", "erm",
+  "wie sagt man", "how do you say", "what's the word", "what is the word",
+];
+const GERMAN_WORDS = new Set(["und", "der", "die", "das", "ist", "nicht", "wie", "ich"]);
+const ENGLISH_WORDS = new Set([
+  "the", "a", "an", "is", "are", "was", "and", "to", "of", "in", "it", "that", "for", "with", "on", "this",
+  "i", "you", "we", "my", "have", "be", "but", "so", "not", "what", "do", "can", "will", "would", "about", "think",
+]);
+
+function tidy(text: string): string {
+  return text.normalize("NFC").replace(/\s+/g, " ").trim();
+}
+
+/** True when the text ends in a hesitation: "ähm", "äh …", "how do you say". */
+export function endsWithHesitation(text: string): boolean {
+  const tail = tidy(text).toLowerCase().replace(/[\s.,;:!?…"'„“”–-]+$/g, "");
+  return HESITATIONS.some((h) => tail === h || tail.endsWith(" " + h) || tail.endsWith("," + h));
+}
+
+/** A German word in an otherwise English line: an umlaut/ß word or one of a few function words. */
+export function hasGermanWord(text: string): boolean {
+  const words = text.toLowerCase().match(/[a-zäöüß']+/g) ?? [];
+  if (words.length < 3) return false;
+  const german = words.filter((w) => GERMAN_WORDS.has(w) || /[äöüß]/.test(w)).length;
+  // "The rest is English": German-looking words are the exception, not the sentence.
+  return german >= 1 && german <= 2 && words.length - german >= german * 2;
+}
+
+/**
+ * Why the user seems to be stuck right now, or null. Pure: main.ts only feeds
+ * it the clock and the state. The newest text must be the user's; a provisional
+ * line carries no speaker yet, so it counts as the user's when the last final
+ * line was (or when speakers are off). 1.0.0: with a voice profile that guess is
+ * dropped — only a final "ME" line counts, a pending line never does.
+ */
+export function stuckReason(input: StuckInput): { reason: StuckReason; text: string } | null {
+  const { now } = input;
+  if (input.busy || input.popupOpen || !input.lastTextAt) return null;
+  if (input.lastAutoAt && now - input.lastAutoAt < AUTO_MIN_GAP_MS) return null;
+  if (input.popupClosedAt && now - input.popupClosedAt < AUTO_AFTER_POPUP_MS) return null;
+
+  const last = input.log[input.log.length - 1];
+  const pending = input.pending ? tidy(input.pending) : "";
+  let text = "";
+  if (input.voiceProfile || input.log.some((entry) => entry.speaker === OWNER_SPEAKER)) {
+    // With a voice profile the provisional line has no speaker yet and could be anybody:
+    // only a final line that the server attributed to the user counts. A provisional line means somebody
+    // is talking right now and the newest text is not (yet) known to be the user's: wait for its final.
+    if (pending || last?.speaker !== OWNER_SPEAKER) return null;
+    text = tidy(last.text);
+  } else if (pending || last) {
+    if (input.speaker && last?.speaker !== input.speaker) return null;
+    text = pending || tidy(last?.text ?? "");
+  }
+  if (!text) return null;
+  if (input.lastText !== null && tidy(input.lastText) === text) return null;
+
+  const quiet = now - input.lastTextAt;
+  if (quiet >= HESITATION_QUIET_MS) {
+    if (endsWithHesitation(text)) return { reason: "hesitation", text };
+    if (input.language === "en" && hasGermanWord(text)) return { reason: "german", text };
+  }
+  if (quiet >= STUCK_QUIET_MS && !/[.?!…]["')»”]*$/.test(text)) return { reason: "unfinished", text };
+  return null;
 }

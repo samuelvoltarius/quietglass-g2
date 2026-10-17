@@ -103,6 +103,7 @@ describe("shiftclock lifecycle", () => {
     expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1);
     expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1);
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    fake.emit(1);
     await sleep(1300);
     expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn);
   });
@@ -114,9 +115,76 @@ describe("shiftclock lifecycle", () => {
     fake.emit(3);
     await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    fake.emit(1);
     await sleep(1300);
     expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn);
     expect(stored(fake).open.project).toBe("Client A");
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.bridge.shutDownPageContainer.mockResolvedValue(true);
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1));
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + ((fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>)[name]?.mock?.calls.length ?? 0), 0);
+    const callsAtAsk = pageCalls();
+    await new Promise((done) => setTimeout(done, 1500));
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(pageCalls()).toBe(callsAtAsk);
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(3);
+    await new Promise((done) => setTimeout(done, 500));
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await new Promise((done) => setTimeout(done, 1500));
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, clock ticking, next 2x asks", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    fake.bridge.shutDownPageContainer.mockResolvedValue(true);
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1));
+    fake.emit(4);                                            // the dialog is on screen
+    const pageCalls = (): number => fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length + fake.bridge.textContainerUpgrade.mock.calls.length + fake.bridge.updateImageRawData.mock.calls.length;
+    const atShown = pageCalls();
+    await sleep(1500);
+    expect(pageCalls()).toBe(atShown);                       // nothing drawn over the dialog
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2)); // page up again, no gesture needed
+    await sleep(50);
+    const afterRestore = fake.bridge.textContainerUpgrade.mock.calls.length;
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(afterRestore); // the clock tick was never stopped
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(2)); // the very first 2x opens the dialog again
+  });
+
+  it("a 2x while the app thinks it is in the background (5 without a dialog) comes back and asks again", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    fake.emit(5);                                            // genuine background: the tick stops
+    await sleep(100);
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(1)); // asked, not swallowed
+    expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBeGreaterThan(rebuilds);       // after the page came back
   });
 
   it("regression: the running entry is saved before the page is shut down", async () => {
@@ -144,11 +212,28 @@ describe("shiftclock lifecycle", () => {
     expect(lastBody(fake).split("\n")[0]).toBe("0:00");
   });
 
-  it("regression: stops redrawing the running clock once the app was closed", async () => {
+  it("the exit call resolving true (dialog shown) does not close the app: the clock keeps drawing", async () => {
+    const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
+    fake.bridge.shutDownPageContainer.mockResolvedValue(true);
+    await boot(fake);
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+    await sleep(10);
+    const drawn = fake.bridge.textContainerUpgrade.mock.calls.length;
+    await sleep(1300);
+    // While the dialog may be on screen no timer draws (a page call could cover it).
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBe(drawn);
+    fake.emit(1); // the next input restores the page; the clock kept running
+    await sleep(1300);
+    expect(fake.bridge.textContainerUpgrade.mock.calls.length).toBeGreaterThan(drawn);
+  });
+
+  it("regression: stops redrawing the running clock once the system ended the app (sysEvent 7)", async () => {
     const fake = fakeBridge(data({ project: "Client A", startedAt: Date.now() - 60_000 }));
     await boot(fake);
     fake.emit(3);
     await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+    fake.emit(7);
     await sleep(10);
     const drawn = fake.bridge.textContainerUpgrade.mock.calls.length + fake.bridge.createStartUpPageContainer.mock.calls.length;
     await sleep(1300);

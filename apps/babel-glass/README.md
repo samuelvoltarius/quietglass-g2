@@ -12,26 +12,25 @@ der Brille — auf Wunsch gleich übersetzt (z. B. Russisch oder Belarussisch �
 Deutsch). Die Spracherkennung läuft auf **deinem eigenen** Server, nicht in
 einer fremden Cloud. Ohne Server zeigt die App feste Demo-Sätze.
 
-**So geht's:** Einmal auf den Bügel tippen startet die Untertitel; laufen sie,
-bereitet Tippen den Stopp vor und ein zweites Tippen innerhalb von 4 s stoppt.
-Wischen blättert zurück, **Halten während der Untertitel startet den Wortfinder**.
-Bei gestoppten Untertiteln öffnet Halten die Hilfe; Meine Stimme lernen/löschen und
-Personen stehen am Ende der Kundenliste („Meine Stimme löschen“ braucht ein zweites
-Tippen innerhalb von 4 s). Das Seitenmenü der Brille ist vorerst aus (seine Klicks
-kommen auf der Brille nicht an). 2× im
-Hauptbild öffnet den Beenden-Dialog; laufende Untertitel enden erst, wenn du das
-Beenden bestätigst. Die Mitschrift löschst du nur am Handy. Solange das Mikrofon
-offen ist, steht **● MIKRO** auf der Brille.
+**So geht's (ab 1.0.0):** Auf der Brille stehen drei Einträge: **Übersetzen**
+(Untertitel plus Übersetzung in die am Handy eingestellte Sprache), **Englisch
+sprechen** (du übst Englisch: Untertitel des Gesagten, der Wortfinder ist immer an,
+das Gegenüber wird auf Wunsch ins Deutsche übersetzt) und **Gespräch** (Mitschrift,
+Sprecher, Zusammenfassung beim Stopp, Info-Popups und Antwort-Vorschläge; Kunden aus
+der Liste stehen darunter). Wischen bewegt den Cursor, Tippen startet. Laufen die
+Untertitel, steht oben „Modus · ● live“ und unten eine Hinweiszeile; Tippen bereitet den
+Stopp vor, ein zweites Tippen innerhalb von 4 s stoppt. Wischen blättert im Verlauf
+zurück. **2×** schließt zuerst ein Popup, stoppt dann und geht zurück zum Start; erst
+2× auf dem Startbild öffnet den Beenden-Dialog. Halten kommt auf der Brille nie in
+der App an, darum hängt nichts daran. Stimme lernen/löschen, Personen, Sprachen,
+Server und „Meine Wörter“ stehen am Handy (drei Tabs: **Jetzt**, **Meine Wörter**,
+**Einstellungen**). Die Mitschrift löschst du nur am Handy. Solange das Mikrofon offen
+ist, steht ein **●** in der Kopfzeile der Brille.
 
-**Übersicht (ab 0.5.0):** Beim Zuhören zeigt die Kopfzeile kompakt, was gerade
-läuft, z. B. „● MIKRO · RU→DE · A/B · Antworten · Gedächtnis“ (nur Aktives).
-Jedes Popup beginnt mit seiner Art: „Info:“ (Erklärung), „Antwort:“
-(Antwort-Vorschlag), „Wort:“ (Wortfinder), „→“ (dein Satz übersetzt). Die
-**Hilfe** (Halten bei gestoppten Untertiteln) und ihre Übersicht-Seiten zeigen jede Funktion,
-wie sie ausgelöst wird und ob sie gerade an ist (Tippen = schließen). Am Handy
-steht oben im Tab Gespräch dieselbe Übersicht als Tabelle mit Schaltern und
-Live-Status (Server live/Demo, Gedächtnis verbunden/nicht verfügbar) und einem
-Knopf „Hilfe auf der Brille zeigen“.
+**Wortfinder:** Bleibst du hängen (Satz bricht ab, „ähm“, „wie sagt man“, im englischen
+Gespräch ein deutsches Wort), sucht Babel das Wort von selbst. Ist deine Stimme gelernt,
+zählen nur deine eigenen fertigen Zeilen („Ich:“), nie eine vorläufige Zeile eines
+Unbekannten.
 
 **Antwort-Vorschläge (ab 0.5.0, an):** Beendet dein Gegenüber eine Frage oder
 einen Satz, auf den du antworten solltest, schlägt dein Sprachmodell **einen**
@@ -67,7 +66,7 @@ Bügel gedrückt. Dein Sprachmodell bekommt die letzten ~20 Sekunden und schläg
 das wahrscheinlich gesuchte Wort plus 2–3 Ausweichwörter vor – eine Zeile auf
 der Brille, z. B. „Kostenvoranschlag · Angebot · Offerte“, bei eingestellter
 Übersetzung darunter das Wort in der Zielsprache. Nach spätestens 8 s steht
-„kein Vorschlag“ da. Unter „Ich bin Sprecher“ (Tab Gespräch) wählst du deinen
+„kein Vorschlag“ da. Unter „Ich bin Sprecher“ (Einstellungen → Weitere Optionen) wählst du deinen
 Buchstaben; „automatisch“ nimmt, wer zuletzt gesprochen hat.
 
 **Eigenes Gedächtnis (ab 0.4.0):** Nach jeder Zusammenfassung merkt sich Babel
@@ -75,7 +74,7 @@ Datum, Titel, Zusammenfassung und Abmachungen – auf deinem eigenen Server, im
 babel-llm-proxy (`selfhost/services/babel-llm-proxy/`, Endpunkte `/memory`).
 Im Gespräch bekommen die Erklär-Popups die drei passendsten früheren Einträge
 als „Notizen des Nutzers“ und erinnern nur daran, wenn es konkret passt. Am
-Handy (Tab **Gedächtnis**) siehst, löschst, ergänzt (Notizen) und exportierst du
+Handy (Einstellungen → **Gedächtnis**) siehst, löschst, ergänzt (Notizen) und exportierst du
 alles. Babel nutzt ausschließlich dieses eigene Gedächtnis. Ein älterer Proxy
 ohne `/memory` → „nicht verfügbar“, sonst ändert sich nichts.
 
@@ -132,13 +131,16 @@ asserting that history stays empty until the recogniser is done.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start / stop captioning; closes the help screen or a popup first |
-| **Swipe** | Scroll back through what was said |
-| **Swipe towards the newest** (already at the live edge) | Translate *my last sentence* into the conversation language (0.5.0) |
-| **Swipe** (captions off, no summary on screen) | Help screen: every helper, its trigger, on/off now (0.5.0); tap = back |
-| **Hold** (captions on) | Word finder: suggests the word you are missing (0.4.0) |
-| **Hold twice** (captions off) | Clear the transcript |
-| **Double tap** | Leave — stops the microphone |
+| **Swipe** (start screen) | Move the cursor: Translate · Speak English · Conversation (customers under it) |
+| **Tap** (start screen) | Start the picked mode |
+| **Tap** (running) | Arms the stop; a second tap within 4 s stops. Also closes a popup |
+| **Swipe** (running) | Scroll back through what was said |
+| **Swipe towards the newest** (live edge, *Translate* only) | Translate *my last sentence* into the conversation language |
+| **Double tap** | Close a popup, then stop and return to the start screen; on the start screen: the exit dialog |
+
+The glasses never send a hold to the app (the system menu opens instead), so no
+function depends on it. Voice, people, languages, the server and "My words" live
+on the phone.
 
 New speech pulls the view back to the live edge automatically, because reading
 history while someone is still talking is not what you meant to do.
@@ -297,7 +299,7 @@ about three quarters of the 576 px width.
 
 ### Word finder and own memory (0.4.0)
 
-**Word finder.** Holding the temple pad while captions run sends the last
+**Word finder.** When you get stuck (automatic since 0.9.0; a hold only where the glasses deliver it) the app sends the last
 ~20 s of the transcript (with "I am speaker: A/B" chosen, mostly your own
 lines; "auto" = whoever spoke last) plus the provisional line to the LLM with a
 tight prompt: the likely word and 2–3 alternatives, only the words, separated
@@ -328,14 +330,13 @@ as before. Babel Glass reads and writes no other memory store.
 
 ### Overview, reply ideas and own sentences (0.5.0)
 
-**Overview.** One source (`src/companion/overview.ts`) feeds three views that
-therefore never disagree: the glasses header while listening (only what is
-active, e.g. `● MIC · RU→DE · A/B · Replies · Memory`; least important parts
-drop first so it always fits 46 characters, the microphone never), the glasses
-help screen (swipe while stopped, or the phone button) and the phone table at
-the top of the Talk tab (switch, trigger, live state). Every popup is labelled
-by its kind — `Info:`, `Reply:`/`Antwort:`, `Word:`/`Wort:`, `→` — on the
-glasses and in the phone transcript.
+**Header and popups (1.0.0).** While listening the glasses header holds only the
+mode and the state (`Translate · ● live`, `● connecting …`, `● offline`, plus
+`‖ history` when scrolled back; the demo marker, a translation error and the armed
+`stop?` stay). The microphone's `●` is always there. The old help screen and the
+overview table are gone: the start screen explains itself with one hint row per
+screen. Every popup is labelled by its kind — `Info:`, `Reply:`/`Antwort:`,
+`Word:`/`Wort:`, `→` — on the glasses and in the phone transcript.
 
 **Reply ideas** (on by default). After a final line of the *other* person
 (speaker letter ≠ "I am speaker"; with "auto" or speakers off: a line not in

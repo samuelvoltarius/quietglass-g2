@@ -8,7 +8,7 @@ import {
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, type PostureView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
 import { GAUGE, drawGauge, gaugeAngle, gaugeKey, type GaugeState } from "./glasses/gauge";
 import { createImageLane } from "./glasses/lane";
 import { angleKey, drawAngle, ANGLE_IMAGE, type AngleState } from "./glasses/digits";
@@ -20,7 +20,7 @@ import { mountPhoneUi, type PhoneUi } from "./ui/phone";
 import { addToStats, createStats, record, recordingDone, startRecording, type Recording, type SensorStats } from "./imu/diagnostics";
 import { buildSensorView } from "./glasses/sensor-view";
 import { buildHelpView, buildMenuView, HELP_PAGES, MENU_ENTRIES } from "./glasses/menu-view";
-import { createExitRequest } from "./exit";
+import { createExitRequest, settleRestore } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
@@ -120,7 +120,7 @@ async function boot(): Promise<void> {
   let diagTimer: ReturnType<typeof setInterval> | undefined;
   let phone: PhoneUi | null = null;
   /** Images are written at most every 700 ms and only when their picture changes. */
-  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
+  const lane = createImageLane((target, imageData) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, target, imageData)), 700);
 
   // A stored calibration makes the app usable immediately after a restart.
   if (data.reference) {
@@ -186,7 +186,11 @@ async function boot(): Promise<void> {
     lane.request(ANGLE_IMAGE, angleKey(angle), () => encodePng(drawAngle(angle)));
   };
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed || paused) return;
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
     const view = currentView();
@@ -212,6 +216,7 @@ async function boot(): Promise<void> {
 
   /** One page write at a time; a request during a write redraws once after it. */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -299,12 +304,20 @@ async function boot(): Promise<void> {
     if (sensorMode && !paused) void startImu();
   };
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: async () => {
-      shutDown();
-      await bridge.imuControl(false).catch(() => undefined);
+    // The dialog took the page away: put it up again the way of the first one,
+    // so the glasses deliver input (and the next 2x) to the app again.
+    onBack: () => {
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
     },
   }, "posturelens");
+  exitAsked = requestExit.asked;
 
   /**
    * Arms a gesture that overwrites something; the same gesture again within
@@ -352,6 +365,8 @@ async function boot(): Promise<void> {
   // app reacted to nothing at all while it waited — not even the double tap.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     const step = lifecycleFromEvent(event);
     if (step === "foregroundExit") {
       // Out of sight: no IMU (battery, BLE), no drawing. The calibration and the tally stay.
@@ -360,6 +375,7 @@ async function boot(): Promise<void> {
       return;
     }
     if (step === "foregroundEnter") {
+      requestExit.back();
       paused = false;
       rebuildWanted = true;
       void draw().then(startImu);
@@ -378,6 +394,8 @@ async function boot(): Promise<void> {
       onSample(sample, Date.now());
       return;
     }
+    // Not the IMU stream: it keeps flowing while the dialog is open and says nothing about the user.
+    requestExit.back();
 
     // QIS v1.2: the glasses' side menu. A menu click never changes data on its own,
     // except "clear tally", which is armed first and needs the same entry again within 4 s.
@@ -474,6 +492,16 @@ async function boot(): Promise<void> {
         break;
       case "doubleClick":
         // System exit dialog; monitoring (and the IMU) carry on until the user confirms.
+        // A double tap while the app thinks it is in the background (a 5 without dialog) means it is on the
+        // glasses again: come back first (page up the way of the first one, IMU on), then ask once the page is there.
+        if (paused) {
+          paused = false;
+          rebuildWanted = true;
+          const restore = draw();
+          void startImu();
+          void settleRestore(restore).then(() => requestExit());
+          return;
+        }
         void requestExit();
         return;
       default:

@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/posture-lens",
-  "version": "0.7.2",
+  "version": "0.7.6",
   "description": "Quietglass PostureLens — neck angle over time, from the IMU",
   "author": "Quietglass",
   "license": "MIT",

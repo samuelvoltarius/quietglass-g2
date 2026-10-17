@@ -46,6 +46,11 @@ const GERMAN_SPEAKING = /^(at|de|ch|li|lu|aut|deu|che|lie|lux|austria|germany|sw
  */
 export async function resolveLocale(bridge: LocaleBridge): Promise<Locale> {
   try {
+    const forced = new URLSearchParams(globalThis.location?.search ?? "").get("lang")
+      ?? new URLSearchParams(globalThis.location?.hash?.replace(/^#/, "") ?? "").get("lang");
+    if (locales.includes(forced as Locale)) return forced as Locale;
+  } catch { /* no location in tests */ }
+  try {
     const saved = await bridge.getLocalStorage(KEY);
     if (locales.includes(saved as Locale)) return saved as Locale;
   } catch {

@@ -1,6 +1,6 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { appStore } from "./storage/kv";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal, isSystemExitEvent } from "./exit";
 import { createTextPage, updateTextPage, type MenuSpec } from "./glasses/text";
 import { helpView, listFooter, viewWords } from "./glasses/help";
 import { glassesView, modeLabel, type FeedStatus } from "./glasses/view";
@@ -36,7 +36,10 @@ async function boot(): Promise<void> {
     // QIS v1.2 #7: the demo says so in one line; fresh live data does not.
     return glassesView(positions, cursor, { mode: mode(), title: t().title, empty: t().empty, controls: listFooter(locale), ...(SIDE_MENU ? {} : { help: w.help, helpControls: listFooter(locale, true) }), ...(status.source === "demo" ? { demoHint: w.demoHint } : {}) });
   };
-  const draw = async (): Promise<void> => { if (closed) return; const next = view(); const sig = JSON.stringify(next); if (sig === last) return; pageReady = pageReady ? await updateTextPage(bridge, next) : await createTextPage(bridge, next, sideMenu(locale)); if (pageReady) last = sig; };
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
+  const draw = async (): Promise<void> => { if (closed || exitAsked()) return; const next = view(); const sig = JSON.stringify(next); if (sig === last) return; pageReady = pageReady ? await updateTextPage(bridge, next) : await createTextPage(bridge, next, sideMenu(locale)); if (pageReady) last = sig; };
   const phoneIdle = (): boolean => !document.activeElement?.matches("#app input, #app select");
   // A call while one is in flight (e.g. Save with a new endpoint) is not dropped: exactly one follow-up runs as soon as the current one ends.
   const refresh = async (): Promise<void> => {
@@ -67,10 +70,20 @@ async function boot(): Promise<void> {
     document.querySelector("#invert")?.addEventListener("change", (event) => { appStore.set(INVERT_KEY, (event.target as HTMLInputElement).checked ? "1" : "0"); });
     document.querySelector("#save")?.addEventListener("click", () => { const input = document.querySelector<HTMLInputElement>("#endpoint"); if (input) appStore.set("markets.endpoint", input.value.trim()); void refresh(); });
   };
-  // Double tap opens the system exit dialog; polling stops only once the user confirms.
-  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; clearInterval(timer); } }, "market-glance");
+  // Double tap opens the system exit dialog. The call resolves when the dialog is SHOWN, not when the user
+  // answered: its result never stops polling. A confirmed exit arrives as sysEvent 6/7 (see the handler below).
+  const requestExit = createExitRequest(bridge, {
+    // The dialog took the page away. createTextPage always goes rebuild + create, so only the page-ready
+    // flag and the draw cache have to be dropped (store review 16.10.2026); done on the next input.
+    onBack: () => { if (closed) return; pageReady = false; last = ""; return draw(); },
+  }, "market-glance");
+  exitAsked = requestExit.asked;
   await draw(); renderPhone(); void refresh(); timer = setInterval(() => void refresh(), 15000);
   bridge.onEvenHubEvent((event) => {
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
+    if (isSystemExitEvent(event)) { closed = true; clearInterval(timer); return; }
+    if (isBackSignal(event)) requestExit.back();
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) { if (SIDE_MENU && menuId === MENU_HELP && !closed) { help = true; last = ""; void draw(); } return; }
     const gesture = gestureFromEvent(event, { invertScroll: invert() }); if (!gesture) return;

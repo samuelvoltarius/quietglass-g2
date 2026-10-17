@@ -1,4 +1,5 @@
 import { AppLocationAccuracy, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { settleRestore } from "./exit";
 import { createClient, toApiError, type StarApi } from "./nina/client";
 import { createDemoNina, type DemoScene } from "./nina/demo";
 import type { Command, StarStatus } from "./nina/status";
@@ -6,7 +7,7 @@ import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
 import { lifecycleFromEvent } from "./lifecycle";
 import { t } from "./messages";
-import { installPage, setPageMenu, updatePage, type MenuSpec, type Preview } from "./glasses/render";
+import { forgetPage, installPage, setPageMenu, updatePage, type MenuSpec, type Preview } from "./glasses/render";
 import { bitmapKey } from "./glasses/gfx";
 import { ICON_STEP_MS } from "./glasses/charts";
 import {
@@ -20,7 +21,7 @@ import { demoForecast } from "./weather/demo";
 import { EMPTY_TRACKER, evaluateWeather, trackWarnings, type WeatherWarning } from "./weather/warnings";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.4.2";
+export const BUILD = "0.4.6";
 
 /** QIS v1.2: ids of the glasses' side menu (Hold opens it). */
 export const MENU = { help: 1, refresh: 2, swipe: 3 } as const;
@@ -238,7 +239,18 @@ async function boot(): Promise<void> {
   const frameKey = (f: Frames): string =>
     [f.icon, f.ring, f.panelA, f.panelB, f.chart].map((b) => (b ? bitmapKey(b) : "-")).join("|") + "|" + (preview?.key ?? "");
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitDialogAsked = false;
+  /**
+   * The system dialog's own lifecycle (step log, Klipper 0.5.11): right after shutDownPageContainer(1) the glasses
+   * send FOREGROUND_ENTER (4) when the dialog comes up and FOREGROUND_EXIT (5) when it goes away after "No" - not
+   * the app entering or leaving. Between the call and the 5 nothing is drawn; the 5 puts the page up again.
+   */
+  let dialogPending = false;
+  let dialogShown = false;
   const drawOnce = async (): Promise<void> => {
+    if (exitDialogAsked) return;
     const state = viewState();
     const view = buildView(state);
     const frames = buildFrames(state, view.layout);
@@ -260,6 +272,7 @@ async function boot(): Promise<void> {
 
   /** One draw at a time; requests meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
+    if (exitDialogAsked) return Promise.resolve();
     if (closed || !ready || backgrounded) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
@@ -387,11 +400,41 @@ async function boot(): Promise<void> {
     pollTimer = setInterval(() => { void poll(); }, POLL_MS);
   };
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN (hardware: ~58 ms after the double tap), not when
+  // the user answered, so the result never tears the app down. If the user confirms, the system ends the app
+  // (sysEvent 6/7 below). After "No" the app has to be alive: on the next signal that it is back (any input,
+  // FOREGROUND_ENTER) the page is put up again the way of the first one, then the event is handled normally.
+  /** The restore started by the last exitBack(), while it is still running. */
+  let restoring: Promise<void> | null = null;
+  const exitBack = (): void => {
+    if (!exitDialogAsked) return;
+    exitDialogAsked = false;
+    if (closed) return;
+    pageReady = false;
+    lastView = null;
+    forgetPage(bridge);
+    const run = draw().catch(() => undefined);
+    restoring = run;
+    void run.then(() => { if (restoring === run) restoring = null; });
+  };
   const requestExit = (): void => {
-    bridge.shutDownPageContainer(1).then(
-      (left) => { if (left === true) shutDown(); },
-      (error: unknown) => { console.warn("[starglass] exit failed:", error); },
-    );
+    // A second double tap before any restore: put the page back first, then ask again.
+    exitBack();
+    // The first double tap after "No" is the back signal itself: a dialog call issued while the page is still being
+    // created is lost (hardware, Klipper 0.5.8). So it waits for the restore and a short settle delay.
+    const restore = restoring;
+    const ask = async (): Promise<void> => {
+      dialogPending = true;
+      try {
+        await bridge.shutDownPageContainer(1);
+      } catch (error: unknown) {
+        console.warn("[starglass] exit failed:", error);
+      }
+      exitDialogAsked = true;
+    };
+    // Without a restore in flight the host is called at once, in this very event.
+    if (restore) void settleRestore(restore).then(ask);
+    else void ask();
   };
   const shutDown = (): void => {
     if (closed) return;
@@ -518,6 +561,23 @@ async function boot(): Promise<void> {
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle === "foreground" && dialogPending) {
+      // The exit dialog came up: stay still, it is on screen now.
+      dialogPending = false;
+      dialogShown = true;
+      exitDialogAsked = true;
+      return;
+    }
+    if (lifecycle === "background" && dialogShown) {
+      // "No": the dialog went away. The app never left - page up again the way of the first one, timers go on.
+      dialogShown = false;
+      exitDialogAsked = true;
+      exitBack();
+      return;
+    }
+    dialogPending = false;
+    dialogShown = false;
+    if (lifecycle !== "background" && lifecycle !== "exit") exitBack();
     if (lifecycle === "foreground") { comeBack(); return; }
     if (lifecycle === "background") { goBackground(); return; }
     if (lifecycle === "exit") { goBackground(); shutDown(); return; }
@@ -530,7 +590,8 @@ async function boot(): Promise<void> {
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
-    if (backgrounded) { comeBack(); return; }
+    // A 2x on the root page still asks to leave: swallowing it after "No" left the dialog closed (store review).
+    if (backgrounded) { comeBack(); if (!(parsed.gesture === "doubleClick" && screen === "pages")) return; }
     // Before the first page exists only "leave" means anything.
     if (!ready) { if (parsed.gesture === "doubleClick") requestExit(); return; }
     if (screen === "control") onControl(parsed.gesture);

@@ -3,9 +3,9 @@ import { AppLocationAccuracy, waitForEvenAppBridge, type EvenAppBridge } from "@
 import { createImageLane } from "./glasses/lane";
 import { footer as qisFooter } from "./glasses/footer";
 import { createBitmap } from "./glasses/bitmap";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal, settleRestore } from "./exit";
 import { encodePng } from "./glasses/pixel";
-import { COCKPIT_TILES, createCockpitPage, createRadarPage, createTextPage, sendImage, setPageMenu, updateRadarText, updateTextPage, type MenuSpec, type RadarView, type TextView } from "./glasses/text";
+import { COCKPIT_TILES, createCockpitPage, createRadarPage, createTextPage, forgetPage, sendImage, setPageMenu, updateRadarText, updateTextPage, type MenuSpec, type RadarView, type TextView } from "./glasses/text";
 import { cockpitModel, playFrame } from "./cockpit/model";
 import { composeCockpit } from "./cockpit/compose";
 import { fetchWarnings, topWarning, type WarningsResult } from "./cockpit/warnings";
@@ -95,14 +95,14 @@ async function boot(): Promise<void> {
   let query = ""; let results: Place[] = []; let searchNote = ""; let coordNote = ""; let tab = readTab();
   /** What the glasses show now, so a refresh only rewrites the containers that changed. */
   let shown: TextView | null = null;
-  const lane = createImageLane((target, imageData) => sendImage(bridge, target, imageData));
+  const lane = createImageLane((target, imageData) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, target, imageData)));
   /** The radar's four tiles go through their own lane: at most one write per tile every 700 ms. */
-  const radarLane = createImageLane((target, imageData) => sendImage(bridge, target, imageData), 700);
+  const radarLane = createImageLane((target, imageData) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, target, imageData)), 700);
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   /** Which layout is on the glasses: switching between them is a page rebuild. */
   let installed: "weather" | "radar" | "cockpit" | null = null;
   /** The cockpit is drawn as one 576 x 288 frame; only its changed tiles cross Bluetooth. */
-  const cockpitSender = createTileSender(COCKPIT_TILES, (slot, png) => sendImage(bridge, slot, png));
+  const cockpitSender = createTileSender(COCKPIT_TILES, (slot, png) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, slot, png)));
   let textBackend: TextBackend | null = null;
   /** Official warnings for the place (Austria only); null until asked or when the service failed. */
   let warnings: WarningsResult | null = null;
@@ -262,7 +262,11 @@ async function boot(): Promise<void> {
     try { warnings = await fetchWarnings(position.latitude, position.longitude, locale); } catch { warnings = null; }
     if (onCockpit()) void draw();
   };
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawNow = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed || backgrounded) return;
     if (!helpOpen && onCockpit()) { await drawCockpit(); return; }
     if (!helpOpen && onRadar()) { await drawRadar(); return; }
@@ -282,6 +286,7 @@ async function boot(): Promise<void> {
   /** One draw at a time: the radar loop, taps and refreshes all ask for one, and two page creations must never overlap. */
   let drawing: Promise<void> | null = null; let drawAgain = false;
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => { try { do { drawAgain = false; await drawNow(); } while (drawAgain && !closed); } finally { drawing = null; } })();
     return drawing;
@@ -356,8 +361,14 @@ async function boot(): Promise<void> {
       appStore.set(KEYS.lat, lat); appStore.set(KEYS.lon, lon); appStore.set(KEYS.mode, "manual"); void refresh();
     });
   };
-  // Double tap opens the system exit dialog; the app keeps running until the user confirms.
-  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; clearInterval(refreshTimer); leaveCockpit(); lane.close(); radarLane.close(); cockpitSender.close(); radar?.stop(); } }, "rainlens");
+  // Double tap opens the system exit dialog; the app keeps running. The call resolves when the dialog is SHOWN,
+  // not when the user answered: its result never closes anything. A confirmed exit arrives as sysEvent 6/7 (onLifecycle).
+  const requestExit = createExitRequest(bridge, {
+    // The dialog took the page away: put it up again the way of the first one,
+    // so the glasses deliver input (and the next 2x) to the app again.
+    onBack: () => { if (closed) return; pageReady = false; last = ""; installed = null; forgetPage(bridge); return draw(); },
+  }, "rainlens");
+  exitAsked = requestExit.asked;
   const stale = (): boolean => Date.now() - fetchedAt >= REFRESH_MS;
   const startRefreshTimer = (): void => {
     clearInterval(refreshTimer);
@@ -372,14 +383,15 @@ async function boot(): Promise<void> {
     radar?.stop();
     leaveCockpit();
   };
-  const comeBack = (): void => {
+  const comeBack = (): Promise<void> => {
     backgrounded = false;
     pageReady = false; last = ""; installed = null;
     startRefreshTimer();
     if (onRadar()) radar?.start();
     if (onCockpit()) enterCockpit();
-    void draw();
+    const restore = draw();
     if (stale() && !loading) void refresh();
+    return restore;
   };
   const onLifecycle = (step: ReturnType<typeof lifecycleFromEvent>): boolean => {
     if (step === null) return false;
@@ -403,6 +415,9 @@ async function boot(): Promise<void> {
   const closeHelp = (): void => { helpOpen = false; last = ""; void draw(); };
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
+    if (isBackSignal(event)) requestExit.back();
     if (onLifecycle(lifecycleFromEvent(event))) return;
     // QIS v1.2: help, refresh and the swipe setting come from the glasses' side menu, never from a gesture.
     const menuId = menuItemIdFromEvent(event);
@@ -415,7 +430,13 @@ async function boot(): Promise<void> {
     }
     const gesture = gestureFromEvent(event, { invertScroll: invertScroll() });
     if (!gesture) return;
-    if (backgrounded) { comeBack(); return; }
+    if (backgrounded) {
+      const restore = comeBack();
+      // A double tap while in the background means the app is on the glasses again: come back, then ask the dialog
+      // (it waits for exactly this restore draw) instead of swallowing the tap.
+      if (gesture.gesture === "doubleClick") void settleRestore(restore).then(() => requestExit());
+      return;
+    }
     // The help page is read-only: 2x is the only gesture there, and it goes back.
     if (helpOpen) { if (gesture.gesture === "doubleClick") closeHelp(); return; }
     // With the side menu on, a hold opens the system menu and the app does nothing on it. Without it (SIDE_MENU), a hold opens the help again.

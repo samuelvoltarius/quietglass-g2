@@ -191,6 +191,8 @@ describe("QIS on the glasses", () => {
     expect(fake.shutdown.modes).toEqual([1]);
     const afterCancel = fake.text["body"];
     await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.text["body"]).toBe(afterCancel); // nothing is drawn while the dialog may be on screen
+    fake.emit(DOWN); await tick(); // the next input restores the page; the captions kept moving
     expect(fake.text["body"]).not.toBe(afterCancel);
   });
 

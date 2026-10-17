@@ -7,12 +7,11 @@ import { isOwnLine, lastOwnLine, ownTranslationRequest, type OwnContext } from "
 import {
   advancePopups, closePopup, dropKind, emptySlot, offerPopup, visiblePopup, QUEUE_MAX_MS, type PopupSlot,
 } from "../src/companion/popups";
-import { activeHelpers, helpLine, helperRows, languagePair, HELPER_IDS } from "../src/companion/overview";
 import { annotateEntry, type TranscriptEntry } from "../src/companion/transcript";
 import { buildView, GLASS_COLS, liveHeader, popupRows, POPUP_WIDTH, type ViewOptions } from "../src/glasses/view";
 import { applyTranscript, applyTranslation, createBuffer, displayWidth } from "../src/captions/buffer";
-import { EMPTY_DATA, parseConversation, parseData, type BabelData } from "../src/storage/persist";
-import { conversationInner, overviewInner } from "../src/ui/phone";
+import { EMPTY_DATA, parseConversation, parseData } from "../src/storage/persist";
+import { conversationInner } from "../src/ui/phone";
 import { locales } from "../src/i18n";
 import { t } from "../src/messages";
 
@@ -293,22 +292,23 @@ describe("settings and stored conversation (0.5.0)", () => {
   });
 });
 
-describe("overview: labels, header, help", () => {
+describe("popups: labels, header", () => {
   const base: ViewOptions = { mode: "conversation", listening: true, status: "ready", translating: true, offset: 0, mock: false, locale: "de" };
-  const everything = { pair: "AUTO→DE".replace("AUTO", "?"), speakers: true, replies: true, own: true, info: true, memory: true };
 
   for (const locale of locales) {
-    it(`keeps the header within ${GLASS_COLS} characters, whatever is active (${locale})`, () => {
-      const now = new Date(2026, 9, 14, 23, 59).getTime();
+    it(`keeps the header within ${GLASS_COLS} characters, whatever is going on (${locale})`, () => {
       for (const status of ["ready", "connecting", "reconnecting", "error"] as const) {
-        for (let mask = 0; mask < 64; mask++) {
-          const active = {
-            pair: mask & 1 ? "BE→DE" : null, speakers: Boolean(mask & 2), replies: Boolean(mask & 4),
-            own: Boolean(mask & 8), info: Boolean(mask & 16), memory: Boolean(mask & 32),
-          };
-          const header = liveHeader({ locale, status, active, now });
-          expect(chars(header), header).toBeLessThanOrEqual(GLASS_COLS);
-          expect(header.startsWith("BABEL · " + t(locale, "g.mic")), header).toBe(true);
+        for (const modeLabel of [t(locale, "g.mode.translate"), t(locale, "g.mode.learn"), t(locale, "g.mode.client")]) {
+          for (let mask = 0; mask < 8; mask++) {
+            const header = liveHeader({
+              locale, status, modeLabel, mock: Boolean(mask & 1), history: Boolean(mask & 2), armedStop: Boolean(mask & 4),
+              translating: true, translateError: "a very long raw error message from somewhere deep in the network stack",
+            });
+            expect(chars(header), header).toBeLessThanOrEqual(GLASS_COLS);
+            // The mode and the microphone's "●" always stay.
+            expect(header.startsWith(modeLabel + " · "), header).toBe(true);
+            expect(header, header).toContain("●");
+          }
         }
       }
     });
@@ -333,42 +333,7 @@ describe("overview: labels, header, help", () => {
       expect(view.body[0]!.startsWith(t(locale, "g.lab.reply"))).toBe(true);
     });
 
-    it(`lists every helper with trigger and state on the help screen (${locale})`, () => {
-      const data: BabelData = { ...EMPTY_DATA, sttUrl: "wss://speech.example", llmUrl: "https://llm.example/v1", llmModel: "qwen", translateProvider: "openai", sourceLanguage: "ru", targetLanguage: "de" };
-      const rows = helperRows({ data, listening: true, sttStatus: "ready", memory: "ok" });
-      expect(rows.map((row) => row.id)).toEqual([...HELPER_IDS]);
-      const lines = rows.map((row) => helpLine(row, locale));
-      for (const line of lines) expect(line).toMatch(/: .+ · .+/);
-      expect(lines[1]).toContain("RU→DE");
-      const view = buildView(createBuffer(), { ...base, locale, listening: false, help: { rows: lines, page: 0 } });
-      expect(view.header).toBe("BABEL · " + t(locale, "g.s.help"));
-      expect(view.body.length).toBeLessThanOrEqual(7);
-      expect(chars(view.footer)).toBeLessThanOrEqual(GLASS_COLS);
-      const listening = buildView(createBuffer(), { ...base, locale, help: { rows: lines, page: 0 } });
-      expect(listening.header.startsWith("BABEL · " + t(locale, "g.s.help") + " · " + t(locale, "g.mic"))).toBe(true);
-      expect(listening.footer).not.toContain(t(locale, "g.mic"));
-    });
   }
-
-  it("shows only what is active", () => {
-    expect(liveHeader({ locale: "de", status: "ready", active: everything })).toContain("?→DE");
-    expect(liveHeader({ locale: "de", status: "ready", active: {} })).toBe("BABEL · ● MIKRO");
-    expect(liveHeader({ locale: "en", status: "ready", active: { pair: "RU→DE", memory: true } })).toBe("BABEL · ● MIC · RU→DE · Memory");
-    const data: BabelData = { ...EMPTY_DATA, sttUrl: "wss://s", llmUrl: "https://l/v1", llmModel: "q", translateProvider: "openai", sourceLanguage: "ru", targetLanguage: "de", replySuggestions: false };
-    expect(activeHelpers({ data, listening: true, sttStatus: "ready", memory: "unavailable" })).toMatchObject({ pair: "RU→DE", replies: false, memory: false, info: true });
-    expect(languagePair({ ...data, sourceLanguage: "auto" })).toBe("?→DE");
-    expect(languagePair({ ...data, mode: "captionOnly" })).toBeNull();
-  });
-
-  it("says on the phone what runs, with switches and live state", () => {
-    const data: BabelData = { ...EMPTY_DATA, llmUrl: "https://l/v1", llmModel: "q" };
-    const html = overviewInner({ data, listening: false, sttStatus: "idle", memory: "unavailable" }, "de");
-    for (const id of HELPER_IDS) expect(html).toContain(`data-helper="${id}"`);
-    expect(html).toContain('data-ov-toggle="replySuggestions" aria-label="Antwort-Vorschläge" checked');
-    expect(html).toContain('data-ov-toggle="translateOwn" aria-label="Eigene Sätze" />');
-    expect(html).toContain("Demo ohne Server");
-    expect(html).toContain("nicht verfügbar");
-  });
 
   it("marks own translations, reply ideas and every popup kind in the phone transcript", () => {
     const html = conversationInner({

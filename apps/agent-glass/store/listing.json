@@ -17,5 +17,5 @@
     }
   ],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/agent-glass/docs/PRIVACY.md",
-  "screenshot": "release/agent-glass/screenshot.png"
+  "screenshot": "apps/agent-glass/store/screenshot.png"
 }

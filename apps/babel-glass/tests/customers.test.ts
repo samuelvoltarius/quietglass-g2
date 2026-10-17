@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  customersUrl, fetchCustomers, orderCustomers, pickBody, pickRows, readCustomers, type CustomerEntry,
+  customerListRow, customersUrl, fetchCustomers, orderCustomers, readCustomers, type CustomerEntry,
 } from "../src/companion/customers";
 import { menuItemIdFromEvent } from "../src/input/gestures";
 
@@ -29,22 +29,13 @@ describe("0.7.0 customer list", () => {
     expect(orderCustomers(list, NOW).map((e) => e.name)).toEqual(["Ganztag", "Mitte", "Zeta", "Alpha", "Alt", "beta"]);
   });
 
-  it("rows per state; the last row is always 'Ohne Kunde'", () => {
-    expect(pickRows({ state: "off" }, NOW).map((r) => r.kind)).toEqual(["none"]);
-    expect(pickRows({ state: "failed" }, NOW).map((r) => r.kind)).toEqual(["retry", "none"]);
-    expect(pickRows({ state: "ready", entries: [entry("a", "A", null)] }, NOW).map((r) => r.kind)).toEqual(["customer", "none"]);
-    const body = pickBody(pickRows({ state: "failed" }, NOW), 1, NOW, "de", 56, 7);
-    expect(body).toEqual(["  Kunden nicht erreichbar", "> Ohne Kunde – Übersetzen"]);
-  });
-
-  it("long lists scroll so the cursor stays visible; rows fit the width", () => {
-    const entries = Array.from({ length: 12 }, (_, i) => entry("c" + i, "Kunde mit einem sehr langen Namen Nummer " + (i + 10), "2026-11-0" + ((i % 9) + 1) + " 10:00"));
-    const rows = pickRows({ state: "ready", entries }, NOW);
-    const body = pickBody(rows, 12, NOW, "de", 56, 7);
-    expect(body).toHaveLength(7);
-    expect(body.at(-1)).toBe("> Ohne Kunde – Übersetzen");
-    for (const row of body) expect([...row].length).toBeLessThanOrEqual(56);
-    expect(body[0]).toMatch(/…/);
+  it("a row shows the name and the next project's day; the name is shortened first", () => {
+    expect(customerListRow(entry("a", "Alpha", "2026-10-14 09:00"), NOW, "de", 56)).toBe("Alpha · heute 09:00");
+    expect(customerListRow(entry("a", "Alpha", null), NOW, "en", 56)).toBe("Alpha");
+    const long = customerListRow(entry("a", "Kunde mit einem sehr langen Namen Nummer 12", "2026-11-02 10:00"), NOW, "de", 30);
+    expect([...long].length).toBeLessThanOrEqual(30);
+    expect(long).toMatch(/…/);
+    expect(long.endsWith("02.11. 10:00")).toBe(true);
   });
 
   it("fetch: list, quiet failure, timeout", async () => {

@@ -29,12 +29,13 @@ function fakeBridge(imageDelayMs = 0) {
   const images: string[] = [];
   const texts: { name: string; content: string }[] = [];
   const shutdown = { confirm: true, fail: false, modes: [] as (number | undefined)[] };
+  const creates = { count: 0, rebuilds: 0 };
   const bridge = {
     getAppLocation: async () => ({ latitude: 47.68, longitude: 13.1 }),
     getLocalStorage: async (key: string) => kv.get(key) ?? "",
     setLocalStorage: async (key: string, value: string) => { kv.set(key, value); return true; },
-    rebuildPageContainer: async () => true,
-    createStartUpPageContainer: async (page: { textObject?: { containerName?: string; content?: string }[] }) => { texts.push(...(page.textObject ?? []).map((part) => ({ name: part.containerName ?? "", content: part.content ?? "" }))); return 0; },
+    rebuildPageContainer: async () => { creates.rebuilds += 1; return true; },
+    createStartUpPageContainer: async (page: { textObject?: { containerName?: string; content?: string }[] }) => { creates.count += 1; texts.push(...(page.textObject ?? []).map((part) => ({ name: part.containerName ?? "", content: part.content ?? "" }))); return 0; },
     textContainerUpgrade: async (update: { containerName?: string; content?: string }) => { texts.push({ name: update.containerName ?? "", content: update.content ?? "" }); return true; },
     updateImageRawData: async (update: { containerName?: string }) => {
       if (imageDelayMs) await new Promise((resolve) => setTimeout(resolve, imageDelayMs));
@@ -46,7 +47,7 @@ function fakeBridge(imageDelayMs = 0) {
     onDeviceStatusChanged: () => () => undefined,
   };
   return {
-    bridge, images, texts, shutdown,
+    bridge, images, texts, shutdown, creates,
     emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
     ready: () => handler !== undefined,
   };
@@ -116,11 +117,24 @@ describe("rainlens images", () => {
     expect(fake.images.filter((name) => name === "weather-icons")).toHaveLength(0);
   });
 
-  it("asks for the system exit dialog (mode 1) and stops drawing once confirmed", async () => {
+  it("asks for the system exit dialog (mode 1); the call resolving true (dialog shown) does not close the app", async () => {
     const fake = await boot();
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([1]);
+    const textsAtAsk = fake.texts.length;
+    fake.emit(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.texts.length).toBeGreaterThan(textsAtAsk);
+  });
+
+  it("stops drawing once the system ends the app (sysEvent 7) after the dialog", async () => {
+    const fake = await boot();
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(7);
+    await vi.advanceTimersByTimeAsync(10);
     const textsAtClose = fake.texts.length;
     fake.emit(2);
     fake.emit(0);
@@ -138,6 +152,71 @@ describe("rainlens images", () => {
     fake.emit(2);
     await vi.advanceTimersByTimeAsync(5000);
     expect(fake.texts.length).toBeGreaterThan(textsAtCancel);
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    const fake = await boot();
+    const creates = fake.creates.count;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.shutdown.confirm = true;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const callsAtAsk = fake.texts.length + fake.images.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(fake.texts.length + fake.images.length).toBe(callsAtAsk);
+    expect(fake.creates.count).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, refresh timer on, next 2x asks", async () => {
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => { fetches += 1; return new Response(JSON.stringify(forecast)); });
+    const fake = await boot();
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(4);                                            // the dialog is on screen
+    const atShown = fake.texts.length + fake.images.length;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(fake.texts.length + fake.images.length).toBe(atShown); // nothing drawn over the dialog
+    const creates = fake.creates.count;
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.creates.count).toBeGreaterThan(creates);     // page created again, no gesture needed
+    const afterRestore = fetches;
+    await vi.advanceTimersByTimeAsync(16 * 60_000);
+    expect(fetches).toBeGreaterThan(afterRestore);           // the refresh timer was never stopped
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.shutdown.modes).toEqual([1, 1]);             // the very first 2x opens the dialog again
+  });
+
+  it("a 2x while the app thinks it is in the background (5 without a dialog) comes back and asks again", async () => {
+    const fake = await boot();
+    fake.emit(5);                                            // genuine background
+    await vi.advanceTimersByTimeAsync(1_000);
+    const creates = fake.creates.count + fake.creates.rebuilds;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(fake.creates.count + fake.creates.rebuilds).toBeGreaterThan(creates);     // the page is back first
+    expect(fake.shutdown.modes).toEqual([1]);                // and the dialog is asked, not swallowed
   });
 
   it("keeps running when the exit call rejects, without an unhandled rejection", async () => {

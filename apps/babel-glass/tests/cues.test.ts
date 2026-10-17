@@ -289,7 +289,8 @@ describe("cues in the app", () => {
   it("Kundengespräch: a card about every 20 s with the customer header, shown 8 s on top of the captions", async () => {
     const calls = stub();
     const fake = await boot({ ...SERVER, talkMode: "translate" });
-    fake.emit(0); // the customer row: client talk with Beispiel Café
+    for (let i = 0; i < 3; i += 1) fake.emit(2); // Translate -> Speak English -> Conversation -> Beispiel Café
+    fake.emit(0); // the customer row: Gespräch with Beispiel Café
     await vi.advanceTimersByTimeAsync(CUE_INTERVAL_MS - 1000);
     expect(calls.filter((c) => c.url.endsWith("/context/cue"))).toEqual([]);
     await vi.advanceTimersByTimeAsync(1600);
@@ -312,17 +313,18 @@ describe("cues in the app", () => {
   it("never in Übersetzen mode, and not with the setting off", async () => {
     let calls = stub();
     let fake = await boot({ ...SERVER, talkMode: "client" });
-    fake.emit(1); // cursor to "Ohne Kunde – Übersetzen"
-    fake.emit(2); // the list goes on with the voice rows: one step down is the "No customer" row
+    fake.emit(1);
+    fake.emit(1); // the cursor starts on the mode used last (Gespräch): two steps up is Übersetzen
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.body().split("\n")[1]).toMatch(/^> /);
+    expect(fake.body().split("\n")[0]).toMatch(/^> /);
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(3 * CUE_INTERVAL_MS);
     expect(calls.some((c) => c.url.endsWith("/context/cue"))).toBe(false);
 
     calls = stub();
     fake = await boot({ ...SERVER, talkMode: "translate", cueCards: false });
-    fake.emit(0); // customer row: client talk, but the cards are off
+    for (let i = 0; i < 3; i += 1) fake.emit(2);
+    fake.emit(0); // customer row: Gespräch, but the cards are off
     await vi.advanceTimersByTimeAsync(3 * CUE_INTERVAL_MS);
     expect(calls.some((c) => c.url.endsWith("/context/cue"))).toBe(false);
   });

@@ -19,6 +19,11 @@
       "name": "g2-microphone",
       "why_en": "Optional voice commands only while you hold or after you pick Speak, at most 15 s, shown as ● MIC. Audio goes only to your own server.",
       "why_de": "Optionale Sprachbefehle nur, solange du hältst oder nach „Sprechen“, höchstens 15 s, angezeigt als ● MIC. Der Ton geht nur an deinen Server."
+    },
+    {
+      "name": "location",
+      "why_en": "Optionally computes sun position and golden/blue hour on the phone when you open Light. The position does not leave the phone.",
+      "why_de": "Berechnet optional Sonnenstand sowie goldene und blaue Stunde auf dem Handy, wenn du Licht öffnest. Der Standort verlässt das Handy nicht."
     }
   ],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/shoot-day/docs/PRIVACY.md",

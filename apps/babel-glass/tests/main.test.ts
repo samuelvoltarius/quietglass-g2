@@ -16,12 +16,12 @@ function fakeBridge(stored = "") {
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { modes: [] as (number | undefined)[], answer: (): Promise<boolean> => Promise.resolve(true) };
   const mic = { open: false, calls: [] as boolean[] };
-  const writes = { count: 0, body: "" };
+  const writes = { count: 0, creates: 0, rebuilds: 0, body: "" };
   const bridge = {
     getLocalStorage: async () => stored,
     setLocalStorage: async () => true,
-    rebuildPageContainer: async () => true,
-    createStartUpPageContainer: async () => { writes.count += 1; return 0; },
+    rebuildPageContainer: async () => { writes.rebuilds += 1; return true; },
+    createStartUpPageContainer: async () => { writes.count += 1; writes.creates += 1; return 0; },
     textContainerUpgrade: async (update: { content?: string }) => { writes.count += 1; writes.body = update.content ?? writes.body; return true; },
     audioControl: async (isOpen: boolean) => { mic.calls.push(isOpen); mic.open = isOpen; return true; },
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.modes.push(mode); return shutdown.answer(); },
@@ -52,13 +52,41 @@ describe("babel-glass exit dialog", () => {
     return fake;
   }
 
-  it("closes the microphone, asks for the system dialog (mode 1) and stays closed on confirm", async () => {
+  it("1.0.0: 2× while captions run stops them and goes back to the start screen; it does not exit", async () => {
     const fake = await bootListening();
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(200);
-    expect(fake.shutdown.modes).toEqual([1]);
-    // QIS v1.2 #2: the microphone stayed open during the dialog and closes only on the confirmed exit.
+    expect(fake.shutdown.modes).toEqual([]);
     expect(fake.mic.calls).toEqual([true, false]);
+    expect(fake.mic.open).toBe(false);
+    // Only on the start screen the second 2× asks the system.
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fake.shutdown.modes).toEqual([1]);
+  });
+
+  it("the call resolving true (dialog shown) does not close the app: the next tap still works", async () => {
+    const fake = await bootListening();
+    fake.emit(3); // stop, back to the start screen
+    await vi.advanceTimersByTimeAsync(200);
+    fake.emit(3); // the system dialog; the call resolves true when it is shown
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fake.shutdown.modes).toEqual([1]);
+    expect(fake.mic.open).toBe(false);
+    fake.emit(0); // "No", then a tap: captions start again
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fake.mic.open).toBe(true);
+  });
+
+  it("a system exit (sysEvent 7) after the dialog closes it for good: nothing writes or listens afterwards", async () => {
+    const fake = await bootListening();
+    fake.emit(3); // stop, back to the start screen
+    await vi.advanceTimersByTimeAsync(200);
+    fake.emit(3); // the system dialog
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(7); // the user said "yes": the system ends the app
+    await vi.advanceTimersByTimeAsync(200);
     expect(fake.mic.open).toBe(false);
     const writesAtClose = fake.writes.count;
     fake.emit(0); // a tap after leaving must not reopen the microphone
@@ -67,19 +95,72 @@ describe("babel-glass exit dialog", () => {
     expect(fake.writes.count).toBe(writesAtClose);
   });
 
-  it("QIS v1.2 #2: keeps captioning through the dialog (no stop first) when the user cancels", async () => {
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
     const fake = await bootListening();
-    let micWhileAsked: boolean | null = null;
-    fake.shutdown.answer = () => { micWhileAsked = fake.mic.open; return Promise.resolve(false); };
+    fake.emit(3); // stop, back to the start screen
+    await vi.advanceTimersByTimeAsync(200);
+    const creates = fake.writes.creates;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.shutdown.answer = () => Promise.resolve(true);
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(200);
     expect(fake.shutdown.modes).toEqual([1]);
-    expect(micWhileAsked).toBe(true);
-    expect(fake.mic.calls).toEqual([true]);
-    expect(fake.mic.open).toBe(true);
-    const writesAtCancel = fake.writes.count;
-    await vi.advanceTimersByTimeAsync(10_000); // the mock recogniser keeps producing lines
-    expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
+    const callsAtAsk = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(fake.writes.count).toBe(callsAtAsk);
+    expect(fake.writes.creates).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, timers on, next 2x asks", async () => {
+    const fake = await bootListening();
+    fake.emit(3); // stop, back to the start screen
+    await vi.advanceTimersByTimeAsync(200);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const timers = vi.getTimerCount();
+    fake.emit(4); // the dialog is on screen
+    const atShown = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(fake.writes.count).toBe(atShown); // nothing drawn over the dialog
+    const creates = fake.writes.creates;
+    fake.emit(5); // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.writes.creates).toBeGreaterThan(creates); // page created again, no gesture needed
+    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(timers); // the ticker and every timer kept running (nothing was paused)
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.shutdown.modes).toEqual([1, 1]); // the very first 2x opens the dialog again
+  });
+
+  it("a root 2x while backgrounded (a 5 without a dialog) comes back and asks again after the restore draw", async () => {
+    const fake = await bootListening();
+    fake.emit(3); // stop, back to the start screen
+    await vi.advanceTimersByTimeAsync(200);
+    fake.emit(5); // genuinely backgrounded
+    await vi.advanceTimersByTimeAsync(200);
+    const drawn = fake.writes.count + fake.writes.rebuilds;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(fake.writes.count + fake.writes.rebuilds).toBeGreaterThan(drawn); // the page was put up again
+    expect(fake.shutdown.modes).toEqual([1]); // and the dialog was asked, not swallowed
   });
 
   it("does not open the microphone on cancel if captions were off", async () => {
@@ -95,11 +176,13 @@ describe("babel-glass exit dialog", () => {
     expect(fake.mic.calls).toEqual([true, false]);
   });
 
-  it("restores the microphone when the exit call rejects, without an unhandled rejection", async () => {
+  it("survives an exit call that rejects, without an unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     nodeProcess.on("unhandledRejection", onUnhandled);
     const fake = await bootListening();
+    fake.emit(3); // stop, back to the start screen
+    await vi.advanceTimersByTimeAsync(200);
     fake.shutdown.answer = () => Promise.reject(new Error("ble gone"));
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(200);
@@ -108,7 +191,7 @@ describe("babel-glass exit dialog", () => {
     nodeProcess.off("unhandledRejection", onUnhandled);
     expect(unhandled).toEqual([]);
     expect(fake.shutdown.modes).toEqual([1]);
-    expect(fake.mic.open).toBe(true);
+    expect(fake.mic.open).toBe(false);
   });
 });
 
@@ -261,37 +344,28 @@ describe("babel-glass robustness", () => {
     expect(fake.body()).toContain("Speech server unreachable");
   });
 
-  it("0.6.1: no glasses gesture sequence clears the transcript; the hold opens the help (no side menu, step log 15.10.)", async () => {
+  it("0.6.1: no glasses gesture sequence clears the transcript (a hold does nothing on the start screen)", async () => {
     const kept = JSON.stringify({ log: [{ text: "Hallo", at: 1 }], summary: { short: ["Kurz gesagt"], long: ["Lang"] } });
     const fake = await boot(richBridge({ stored: {
       [SETTINGS_KEY]: JSON.stringify({ keepTranscript: true }),
       [CONVERSATION_KEY]: kept,
     } }));
     expect(fake.body()).toContain("Kurz gesagt");
-    expect(fake.page.text.get(3)).toBe("Tap = go on · Hold = help · 2× = exit");
-    expect(fake.body()).toContain("Kurz gesagt");
-    fake.emit(9); // without the side menu a hold while stopped opens the help again
+    expect(fake.page.text.get(3)).toBe("Tap = go on · 2× = exit");
+    fake.emit(9); // a hold is no gesture of the app: nothing opens, nothing is cleared
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.page.text.get(1)).toMatch(/^BABEL · help/);
-    expect(fake.footer()).not.toContain("Tap again");
+    expect(fake.body()).toContain("Kurz gesagt");
     fake.emit(10);
     await vi.advanceTimersByTimeAsync(50);
-    // Every short sequence of non-start gestures (tap/swipes/hold/release), none of which may clear.
+    // Every short sequence of non-start gestures (swipes/hold/release/2×), none of which may clear.
     const gestures = [1, 2, 9, 10, 3];
     for (const first of gestures) for (const second of gestures) for (const third of gestures) {
-      if (first === 0 || second === 0 || third === 0) continue;
       for (const g of [first, second, third]) {
         fake.emit(g);
         await vi.advanceTimersByTimeAsync(10);
       }
       expect(fake.storage.get(CONVERSATION_KEY)).toBe(kept);
     }
-    // Menu help, then a tap: the tap only leaves the help (and may start listening afterwards), never clears.
-    fake.menu(1);
-    await vi.advanceTimersByTimeAsync(50);
-    fake.emit(0);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.storage.get(CONVERSATION_KEY)).toBe(kept);
   });
 
   it("QIS v1: a tap on running captions only arms the stop; the second tap within 4 s stops, anything else cancels", async () => {
@@ -303,7 +377,7 @@ describe("babel-glass robustness", () => {
     fake.emit(0); // arms
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.mic.open).toBe(true);
-    expect(fake.page.text.get(1)).toMatch(/^BABEL · ● MIC · stop\?/);
+    expect(fake.page.text.get(1)).toMatch(/^Translate · ● live · stop\?/);
     expect(fake.footer()).toBe("Tap again = stop · Swipe/2× = cancel");
     for (const cancel of [1, 2, 9, 3]) {
       fake.emit(cancel);
@@ -326,15 +400,36 @@ describe("babel-glass robustness", () => {
     expect(fake.mic.open).toBe(false);
   });
 
-  it("QIS v1: 2x closes help and popups first and only then leaves the app", async () => {
-    const fake = await boot(richBridge());
-    fake.menu(1); // help (side menu)
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.page.text.get(1)).toMatch(/^BABEL · help/);
+  it("QIS v1: 2× closes the summary first and only then leaves the app", async () => {
+    const kept = JSON.stringify({ log: [{ text: "Hallo", at: 1 }], summary: { short: ["Kurz gesagt"], long: ["Lang"] } });
+    const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ keepTranscript: true }), [CONVERSATION_KEY]: kept } }));
+    expect(fake.body()).toContain("Kurz gesagt");
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.modes).toEqual([]);
-    expect(fake.page.text.get(1)).toMatch(/^BABEL · pick customer/);
+    expect(fake.header()).toBe("BABEL · mic off · MOCK");
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.modes).toEqual([1]);
+  });
+
+  it("1.0.0: 2× closes a popup first, then stops and returns to the start screen; the exit dialog only comes from there", async () => {
+    const fake = await boot(richBridge());
+    fake.emit(0); // demo captions
+    await vi.advanceTimersByTimeAsync(3000);
+    fake.emit(9); // manual word finder opens a popup
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.body()).toContain("quote · estimate · offer");
+    fake.emit(3); // closes the popup only
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.body()).not.toContain("quote · estimate");
+    expect(fake.mic.open).toBe(true);
+    fake.emit(3); // now it stops and goes back to the start screen
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic.open).toBe(false);
+    expect(fake.shutdown.modes).toEqual([]);
+    expect(fake.header()).toMatch(/^BABEL · mic off/);
+    expect(fake.body().split("\n").slice(0, 3)).toEqual(["> Translate", "  Speak English", "  Conversation"]);
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.modes).toEqual([1]);
@@ -360,77 +455,90 @@ describe("babel-glass robustness", () => {
     fake.emit(0); // mock captions
     await vi.advanceTimersByTimeAsync(5000); // first demo line is a question, then the debounce
     expect(fake.body()).toContain("Reply: Sure, let's start right away.");
-    expect(fake.page.text.get(1) ?? "").toMatch(/^BABEL · ● MIC/);
+    expect(fake.page.text.get(1) ?? "").toMatch(/^Translate · ● live/);
     fake.emit(0); // tap closes the popup, captions go on
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.mic.open).toBe(true);
     expect(fake.body()).not.toContain("Reply:");
   });
 
-  it("without the side menu a hold opens the help; swipes while stopped never open it", async () => {
+  it("1.0.0 start screen: exactly three modes, a voice hint; swipes move the cursor, a hold does nothing", async () => {
     const fake = await boot(richBridge());
-    expect(fake.header()).toMatch(/^BABEL · pick customer/);
-    for (const swipe of [1, 2, 1, 2, 10]) {
-      fake.emit(swipe);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(fake.header(), `after ${swipe}`).toMatch(/^BABEL · pick customer/);
-    }
-    fake.emit(9); // hold
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.header()).toMatch(/^BABEL · help/);
-    // Page 1: the four gestures in footer order, then what the app needs; page 2: what runs when.
-    const gestures = ["Tap =", "Swipe =", "Hold =", "2× ="].map((word) => fake.body().indexOf(word));
-    expect(gestures.every((index) => index >= 0)).toBe(true);
-    expect(gestures).toEqual([...gestures].sort((a, b) => a - b));
-    expect(fake.body()).toContain("Needs a speech server");
-    expect(fake.footer()).toMatch(/^Page 1\/\d · Swipe = scroll · 2× = back$/);
-    const pages = Number(/1\/(\d)/.exec(fake.footer())![1]);
-    const seen = [fake.body()];
-    for (let page = 2; page <= pages; page += 1) {
-      fake.emit(2);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(fake.footer()).toBe(page < pages ? "Page " + page + "/" + pages + " · Swipe = scroll · 2× = back" : "Page " + page + "/" + pages + " · Tap = close · 2× = back");
-      seen.push(fake.body());
-    }
-    expect(seen[1]!.split("\n")[0]).toBe("OVERVIEW · what runs when");
-    expect(seen[pages - 1]!.split("\n").at(-1)).toBe("— End · Tap = close —");
-    expect(seen.join(" ")).toContain("Captions: tap · demo without server");
-    // A swipe past the last page closes the help: back on the customer list, nothing hangs.
+    expect(fake.header()).toBe("BABEL · mic off · MOCK");
+    expect(fake.body().split("\n")).toEqual(["> Translate", "  Speak English", "  Conversation", "Tip: learn your voice on the phone"]);
+    expect(fake.footer()).toBe("Tap: start · Swipe: choose · 2×: exit");
     fake.emit(2);
+    fake.emit(2);
+    fake.emit(2); // never below the last row
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.header()).toMatch(/^BABEL · pick customer/);
-    expect(fake.mic.open).toBe(false);
-    // "Übersicht" opens the same sheet right on the overview page.
-    fake.menu(2);
+    expect(fake.body().split("\n")).toEqual(["  Translate", "  Speak English", "> Conversation", "Tip: learn your voice on the phone"]);
+    for (const other of [9, 10]) {
+      fake.emit(other);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fake.header()).toBe("BABEL · mic off · MOCK");
+      expect(fake.mic.open).toBe(false);
+    }
+    fake.emit(1);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.body().split("\n")[0]).toBe("OVERVIEW · what runs when");
-    fake.emit(0); // a tap closes it without starting the mic
+    expect(fake.body().split("\n")[1]).toBe("> Speak English");
+  });
+
+  it("1.0.0: the hint row disappears once a voice is trained", async () => {
+    const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ voiceEnrolled: true }) } }));
+    expect(fake.body().split("\n")).toEqual(["> Translate", "  Speak English", "  Conversation"]);
+  });
+
+  it("1.0.0 running screen: mode and state on top, one hint line below; a tap arms, scrolling back says paused", async () => {
+    const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ replySuggestions: false, insights: false }) } }));
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(fake.header()).toBe("Translate · ● live · MOCK");
+    expect(fake.footer()).toBe("Tap: stop · Swipe: back");
+    fake.emit(1); // swipe up = back in the history
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.mic.open).toBe(false);
-    expect(fake.header()).toMatch(/^BABEL · pick customer/);
+    expect(fake.header()).toBe("Translate · ● live · history · MOCK");
+    expect(fake.footer()).toBe("Tap: stop · Swipe down: live");
+  });
+
+  it("1.0.0 start screen: each row starts its mode, stores it, and the mode name heads the running screen", async () => {
+    for (const [swipes, mode, header] of [[0, "translate", "Translate"], [1, "learn", "Speak English"], [2, "client", "Conversation"]] as const) {
+      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ replySuggestions: false, insights: false }) } }));
+      for (let i = 0; i < swipes; i += 1) fake.emit(2);
+      await vi.advanceTimersByTimeAsync(50);
+      fake.emit(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fake.mic.open).toBe(true);
+      expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["talkMode"]).toBe(mode);
+      expect(fake.header()).toMatch(new RegExp("^" + header + " · ● live"));
+    }
+  });
+
+  it("1.0.0 Speak English: captions in English, no translation of the user's own line, swipe down at the live edge does not translate", async () => {
+    const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ replySuggestions: false, insights: false, talkMode: "learn" }) } }));
+    // The cursor sits on the mode used last.
+    expect(fake.body().split("\n")[1]).toBe("> Speak English");
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(3500);
+    fake.emit(2); // already at the live edge: in Übersetzen this asks for "my last sentence"
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.body()).not.toContain("Translate into");
+    expect(fake.body()).not.toContain("set \"Translate");
+    expect(fake.mic.open).toBe(true);
   });
 
   it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.); the click handler stays", async () => {
     const fake = await boot(richBridge());
     expect(fake.page.menus.length).toBeGreaterThan(0);
     expect(fake.page.menus.every((menu) => menu.length === 0)).toBe(true); // no menuObject on any page
-    fake.menu(3);
+    fake.menu(8); // people: 2 -> 3
     await vi.advanceTimersByTimeAsync(50);
-    expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["talkMode"]).toBe("client");
+    expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["persons"]).toBe(3);
     expect(fake.page.menus.every((menu) => menu.length === 0)).toBe(true);
     expect(fake.page.creates).toBe(1); // no menu, so no rebuild for it either
-    fake.menu(3);
+    // The help, overview, mode and customer entries are gone: their ids do nothing.
+    for (const id of [1, 2, 3, 4, 5]) fake.menu(id);
     await vi.advanceTimersByTimeAsync(50);
-    expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["talkMode"]).toBe("translate");
-    // Kundeninfo without a picked customer says so; 2× goes back to the list.
-    fake.menu(5);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.header()).toMatch(/^BABEL · customer/);
-    expect(fake.body()).toContain("No customer picked.");
-    fake.emit(3);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.header()).toMatch(/^BABEL · pick customer/);
-    expect(fake.shutdown.modes).toEqual([]);
+    expect(fake.header()).toBe("BABEL · mic off · MOCK");
   });
 
   describe("0.7.0 customer list on the start screen", () => {
@@ -466,29 +574,27 @@ describe("babel-glass robustness", () => {
     };
     const SERVER = { llmUrl: "https://proxy.example/v1", llmModel: "m", insights: false, memory: false };
 
-    it("orders today's customers first (by time), then by name; the last row is 'No customer'", async () => {
+    it("lists the customers under 'Conversation': today's first (by time), then by name", async () => {
       const calls = stub("ok");
-      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify(SERVER) } }));
+      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, voiceEnrolled: true }) } }));
       expect(calls.some((call) => call.url === "https://proxy.example/context/customers")).toBe(true);
-      expect(fake.header()).toBe("BABEL · pick customer · MOCK");
+      expect(fake.header()).toBe("BABEL · mic off · MOCK");
       expect(fake.body().split("\n")).toEqual([
-        "> Beispiel Café · today 09:00",
-        "  Zeta Werkstatt · today 14:30",
-        "  Alpha Studio · 02.01.",
-        "  Muster Bäckerei",
-        "  No customer – translate",
-        // Without the side menu its voice entries stand at the end of the list.
-        "  Learn my voice",
-        "  Delete my voice",
+        "> Translate",
+        "  Speak English",
+        "  Conversation",
+        "    Beispiel Café · today 09:00",
+        "    Zeta Werkstatt · today 14:30",
+        "    Alpha Studio · 02.01.",
+        "    Muster Bäckerei",
       ]);
-      expect(fake.footer()).toBe("Tap = start · Hold = help · 2× = exit");
-      fake.emit(2);
+      expect(fake.footer()).toBe("Tap: start · Swipe: choose · 2×: exit");
+      for (let i = 0; i < 4; i += 1) fake.emit(2);
       await vi.advanceTimersByTimeAsync(50);
-      expect(fake.body().split("\n")[1]).toBe("> Zeta Werkstatt · today 14:30");
-      fake.emit(1);
-      fake.emit(1); // never above the first row
+      expect(fake.body().split("\n")[4]).toBe(">   Zeta Werkstatt · today 14:30");
+      for (let i = 0; i < 6; i += 1) fake.emit(1); // never above the first row
       await vi.advanceTimersByTimeAsync(50);
-      expect(fake.body().split("\n")[0]).toBe("> Beispiel Café · today 09:00");
+      expect(fake.body().split("\n")[0]).toBe("> Translate");
     });
 
     it("honours invertScroll: the physical swipe direction moves the cursor", async () => {
@@ -496,16 +602,19 @@ describe("babel-glass robustness", () => {
       const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, invertScroll: true }) } }));
       fake.emit(1); // SCROLL_TOP on inverted hardware = down
       await vi.advanceTimersByTimeAsync(50);
-      expect(fake.body().split("\n")[1]).toMatch(/^> Zeta/);
+      expect(fake.body().split("\n")[1]).toMatch(/^> Speak English/);
     });
 
-    it("a tap on a customer starts client talk with that customer: X-Babel-Customer on every model request, Kundeninfo from the menu", async () => {
+    it("a tap on a customer starts 'Conversation' with that customer: X-Babel-Customer on every model request", async () => {
       const calls = stub("ok");
-      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, talkMode: "translate", replySuggestions: true }) } }));
+      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, talkMode: "translate", replySuggestions: true, autoSummary: false }) } }));
+      for (let i = 0; i < 3; i += 1) fake.emit(2); // Translate -> Speak English -> Conversation -> Beispiel Café
+      await vi.advanceTimersByTimeAsync(50);
       fake.emit(0);
       await vi.advanceTimersByTimeAsync(50);
       expect(fake.mic.open).toBe(true);
       expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["talkMode"]).toBe("client");
+      expect(fake.header()).toMatch(/^Conversation · ● live/);
       const info = calls.find((call) => call.url.includes("/context/customer?full=1"));
       expect(info?.url).toBe("https://proxy.example/context/customer?full=1&customer=c_3");
       expect(info?.headers["X-Babel-Customer"]).toBe("c_3");
@@ -514,58 +623,41 @@ describe("babel-glass robustness", () => {
       const chats = calls.filter((call) => call.url.includes("/chat/completions"));
       expect(chats.length).toBeGreaterThan(0);
       for (const chat of chats) expect(chat.headers["X-Babel-Customer"]).toBe("c_3");
-      fake.menu(5); // Kundeninfo
-      await vi.advanceTimersByTimeAsync(50);
-      expect(fake.header()).toMatch(/^BABEL · customer/);
-      expect(fake.body()).toContain("Customer: Beispiel Café");
-      fake.emit(3); // back to the captions
-      await vi.advanceTimersByTimeAsync(50);
-      // While listening a swipe scrolls the captions, never help or Kunde.
+      // While listening a swipe scrolls the captions.
       for (const swipe of [1, 2]) {
         fake.emit(swipe);
         await vi.advanceTimersByTimeAsync(50);
-        expect(fake.header()).toMatch(/^BABEL · ● MIC/);
+        expect(fake.header()).toMatch(/^Conversation · /);
       }
-      // "Kunde wechseln" stops the captions and shows the list again, the cursor on the customer in use.
-      // QIS v1.2 #3: while captions run the first click only arms it.
-      fake.menu(4);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(fake.mic.open).toBe(true);
-      expect(fake.footer()).toMatch(/^Tap again = restart captions/);
-      fake.menu(4);
-      await vi.advanceTimersByTimeAsync(50);
+      // 2× stops and returns to the start screen, the cursor on the customer in use.
+      fake.emit(3);
+      await vi.advanceTimersByTimeAsync(100);
       expect(fake.mic.open).toBe(false);
-      expect(fake.header()).toBe("BABEL · pick customer · MOCK");
-      expect(fake.body().split("\n")[0]).toBe("> Beispiel Café · today 09:00");
+      expect(fake.header()).toBe("BABEL · mic off · MOCK");
+      expect(fake.body().split("\n").find((row) => row.startsWith(">"))).toBe(">   Beispiel Café · today 09:00");
     });
 
-    it("the last row starts the translate mode without any customer context", async () => {
+    it("the 'Conversation' row itself starts without any customer context", async () => {
       const calls = stub("ok");
-      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, talkMode: "client", replySuggestions: true }) } }));
-      for (let i = 0; i < 4; i += 1) fake.emit(2);
+      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, talkMode: "translate", replySuggestions: true }) } }));
+      fake.emit(2);
+      fake.emit(2);
       await vi.advanceTimersByTimeAsync(50);
-      expect(fake.body().split("\n").find((row) => row.startsWith("> "))).toBe("> No customer – translate");
+      expect(fake.body().split("\n").find((row) => row.startsWith("> "))).toBe("> Conversation");
       fake.emit(0);
       await vi.advanceTimersByTimeAsync(6000);
       expect(fake.mic.open).toBe(true);
-      expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["talkMode"]).toBe("translate");
+      expect(JSON.parse(fake.storage.get(SETTINGS_KEY) ?? "{}")["talkMode"]).toBe("client");
       expect(calls.some((call) => call.url.includes("/context/customer?full=1"))).toBe(false);
       const chats = calls.filter((call) => call.url.includes("/chat/completions"));
       for (const chat of chats) expect(chat.headers["X-Babel-Customer"]).toBe("-");
     });
 
-    it("an unreachable list shows 'Customers unreachable' + 'No customer'; a tap on the first row retries", async () => {
+    it("an unreachable list leaves just the three rows", async () => {
       const calls = stub("fail");
-      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify(SERVER) } }));
-      expect(fake.body().split("\n")).toEqual(["> Customers unreachable", "  No customer – translate", "  Learn my voice", "  Delete my voice", "  People: 2"]);
-      const asked = (): number => calls.filter((call) => call.url.endsWith("/context/customers")).length;
-      expect(asked()).toBe(1);
-      fake.emit(0);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(asked()).toBe(2);
-      expect(fake.mic.open).toBe(false);
-      fake.emit(2);
-      await vi.advanceTimersByTimeAsync(50);
+      const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, voiceEnrolled: true }) } }));
+      expect(fake.body().split("\n")).toEqual(["> Translate", "  Speak English", "  Conversation"]);
+      expect(calls.filter((call) => call.url.endsWith("/context/customers"))).toHaveLength(1);
       fake.emit(0);
       await vi.advanceTimersByTimeAsync(50);
       expect(fake.mic.open).toBe(true);
@@ -574,9 +666,10 @@ describe("babel-glass robustness", () => {
     it("a list that never answers gives up after the timeout", async () => {
       stub("hang");
       const fake = await boot(richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify(SERVER) } }));
-      expect(fake.body().split("\n")[0]).toBe("> Loading customers …");
+      // While loading nothing is listed under 'Conversation'; and it stays like that.
+      expect(fake.body().split("\n").slice(0, 3)).toEqual(["> Translate", "  Speak English", "  Conversation"]);
       await vi.advanceTimersByTimeAsync(4500);
-      expect(fake.body().split("\n")).toEqual(["> Customers unreachable", "  No customer – translate", "  Learn my voice", "  Delete my voice", "  People: 2"]);
+      expect(fake.body().split("\n").slice(0, 3)).toEqual(["> Translate", "  Speak English", "  Conversation"]);
     });
   });
 
@@ -730,9 +823,9 @@ describe("babel-glass 0.8.0 Meine Stimme + Personen", () => {
     expect(fake.body()).toContain("14 s of voice · quality 83 %");
     expect(settings(fake)["voiceEnrolled"]).toBe(true);
     expect(socket.closed).toBe(true);
-    fake.emit(0); // a tap closes the sheet, back to the list
+    fake.emit(0); // a tap closes the sheet, back to the start screen
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.header()).toMatch(/^BABEL · pick customer/);
+    expect(fake.header()).toMatch(/^BABEL · mic off/);
     expect(fake.mic.open).toBe(false);
   });
 
@@ -748,7 +841,7 @@ describe("babel-glass 0.8.0 Meine Stimme + Personen", () => {
     expect(socket.closed).toBe(true);
     expect(socket.frames().some((f) => f["type"] === "stop")).toBe(false);
     expect(settings(fake)["voiceEnrolled"]).not.toBe(true);
-    expect(fake.header()).toMatch(/^BABEL · pick customer/);
+    expect(fake.header()).toMatch(/^BABEL · mic off/);
   });
 
   it("a server that rejects the reading says why and stores nothing", async () => {
@@ -793,27 +886,13 @@ describe("babel-glass 0.8.0 Meine Stimme + Personen", () => {
     expect(fake.mic.calls).toEqual([]);
   });
 
-  it("without the side menu: Delete my voice is a row at the end of the list; one tap arms, a second tap on it deletes, anything else cancels", async () => {
+  it("1.0.0: no voice entries on the glasses' start screen any more (they live on the phone)", async () => {
     const fake = await boot({ ...SERVER, voiceEnrolled: true });
     expect(fake.page.menus.every((menu) => menu.length === 0)).toBe(true);
-    fake.emit(2); fake.emit(2); // No customer -> Learn my voice -> Delete my voice
+    for (let i = 0; i < 6; i += 1) fake.emit(2);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.body().split("\n").find((row) => row.startsWith("> "))).toBe("> Delete my voice");
-    fake.emit(0); // arms
-    await vi.advanceTimersByTimeAsync(50);
-    expect(VoiceSocket.all).toHaveLength(0);
-    expect(fake.footer()).toBe("Tap again = delete · Swipe/2× = cancel");
-    fake.emit(1); // a swipe cancels and does nothing else
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.footer()).not.toMatch(/^Tap again/);
-    expect(settings(fake)["voiceEnrolled"]).toBe(true);
-    fake.emit(0); // the cancelling swipe moved nothing: still on "Delete my voice"
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.footer()).toMatch(/^Tap again = delete/);
-    fake.emit(0); // the confirming tap on the same row
-    await vi.advanceTimersByTimeAsync(50);
-    expect(VoiceSocket.all.at(-1)!.frames()[0]).toMatchObject({ type: "start", voice: "delete", token: "tok" });
-    expect(settings(fake)["voiceEnrolled"]).toBe(false);
+    expect(fake.body()).not.toMatch(/voice|People/i);
+    expect(fake.body().split("\n")).toEqual(["  Translate", "  Speak English", "> Conversation"]);
   });
 
   it("QIS v1.2 #3: an armed delete runs out after 4 s, and a swipe cancels it; nothing is deleted", async () => {

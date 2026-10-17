@@ -131,6 +131,16 @@ export function buildPage(view: PageView): CreateStartUpPageContainer {
 }
 
 const started = new WeakSet<EvenAppBridge>();
+
+/**
+ * The next page goes the way of the very first one again (rebuild + create).
+ * Needed after the system's exit dialog was cancelled: on the real glasses the
+ * dialog takes the page away, and a plain rebuild no longer reaches it (store
+ * review 16.10.2026: "after No, double-tap can no longer open the exit window").
+ */
+export function forgetPage(bridge: EvenAppBridge): void {
+  started.delete(bridge);
+}
 const sentLength = new Map<number, number>();
 const TEXT_HARD_CAP = 900;
 

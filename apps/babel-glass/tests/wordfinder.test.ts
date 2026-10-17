@@ -67,16 +67,17 @@ describe("Wortfinder popup", () => {
     for (const line of lines) expect([...line].length).toBeLessThanOrEqual(WORD_LINE_CHARS);
   });
 
-  it("shows on the glasses above the newest captions, with the hold hint in the footer", () => {
+  it("shows on the glasses above the newest captions; the footer only says what a tap does", () => {
     const buffer = applyTranscript(createBuffer(), { text: "Ich brauche noch so ein, äh …", final: true }, 0);
     const base: ViewOptions = { mode: "conversation", listening: true, status: "ready", translating: false, offset: 0, mock: false, locale: "de" };
-    const view = buildView(buffer, { ...base, wordFinder: true, popup: { term: "", info: "", kind: "word", lines: ["Angebot · Offerte"] } });
-    expect(view.header).toContain("● MIKRO");
+    const view = buildView(buffer, { ...base, popup: { term: "", info: "", kind: "word", lines: ["Angebot · Offerte"] } });
+    expect(view.header).toContain("● live");
     expect(view.body[0]).toBe("Wort: Angebot · Offerte");
     expect(view.body.join("\n")).toContain("Ich brauche");
-    const plain = buildView(buffer, { ...base, wordFinder: true });
-    expect(plain.footer).toBe("Tippen = Stopp · Halten = Wort · 2× = Ende");
-    expect([...plain.footer].length).toBeLessThanOrEqual(GLASS_COLS);
+    expect(view.footer).toBe("Tippen: schließen");
+    // No hold anywhere: it does not arrive on the real glasses.
+    expect(buildView(buffer, base).footer).toBe("Tippen: Stopp · Wischen: zurück");
+    expect([...buildView(buffer, base).footer].length).toBeLessThanOrEqual(GLASS_COLS);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildView } from "../src/glasses/view";
-import { applyError, applyReport, acknowledge, createSource } from "../src/monitor/dashboard";
+import { problemsView, startView } from "../src/glasses/view";
+import { applyError, applyReport, acknowledge, createSource, problems } from "../src/monitor/dashboard";
 import { backoffMs, describeError, fetchReport } from "../src/protocol/fetcher";
 import { parseData, EMPTY_DATA, maskToken, validateUrl, isPlainHttp, upsertSource, removeSource, nextSourceId } from "../src/storage/persist";
 import type { Metric } from "../src/protocol/schema";
@@ -15,34 +15,40 @@ const broken = {
   ],
 };
 
+const NOW = 0;
+const list = (sources: ReturnType<typeof applyReport>[]) => problems(sources, NOW);
+const opts = { locale: "en", demo: false, armed: false } as const;
+
 describe("healthy display", () => {
   it("asks for configuration when there are no sources", () => {
-    expect(buildView([], {}, 0).body.join(" ")).toContain("phone app");
+    const view = startView([], 0, NOW, { locale: "en", demo: false, problemCount: 0, actionCount: 0 });
+    expect(view.body.join(" ")).toContain("phone app");
+    expect(view.footer).toBe("2× = exit");
   });
 
-  it("shows one quiet line when everything is fine", () => {
+  it("shows only the overview when everything is fine: header, one row, one footer line", () => {
     const source = applyReport(createSource("s1", "nas"), healthy, 0);
-    const view = buildView([source], {}, 0);
-    expect(view.header).toBe("STATUS · all ok");
-    expect(view.body).toEqual(["1 of 1 ok"]);
-    expect(view.footer).toBe("Hold = menu · 2× = exit");
+    const view = startView([source], 0, NOW, { locale: "en", demo: false, problemCount: 0, actionCount: 0 });
+    expect(view.header).toBe("Status · ● live");
+    expect(view.body).toEqual(["● nas"]);
+    expect(view.footer).toBe("Tap = open · Swipe = choose · 2× = exit");
   });
 });
 
 describe("problem display", () => {
-  it("names the severity and the count", () => {
+  it("header names the page and the live state", () => {
     const source = applyReport(createSource("s1", "nas"), broken, 0);
-    expect(buildView([source], {}, 0).header).toBe("STATUS · CRITICAL · 2");
+    expect(problemsView([source], list([source]), 0, NOW, opts).header).toBe("Problems · ● live");
   });
 
   it("puts the worst problem first", () => {
     const source = applyReport(createSource("s1", "nas"), broken, 0);
-    expect(buildView([source], {}, 0).body[0]).toContain("Disk");
+    expect(problemsView([source], list([source]), 0, NOW, opts).body[0]).toContain("Disk");
   });
 
   it("marks severity distinctly", () => {
     const source = applyReport(createSource("s1", "nas"), broken, 0);
-    const body = buildView([source], {}, 0).body;
+    const body = problemsView([source], list([source]), 0, NOW, opts).body;
     expect(body[0]).toContain("!");
     expect(body[1]).toContain("·");
   });
@@ -50,33 +56,44 @@ describe("problem display", () => {
   it("marks acknowledged problems and sinks them", () => {
     let source = applyReport(createSource("s1", "nas"), broken, 0);
     source = acknowledge(source, "disk");
-    const body = buildView([source], {}, 0).body;
+    const body = problemsView([source], list([source]), 0, NOW, opts).body;
     expect(body[0]).toContain("RAM");
     expect(body[1]).toContain("(ack)");
   });
 
   it("shows an unreachable source as a problem, never as ok", () => {
     const source = applyError(createSource("s1", "nas"), "unreachable", 0);
-    const view = buildView([source], {}, 0);
-    expect(view.header).toContain("NO DATA");
+    const view = problemsView([source], list([source]), 0, NOW, opts);
+    expect(view.header).toBe("Problems · offline");
     expect(view.body[0]).toContain("unreachable");
   });
 
-  it("keeps the cursor row on screen in a long list", () => {
+  it("keeps the cursor row on screen in a long list, five rows at most", () => {
     const many = {
       name: "nas",
       metrics: Array.from({ length: 12 }, (_, i) =>
         metric({ id: "m" + i, label: "M" + i, value: 99, warn: 80, critical: 95 })),
     };
     const source = applyReport(createSource("s1", "nas"), many, 0);
-    const view = buildView([source], { cursor: 10, maxRows: 3 }, 0);
-    expect(view.body.some((line) => line.startsWith("> "))).toBe(true);
-    expect(view.footer).toBe("Tap = seen · Swipe = list · Hold = menu · 2× = exit");
+    const view = problemsView([source], list([source]), 10, NOW, opts);
+    expect(view.body).toHaveLength(5);
+    expect(view.body.filter((line) => line.startsWith("● "))).toHaveLength(1);
+    expect(view.footer).toBe("Tap = seen · Swipe = list · 2× = back");
   });
 
   it("clamps an out-of-range cursor instead of showing nothing", () => {
     const source = applyReport(createSource("s1", "nas"), broken, 0);
-    expect(buildView([source], { cursor: 99 }, 0).body.some((l) => l.startsWith("> "))).toBe(true);
+    expect(problemsView([source], list([source]), 99, NOW, opts).body.some((l) => l.startsWith("● "))).toBe(true);
+  });
+
+  it("asks for the second tap in the footer once armed, and offers no tap for a seen problem", () => {
+    const source = applyReport(createSource("s1", "nas"), broken, 0);
+    expect(problemsView([source], list([source]), 0, NOW, { ...opts, armed: true }).footer).toBe("Tap again = seen · Swipe/2× = cancel");
+    const seen = acknowledge(source, "disk");
+    expect(problemsView([seen], list([seen]), 0, NOW, { ...opts }).footer).toBe("Tap = seen · Swipe = list · 2× = back");
+    expect(problemsView([seen], list([seen]), 0, NOW, opts).body[0]).toContain("RAM");
+    const onlySeen = acknowledge(acknowledge(source, "disk"), "ram");
+    expect(problemsView([onlySeen], list([onlySeen]), 0, NOW, opts).footer).toBe("Swipe = list · 2× = back");
   });
 });
 
@@ -181,8 +198,8 @@ describe("review regressions", () => {
       name: "x",
       metrics: [metric({ id: "t", label: "Temperature of the attic sensor near the chimney", value: 41, unit: "°C", warn: 30 })],
     }, 0);
-    const down = applyError(createSource("s2", "nas"), "x".repeat(60), 0);
-    const view = buildView([long, acknowledge(down, "__source")], {}, 0);
+    const down = acknowledge(applyError(createSource("s2", "nas"), "x".repeat(60), 0), "__source");
+    const view = problemsView([long, down], list([long, down]), 0, NOW, opts);
     for (const row of view.body) expect(row.length).toBeLessThanOrEqual(56);
     expect(view.body.some((row) => row.endsWith("(ack)"))).toBe(true);
   });

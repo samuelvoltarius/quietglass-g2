@@ -10,5 +10,5 @@ regenerate rather than editing these files.
 | `background.png` | 1920×1080 | Greyscale, name and tagline |
 | `tagline.txt` | — | Line 1 English, line 2 German, each ≤ 60 characters |
 
-Screenshot: the simulator capture is kept at [`../docs/screenshot.png`](../docs/screenshot.png)
-and is not duplicated here.
+Screenshot: [`screenshot.png`](screenshot.png) is a direct 576×288 capture from
+the official Even Hub simulator.

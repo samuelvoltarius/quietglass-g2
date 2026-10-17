@@ -12,7 +12,8 @@ import { clockLabel, type TranscriptEntry } from "../companion/transcript";
 import type { Insight } from "../companion/llm";
 import { memoryDate, memoryExport, type MemoryClient, type MemoryEntry } from "../companion/memory";
 import type { SpeakerChoice } from "../companion/wordfinder";
-import { helperRows, type HelperToggle, type OverviewInput } from "../companion/overview";
+import type { VocabEntry } from "../companion/vocab";
+import type { HelperToggle, OverviewInput } from "../companion/overview";
 import type { PopupKind } from "../companion/popups";
 import { cuesHtml, type CueCard } from "../companion/cues";
 
@@ -37,10 +38,25 @@ export interface ConversationState {
   readonly overview?: OverviewInput;
   /** 0.6.2: "Kunde (Shoot Day): <name> – n Ideen, m Storyboards" when the proxy reports one. */
   readonly customerLine?: string;
-  /** 0.6.3: the mode in force (Kundengespräch / Übersetzen), shown as a two-button toggle. */
-  readonly talkMode?: "client" | "translate";
+  /** The mode in force (Übersetzen / Englisch sprechen / Gespräch), shown as three buttons. */
+  readonly talkMode?: "client" | "translate" | "learn";
   /** Tipp-Karten shown on the glasses in this conversation (oldest first). */
   readonly cues?: readonly CueCard[];
+  /** 0.9.0: "Meine Wörter", newest first. */
+  readonly words?: readonly VocabEntry[];
+  /** 1.0.0: the customers of the start screen's list and the one picked, for the picker under "Gespräch". */
+  readonly customers?: readonly { readonly id: string; readonly name: string }[];
+  readonly customerId?: string | null;
+  /** 1.0.0: the "Meine Stimme" card. */
+  readonly voice?: VoiceUiState;
+}
+
+/** The "Meine Stimme" card: trained or not, and the step of a running enrollment or deletion. */
+export interface VoiceUiState {
+  readonly trained: boolean;
+  readonly phase: "idle" | "connecting" | "reading" | "saving" | "deleting" | "done" | "error";
+  /** Result or problem of the last action (already in the UI language). */
+  readonly message?: string;
 }
 
 /**
@@ -62,10 +78,16 @@ export interface PhoneUiPorts {
   readonly getConversation?: () => ConversationState;
   readonly onSummarize?: () => void;
   readonly onClearTranscript?: () => void;
+  /** 0.9.0 "Meine Wörter": delete one word / all of them. */
+  readonly onDeleteWord?: (word: string) => void;
+  readonly onClearWords?: () => void;
   /** Babel's own memory on the babel-llm-proxy; null = no language-model server set. */
   readonly getMemory?: () => MemoryClient | null;
-  /** 0.5.0: show the help screen ("what runs when") on the glasses. */
-  readonly onShowHelp?: () => void;
+  /** 1.0.0 "Meine Stimme": start the voice recording on the glasses / delete the voice print on the server. */
+  readonly onLearnVoice?: () => void;
+  readonly onDeleteVoice?: () => void;
+  /** 1.0.0: the customer for "Gespräch" picked on the phone; null = none. */
+  readonly onPickCustomer?: (id: string | null) => void;
 }
 
 /** What the "Gedächtnis" tab shows; loaded from the proxy, kept across redraws. */
@@ -92,19 +114,25 @@ export interface UiRoot {
   querySelectorAll?<T extends Element>(selector: string): ArrayLike<T>;
 }
 
-/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
+/** Three tabs only (1.0.0): what runs now, the words found, and everything that is set up once. */
 const TABS: readonly { id: string; icon: string; key: string }[] = [
-  { id: "talk", icon: "💬", key: "p.tabTalk" },
-  { id: "languages", icon: "🌐", key: "p.tabLanguages" },
-  { id: "memory", icon: "🧠", key: "p.tabMemory" },
-  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
-  { id: "connection", icon: "📡", key: "p.tabConn" },
-  { id: "more", icon: "⚙️", key: "p.tabMore" },
+  { id: "now", icon: "💬", key: "p.tabNow" },
+  { id: "words", icon: "📖", key: "p.tabWords" },
+  { id: "settings", icon: "⚙️", key: "p.tabSettings" },
 ];
 const TAB_KEY = "quietglass.babel-glass.tab";
 
-function readTab(): string {
-  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "talk"; } catch { return "talk"; }
+/** Nothing set up yet (no speech server, no voice): Einstellungen opens with the 3-step checklist. */
+export function isFirstRun(data: BabelData): boolean {
+  return usesMockStt(data) && !companionConfigured(data) && !data.voiceEnrolled;
+}
+
+function readTab(firstRun: boolean): string {
+  try {
+    const v = localStorage.getItem(TAB_KEY);
+    if (TABS.some((tab) => tab.id === v)) return v!;
+  } catch { /* no storage */ }
+  return firstRun ? "settings" : "now";
 }
 
 /** Shows only the active tab; the choice survives redraws and restarts. */
@@ -123,7 +151,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 }
 
 export function mountPhoneUiInto(root: UiRoot, ports: PhoneUiPorts): void {
-  let tab = readTab();
+  let tab = readTab(isFirstRun(ports.getData()));
   const memory = createMemoryTab(root, ports);
   const render = (notice = ""): void => {
     const locale = ports.getLocale?.() ?? "en";
@@ -135,11 +163,11 @@ export function mountPhoneUiInto(root: UiRoot, ports: PhoneUiPorts): void {
     applyTab(root, tab);
     Array.from(root.querySelectorAll?.<HTMLButtonElement>("[data-tab-go]") ?? []).forEach((button) => {
       button.addEventListener("click", () => {
-        tab = button.dataset["tabGo"] ?? "talk";
+        tab = button.dataset["tabGo"] ?? "now";
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
         applyTab(root, tab);
-        // The memory is read fresh whenever its tab is opened.
-        if (tab === "memory") void memory.load();
+        // The memory is read fresh whenever the settings are opened.
+        if (tab === "settings") void memory.load();
         try { window.scrollTo({ top: 0 }); } catch { /* no window outside the WebView */ }
       });
     });
@@ -155,14 +183,23 @@ export function mountPhoneUiInto(root: UiRoot, ports: PhoneUiPorts): void {
  * settings form below is never rebuilt while someone types in it.
  */
 export function renderConversation(root: UiRoot, state: ConversationState, locale: Locale): void {
-  const overview = root.querySelector<HTMLElement>("#ov-body");
-  if (overview && state.overview) overview.innerHTML = overviewInner(state.overview, locale);
+  const paint = (selector: string, html: string): void => {
+    const el = root.querySelector<HTMLElement>(selector);
+    // Controls (the mode buttons, the pickers) are only rebuilt when they changed, so an open picker is not closed by a new line.
+    if (el && lastPainted.get(el) !== html) { el.innerHTML = html; lastPainted.set(el, html); }
+  };
+  if (state.words) paint("#words-body", wordsInner(state.words, locale));
+  paint("#now-body", nowInner(state, locale));
+  if (state.voice) paint("#voice-body", voiceInner(state.voice, locale));
   const body = root.querySelector<HTMLElement>("#conv-body");
   if (!body) return;
   body.innerHTML = conversationInner(state, locale);
   const lines = root.querySelector<HTMLElement>("#conv-lines");
   if (lines && typeof lines.scrollHeight === "number") lines.scrollTop = lines.scrollHeight;
 }
+
+/** What each redrawn control block showed last, to skip identical redraws. */
+const lastPainted = new WeakMap<object, string>();
 
 const SPEAKER_CLASSES = "ABCDEFGH";
 
@@ -188,12 +225,7 @@ export function conversationInner(state: ConversationState, locale: Locale): str
     lines.push(`<p class="line pending">… ${escapeHtml(state.pending)} <em>${x("p.convLive")}</em></p>`);
   }
   const customer = state.customerLine ? `<p class="hint customer">${escapeHtml(state.customerLine)}</p>` : "";
-  const modeButton = (mode: "client" | "translate", key: string): string =>
-    `<button type="button" id="talk-mode-${mode}" data-talk-mode="${mode}" class="${state.talkMode === mode ? "" : "secondary"}" aria-pressed="${state.talkMode === mode}">${x(key)}</button>`;
-  const modeToggle = state.talkMode
-    ? `<div class="talk-mode"><strong>${x("p.talkModeTitle")}:</strong> <span class="buttons">${modeButton("client", "p.mode.clientBtn")}${modeButton("translate", "p.mode.translateBtn")}</span><p class="hint">${x("p.modeHint")}</p></div>`
-    : "";
-  const transcript = modeToggle + customer + (lines.length
+  const transcript = customer + (lines.length
     ? `<div id="conv-lines" class="transcript">${lines.join("")}</div>`
     : `<p class="hint">${x("p.convEmpty")}</p>`);
 
@@ -229,31 +261,63 @@ export function conversationInner(state: ConversationState, locale: Locale): str
   return transcript + count + buttons + summary + insights + cuesHtml(state.cues ?? [], locale);
 }
 
-/**
- * The overview table (0.5.0): every helper, its trigger, its state now and,
- * where it has one, its switch. Pure, so tests can read it.
- */
-export function overviewInner(input: OverviewInput, locale: Locale): string {
-  const x = (key: string, vars: Record<string, string> = {}): string => t(locale, key, vars);
-  const rows = helperRows(input).map((row) => {
-    const toggle = row.toggle
-      ? `<input type="checkbox" data-ov-toggle="${row.toggle}" aria-label="${escapeHtml(x("g.hlp." + row.id))}"${input.data[row.toggle] ? " checked" : ""} />`
-      : "";
-    return `<tr class="${row.on ? "on" : "off"}" data-helper="${row.id}"><td>${toggle}</td><td><b>${escapeHtml(x("g.hlp." + row.id))}</b><br><small>${escapeHtml(x("g.trg." + row.id))}</small></td>`
-      + `<td class="state">${escapeHtml(x(row.status, row.vars ?? {}))}</td></tr>`;
-  });
-  return `<table class="keys overview"><thead><tr><th>${x("p.ovSwitch")}</th><th>${x("p.ovHelper")} · ${x("p.ovTrigger")}</th><th>${x("p.ovStatus")}</th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+/** The mode buttons, the customer picker for "Gespräch" and the state of the glasses (1.0.0). Pure, so tests can read it. */
+export function nowInner(state: ConversationState, locale: Locale): string {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const listening = state.overview?.listening ?? false;
+  const demo = state.overview ? usesMockStt(state.overview.data) : false;
+  const status = `<p class="state ${listening ? "live" : "idle"}"><span class="dot" aria-hidden="true"></span><b>${x(listening ? "p.nowLive" : "p.nowReady")}</b>`
+    + `${demo ? ` <span class="tag">${escapeHtml(x("g.mock"))}</span>` : ""}</p>`;
+  const modeButton = (mode: "translate" | "learn" | "client"): string =>
+    `<button type="button" id="talk-mode-${mode}" data-talk-mode="${mode}" class="${state.talkMode === mode ? "" : "secondary"}" aria-pressed="${state.talkMode === mode}">${escapeHtml(x("g.mode." + mode))}</button>`;
+  const modes = state.talkMode
+    ? `<div class="modes" role="group" aria-label="${escapeHtml(x("p.nowModeTitle"))}">${modeButton("translate")}${modeButton("learn")}${modeButton("client")}</div>`
+    : "";
+  const customers = state.talkMode === "client" && state.customers?.length
+    ? `<label for="customer-pick">${x("p.nowCustomer")}</label><select id="customer-pick"><option value="">${escapeHtml(x("p.nowNoCustomer"))}</option>`
+      + state.customers.map((c) => `<option value="${escapeHtml(c.id)}"${c.id === state.customerId ? " selected" : ""}>${escapeHtml(c.name)}</option>`).join("")
+      + "</select>"
+    : "";
+  return status + modes + customers + `<p class="hint">${x("p.glassesHow")}</p>`;
 }
 
-function overviewCard(state: ConversationState | null, locale: Locale): string {
-  if (!state?.overview) return "";
-  return `
-  <section class="card" id="ov">
-    <h2>${t(locale, "p.ovTitle")}</h2>
-    <div id="ov-body">${overviewInner(state.overview, locale)}</div>
-    <p class="hint">${t(locale, "p.ovHint")}</p>
-    <div class="buttons"><button id="ov-help" type="button" class="secondary">${t(locale, "p.ovHelpGlasses")}</button></div>
-  </section>`;
+/** The "Meine Stimme" card's inside: status, the how-to and the two buttons (1.0.0). Pure, so tests can read it. */
+export function voiceInner(voice: VoiceUiState, locale: Locale): string {
+  const x = (key: string): string => t(locale, key);
+  const busy = voice.phase === "connecting" || voice.phase === "reading" || voice.phase === "saving" || voice.phase === "deleting";
+  const status = `<p class="state ${voice.trained ? "live" : "idle"}"><span class="dot" aria-hidden="true"></span><b>${x(voice.trained ? "p.voiceTrained" : "p.voiceNot")}</b></p>`;
+  const progress = busy ? `<p class="progress">${escapeHtml(x("p.voice." + voice.phase))}</p>` : "";
+  const result = !busy && voice.message
+    ? `<p class="${voice.phase === "error" ? "warn" : "ok"}">${escapeHtml(voice.message)}</p>`
+    : "";
+  const how = busy ? "" : `<p class="hint">${x("p.voiceHow")}</p>`;
+  return status + progress + result + how
+    + `<button type="button" id="voice-learn" class="big"${busy ? " disabled" : ""}>${x(voice.trained ? "p.voiceRelearn" : "p.voiceLearn")}</button>`
+    + (voice.trained ? `<button type="button" id="voice-delete" class="secondary"${busy ? " disabled" : ""}>${x("p.voiceDelete")}</button>` : "");
+}
+
+/** First-run checklist (1.0.0): Server, then voice, then done. Pure, so tests can read it. */
+export function setupInner(data: BabelData, locale: Locale): string {
+  const x = (key: string): string => t(locale, key);
+  const step = (n: number, done: boolean, key: string): string =>
+    `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${x(key)}</span></li>`;
+  const server = !usesMockStt(data);
+  return `<ol class="steps">${step(1, server, "p.setup1")}${step(2, data.voiceEnrolled, "p.setup2")}${step(3, server && data.voiceEnrolled, "p.setup3")}</ol>`
+    + (server ? "" : `<p class="hint">${x("p.setupDemo")}</p>`);
+}
+
+/** "Meine Wörter" (0.9.0): word → German meaning, alternatives below, one delete button each. Pure, so tests can read it. */
+export function wordsInner(words: readonly VocabEntry[], locale: Locale): string {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  if (words.length === 0) return `<p class="hint">${x("p.wordsEmpty")}</p>`;
+  const items = words.map((entry) => {
+    const meaning = entry.meaning ? ` → ${escapeHtml(entry.meaning)}` : "";
+    const more = entry.alternatives.length ? `<br><small>${entry.alternatives.map(escapeHtml).join(" · ")}</small>` : "";
+    return `<li><b>${escapeHtml(entry.word)}</b>${meaning}${more}`
+      + ` <button type="button" class="secondary small" data-word-del="${escapeHtml(entry.word)}">${x("p.wordsDelete")}</button></li>`;
+  });
+  return `<p class="count">${x("p.wordsCount", { count: words.length })}</p><ul class="memory">${items.join("")}</ul>`
+    + `<div class="buttons"><button id="words-clear" type="button" class="secondary">${x("p.wordsClear")}</button></div>`;
 }
 
 /** The inside of the "Gedächtnis" card (pure, so tests can read it). */
@@ -417,6 +481,10 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
   const chipOn = translationEnabled(data);
   const code = (value: string): string => (value === AUTO ? "auto" : value.toUpperCase());
   const chipText = chipOn ? `${code(data.sourceLanguage)} → ${code(data.targetLanguage)}` : x("p.chipCaptions");
+  const serverReady = !usesMockStt(data);
+  const voice: VoiceUiState = conversation?.voice ?? { trained: data.voiceEnrolled, phase: "idle" };
+  const check = (id: string, checked: boolean, key: string): string =>
+    `<label class="check"><input id="${id}" type="checkbox" ${checked ? "checked" : ""} /> ${x(key)}</label>`;
   return `
   <header class="brand bar">
     <div>
@@ -428,97 +496,52 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
 
   <p id="notice" class="notice" ${notice ? "" : "hidden"}>${escapeHtml(notice)}</p>
 
-  <div class="tab" data-tab="talk">
-  ${overviewCard(conversation, locale)}
+  <div class="tab" data-tab="now">
+  ${conversation ? `<section class="card" id="now"><div id="now-body">${nowInner(conversation, locale)}</div></section>` : ""}
   ${conversationCard(conversation, locale)}
+  </div>
 
-  ${usesMockStt(data) ? `
-  <section class="card">
-    <h2>${x("p.mockTitle")}</h2>
-    <p class="hint">${x("p.mockBody", { mock: x("g.mock") })}</p>
-  </section>` : ""}
-
-  <section class="card">
-    <h2>${x("p.companionTitle")}</h2>
-    <label class="check"><input id="speakers" type="checkbox" ${data.speakers ? "checked" : ""} /> ${x("p.speakers")}</label>
-    <p class="hint">${x("p.speakersHint")}</p>
-    <label class="check"><input id="insights" type="checkbox" ${data.insights ? "checked" : ""} /> ${x("p.insights")}</label>
-    <label class="check"><input id="reply-suggestions" type="checkbox" ${data.replySuggestions ? "checked" : ""} /> ${x("p.replies")}</label>
-    <p class="hint">${x("p.repliesHint")}</p>
-    <label class="check"><input id="cue-cards" type="checkbox" ${data.cueCards !== false ? "checked" : ""} /> ${x("p.cues")}</label>
-    <p class="hint">${x("p.cuesHint")}</p>
-    <label class="check"><input id="translate-own" type="checkbox" ${data.translateOwn ? "checked" : ""} /> ${x("p.translateOwn")}</label>
-    <p class="hint">${x("p.translateOwnHint")}</p>
-    <label class="check"><input id="auto-summary" type="checkbox" ${data.autoSummary ? "checked" : ""} /> ${x("p.autoSummary")}</label>
-    <label class="check"><input id="keep-transcript" type="checkbox" ${data.keepTranscript ? "checked" : ""} /> ${x("p.keepTranscript")}</label>
-    <p class="hint">${x("p.keepTranscriptHint")}</p>
-    <label for="my-speaker">${x("p.mySpeaker")}</label>
-    <select id="my-speaker">
-      ${(["auto", "A", "B"] as const).map((choice) =>
-        '<option value="' + choice + '"' + (choice === data.mySpeaker ? " selected" : "") + ">" +
-        escapeHtml(choice === "auto" ? x("p.mySpeakerAuto") : choice) + "</option>").join("")}
-    </select>
-    <p class="hint">${x("p.mySpeakerHint")}</p>
-    <label class="check"><input id="memory" type="checkbox" ${data.memory ? "checked" : ""} /> ${x("p.memoryToggle")}</label>
-    <p class="hint">${x("p.memoryToggleHint")}</p>
-    <p class="hint">${companionConfigured(data) ? x("p.companionLlm") : x("p.companionNoLlm")}</p>
+  <div class="tab" data-tab="words">
+  <section class="card" id="words">
+    <h2>${x("p.wordsTitle")}</h2>
+    <div id="words-body">${wordsInner(conversation?.words ?? [], locale)}</div>
   </section>
   </div>
 
-  <div class="tab" data-tab="languages">
+  <div class="tab" data-tab="settings">
+  ${serverReady ? "" : `<section class="card setup" id="setup"><h2>${x("p.setupTitle")}</h2>${setupInner(data, locale)}</section>`}
+
+  <section class="card" id="voice">
+    <h2>${x("p.voiceTitle")}</h2>
+    <div id="voice-body">${voiceInner(voice, locale)}</div>
+  </section>
+
   <section class="card">
-    <h2>${x("p.sttTitle")}</h2>
+    <h2>${x("p.langTitle")}</h2>
     ${languageField("source", x("p.source"), data.sourceLanguage, true, x("p.codeHintSource"), locale)}
     <p class="hint">${x("p.sourceHint")}</p>
-  </section>
-
-  <section class="card">
-    <h2>${x("p.trTitle")}</h2>
     ${languageField("target", x("p.target"), data.targetLanguage, false, x("p.codeHintTarget"), locale)}
-    <p class="hint">${x("p.directionHint")}</p>
-
-    <label class="check"><input id="translit" type="checkbox" ${data.transliterateOriginal ? "checked" : ""} /> ${x("p.translit")}</label>
-    <p class="hint">${x("p.translitHint")}</p>
-
-    <p class="hint">${x("p.trState", { state: translationEnabled(data) ? x("p.on") : x("p.off") })}</p>
+    ${check("learn-translate", data.learnTranslate, "p.learnTranslate")}
+    ${check("translit", data.transliterateOriginal, "p.translit")}
     <button id="save" type="button">${x("p.save")}</button>
   </section>
-  </div>
 
-  <div class="tab" data-tab="glasses">
   <section class="card">
-    <h2>${x("p.modeTitle")}</h2>
-    <select id="mode">
-      ${(Object.keys(MODE_PRESETS) as CaptionMode[]).map((mode) =>
-        '<option value="' + mode + '"' + (mode === data.mode ? " selected" : "") + ">" +
-        escapeHtml(x("p.mode." + mode)) + "</option>").join("")}
+    <h2>${x("p.personsTitle")}</h2>
+    <select id="persons" aria-label="${escapeHtml(x("p.personsTitle"))}">
+      ${[2, 3, 4, 5].map((n) => `<option value="${n}"${n === data.persons ? " selected" : ""}>${escapeHtml(x("p.persons", { n }))}</option>`).join("")}
     </select>
-    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
+    <p class="hint">${x("p.personsHint")}</p>
   </section>
 
   <section class="card">
-    <h2>${x("p.controlsTitle")}</h2>
-    <table class="keys">
-      <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
-      <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
-      <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
-      <tr><td>${x("p.double")}</td><td>${x("p.doubleDo")}</td></tr>
-    </table>
-    <p class="hint">${x("p.controlsHint", { mic: x("g.mic") })}</p>
+    <h2>${x("p.wordFinderTitle")}</h2>
+    ${check("word-auto", data.wordAuto, "p.wordAuto")}
+    <p class="hint">${x("p.wordAutoHint")} ${x("p.wordAutoLearn")}</p>
   </section>
-  </div>
 
-  <div class="tab" data-tab="memory">
-  <section class="card" id="mem">
-    <h2>${x("p.memTitle")}</h2>
-    <p class="hint">${x("p.memHint")}</p>
-    <div id="mem-body"></div>
-  </section>
-  </div>
-
-  <div class="tab" data-tab="connection">
-  <section class="card">
-    <h2>${x("p.serverSttTitle")}</h2>
+  <details class="card fold" id="server"${serverReady ? "" : " open"}>
+    <summary><b>${x("p.serverTitle")}</b> <span class="tag">${x(serverReady ? "p.serverReady" : "p.serverMissing")}</span></summary>
     <label for="stt">${x("p.sttServer")}</label>
     <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="wss://your-host:9000/asr" />
     <p class="hint">${x("p.sttServerHint")}</p>
@@ -526,10 +549,7 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
 
     <label for="stt-token">${x("p.sttToken")} — <em>${secret(data.sttToken)}</em></label>
     <input id="stt-token" type="password" placeholder="${escapeHtml(x("p.sttTokenPlaceholder"))}" />
-  </section>
 
-  <section class="card">
-    <h2>${x("p.serverTrTitle")}</h2>
     <label for="provider">${x("p.trServer")}</label>
     <select id="provider">
       ${PROVIDERS.map((p) =>
@@ -556,11 +576,45 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
       <input id="llm-key" type="password" placeholder="${escapeHtml(x("p.llmKeyPlaceholder"))}" />
     </div>
     <button id="save-servers" type="button">${x("p.save")}</button>
-  </section>
-  </div>
+  </details>
 
-  <div class="tab" data-tab="more">
-  <section class="card compact">${languageSelect(locale)}</section>
+  <details class="card fold" id="mem">
+    <summary><b>${x("p.memTitle")}</b></summary>
+    <p class="hint">${x("p.memHint")}</p>
+    <div id="mem-body"></div>
+  </details>
+
+  <details class="card fold">
+    <summary><b>${x("p.moreTitle")}</b></summary>
+    ${check("speakers", data.speakers, "p.speakers")}
+    ${check("insights", data.insights, "p.insights")}
+    ${check("reply-suggestions", data.replySuggestions, "p.replies")}
+    ${check("cue-cards", data.cueCards !== false, "p.cues")}
+    ${check("translate-own", data.translateOwn, "p.translateOwn")}
+    <p class="hint">${x("p.translateOwnHint")}</p>
+    ${check("auto-summary", data.autoSummary, "p.autoSummary")}
+    ${check("keep-transcript", data.keepTranscript, "p.keepTranscript")}
+    <p class="hint">${x("p.keepTranscriptHint")}</p>
+    ${check("memory", data.memory, "p.memoryToggle")}
+    <p class="hint">${x("p.memoryToggleHint")}</p>
+    <label for="my-speaker">${x("p.mySpeaker")}</label>
+    <select id="my-speaker">
+      ${(["auto", "A", "B"] as const).map((choice) =>
+        '<option value="' + choice + '"' + (choice === data.mySpeaker ? " selected" : "") + ">" +
+        escapeHtml(choice === "auto" ? x("p.mySpeakerAuto") : choice) + "</option>").join("")}
+    </select>
+  </details>
+
+  <details class="card fold">
+    <summary><b>${x("p.displayTitle")}</b></summary>
+    <select id="mode" aria-label="${escapeHtml(x("p.modeTitle"))}">
+      ${(Object.keys(MODE_PRESETS) as CaptionMode[]).map((mode) =>
+        '<option value="' + mode + '"' + (mode === data.mode ? " selected" : "") + ">" +
+        escapeHtml(x("p.mode." + mode)) + "</option>").join("")}
+    </select>
+    ${check("invert", data.invertScroll, "p.invert")}
+    ${languageSelect(locale)}
+  </details>
 
   <footer class="card hint">${x("p.footer")}</footer>
   </div>
@@ -668,28 +722,45 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
   const settingIds: ReadonlyArray<readonly [string, HelperToggle]> = [
     ["speakers", "speakers"], ["insights", "insights"], ["reply-suggestions", "replySuggestions"], ["translate-own", "translateOwn"],
     ["auto-summary", "autoSummary"], ["keep-transcript", "keepTranscript"], ["memory", "memory"],
+    ["word-auto", "wordAuto"],
   ];
   for (const [id, key] of settingIds) {
     byId<HTMLInputElement>(id)?.addEventListener("change", (event) => {
       const checked = (event.target as HTMLInputElement).checked;
       commit({ [key]: checked } as Partial<BabelData>);
-      // The overview switch shows the same setting.
-      const twin = root.querySelector<HTMLInputElement>(`[data-ov-toggle="${key}"]`);
-      if (twin) twin.checked = checked;
     });
   }
 
-  // Overview switches: one listener on the card (its table is redrawn with the conversation).
-  byId<HTMLElement>("ov")?.addEventListener("change", (event) => {
-    const target = event.target as HTMLInputElement | null;
-    const key = target?.dataset?.["ovToggle"] as HelperToggle | undefined;
-    if (!target || !key) return;
-    commit({ [key]: target.checked } as Partial<BabelData>);
-    const twin = byId<HTMLInputElement>(settingIds.find(([, k]) => k === key)?.[0] ?? "");
-    if (twin) twin.checked = target.checked;
+  byId<HTMLSelectElement>("persons")?.addEventListener("change", (event) => {
+    commit({ persons: Number((event.target as HTMLSelectElement).value) });
   });
-  byId<HTMLElement>("ov")?.addEventListener("click", (event) => {
-    if ((event.target as HTMLElement | null)?.id === "ov-help") ports.onShowHelp?.();
+  byId<HTMLInputElement>("learn-translate")?.addEventListener("change", (event) => {
+    commit({ learnTranslate: (event.target as HTMLInputElement).checked });
+  });
+
+  // The mode buttons and the customer picker are redrawn with the conversation, so listen on the card.
+  byId<HTMLElement>("now")?.addEventListener("click", (event) => {
+    const mode = (event.target as HTMLElement | null)?.dataset?.["talkMode"];
+    if (mode === "client" || mode === "translate" || mode === "learn") commit({ talkMode: mode });
+  });
+  byId<HTMLElement>("now")?.addEventListener("change", (event) => {
+    const target = event.target as HTMLSelectElement | null;
+    if (target?.id === "customer-pick") ports.onPickCustomer?.(target.value || null);
+  });
+
+  // "Meine Stimme" (1.0.0): record on the glasses / delete on the server; its card is redrawn, so listen on the card.
+  byId<HTMLElement>("voice")?.addEventListener("click", (event) => {
+    const id = (event.target as HTMLElement | null)?.id;
+    if (id === "voice-learn") ports.onLearnVoice?.();
+    if (id === "voice-delete" && window.confirm(t(ports.getLocale?.() ?? "en", "p.voiceDeleteConfirm"))) ports.onDeleteVoice?.();
+  });
+
+  // "Meine Wörter" (0.9.0): its list is redrawn with the conversation, so listen on the card.
+  byId<HTMLElement>("words")?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const word = target?.dataset?.["wordDel"];
+    if (word) ports.onDeleteWord?.(word);
+    if (target?.id === "words-clear" && window.confirm(t(ports.getLocale?.() ?? "en", "p.wordsClearConfirm"))) ports.onClearWords?.();
   });
 
   // The conversation card is redrawn on its own; listen on the card, not the buttons.
@@ -697,8 +768,6 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
     const target = event.target as HTMLElement | null;
     const id = target?.id ?? "";
     if (id === "summarize") ports.onSummarize?.();
-    const mode = target?.dataset?.["talkMode"];
-    if (mode === "client" || mode === "translate") commit({ talkMode: mode });
     if (id === "clear-log" && window.confirm(t(ports.getLocale?.() ?? "en", "p.clearConfirm"))) ports.onClearTranscript?.();
   });
 

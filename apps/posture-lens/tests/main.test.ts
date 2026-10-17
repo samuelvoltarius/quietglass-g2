@@ -83,7 +83,26 @@ describe("posturelens loop", () => {
     return fake;
   }
 
-  it("asks for the system dialog, then stops drawing and leaves the IMU off once confirmed", async () => {
+  it("asks for the system dialog; the call resolving true (dialog shown) keeps monitoring, and the IMU stream does not redraw over the dialog", async () => {
+    const fake = await boot();
+    fake.sample(0.1);
+    await vi.advanceTimersByTimeAsync(600);
+    const creates = fake.writes.creates;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const writesAtAsk = fake.writes.count;
+    for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(1000); }
+    // While the dialog may be on screen no timer draws (a page call could cover it).
+    expect(fake.writes.count).toBe(writesAtAsk);
+    expect(fake.writes.creates).toBe(creates);
+    fake.emit(1); // the next input restores the page; monitoring never stopped
+    for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(1000); }
+    expect(fake.writes.count).toBeGreaterThan(writesAtAsk);
+    expect(fake.imu).not.toContain(false);
+  });
+
+  it("asks for the system dialog, then stops drawing and leaves the IMU off once the system ends the app (sysEvent 7)", async () => {
     // Regression: IMU samples and the 1 s tick kept writing to the closed page,
     // and a reconnect switched the IMU back on.
     const fake = await boot();
@@ -92,6 +111,8 @@ describe("posturelens loop", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(7);
+    await vi.advanceTimersByTimeAsync(10);
     const writesAtClose = fake.writes.count;
     for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(500); }
     fake.reconnect();
@@ -109,9 +130,80 @@ describe("posturelens loop", () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([1]);
     const writesAtCancel = fake.writes.count;
+    fake.emit(1);
     for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(1000); }
     expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
     expect(fake.imu).not.toContain(false);
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    const fake = await boot();
+    fake.sample(0.1);
+    await vi.advanceTimersByTimeAsync(600);
+    const creates = fake.writes.creates;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.shutdown.confirm = true;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const callsAtAsk = fake.writes.count + fake.images.length;
+    for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(1000); }
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(fake.writes.count + fake.images.length).toBe(callsAtAsk);
+    expect(fake.writes.creates).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, IMU on, next 2x asks", async () => {
+    const fake = await boot();
+    fake.sample(0.1);
+    await vi.advanceTimersByTimeAsync(600);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(4);                                            // the dialog is on screen
+    const atShown = fake.writes.count + fake.writes.rebuilds + fake.images.length;
+    for (let i = 1; i <= 12; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(1000); }
+    expect(fake.writes.count + fake.writes.rebuilds + fake.images.length).toBe(atShown); // nothing drawn over the dialog
+    const creates = fake.writes.creates;
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.writes.creates).toBeGreaterThan(creates);    // page created again, no gesture needed
+    const afterRestore = fake.writes.count + fake.writes.rebuilds + fake.images.length;
+    for (let i = 1; i <= 5; i++) { fake.sample(i * 0.1); await vi.advanceTimersByTimeAsync(1000); }
+    expect(fake.writes.count + fake.writes.rebuilds + fake.images.length).toBeGreaterThan(afterRestore); // monitoring never stopped
+    expect(fake.imu).not.toContain(false);                   // the 4/5 paused nothing
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.shutdown.modes).toEqual([1, 1]);             // the very first 2x opens the dialog again
+  });
+
+  it("a 2x while the app thinks it is in the background (5 without a dialog) comes back and asks again", async () => {
+    const fake = await boot();
+    fake.sample(0.1);
+    await vi.advanceTimersByTimeAsync(600);
+    fake.emit(5);                                            // genuine background: paused, IMU off
+    await vi.advanceTimersByTimeAsync(500);
+    const rebuilt = fake.writes.creates + fake.writes.rebuilds;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fake.writes.creates + fake.writes.rebuilds).toBeGreaterThan(rebuilt); // the page is back first
+    expect(fake.shutdown.modes).toEqual([1]);                // and the dialog is asked, not swallowed
   });
 
   it("keeps monitoring when the exit call rejects, without an unhandled rejection", async () => {
@@ -126,6 +218,7 @@ describe("posturelens loop", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     const writesAtFailure = fake.writes.count;
+    fake.emit(1);
     for (let i = 1; i <= 5; i++) { fake.sample(i * 0.2); await vi.advanceTimersByTimeAsync(1000); }
     vi.useRealTimers();
     await new Promise((resolve) => setTimeout(resolve, 20));

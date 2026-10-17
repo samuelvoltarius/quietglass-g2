@@ -1,10 +1,10 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { appStore } from "./storage/kv";
-import { createTextPage, updateTextPage, type MenuSpec, type TextView } from "./glasses/text";
+import { createTextPage, forgetPage, updateTextPage, type MenuSpec, type TextView } from "./glasses/text";
 import { languageSelect, rememberLocale, resolveLocale, setLocale, tr, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { captionFooter, helpView } from "./glasses/help";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal, isSystemExitEvent } from "./exit";
 import { messages } from "./messages";
 import { bridgeUrl, fetchText } from "./podcast/bridge";
 import { failureFor, type Failure } from "./podcast/errors";
@@ -37,8 +37,11 @@ async function boot(): Promise<void> {
   const view = (): TextView => help ? helpView(locale) : ({ header: `PODCAPTION · ${t(player.playing ? "tagPlay" : "tagPause")} · ${t(SOURCE_TAG[source])}`.slice(0, LINE_WIDTH), body: failure ? [...captionRows(episode, captions, cursor, BODY_ROWS - 1), errorRow(glassesErrorText())] : captionRows(episode, captions, cursor), footer: captionFooter(locale, player.playing) });
   /** QIS v1.2: Hold opens the side menu: Hilfe and the swipe direction (its label names the state, so a change rebuilds the page once). */
   const menuSpec = (): MenuSpec => SIDE_MENU ? ({ key: `${locale}:${invert() ? 1 : 0}`, items: [{ id: MENU.help, label: t("mHelp") }, { id: MENU.swipe, label: t(invert() ? "mSwipeInverted" : "mSwipeNormal") }] }) : { key: "none", items: [] };
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const draw = async (): Promise<void> => {
-    if (closed) return; const next = view(); const menu = menuSpec(); const sig = JSON.stringify(next);
+    if (closed || exitAsked()) return; const next = view(); const menu = menuSpec(); const sig = JSON.stringify(next);
     if (sig === last && menu.key === pageMenuKey) return;
     if (pageReady && menu.key !== pageMenuKey) pageReady = false;
     const result = pageReady ? await updateTextPage(bridge, next) : await createTextPage(bridge, next, menu);
@@ -75,11 +78,21 @@ async function boot(): Promise<void> {
     document.querySelector("#use-paste")?.addEventListener("click", async () => { const text = document.querySelector<HTMLTextAreaElement>("#paste")?.value ?? ""; if (!text.trim()) { failure = { key: "errPasteEmpty" }; last = ""; void draw(); renderPhone(); return; } try { await useCaptions(readTranscript(text, text.trimStart().startsWith("{") ? "application/json" : "text/vtt"), titleFor(t("transcript")), "FILE"); } catch (cause) { fail(cause); } });
     document.querySelector("#connect")?.addEventListener("click", () => { const input = document.querySelector<HTMLInputElement>("#endpoint"); if (input) appStore.set("podcaption.bridge", input.value.trim()); void loadFeed(); });
   };
-  // Double tap opens the system exit dialog; playback continues until the user confirms.
-  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; player.stop(); } }, "podcaption");
+  // Double tap opens the system exit dialog; playback continues while it is open. The call resolves when the
+  // dialog is SHOWN, not when the user answered: its result never stops playback. A confirmed exit arrives as
+  // sysEvent 6/7 (handler below).
+  const requestExit = createExitRequest(bridge, {
+    // The dialog took the page away: on the next input put it up again the way of the first one, so input (and the next 2x) reaches the app again.
+    onBack: () => { if (closed) return; pageReady = false; last = ""; forgetPage(bridge); return draw(); },
+  }, "podcaption");
+  exitAsked = requestExit.asked;
   await draw(); renderPhone();
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
+    if (isSystemExitEvent(event)) { closed = true; player.stop(); return; }
+    if (isBackSignal(event)) requestExit.back();
     // QIS v1.2: help and the swipe setting come from the glasses' side menu, never from a gesture.
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {

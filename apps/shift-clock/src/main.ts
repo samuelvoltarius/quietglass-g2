@@ -5,12 +5,12 @@ import {
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { ARM_MS, buildView, CANCEL, dayBarFor, HELP, type ClockView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, sendDayBar, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, sendDayBar, updatePage, type MenuSpec } from "./glasses/render";
 import { drawDayBar, sameDayBar, type DayBarState } from "./glasses/daybar";
 import { createImageSync } from "./glasses/image-sync";
 import { addProject, load, save, type ClockData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal, settleRestore } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { defaultProject, t } from "./messages";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
@@ -68,7 +68,8 @@ async function boot(): Promise<void> {
    * clock runs it is resent at most every five minutes.
    */
   const dayBar = createImageSync<DayBarState>(sameDayBar, async (bar) => {
-    if (closed) return false;
+    // Also silent while the exit dialog may be on screen: a transfer that was queued before the ask must not land on it.
+    if (closed || exitAsked()) return false;
     const result = await sendDayBar(bridge, drawDayBar(bar));
     if (!result.ok) console.warn("[shiftclock] day bar failed:", result.reason);
     return result.ok;
@@ -77,7 +78,11 @@ async function boot(): Promise<void> {
   /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
   let refreshPhone: () => void = () => undefined;
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     const view = currentView();
     // Checked on every redraw, but only sent when a five-minute step changed.
     const menu = menuSpec();
@@ -106,6 +111,7 @@ async function boot(): Promise<void> {
    * view land after a newer one. Requests made meanwhile collapse into one.
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (closed) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
     drawing = (async () => {
@@ -142,9 +148,20 @@ async function boot(): Promise<void> {
     ticker = undefined;
   };
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; stopTicker(); disarm(); },
+    // The dialog took the page away: put it up again the way of the first one,
+    // so the glasses deliver input (and the next 2x) to the app again.
+    onBack: () => {
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
+    },
   }, "shiftclock");
+  exitAsked = requestExit.asked;
   let leaving: Promise<void> | null = null;
 
   /**
@@ -152,32 +169,37 @@ async function boot(): Promise<void> {
    * next time. The system exit dialog is asked only once that save has
    * landed; if the user cancels, the clock simply keeps ticking on screen.
    */
-  const close = (): void => {
+  const close = (restore: Promise<void> | null = null): void => {
     if (closed || leaving) return;
     leaving = persist()
       .catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); })
+      .then(() => settleRestore(restore))
       .then(() => requestExit())
       .then(() => undefined)
       .finally(() => { leaving = null; });
   };
 
   /** Rebuilds the page from scratch: after a reconnect or a return to the foreground. */
-  const redrawFully = (): void => {
+  const redrawFully = (): Promise<void> => {
     rebuildWanted = true;
     lastView = null;
-    void draw();
+    return draw();
   };
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     // Left or back through the system instead of a double tap: the open entry
     // is saved either way (the clock itself keeps running, as on a double tap).
     const step = lifecycleFromEvent(event);
+    if (isBackSignal(event)) requestExit.back();
     if (step === "foregroundEnter") { startTicker(); redrawFully(); return; }
     if (step === "foregroundExit") { stopTicker(); disarm(); persistInBackground(); return; }
     if (isFinalExit(step)) {
       closed = true;
       stopTicker();
+      disarm();
       persist().catch((error: unknown) => { console.warn("[shiftclock] save failed:", error); });
       return;
     }
@@ -266,7 +288,13 @@ async function boot(): Promise<void> {
       case "doubleClick":
         // Back one level; only on the root screen does it leave the app.
         if (selecting !== null) { selecting = null; break; }
-        close();
+        // A 2x after a genuine 5 (no dialog) means the app is on the glasses again: the clock tick resumes, the page
+        // is rebuilt and the dialog is asked only once that restore is through, never swallowed.
+        {
+          const away = ticker === undefined;
+          startTicker();
+          close(away ? redrawFully() : null);
+        }
         return;
 
       default:

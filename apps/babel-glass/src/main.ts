@@ -7,7 +7,7 @@ import {
 import { createPassthroughTranslator, type TranslationProvider } from "./translate/provider";
 import { selectTranslator, translationRequestFor } from "./translate/select";
 import {
-  applyTranscript, applyTranslation, clearBuffer, createBuffer, dropTranslation, wrap, type CaptionBuffer,
+  applyTranscript, applyTranslation, clearBuffer, createBuffer, dropTranslation, type CaptionBuffer,
 } from "./captions/buffer";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import {
@@ -15,19 +15,21 @@ import {
 } from "./glasses/view";
 import { createThrottle } from "./glasses/throttle";
 import { sameView } from "./glasses/diff";
-import { createPage, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
+import { startBody, startRows, type StartRow } from "./glasses/start";
 import { iconFrame, ICON_STEP_MS, type IconKind } from "./glasses/icon";
 import {
-  companionConfigured, load, loadConversation, save, saveConversation, translationEnabled, usesMockStt,
+  companionConfigured, load, loadConversation, loadVocab, save, saveConversation, saveVocab, translationEnabled, usesMockStt,
   type BabelData,
 } from "./storage/persist";
-import { mountPhoneUi, renderConversation, type ConversationState, type PhoneInsight } from "./ui/phone";
+import { mountPhoneUi, renderConversation, type ConversationState, type PhoneInsight, type VoiceUiState } from "./ui/phone";
 import { annotateEntry, appendEntry, attachTranslation, type TranscriptEntry } from "./companion/transcript";
 import { createCompanionLlm, createMockCompanion, type CompanionLlm } from "./companion/llm";
 import { createInsightWatcher } from "./companion/insights";
 import {
-  conversationLanguage, findWord, resolveSpeaker, wordContext, wordPopupLines, WORD_TIMEOUT_MS,
+  conversationLanguage, findWord, resolveSpeaker, stuckReason, wordContext, wordPopupLines, WORD_TIMEOUT_MS,
 } from "./companion/wordfinder";
+import { addVocab, removeVocab, vocabFromResult, type VocabEntry } from "./companion/vocab";
 import { createMemoryClient, memoryNotes, memoryQuery, type MemoryClient } from "./companion/memory";
 import {
   createReplyWatcher, foreignLanguage, lineOwner, replyContext, suggestReply, type ReplyLanguage, type ReplySuggestion,
@@ -36,25 +38,22 @@ import { isOwnLine, lastOwnLine, OWN_MARK, ownTranslationRequest, type OwnContex
 import {
   advancePopups, closePopup, dropKind, emptySlot, offerPopup, POPUP_RANK, visiblePopup, type PopupKind, type PopupSlot,
 } from "./companion/popups";
-import { activeHelpers, helpLine, helperRows, type MemoryStatus, type OverviewInput } from "./companion/overview";
+import type { MemoryStatus, OverviewInput } from "./companion/overview";
 import { sameLanguage } from "./text/languages";
-import { customerPhoneLine, customerRows, fetchCustomer, type CustomerContext } from "./companion/customer";
-import {
-  fetchCustomers, pickBody, pickRows, type CustomerEntry, type CustomerListState, type PickRow,
-} from "./companion/customers";
+import { customerPhoneLine, fetchCustomer, type CustomerContext } from "./companion/customer";
+import { fetchCustomers, type CustomerEntry, type CustomerListState } from "./companion/customers";
 import { setSessionCustomer } from "./llm/stream";
 import { t } from "./messages";
 import { effectiveTalkMode, modeData, replyTimingFor, talkModeKey, type TalkMode } from "./companion/talkmode";
 import type { Summary } from "./companion/llm";
-import { createExitRequest } from "./exit";
+import { createExitRequest, settleRestore } from "./exit";
 import { createCueWatcher, cueCardsOn, cueRows, cueSummaryBlock, cueTranscript, CUE_POPUP_MS, fetchCue, keepCue, type CueCard } from "./companion/cues";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 import { activeConfirm, CONFIRM_WINDOW_MS, type PendingConfirm } from "./input/confirm";
 import { menuArmedKind, menuClickStep, SIDE_MENU, type MenuArmed } from "./input/menu-confirm";
-import type { MenuRow } from "./companion/customers";
 import {
-  createVoiceEnrollment, ENROLL_MS, nextPersons, othersFor, voiceCommand, type VoiceEnrollment, type VoiceReply,
+  createVoiceEnrollment, ENROLL_MS, nextPersons, othersFor, OWNER_SPEAKER, voiceCommand, type VoiceEnrollment, type VoiceReply,
 } from "./stt/voice";
 import { voiceSheetCancels, voiceSheetRows, type VoiceSheet } from "./companion/myvoice";
 
@@ -64,11 +63,12 @@ export const NO_SERVER_MS = 60_000;
 export const MAX_LISTEN_MS = 90 * 60_000;
 
 /**
- * 0.7.0: the glasses' side menu (hold -> the system menu next to Close and
- * Brightness). Help, overview, mode and customer live here, never on swipes.
+ * The glasses' side menu (hold -> the system menu next to Close and Brightness) stays off (SIDE_MENU, step log
+ * 15.10.2026). 1.0.0: help, overview, mode and customer are gone from it (the start screen picks the mode and the
+ * customer); what is left is what the phone now does through its own buttons: voice, delete voice, people.
  */
 export { SIDE_MENU };
-export const MENU = { help: 1, overview: 2, mode: 3, pick: 4, info: 5, voice: 6, voiceDelete: 7, persons: 8 } as const;
+export const MENU = { voice: 6, voiceDelete: 7, persons: 8 } as const;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
@@ -90,6 +90,8 @@ async function boot(): Promise<void> {
 
 
   let data: BabelData = await load(bridge);
+  /** 0.9.0 "Meine Wörter": the words found so far, newest first (kept on the phone). */
+  let words: VocabEntry[] = await loadVocab(bridge).catch(() => []);
   /** UI language of glasses and phone; independent of the caption languages. */
   let locale: Locale = await resolveLocale(bridge);
   let buffer: CaptionBuffer = createBuffer();
@@ -144,10 +146,8 @@ async function boot(): Promise<void> {
   const offer = (kind: PopupKind, popup: ViewPopup, ms: number): void => {
     popups = offerPopup(popups, kind, popup, ms, Date.now()).slot;
   };
-  /** Help screen ("what runs when") page on the glasses; null = closed. */
+  /** Page of the paged sheet on the glasses (1.0.0: only the "Meine Stimme" sheet is left); null = closed. */
   let help: number | null = null;
-  /** 0.6.2: which paged popup `help` shows: the help/overview or the Shoot Day customer ("Kunde"). */
-  let helpKind: "help" | "customer" | "voice" = "help";
   /** 0.8.0 "Meine Stimme": the sheet's step, the running enrollment, its timer, and whether the mic is open for it. */
   let voiceSheet: VoiceSheet | null = null;
   let enrollment: VoiceEnrollment | null = null;
@@ -158,7 +158,7 @@ async function boot(): Promise<void> {
   /** 0.6.2: the customer Shoot Day reports through the proxy; null = none, unknown or unreachable. */
   let customer: CustomerContext | null = null;
   let customerRun = 0;
-  /** 0.7.0: the start screen's customer list, its cursor, and the customer picked for this session. */
+  /** 0.7.0: the start screen's customer list, its cursor (over the start rows), and the customer picked for this session. */
   let customerList: CustomerListState = { state: "off" };
   let cursor = 0;
   let sessionCustomer: CustomerEntry | null = null;
@@ -441,7 +441,7 @@ async function boot(): Promise<void> {
   /** When the last swipe arrived: one physical swipe sends several events. */
   let lastScrollAt = 0;
 
-  // ---- Wortfinder (0.4.0): hold during captions ----
+  // ---- Wortfinder (0.4.0): by itself when the user is stuck (0.9.0); a hold, where it arrives, asks at once ----
   const WORD_POPUP_MS = 15_000;
   const WORD_NOTE_MS = 4_000;
   let wordBusy = false;
@@ -451,20 +451,33 @@ async function boot(): Promise<void> {
     offer("word", { term: "", info: lines.join(" "), kind: "word", lines }, ms);
     void draw();
   };
-  const findWordNow = async (): Promise<void> => {
+  /** 0.9.0: when the recogniser last delivered new text, and which (see onTranscript). */
+  let lastTextAt = 0;
+  let lastSeenText = "";
+  /** Start and text of the last lookup; popup state for the automatic trigger. */
+  let lastAutoAt = 0;
+  let lastWordText: string | null = null;
+  let popupClosedAt = 0;
+  let popupWasOpen = false;
+  /** The user's speaker letter for the word finder; null = speakers off, all speech is his. */
+  const wordSpeaker = (): string | null => (data.speakers ? (data.voiceEnrolled ? OWNER_SPEAKER : resolveSpeaker(log, data.mySpeaker)) : null);
+  /** 1.0.0: automatic in "Englisch sprechen" whatever the phone switch says, else the switch decides. */
+  const wordAutoOn = (): boolean => data.wordAuto || talkMode() === "learn";
+  /** `auto`: started by `stuckReason` — no "searching" popup, and a miss stays silent. */
+  const findWordNow = async (auto = false): Promise<void> => {
     if (wordBusy) return;
     const x = (key: string): string => t(locale, key);
     if (!companionConfigured(data)) {
+      if (auto) return;
       // The demo (no server) shows what it would look like.
       showWord(usesMockStt(data) ? [x("g.wordDemo")] : [x("g.wordNoLlm")], usesMockStt(data) ? WORD_POPUP_MS : WORD_NOTE_MS);
       return;
     }
-    const speaker = data.speakers ? resolveSpeaker(log, data.mySpeaker) : null;
-    const context = wordContext(log, { now: Date.now(), speaker, pending: buffer.pending?.text ?? null });
-    if (!context.trim()) { showWord([x("g.wordNone")], WORD_NOTE_MS); return; }
+    const context = wordContext(log, { now: Date.now(), speaker: wordSpeaker(), pending: buffer.pending?.text ?? null });
+    if (!context.trim()) { if (!auto) showWord([x("g.wordNone")], WORD_NOTE_MS); return; }
     wordBusy = true;
     const run = ++wordRun;
-    showWord([x("g.wordSearching")], WORD_TIMEOUT_MS + 2000);
+    if (!auto) showWord([x("g.wordSearching")], WORD_TIMEOUT_MS + 2000);
     const result = await findWord(
       { url: data.llmUrl, model: data.llmModel, ...(data.llmKey ? { apiKey: data.llmKey } : {}) },
       {
@@ -475,41 +488,56 @@ async function boot(): Promise<void> {
     ).catch(() => ({ ok: false as const, error: "failed" }));
     wordBusy = false;
     if (run !== wordRun || !listening || closed) return;
-    if (!result.ok) { showWord([x("g.wordNone")], WORD_NOTE_MS); return; }
-    const lines = wordPopupLines(result.value);
+    if (!result.ok) { if (!auto) showWord([x("g.wordNone")], WORD_NOTE_MS); return; }
+    const lines = wordPopupLines(result.value, undefined, result.value.learner ? x("g.wordMeaning") : "");
     showWord(lines, WORD_POPUP_MS);
     insights = [...insights, { term: "", info: lines.join(" "), kind: "word" as const }].slice(-50);
+    // "Meine Wörter": every successful lookup is kept.
+    const found = vocabFromResult(result.value, Date.now());
+    if (found) {
+      words = addVocab(words, found);
+      void saveVocab(bridge, words).catch((error: unknown) => { console.warn("[babelglass] words not saved:", error); });
+    }
     schedulePhone();
   };
 
-  const overviewInput = (): OverviewInput => ({ data, listening, sttStatus: status, memory: memoryStatus });
-  /** The help screen as glasses rows: every helper, its trigger, on or off now. */
-  const helpRows = (): string[] => {
-    // QIS v1: the gestures first, in footer order, plus what the app needs; then every helper.
-    const gestures = [1, 2, 3, 4, 5].flatMap((n) => wrap(t(locale, "g.hg." + n), POPUP_WIDTH));
-    // 0.6.2: the overview ("was läuft wann") starts on a page of its own, under its own title row.
-    while (gestures.length % BODY_ROWS !== 0) gestures.push("");
-    return [
-      ...gestures,
-      t(locale, "g.overviewHead"),
-      ...helperRows(overviewInput()).flatMap((row) => wrap(helpLine(row, locale), POPUP_WIDTH)),
-    ];
+  // ---- Wortfinder automatisch (0.9.0): the user is stuck ----
+  const WORD_TICK_MS = 500;
+  let wordTimer: ReturnType<typeof setInterval> | undefined;
+  const wordTick = (): void => {
+    if (!listening || closed || paused) return;
+    const now = Date.now();
+    const open = popupNow() !== null || help !== null;
+    if (popupWasOpen && !open) popupClosedAt = now;
+    popupWasOpen = open;
+    if (!wordAutoOn() || !companionConfigured(data)) return;
+    const stuck = stuckReason({
+      now, log, pending: buffer.pending?.text ?? null, lastTextAt,
+      speaker: wordSpeaker(), voiceProfile: data.voiceEnrolled && data.speakers,
+      language: conversationLanguage(log, md().sourceLanguage),
+      lastAutoAt, lastText: lastWordText, busy: wordBusy, popupOpen: open, popupClosedAt,
+    });
+    if (!stuck) return;
+    lastAutoAt = now;
+    lastWordText = stuck.text;
+    void findWordNow(true);
   };
-  /** Rows of the paged popup now shown (help/overview or Kunde). */
-  const sheetRowsNow = (): string[] =>
-    helpKind === "voice"
-      ? voiceSheetRows(voiceSheet ?? { kind: "connecting" }, locale, Date.now())
-      : helpKind === "customer"
-      ? customer ? customerRows(customer, locale, POPUP_WIDTH) : [t(locale, "g.noCustomer")]
-      : helpRows();
+  const startWordTimer = (): void => {
+    clearInterval(wordTimer);
+    lastAutoAt = 0;
+    lastWordText = null;
+    popupClosedAt = 0;
+    popupWasOpen = false;
+    wordTimer = setInterval(wordTick, WORD_TICK_MS);
+  };
+  const stopWordTimer = (): void => { clearInterval(wordTimer); wordTimer = undefined; };
+
+  const overviewInput = (): OverviewInput => ({ data, listening, sttStatus: status, memory: memoryStatus });
+  /** Rows of the paged sheet now shown (1.0.0: the "Meine Stimme" sheet). */
+  const sheetRowsNow = (): string[] => voiceSheetRows(voiceSheet ?? { kind: "connecting" }, locale, Date.now());
   /** Header label of the paged sheet now shown. */
   const sheetTitle = (): Record<string, string> =>
-    helpKind === "customer" ? { title: t(locale, "g.s.cust") }
-      : helpKind === "voice" ? { title: t(locale, "g.s.voice"), ...(voiceSheetCancels(voiceSheet) ? { tapLabel: t(locale, "g.a.cancel") } : {}) }
-      : {};
-  /** First page of the overview ("was laeuft wann") inside the help sheet. */
-  const overviewPage = (): number => Math.ceil([1, 2, 3, 4, 5].flatMap((n) => wrap(t(locale, "g.hg." + n), POPUP_WIDTH)).length / BODY_ROWS);
-  const openHelp = (): void => { helpKind = "help"; help = 0; };
+    ({ title: t(locale, "g.s.voice"), ...(voiceSheetCancels(voiceSheet) ? { tapLabel: t(locale, "g.a.cancel") } : {}) });
   /**
    * 0.6.2: asks the proxy for the Shoot Day customer (3 s at most). Any failure
    * means no customer: no idle row, and the Kunde popup closes if it was open.
@@ -526,31 +554,31 @@ async function boot(): Promise<void> {
       void draw();
     });
   };
-  /** 0.7.0: (re)loads the start screen's customer list; without a model server only "Ohne Kunde" is offered. */
+  /** The start screen's selectable rows now: the three modes, the customers under "Gespräch". */
+  const startRowsNow = (): StartRow[] => startRows(customerList, new Date());
+  /** Puts the cursor on the row of the customer picked, else on the mode used last (the first row without a pick). */
+  const placeCursor = (): void => {
+    const rows = startRowsNow();
+    const picked = sessionCustomer
+      ? rows.findIndex((row) => row.kind === "customer" && row.entry.id === sessionCustomer?.id)
+      : -1;
+    const last = data.talkMode ? rows.findIndex((row) => row.kind === "mode" && row.mode === data.talkMode) : -1;
+    cursor = picked >= 0 ? picked : Math.max(0, last);
+  };
+  /** (Re)loads the customers shown under "Gespräch"; without a model server there are none. */
   const loadCustomers = (): void => {
     const run = ++listRun;
-    if (!companionConfigured(data)) { customerList = { state: "off" }; cursor = 0; return; }
+    if (!companionConfigured(data)) { customerList = { state: "off" }; placeCursor(); return; }
     customerList = { state: "loading" };
-    cursor = 0;
+    placeCursor();
     void fetchCustomers({ url: data.llmUrl, ...(data.llmKey ? { apiKey: data.llmKey } : {}) }).then((found) => {
       if (run !== listRun || closed) return;
       customerList = found === null ? { state: "failed" } : { state: "ready", entries: found };
-      const rows = pickRows(customerList, new Date());
-      const at = sessionCustomer ? rows.findIndex((row) => row.kind === "customer" && row.entry.id === sessionCustomer?.id) : -1;
-      cursor = at >= 0 ? at : 0;
+      placeCursor();
+      schedulePhone();
       void draw();
     });
   };
-  /**
-   * Without the side menu (SIDE_MENU off, step log 15.10.2026) the entries only it carried live at the end of the start list:
-   * Meine Stimme lernen/löschen and Personen. Help is a hold; the mode is the row picked; Kundeninfo stays on the phone.
-   */
-  const menuRows = (): MenuRow[] => SIDE_MENU ? [] : [
-    { id: MENU.voice, label: t(locale, "g.m.voice") },
-    { id: MENU.voiceDelete, label: t(locale, "g.m.voiceDelete") },
-    { id: MENU.persons, label: t(locale, "g.m.persons", { n: data.persons }) },
-  ];
-  const pickerRows = (): PickRow[] => pickRows(customerList, new Date(), menuRows());
   /** The armed action as the screen shows it; a stop only counts while captions run. Clearing is phone-only (0.6.1). */
   const armedKind = (now: number): "stop" | null => {
     const armed = activeConfirm(pending, now);
@@ -563,6 +591,20 @@ async function boot(): Promise<void> {
     confirmTimer = setTimeout(() => { pending = null; void draw(); }, CONFIRM_WINDOW_MS + 50);
   };
   const disarm = (): void => { pending = null; clearTimeout(confirmTimer); };
+
+  /** What the phone's "Meine Stimme" card shows: trained or not, and the step of a running enrollment or deletion. */
+  const voiceUiState = (): VoiceUiState => {
+    const trained = data.voiceEnrolled;
+    if (voiceSheet === null) return { trained, phase: "idle" };
+    switch (voiceSheet.kind) {
+      case "connecting": case "reading": case "saving": case "deleting": return { trained, phase: voiceSheet.kind };
+      case "noServer": case "micDenied": return { trained, phase: "error", message: t(locale, "p.voice." + voiceSheet.kind) };
+      case "result": {
+        const rows = voiceSheetRows(voiceSheet, locale, Date.now());
+        return { trained, phase: voiceSheet.reply.ok ? "done" : "error", message: rows[0] ?? "" };
+      }
+    }
+  };
 
   const conversationState = (): ConversationState => ({
     log,
@@ -577,6 +619,10 @@ async function boot(): Promise<void> {
     ...(customer ? { customerLine: customerPhoneLine(customer, locale) } : {}),
     talkMode: talkMode(),
     cues,
+    words,
+    customers: customerList.state === "ready" ? customerList.entries.map((entry) => ({ id: entry.id, name: entry.name })) : [],
+    customerId: sessionCustomer?.id ?? null,
+    voice: voiceUiState(),
   });
 
   let phoneTimer: ReturnType<typeof setTimeout> | undefined;
@@ -662,11 +708,9 @@ async function boot(): Promise<void> {
       speakers: data.speakers,
       now: Date.now(),
       popup: popupNow(),
-      active: activeHelpers(overviewInput()),
       help: help === null ? null : { rows: sheetRowsNow(), page: help, ...sheetTitle() },
-      picker: listening ? null : { rows: pickBody(pickerRows(), cursor, new Date(), locale, POPUP_WIDTH, BODY_ROWS) },
-      talkModeLabel: t(locale, talkModeKey(talkMode())),
-      wordFinder: companion() !== null,
+      start: listening ? null : { rows: startBody(startRowsNow(), cursor, new Date(), locale, POPUP_WIDTH, BODY_ROWS, !data.voiceEnrolled) },
+      modeLabel: t(locale, talkModeKey(talkMode())),
       summary: shownSummary(),
       summaryPage,
       notice,
@@ -681,7 +725,11 @@ async function boot(): Promise<void> {
     try { await updateIcon(bridge, iconFrame(iconKind(), Date.now())); } finally { iconBusy = false; }
   };
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed || paused) return;
     popups = advancePopups(popups, Date.now());
     // After a reconnect or a return to the foreground the page is rebuilt even
@@ -712,6 +760,7 @@ async function boot(): Promise<void> {
    * start-up page twice (which leaves real glasses deaf).
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -725,21 +774,14 @@ async function boot(): Promise<void> {
 
   const buildTranslator = (): TranslationProvider => selectTranslator(md());
 
-  /** 0.7.0: the side menu: Hilfe, Uebersicht, Modus (names the mode in force; picking it toggles), Kunde wechseln, Kundeninfo. */
+  /** The side menu (off, see SIDE_MENU): voice, delete voice, people. */
   const menuSpec = (): MenuSpec => {
-    const mode = talkMode();
     // Step log 15.10.2026: no menu on the pages while its clicks do not arrive on the real glasses.
     if (!SIDE_MENU) return { key: "none", items: [] };
     const item = (id: number, key: string): { id: number; label: string } => ({ id, label: t(locale, key) });
     return {
-      key: locale + ":" + mode + ":" + data.persons,
+      key: locale + ":" + data.persons,
       items: [
-        item(MENU.help, "g.m.help"),
-        item(MENU.overview, "g.m.overview"),
-        item(MENU.mode, mode === "client" ? "g.m.modeClient" : "g.m.modeTranslate"),
-        item(MENU.pick, "g.m.pick"),
-        item(MENU.info, "g.m.info"),
-        // 0.8.0: the user's voice (ME = "Ich:") and how many people talk.
         item(MENU.voice, "g.m.voice"),
         item(MENU.voiceDelete, "g.m.voiceDelete"),
         { id: MENU.persons, label: t(locale, "g.m.persons", { n: data.persons }) },
@@ -747,7 +789,7 @@ async function boot(): Promise<void> {
     };
   };
 
-  /** 0.6.3: the user picked a mode on the glasses: stored, and kept from now on. */
+  /** The user picked a mode (start screen or phone): stored, and kept from now on. */
   const pickTalkMode = async (mode: TalkMode): Promise<void> => {
     data = { ...data, talkMode: mode };
     translator = buildTranslator();
@@ -790,6 +832,9 @@ async function boot(): Promise<void> {
 
   const onTranscript = (transcript: Transcript): void => {
     const now = Date.now();
+    // 0.9.0: a repeated partial is no new text (the automatic word finder waits for silence).
+    const seen = transcript.text.trim();
+    if (seen && seen !== lastSeenText) { lastTextAt = now; lastSeenText = seen; }
     buffer = applyTranscript(buffer, transcript, now);
     // New speech pulls the view back to the live edge; reading history while
     // someone is talking is not what the user meant to do.
@@ -806,7 +851,9 @@ async function boot(): Promise<void> {
         replies.onFinal(log);
         keepConversation(true);
         const entry = log[log.length - 1];
-        if (data.translateOwn && translationEnabled(md()) && entry && isOwnLine(entry, ownCtx())) {
+        if (talkMode() === "learn" && entry?.speaker === OWNER_SPEAKER) {
+          // "Englisch sprechen": the user's own English is not translated, only the other person.
+        } else if (data.translateOwn && talkMode() !== "learn" && translationEnabled(md()) && entry && isOwnLine(entry, ownCtx())) {
           // The user's own line goes the other way: into the conversation language.
           translateOwnLine(entry);
         } else {
@@ -872,6 +919,7 @@ async function boot(): Promise<void> {
     listeningSince = Date.now();
     serverMissingSince = null;
     cueWatcher.start(listeningSince);
+    startWordTimer();
     help = null;
     schedulePhone();
     await draw();
@@ -890,6 +938,7 @@ async function boot(): Promise<void> {
     status = "idle";
     popups = emptySlot();
     wordRun++;
+    stopWordTimer();
     sayRun++;
     sayBusy = false;
     watcher.stop();
@@ -899,6 +948,8 @@ async function boot(): Promise<void> {
     if (buffer.pending) buffer = { ...buffer, pending: null };
     keepConversation();
     schedulePhone();
+    // Back at the start screen: the cursor sits on the mode just used; a failed customer list is tried again.
+    if (customerList.state === "failed") loadCustomers(); else placeCursor();
     if (withSummary && data.autoSummary && log.length >= 2 && companion()) {
       void summarize();
       return;
@@ -906,10 +957,9 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  /** 0.7.0: a tap on the start screen: a customer -> Kundengespraech with them, the last row -> Uebersetzen. */
-  const startFromRow = async (row: PickRow | undefined): Promise<void> => {
-    if (!row || row.kind === "loading" || row.kind === "menu") return;
-    if (row.kind === "retry") { loadCustomers(); await draw(); return; }
+  /** 1.0.0: a tap on the start screen: a mode row starts that mode, a customer row starts "Gespräch" with that customer. */
+  const startFromRow = async (row: StartRow | undefined): Promise<void> => {
+    if (!row) return;
     if (row.kind === "customer") {
       sessionCustomer = row.entry;
       setSessionCustomer(row.entry.id);
@@ -921,7 +971,7 @@ async function boot(): Promise<void> {
       customerRun++;
       // "-" tells the proxy: no customer context at all (not Shoot Day's active one).
       setSessionCustomer(companionConfigured(data) ? "-" : null);
-      await pickTalkMode("translate");
+      await pickTalkMode(row.mode);
     }
     await startListening();
   };
@@ -941,14 +991,15 @@ async function boot(): Promise<void> {
   };
   /** Closes the paged sheet; a running enrollment is cancelled with it. */
   const closeSheet = (): void => {
-    if (helpKind === "voice") { if (voiceSheetCancels(voiceSheet)) cancelVoice(); voiceSheet = null; }
+    if (voiceSheetCancels(voiceSheet)) cancelVoice();
+    voiceSheet = null;
     help = null;
-    helpKind = "help";
+    schedulePhone();
   };
   const showVoice = (sheet: VoiceSheet): void => {
     voiceSheet = sheet;
-    helpKind = "voice";
     help = 0;
+    schedulePhone();
   };
   const voiceConfig = (): { url: string; token?: string } => ({ url: data.sttUrl, ...(data.sttToken ? { token: data.sttToken } : {}) });
   const rememberVoice = async (enrolled: boolean): Promise<void> => {
@@ -958,11 +1009,11 @@ async function boot(): Promise<void> {
     schedulePhone();
   };
 
-  /** Side menu "Meine Stimme lernen": ~16 s of reading through the glasses mic, sent only to the user's speech server. */
+  /** Phone button "Stimme lernen" (the side menu's entry, too): ~16 s of reading through the glasses mic, sent only to the user's speech server. */
   const startEnrollment = async (): Promise<void> => {
     cancelVoice();
     const run = voiceRun;
-    if (usesMockStt(data)) { showVoice({ kind: "noServer" }); return; }
+    if (usesMockStt(data)) { showVoice({ kind: "noServer" }); void draw(); return; }
     if (listening) await stopListening();
     showVoice({ kind: "connecting" });
     void draw();
@@ -1001,21 +1052,21 @@ async function boot(): Promise<void> {
     enrollTimer = undefined;
     enrollMic = false;
     await bridge.audioControl(false).catch(() => undefined);
-    if (helpKind === "voice") voiceSheet = { kind: "saving" };
+    if (voiceSheet !== null) showVoice({ kind: "saving" });
     void draw();
     const reply: VoiceReply = await job.finish();
     if (run !== voiceRun) return;
     enrollment = null;
     if (reply.ok) await rememberVoice(true);
-    if (helpKind === "voice" && help !== null) voiceSheet = { kind: "result", reply };
+    if (voiceSheet !== null && help !== null) showVoice({ kind: "result", reply });
     await draw();
   };
 
-  /** Side menu "Meine Stimme löschen": the server removes the voice print; captions use letters only again. */
+  /** Phone button "Stimme löschen" (the side menu's entry, too): the server removes the voice print; captions use letters only again. */
   const deleteVoice = async (): Promise<void> => {
     cancelVoice();
     const run = voiceRun;
-    if (usesMockStt(data)) { await rememberVoice(false); showVoice({ kind: "noServer" }); return; }
+    if (usesMockStt(data)) { await rememberVoice(false); showVoice({ kind: "noServer" }); void draw(); return; }
     // A running session still holds the print in memory: it ends first.
     if (listening) await stopListening();
     showVoice({ kind: "deleting" });
@@ -1023,19 +1074,19 @@ async function boot(): Promise<void> {
     const reply = await voiceCommand({ ...voiceConfig(), action: "delete" });
     if (run !== voiceRun || closed) return;
     if (reply.ok) await rememberVoice(false);
-    if (helpKind === "voice" && help !== null) voiceSheet = { kind: "result", reply };
+    if (voiceSheet !== null && help !== null) showVoice({ kind: "result", reply });
     await draw();
   };
 
-  /** QIS v1.2 #3: which menu items are armed first: the voice delete always, the restarting ones only while captions run. */
+  /** QIS v1.2 #3: which menu items are armed first: the voice delete always, the people only while captions run. */
   const menuArmFor = (itemId: number): MenuArmed | null => {
     if (itemId === MENU.voiceDelete) return "voiceDelete";
-    if (listening && (itemId === MENU.pick || itemId === MENU.mode || itemId === MENU.persons)) return "restart";
+    if (listening && itemId === MENU.persons) return "restart";
     return null;
   };
   const clearMenuArm = (): void => { menuPending = null; clearTimeout(menuTimer); };
 
-  /** 0.7.0: an item of the glasses' side menu. Menu clicks arrive on their own event, whatever captures input. */
+  /** An item of the glasses' side menu. Menu clicks arrive on their own event, whatever captures input. */
   const onMenu = async (itemId: number): Promise<void> => {
     disarm();
     // QIS v1.2 #3: deleting the voice print, and anything that would restart running captions, waits for a second click.
@@ -1049,11 +1100,8 @@ async function boot(): Promise<void> {
     }
     notice = null;
     // Any other menu item ends a running "Meine Stimme" recording first.
-    if (itemId !== MENU.persons && helpKind === "voice") closeSheet();
+    if (itemId !== MENU.persons && voiceSheet !== null) closeSheet();
     switch (itemId) {
-      case MENU.help: helpKind = "help"; help = 0; break;
-      case MENU.overview: helpKind = "help"; help = overviewPage(); break;
-      case MENU.info: helpKind = "customer"; help = 0; refreshCustomer(); break;
       case MENU.voice: await startEnrollment(); break;
       case MENU.voiceDelete: await deleteVoice(); break;
       case MENU.persons: {
@@ -1067,22 +1115,6 @@ async function boot(): Promise<void> {
         }
         break;
       }
-      case MENU.mode: {
-        const before = modeData(data, customer !== null);
-        await pickTalkMode(talkMode() === "client" ? "translate" : "client");
-        // The recogniser takes its language once, at the start: a changed one needs a fresh connection.
-        if (listening && sttSettingsChanged(before, modeData(data, customer !== null))) {
-          await stopListening();
-          await startListening();
-        }
-        break;
-      }
-      case MENU.pick:
-        help = null;
-        if (listening) await stopListening();
-        if (summary?.state !== "working") summaryHidden = true;
-        loadCustomers();
-        break;
       default:
         return;
     }
@@ -1125,22 +1157,36 @@ async function boot(): Promise<void> {
   /**
    * QIS v1.2 #2: 2x at the root opens the system exit dialog without stopping
    * anything first. Running captions keep running while the user decides; they
-   * (and the microphone) only end when the exit is confirmed. Cancel changes nothing.
+   * (and the microphone) only end when the system ends the app (sysEvent 6/7). The call resolves when
+   * the dialog is shown, not when the user answered, so its result never shuts anything down.
    */
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { shutDown(); },
+    onBack: () => {
+      // The dialog took the page away. On the next input put it up again the way of the first one,
+      // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
+    },
   }, "babelglass");
+  exitAsked = requestExit.asked;
   const exitWithDialog = async (): Promise<void> => { await requestExit(); };
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     const step = lifecycleFromEvent(event);
+    // Not the microphone stream: PCM keeps flowing while the dialog is open and says nothing about the user.
+    if (step !== "foregroundExit" && !isFinalExit(step) && (event as { audioEvent?: unknown }).audioEvent === undefined) requestExit.back();
     if (step === "foregroundExit") {
       // Out of sight: the microphone closes (it reopens only on a tap) and
       // the conversation is stored if the user asked for that.
       paused = true;
       pending = null;
-      if (helpKind === "voice") closeSheet();
+      if (voiceSheet !== null) closeSheet();
       void stopListening().catch(() => undefined);
       keepConversation();
       return;
@@ -1170,12 +1216,6 @@ async function boot(): Promise<void> {
     const rows = MODE_PRESETS[data.mode].rows;
     // The release that follows a hold is not a gesture of its own.
     if (gesture.gesture === "longPressRelease") return;
-
-    // Without the side menu the confirming step is a tap on the same list row (the armed row of the start list).
-    if (!SIDE_MENU && gesture.gesture === "click" && !listening && help === null && menuArmedKind(menuPending, Date.now()) !== null) {
-      const row = pickerRows()[cursor];
-      if (row?.kind === "menu") { void onMenu(row.id); return; }
-    }
 
     // QIS v1.2 #3: an armed side-menu item. A tap, a swipe or 2x cancel it and do nothing else;
     // a hold does not (it is how the side menu opens again for the confirming second click).
@@ -1212,28 +1252,27 @@ async function boot(): Promise<void> {
     };
 
     switch (gesture.gesture) {
-      case "click":
+      case "click": {
+        // A notice (mic refused, server gone) is read first: the tap only takes it away, back to the start screen.
+        if (notice && !listening) { notice = null; break; }
         notice = null;
-        // A tap first closes the help screen or a popup; running, it arms the stop.
+        // A tap first closes the sheet or a popup; running, it arms the stop.
         // 0.8.0: on the "Meine Stimme" sheet it cancels the recording (nothing is stored).
         if (help !== null) { closeSheet(); break; }
         if (closeShownPopup()) break;
         if (listening) { arm("stop"); break; }
-        // 0.7.0: stopped, a summary goes first (back to the list); then the tap starts with the row under the cursor.
+        // Stopped, a summary goes first (back to the start screen); then the tap starts with the row under the cursor.
         const sheet = shownSummary();
         if (sheet) { if (sheet.state !== "working") summaryHidden = true; break; }
-        {
-          const row = pickerRows()[cursor];
-          if (row?.kind === "menu") { void onMenu(row.id); return; }
-          void startFromRow(row);
-        }
+        void startFromRow(startRowsNow()[cursor]);
         return;
+      }
       case "scrollUp": {
         const now = Date.now();
         lastScrollAt = now;
         if (help !== null) { help = Math.max(0, help - 1); break; }
         if (!listening && shownSummary()?.state === "done") { summaryPage = Math.max(0, summaryPage - 1); break; }
-        // 0.7.0: stopped, a swipe only moves the cursor of the customer list (never help or Kunde).
+        // Stopped, a swipe only moves the cursor of the start screen.
         if (!listening) { if (!shownSummary()) cursor = Math.max(0, cursor - 1); break; }
         offset = Math.min(offset + rows, 200);
         break;
@@ -1254,27 +1293,35 @@ async function boot(): Promise<void> {
           summaryPage = Math.min(summaryPage + 1, summaryPageCount(paged.short, paged.long ?? []) - 1);
           break;
         }
-        if (!listening) { if (!shownSummary()) cursor = Math.min(pickerRows().length - 1, cursor + 1); break; }
-        // Already at the live edge (and not the tail of the swipe that got there):
-        // translate my last sentence into the conversation language.
-        if (offset === 0 && settled) { void translateMyLast(); return; }
+        if (!listening) { if (!shownSummary()) cursor = Math.min(startRowsNow().length - 1, cursor + 1); break; }
+        // Already at the live edge (and not the tail of the swipe that got there): translate my last sentence
+        // into the conversation language. Only "Übersetzen" has that; the other modes just stay at the live edge.
+        if (offset === 0 && settled) { if (talkMode() === "translate") void translateMyLast(); return; }
         offset = Math.max(0, offset - rows);
         break;
       }
       case "longPress": {
-        // During captions a hold is the Wortfinder. 0.7.0: stopped, nothing (help lives in the side menu).
+        // A hold never arrives on the real glasses (the system menu opens), so nothing depends on it.
+        // Where it does arrive (simulator), during captions it is the manual Wortfinder.
         // Nothing on the glasses clears the transcript: that is only possible on the phone (0.6.1).
         if (listening) { void findWordNow(); return; }
-        // Without the side menu the hold opens the help again (as before 0.7.0; it holds the overview on its later pages).
-        if (!SIDE_MENU) { if (help === null) openHelp(); break; }
         return;
       }
       case "doubleClick":
-        // Back one level first (help, popup); only on the main screen it leaves.
+        // Back one level first (sheet, popup); then, running, stop and go back to the start screen (no exit);
+        // only on the start screen itself it leaves (the system exit dialog).
         if (help !== null) { closeSheet(); break; }
         if (closeShownPopup()) break;
-        // 0.7.0: stopped, a finished summary goes back to the customer list first.
-        if (!listening && shownSummary() && summary?.state !== "working") { summaryHidden = true; break; }
+        if (listening) { notice = null; void stopListening(true); return; }
+        // Stopped, a finished summary goes back to the start screen first.
+        if (shownSummary() && summary?.state !== "working") { summaryHidden = true; break; }
+        // Backgrounded (a genuine 5 without a dialog): come back first and ask only after the restore draw.
+        if (paused) {
+          paused = false;
+          rebuildWanted = true;
+          void settleRestore(draw()).then(exitWithDialog);
+          return;
+        }
         void exitWithDialog();
         return;
       default:
@@ -1306,9 +1353,29 @@ async function boot(): Promise<void> {
   mountPhoneUi({
     getConversation: conversationState,
     getMemory: memoryClient,
-    onShowHelp: () => { openHelp(); void draw(); },
+    onLearnVoice: () => { void startEnrollment(); },
+    onDeleteVoice: () => { void deleteVoice(); },
+    onPickCustomer: (id) => {
+      // The phone can set (or take away) the customer of the conversation that runs or is about to start.
+      const entry = customerList.state === "ready" && id ? customerList.entries.find((candidate) => candidate.id === id) ?? null : null;
+      sessionCustomer = entry;
+      if (entry) { setSessionCustomer(entry.id); refreshCustomer(); }
+      else { customer = null; customerRun++; setSessionCustomer(companionConfigured(data) ? "-" : null); }
+      schedulePhone();
+      void draw();
+    },
     onSummarize: () => { void summarize(); },
     onClearTranscript: clearConversation,
+    onDeleteWord: (word) => {
+      words = removeVocab(words, word);
+      void saveVocab(bridge, words).catch(() => undefined);
+      schedulePhone();
+    },
+    onClearWords: () => {
+      words = [];
+      void saveVocab(bridge, words).catch(() => undefined);
+      schedulePhone();
+    },
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
@@ -1349,7 +1416,7 @@ async function boot(): Promise<void> {
 }
 
 function sttSettingsChanged(a: BabelData, b: BabelData): boolean {
-  return a.sttUrl !== b.sttUrl || a.sttToken !== b.sttToken || a.sourceLanguage !== b.sourceLanguage;
+  return a.sttUrl !== b.sttUrl || a.sttToken !== b.sttToken || a.sourceLanguage !== b.sourceLanguage || a.persons !== b.persons;
 }
 
 void boot().catch((error: unknown) => {

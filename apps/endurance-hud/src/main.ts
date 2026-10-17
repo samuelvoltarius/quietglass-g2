@@ -1,6 +1,6 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { appStore } from "./storage/kv";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal, isSystemExitEvent } from "./exit";
 import { createTextPage, updateTextPage, type MenuSpec, type TextView } from "./glasses/text";
 import { helpView, liveView, qis, SPORT_CHOICES, sportListView } from "./glasses/views";
 import { languageSelect, rememberLocale, resolveLocale, setLocale, type Locale } from "./i18n";
@@ -55,8 +55,11 @@ async function boot(): Promise<void> {
   };
   const menu = (): MenuSpec => ({ items: !SIDE_MENU ? [] : [{ id: MENU.sport, label: qis[locale].menuSport }, { id: MENU.help, label: qis[locale].menuHelp }] });
   const view = (): TextView => (screen === "help" ? helpView(locale) : screen === "sport" ? sportListView(locale, sportCursor, choice === "run" || choice === "bike" ? choice : null) : liveView(locale, mode(), sport(), data));
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const draw = async (): Promise<void> => {
-    if (closed) return;
+    if (closed || exitAsked()) return;
     const next = view();
     const sig = JSON.stringify(next) + sport();
     if (sig === last) return;
@@ -139,7 +142,14 @@ async function boot(): Promise<void> {
   // QIS v1.2: tap reloads; with SIDE_MENU on, the glasses' side menu (hold) holds Hilfe and Sportart. The sport is chosen in a list:
   // swipe moves, tap sets (a swipe never saves anything). Double tap goes back (help, list) or opens the system exit
   // dialog (root); polling stops only once the user confirms.
-  const requestExit = createExitRequest(bridge, { onConfirmed: () => { closed = true; clearInterval(timer); } }, "endurance-hud");
+  // "No" in the exit dialog: the dialog took the page away. createTextPage always puts a first page up
+  // (rebuild + create), so marking the page as not ready is enough (store review 16.10.2026).
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
+  const requestExit = createExitRequest(bridge, {
+    onBack: () => { if (closed) return; pageReady = false; last = ""; return draw(); },
+  }, "endurance-hud");
+  exitAsked = requestExit.asked;
   const show = (next: typeof screen): void => { screen = next; void draw(); };
   const openSportList = (): void => { sportCursor = Math.max(0, SPORT_CHOICES.indexOf(choice === "run" || choice === "bike" ? choice : null)); show("sport"); };
   await draw();
@@ -147,6 +157,11 @@ async function boot(): Promise<void> {
   void refresh();
   timer = setInterval(() => void refresh(), 2000);
   bridge.onEvenHubEvent((event) => {
+    if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
+    if (isSystemExitEvent(event)) { closed = true; clearInterval(timer); return; }
+    if (isBackSignal(event)) requestExit.back();
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
       if (menuId === MENU.help) show("help");

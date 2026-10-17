@@ -4,7 +4,7 @@ import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { answerPages, buildView, helpView, sessionList, type AgentView, type Armed } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { footer } from "./glasses/footer";
-import { createPage, faceKey, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, faceKey, updatePage, type MenuSpec } from "./glasses/render";
 import { t } from "./messages";
 import { MASCOT_STEP_MS, headerIcon, isOffline } from "./glasses/face";
 import { load, parsePairingUrl, save, type Settings } from "./storage/persist";
@@ -237,7 +237,11 @@ async function boot(): Promise<void> {
     return demo ? { ...view, footer: footer(locale, { hint: t(locale, "g.demoFoot") }, "exit") } : view;
   };
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed || paused) return;
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
     const view = currentView();
@@ -261,6 +265,7 @@ async function boot(): Promise<void> {
    * start-up page, and a second create leaves real glasses deaf.
    */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -474,14 +479,31 @@ async function boot(): Promise<void> {
     narrator.stop();
   };
 
-  const requestExit = createExitRequest(bridge, { onConfirmed: shutDown }, "agent-glass");
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // tears the app down (the system ends it itself, or a sysEvent 6/7 arrives). On the next input the page
+  // is put up again the way of the first one, so 2× opens the dialog again after "No".
+  const requestExit = createExitRequest(bridge, {
+    onBack: () => {
+      if (closed) return;
+      // The user is on the glasses (an input or the dialog came back): a pause from an earlier 5 must not keep the restore from drawing.
+      paused = false;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
+    },
+  }, "agent-glass");
+  exitAsked = requestExit.asked;
 
   // Gestures and the exit come first. Loading sessions and opening one are
   // network calls with up to 10 s timeouts each; awaited before this, a slow
   // or dead backend left the glasses deaf for up to half a minute.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
+    if (requestExit.onLifecycle(event) !== null) return;
     const step = lifecycleFromEvent(event);
+    if (step !== "foregroundExit" && !isFinalExit(step)) requestExit.back();
     if (step === "foregroundExit") { paused = true; return; }
     if (step === "foregroundEnter") { paused = false; rebuildWanted = true; void draw(); return; }
     if (isFinalExit(step)) { shutDown(); return; }
@@ -589,7 +611,7 @@ async function boot(): Promise<void> {
         return;
 
       case "exit":
-        // System exit dialog; the stream and narration keep going until the user confirms.
+        // System exit dialog; everything keeps running (the system ends the app if the user confirms).
         void requestExit();
         return;
 

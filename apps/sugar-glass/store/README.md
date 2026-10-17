@@ -10,9 +10,5 @@ regenerate rather than editing these files.
 | `background.png` | 1920×1080 | Greyscale, name and tagline |
 | `tagline.txt` | — | Line 1 English, line 2 German, each ≤ 60 characters |
 
-Screenshot: the simulator capture is kept at [`../docs/screenshot.png`](../docs/screenshot.png)
-and is not duplicated here.
-
-`icon-24-hub.png` (24×24) is the Even Hub upload variant: only transparent and
-(244, 244, 244, 255) pixels, drawn in 2×2 blocks on the 12×12 grid, as the
-portal requires. It is made from the same 12×12 drop pattern (kept by hand).
+Screenshot: [`screenshot.png`](screenshot.png) is a direct 576×288 capture from
+the official Even Hub simulator.

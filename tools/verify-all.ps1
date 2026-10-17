@@ -2,6 +2,11 @@
 # display. One at a time is deliberate: several simulator instances at once make
 # page creation fail as "invalid" and render blank.
 
+param(
+  [switch]$StoreEnglish,
+  [string[]]$Include = @()
+)
+
 $root = "F:\quietglass"
 
 # Every app under apps\ with the dev port from its vite.config, so new apps are
@@ -11,6 +16,10 @@ $apps = Get-ChildItem "$root\apps" -Directory | ForEach-Object {
   if ($config -and ((Get-Content $config.FullName -Raw) -match "port:\s*(\d+)")) {
     @{ dir = $_.Name; port = [int]$Matches[1] }
   }
+} | Where-Object {
+  $_.dir -ne "node_modules" -and
+  ($Include.Count -eq 0 -or $Include -contains $_.dir) -and
+  (-not $StoreEnglish -or $_.dir -ne "klipper-glance")
 }
 
 $shots = "$root\.verify"
@@ -33,36 +42,45 @@ function Test-DevServer([int]$port) {
   try { (Invoke-WebRequest "http://127.0.0.1:$port/" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $false }
 }
 
-# A capture with no lit pixel means the page never rendered.
+# A capture with no lit pixel means the page never rendered. The simulator uses
+# transparent pixels for the dark lens area and alpha for illuminated pixels.
 function Test-Blank([string]$path) {
   $bitmap = [System.Drawing.Bitmap]::FromFile($path)
   try {
+    $maxAlpha = 0
     for ($y = 0; $y -lt $bitmap.Height; $y += 2) {
       for ($x = 0; $x -lt $bitmap.Width; $x += 2) {
-        if ($bitmap.GetPixel($x, $y).A -gt 0) { return $false }
+        $pixel = $bitmap.GetPixel($x, $y)
+        if ($pixel.A -gt $maxAlpha) { $maxAlpha = $pixel.A }
       }
     }
-    return $true
+    return $maxAlpha -lt 8
   } finally { $bitmap.Dispose() }
 }
 
 function Get-Capture([string]$dir, [int]$port) {
+  # A fragment keeps the locale override separate without relying on cmd.exe's
+  # special handling of `&` in URLs. Apps ignore `demo=1` when no demo is needed.
+  $url = "http://127.0.0.1:$port/?demo=1#lang=en"
   Start-Process -FilePath "cmd.exe" `
-    -ArgumentList "/c", ".\node_modules\.bin\evenhub-simulator.cmd --automation-port $automationPort http://127.0.0.1:$port > verify-sim.log 2>&1" `
-    -WindowStyle Normal
+    -ArgumentList "/c", ".\node_modules\.bin\evenhub-simulator.cmd --automation-port $automationPort `"$url`" > verify-sim.log 2>&1" `
+    -WindowStyle Hidden
   $up = Wait-Until { Get-NetTCPConnection -LocalPort $automationPort -State Listen -ErrorAction SilentlyContinue } 30
   if (-not $up) { return "NO SIMULATOR" }
   Start-Sleep -Seconds 8   # let the app create its page
   try {
+    $capture = if ($StoreEnglish) { "$root\release\$dir\screenshot.png" } else { "$shots\$dir.png" }
+    New-Item -ItemType Directory -Force -Path (Split-Path $capture) | Out-Null
     Invoke-WebRequest -Uri "http://127.0.0.1:$automationPort/api/screenshot/glasses" `
-      -OutFile "$shots\$dir.png" -TimeoutSec 15 -ErrorAction Stop | Out-Null
+      -OutFile $capture -TimeoutSec 15 -ErrorAction Stop | Out-Null
   } catch { return "SCREENSHOT FAILED" }
   finally {
     Get-Process evenhub-simulator -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 2
   }
-  if (Test-Blank "$shots\$dir.png") { return "BLANK" }
-  return "screenshot " + (Get-Item "$shots\$dir.png").Length + " bytes"
+  $capture = if ($StoreEnglish) { "$root\release\$dir\screenshot.png" } else { "$shots\$dir.png" }
+  if (Test-Blank $capture) { return "BLANK" }
+  return "screenshot " + (Get-Item $capture).Length + " bytes"
 }
 
 # Clear anything left over from earlier runs.

@@ -15,7 +15,7 @@ function fakeBridge(writeDelayMs = 0, storage = new Map<string, string>()) {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
-  const writes = { count: 0, inFlight: 0, maxInFlight: 0, body: "" };
+  const writes = { count: 0, creates: 0, rebuilds: 0, inFlight: 0, maxInFlight: 0, body: "" };
   const write = async (content: string, isBody: boolean): Promise<void> => {
     writes.count += 1;
     writes.inFlight += 1;
@@ -27,8 +27,8 @@ function fakeBridge(writeDelayMs = 0, storage = new Map<string, string>()) {
   const bridge = {
     getLocalStorage: async (key: string) => storage.get(key) ?? "",
     setLocalStorage: async (key: string, value: string) => { storage.set(key, value); return true; },
-    rebuildPageContainer: async () => true,
-    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+    rebuildPageContainer: async () => { writes.rebuilds += 1; return true; },
+    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => { writes.creates += 1;
       await write((page.textObject ?? []).find((part) => part.containerID === 2)?.content ?? "", true);
       return 0;
     },
@@ -89,13 +89,31 @@ describe("cadence run loop", () => {
     expect(fake.writes.maxInFlight).toBe(1);
   });
 
-  it("asks for the system exit dialog and stops drawing once the user confirms", async () => {
+  it("asks for the system exit dialog; the call resolving true (dialog shown) does not stop the beat", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(2000);
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([1]);
+    const writesAtAsk = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
+    // While the dialog may be on screen no timer draws (a page call could cover it).
+    expect(fake.writes.count).toBe(writesAtAsk);
+    // The beat kept running: after the next input it draws again.
+    fake.emit(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.writes.count).toBeGreaterThan(writesAtAsk);
+  });
+
+  it("the system ending the app (sysEvent 7) after the dialog stops drawing", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(7);
+    await vi.advanceTimersByTimeAsync(100);
     const writesAtClose = fake.writes.count;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(fake.writes.count).toBe(writesAtClose);
@@ -111,11 +129,83 @@ describe("cadence run loop", () => {
     expect(fake.shutdown.modes).toEqual([1]);
     const writesAtCancel = fake.writes.count;
     await vi.advanceTimersByTimeAsync(5000);
-    expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
+    // While the dialog may be on screen no timer draws (a page call could cover it).
+    expect(fake.writes.count).toBe(writesAtCancel);
     // Gestures still work after staying.
     fake.emit(1);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.writes.body).toContain("104 bpm");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    const creates = fake.writes.creates;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.shutdown.confirm = true;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.shutdown.modes).toEqual([1]);
+    const callsAtAsk = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5000);
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(fake.writes.count).toBe(callsAtAsk);
+    expect(fake.writes.creates).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, beat running, next 2x asks", async () => {
+    const fake = await boot();
+    fake.emit(0); // the beat runs
+    await vi.advanceTimersByTimeAsync(2000);
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(70);
+    expect(fake.shutdown.modes).toEqual([1]);
+    fake.emit(4); // the dialog is on screen
+    const atShown = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(fake.writes.count).toBe(atShown); // nothing drawn over the dialog
+    const creates = fake.writes.creates;
+    fake.emit(5); // "No": the dialog is gone
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.writes.creates).toBeGreaterThan(creates); // page created again, no gesture needed
+    const afterRestore = fake.writes.count;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fake.writes.count).toBeGreaterThan(afterRestore); // the beat and the tick were never stopped
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.shutdown.modes).toEqual([1, 1]); // the very first 2x opens the dialog again
+  });
+
+  it("a 2x while backgrounded (a 5 without a dialog) comes back and asks again after the restore draw", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    fake.emit(5); // genuinely backgrounded
+    await vi.advanceTimersByTimeAsync(200);
+    const built = fake.writes.creates + fake.writes.rebuilds;
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(fake.writes.creates + fake.writes.rebuilds).toBeGreaterThan(built); // the page was put up again
+    expect(fake.shutdown.modes).toEqual([1]); // and the dialog was asked, not swallowed
   });
 
   it("keeps running when the exit call rejects, without an unhandled rejection", async () => {
@@ -130,6 +220,7 @@ describe("cadence run loop", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     const writesAtFailure = fake.writes.count;
+    fake.emit(1);
     await vi.advanceTimersByTimeAsync(5000);
     vi.useRealTimers();
     await new Promise((resolve) => setTimeout(resolve, 20));

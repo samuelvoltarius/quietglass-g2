@@ -3,12 +3,10 @@ import { NET_DEVICES_MAX, readNetwork, reportFromValue, type NetworkInfo, type S
 import {
   NET_NEW_PREFIX, acknowledge, applyReport, createSource, netNewMetric, problems, type SourceStatus,
 } from "../src/monitor/dashboard";
-import { describeMetric, detailLines, networkLine } from "../src/glasses/host";
-import { fleetRows, fleetView } from "../src/glasses/fleet";
-import { MetricHistory } from "../src/monitor/history";
+import { describeMetric, networkLine } from "../src/glasses/host";
+import { hostTone, overviewCells, statusLines } from "../src/cockpit/model";
 import { devicesUrl, markDeviceKnown } from "../src/protocol/fetcher";
 import { networkHtml } from "../src/ui/phone";
-import { LINE_WIDTH } from "../src/glasses/view";
 
 // Fixtures only, made-up 10.x addresses.
 const NOW = 1_800_000_000_000;
@@ -101,26 +99,23 @@ describe("new devices on the glasses", () => {
     expect(problems([source], NOW + 3)).toHaveLength(0);
   });
 
-  it("raise the alert line of the overview and mark the machine", () => {
+  it("raise the headline of the cockpit and mark the machine", () => {
     const sources = [machine(oneNew, "Spark"), machine(undefined, "Pi5")];
-    const rows = fleetRows(sources, new MetricHistory(), 0, "de", NOW);
-    expect(rows[0]?.state).toBe("warn");
-    expect(rows[1]?.state).toBe("ok");
-    const view = fleetView(sources, rows, "de", NOW);
-    expect(view.header).toBe("STATUS · Spark: Neues Gerät im Netz: android-5f3c");
-    expect(view.header.length).toBeLessThanOrEqual(LINE_WIDTH);
+    expect(hostTone(sources[0]!, NOW)).toBe("warn");
+    expect(hostTone(sources[1]!, NOW)).toBe("ok");
+    expect(statusLines(sources, NOW, "de")).toEqual(["1 PROBLEM"]);
+    expect(statusLines([sources[1]!], NOW, "de")).toEqual(["ALLES OK"]);
+    expect(overviewCells(sources, NOW, "de").slice(0, 3).map((cell) => cell.value)).toEqual(["1", "1", "0"]);
   });
 
-  it("say 'Netz: 23 Geräte · 1 NEU' on the detail page", () => {
+  it("say 'Netz: 23 Geräte · 1 NEU'", () => {
     const many = network([...Array.from({ length: 22 }, (_, i) => device(i + 1)), device(99, { new: true, known: false })]);
     expect(networkLine({ name: "x", metrics: [], network: many }, "de")).toBe("Netz: 23 Geräte · 1 NEU");
     expect(networkLine({ name: "x", metrics: [], network: many }, "en")).toBe("Network: 23 devices · 1 NEW");
     expect(networkLine({ name: "x", metrics: [], network: network([device(1), device(2, { online: false })]) }, "de")).toBe("Netz: 2 Geräte · 1 online");
     expect(networkLine({ name: "x", metrics: [] }, "de")).toBeNull();
-    const lines = detailLines(machine(many), "de", NOW);
-    expect(lines[0]).toMatch(/^· Neues Gerät im Netz: 10\.0\.0\.99/);
-    expect(lines).toContain("Netz: 23 Geräte · 1 NEU");
-    for (const line of lines) expect(line.length).toBeLessThanOrEqual(LINE_WIDTH);
+    const first = problems([machine(many)], NOW)[0]!;
+    expect(describeMetric(first.metric, "de")).toBe("Neues Gerät im Netz: 10.0.0.99");
   });
 });
 

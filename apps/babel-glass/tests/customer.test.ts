@@ -75,19 +75,17 @@ describe("0.6.2 Shoot Day customer", () => {
     expect(auth).toBe("Bearer k1");
   });
 
-  it("0.8.1: the idle screen is always the customer list; no stale swipe-for-help screen is left", () => {
+  it("1.0.0: the idle screen is the start screen; no help, no hold hint, one footer row", () => {
     const base: ViewOptions = { mode: "conversation", listening: false, status: "ready", translating: false, offset: 0, mock: false, locale: "de" };
-    const view = buildView(createBuffer(), { ...base, picker: { rows: ["> Beispiel Café · heute 09:00", "  Ohne Kunde – Übersetzen"] } });
-    expect(view.header).toBe("BABEL · Kunde wählen");
-    expect(view.body).toEqual(["> Beispiel Café · heute 09:00", "  Ohne Kunde – Übersetzen"]);
-    // Without the side menu the hold opens the help again; the swipe hint makes way for it (one row only).
-    expect(view.footer).toBe("Tippen = Start · Halten = Hilfe · 2× = Ende");
+    const view = buildView(createBuffer(), { ...base, start: { rows: ["> Übersetzen", "  Englisch sprechen", "  Gespräch"] } });
+    expect(view.header).toBe("BABEL · Mikro aus");
+    expect(view.body).toEqual(["> Übersetzen", "  Englisch sprechen", "  Gespräch"]);
+    expect(view.footer).toBe("Tippen: Start · Wischen: wählen · 2×: Ende");
     expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
     for (const locale of ["de", "en"] as const) {
       const idle = buildView(createBuffer(), { ...base, locale });
       expect(idle.body.join(" ")).not.toMatch(/Hilfe|help/i);
-      expect(idle.footer).toMatch(locale === "de" ? /Halten = Hilfe/ : /Hold = help/);
-      expect(idle.footer).not.toMatch(/Seitenmenü|side menu|Menü|menu/);
+      expect(idle.footer).not.toMatch(/Hilfe|help|Halten|Hold|Seitenmenü|side menu|Menü|menu/);
       expect(chars(idle.footer)).toBeLessThanOrEqual(ROW_WIDTH);
     }
   });

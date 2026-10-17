@@ -1,7 +1,33 @@
 # Changelog
 
+## [0.4.6] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Beenden-Dialog: die Ereignisse 4/5 direkt nach dem Aufruf sind der Dialog selbst.** Am Gerät gemessen: ca. 150 ms nach `shutDownPageContainer(1)` kommt FOREGROUND_ENTER (4) = der Dialog ist da; bei „Nein“ kommt FOREGROUND_EXIT (5) = der Dialog ist weg (die App war nie weg); bei „Ja“ kommt 5 und ca. 0,5 s später SYSTEM_EXIT (7). Die App liest 4/5 nach dem Aufruf jetzt so: bei 4 wird nichts gezeichnet, bei 5 steht die Seite sofort wieder da, ohne dass eine Geste nötig ist. Nichts wird pausiert, Abfragen laufen durchgehend weiter.
+- Ein 2× auf der Startseite fragt den Dialog danach wieder, direkt beim ersten Mal.
+
+## [0.4.5] — 2026-10-17
+
+### Behoben (Hardware-Test)
+
+- **Nach „Nein“ im Beenden-Dialog tat das erste 2× nichts.** Das erste 2× ist selbst das Signal „App ist wieder da“: es startet den Wiederaufbau der Seite (rebuild + create), und im selben Augenblick ging der Dialog-Aufruf los, solange die Seite noch entstand, und ging verloren. Jetzt wartet der Dialog-Aufruf auf den Wiederaufbau (höchstens 10 s) und danach 300 ms, und fragt erst dann. Ein einzelnes 2× nach „Nein“ öffnet den Dialog also wieder.
+- Während der Dialog offen sein könnte, zeichnen Timer, Polls und Streams nicht mehr auf die Brille (Seitenaufrufe könnten ihn überdecken); die Daten werden weiter gesammelt, die Seite kommt beim nächsten Tippen/Wischen/2× komplett zurück.
+
+## [0.4.4] — 2026-10-17
+
+### Behoben (Store-Prüfung, Wiederholung)
+
+- **Beenden-Dialog: das Ergebnis von `shutDownPageContainer(1)` beendet die App nicht mehr.** Auf der Brille kommt `true` schon, wenn der Dialog *angezeigt* wird (am Gerät gemessen: ca. 58 ms nach dem 2×), nicht erst bei „Ja“. Die App hielt das für eine Bestätigung und stellte sich tot; nach „Nein“ öffnete ein weiteres 2× den Dialog nicht mehr (Prüfer, Even Hub). Jetzt läuft die App weiter, ganz gleich was der Aufruf liefert; beendet wird sie nur vom System (App wird geschlossen und/oder Systemereignis 6/7). Die Seite wird nicht sofort neu gezeichnet (der Dialog könnte noch offen sein und von einem Seitenaufruf überdeckt werden), sondern beim nächsten Tippen, Wischen oder 2× bzw. bei FOREGROUND_ENTER wie beim ersten Start neu aufgebaut; dann wird das Ereignis normal verarbeitet, also öffnet 2× direkt nach „Nein“ den Dialog wieder.
+- Systemende (Ereignis 6/7) beendet jetzt das Abfragen ausdrücklich.
 All notable changes to Market Glance are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
+
+## [0.4.3] — 2026-10-16
+
+### Behoben (Store-Prüfung)
+
+- Nach „Nein“ im Beenden-Dialog öffnete 2× den Dialog nicht mehr – die App baut die Seite jetzt wie beim ersten Start neu auf.
 
 ## [0.4.2] — 2026-10-15
 

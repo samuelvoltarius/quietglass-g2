@@ -11,5 +11,5 @@
   ],
   "permissions": [],
   "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/shift-clock/docs/PRIVACY.md",
-  "screenshot": "release/shift-clock/screenshot.png"
+  "screenshot": "apps/shift-clock/store/screenshot.png"
 }

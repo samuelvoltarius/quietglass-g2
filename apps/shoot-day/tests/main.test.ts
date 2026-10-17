@@ -228,13 +228,26 @@ describe("Shoot Day lifecycle", () => {
     for (const menu of fake.menus()) expect(menu).toHaveLength(0);
   });
 
-  it("double tap in the menu asks the system to close (mode 1) and stops only when confirmed", async () => {
+  it("double tap in the menu asks the system to close (mode 1); the call resolving true (dialog shown) does not stop the app", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
     fake.exit.answer = true;
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    await new Promise((done) => setTimeout(done, 20));
+    fake.emit(DOWN); // "No", then a swipe: the app still reacts
+    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("> Teleprompter"));
+  });
+
+  it("stops only when the system ends the app (sysEvent 7) after the exit dialog", async () => {
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    fake.emit(7);
     await new Promise((done) => setTimeout(done, 20));
     const writes = fake.bridge.textContainerUpgrade.mock.calls.length;
     fake.emit(DOWN);
@@ -253,6 +266,78 @@ describe("Shoot Day lifecycle", () => {
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("> Teleprompter"));
     // And a second double tap asks again.
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1]));
+  });
+
+  it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await new Promise((done) => setTimeout(done, 20));
+    const creates = fake.bridge.createStartUpPageContainer.mock.calls.length;
+    // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + ((fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>)[name]?.mock?.calls.length ?? 0), 0);
+    const callsAtAsk = pageCalls();
+    await new Promise((done) => setTimeout(done, 1500));
+    // Timers, polls and streams keep collecting data but make no page call while the dialog may be on screen.
+    expect(pageCalls()).toBe(callsAtAsk);
+    expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBe(creates);
+    // "No", then a single 2x as the very first event: the restore (create) must finish BEFORE the dialog is asked again
+    // (hardware, Klipper 0.5.8: a dialog call issued while the page is being created is lost).
+    const order: string[] = [];
+    let releaseCreate!: () => void;
+    const gate = new Promise<void>((done) => { releaseCreate = done; });
+    const host = fake.bridge as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const realCreate = host["createStartUpPageContainer"]!;
+    const realShutDown = host["shutDownPageContainer"]!;
+    host["createStartUpPageContainer"] = async (...args: unknown[]) => { order.push("create:start"); await gate; const result = await realCreate.apply(fake.bridge, args); order.push("create:done"); return result; };
+    host["shutDownPageContainer"] = (...args: unknown[]) => { order.push("shutdown"); return realShutDown.apply(fake.bridge, args); };
+    fake.emit(DOUBLE);
+    await new Promise((done) => setTimeout(done, 500));
+    expect(order).toEqual(["create:start"]); // the dialog is not asked while the page is still being created
+    releaseCreate();
+    await new Promise((done) => setTimeout(done, 1500));
+    expect(order).toEqual(["create:start", "create:done", "shutdown"]); // restore first, then the dialog, exactly once more
+  });
+
+  it("hardware order (step log 0.5.11): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again, timers on, next 2x asks", async () => {
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await new Promise((done) => setTimeout(done, 20));
+    const host = fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>;
+    const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + (host[name]?.mock?.calls.length ?? 0), 0);
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    fake.emit(4);                                            // the dialog is on screen
+    const atShown = pageCalls();
+    await new Promise((done) => setTimeout(done, 1500));
+    expect(pageCalls()).toBe(atShown);                       // nothing drawn over the dialog
+    const pagesBefore = fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length;
+    fake.emit(5);                                            // "No": the dialog is gone
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length).toBeGreaterThan(pagesBefore)); // page up again, no gesture
+    expect(fake.header()).toBe("SHOOT DAY · Testdreh");
+    expect(cleared).not.toHaveBeenCalled();                  // clock and outbox timer were never stopped (no background state)
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1])); // the very first 2x opens the dialog again
+  });
+
+  it("the dialog sends the app to the background (5 without 4): after No the very first 2x is not swallowed, it restores and asks again", async () => {
+    const fake = fakeBridge(configured());
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await new Promise((done) => setTimeout(done, 20));
+    fake.exit.answer = true;
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+    fake.emit(5);                                            // FOREGROUND_EXIT on its own (fallback: no 4 seen)
+    await new Promise((done) => setTimeout(done, 50));
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1]));
   });

@@ -1,4 +1,5 @@
 import { AppLocationAccuracy, AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { settleRestore } from "./exit";
 import { createClient, ApiError, classifyError, insecureServer, serverHost, type LinkProblem } from "./api/client";
 import { emptyReport } from "./api/empty";
 import { createDemoApi, DEMO_SCENES, type DemoScene } from "./api/demo";
@@ -30,7 +31,7 @@ import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
 const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) ?? "default";
-const BUILD = "0.9.2";
+const BUILD = "0.9.6";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent (10 min dictation); also guards against a lost "release" event. */
@@ -46,7 +47,7 @@ async function boot(): Promise<void> {
   // no useful locale of its own, and screenshots want a deterministic one.
   const params = new URLSearchParams(globalThis.location?.search ?? "");
   const setup = new URLSearchParams(globalThis.location?.hash?.replace(/^#/, "") ?? "");
-  const forced = params.get("lang");
+  const forced = params.get("lang") ?? setup.get("lang");
   if (forced === "de" || forced === "en") setLocale(forced);
   let locale: Locale = forced === "de" || forced === "en" ? forced : await resolveLocale(bridge);
   setLocale(locale);
@@ -223,7 +224,15 @@ async function boot(): Promise<void> {
   };
 
   let lastIconShown = "";
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitDialogAsked = false;
+  // The system dialog's own lifecycle (step log, Klipper 0.5.11): right after shutDownPageContainer(1) the glasses
+  // send FOREGROUND_ENTER (4) when the dialog comes up and FOREGROUND_EXIT (5) when it goes away after "No".
+  let dialogPending = false;
+  let dialogShown = false;
   const drawOnce = async (): Promise<void> => {
+    if (exitDialogAsked) return;
     const now = Date.now();
     // Quiet while the agent works: empty text at brightness 0/1 and a black (= transparent) face, all in place.
     const quiet = isQuiet(model, now);
@@ -258,6 +267,7 @@ async function boot(): Promise<void> {
 
   /** One draw at a time; requests made meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
+    if (exitDialogAsked) return Promise.resolve();
     if (drawing !== null) {
       redrawQueued = true;
       return drawing;
@@ -349,6 +359,23 @@ async function boot(): Promise<void> {
     schedulePoll(nextPollMs());
   };
 
+  /** The restore started by the last exitBack(), while it is still running. */
+  let restoring: Promise<void> | null = null;
+  const exitBack = (): void => {
+    if (!exitDialogAsked) return;
+    exitDialogAsked = false;
+    if (closed) return;
+    // The dialog takes the page away and a plain rebuild no longer reaches it (store review 16.10.2026):
+    // put the page up again the way of the first one (rebuild + create), so input (and the next 2×) reaches the app.
+    pageCreated = false;
+    lastView = null;
+    menuKey = "";
+    lastIconShown = "";
+    const run = draw().catch(() => undefined);
+    restoring = run;
+    void run.then(() => { if (restoring === run) restoring = null; });
+  };
+
   const runEffect = async (effect: Effect | undefined): Promise<void> => {
     if (effect === undefined) return;
     try {
@@ -419,9 +446,22 @@ async function boot(): Promise<void> {
         return;
       }
       if (effect.kind === "exit") {
-        // Required by Even QA on the root page. Do not clean up here: the user
-        // may cancel. Cleanup happens only on SYSTEM/ABNORMAL_EXIT below.
-        await bridge.shutDownPageContainer(1);
+        // Required by Even QA on the root page. Do not clean up here: the call resolves when the dialog is
+        // SHOWN (hardware: ~58 ms after the double tap), not when the user answered. Cleanup happens only on
+        // SYSTEM/ABNORMAL_EXIT below. A second double tap before any restore: page back first, then ask again.
+        exitBack();
+        // The first double tap after "No" is the back signal itself: a dialog call issued while the page is still
+        // being created is lost (hardware, Klipper 0.5.8). So wait for the restore and a short settle delay.
+        if (restoring) await settleRestore(restoring);
+        dialogPending = true;
+        try {
+          await bridge.shutDownPageContainer(1);
+        } catch (error) {
+          console.warn("[quiethub] exit failed:", rawText(error));
+        }
+        // No redraw now: the dialog may still be on screen and a page call could cover it. On the next input
+        // (or FOREGROUND_ENTER) the page is put up again the way of the first one (exitBack).
+        exitDialogAsked = true;
         return;
       }
       if (effect.kind === "recordStop") {
@@ -545,13 +585,36 @@ async function boot(): Promise<void> {
   let unsubscribeEvents: () => void = () => undefined;
   let unsubscribeDevice: () => void = () => undefined;
   const handle = (event: unknown): void => {
+    if (closed) return;
+    const systemType = (event as { sysEvent?: { eventType?: number } }).sysEvent?.eventType;
+    if (systemType === 4 && dialogPending) {
+      // The exit dialog came up: stay still, it is on screen now.
+      dialogPending = false;
+      dialogShown = true;
+      exitDialogAsked = true;
+      return;
+    }
+    if (systemType === 5 && dialogShown) {
+      // "No": the dialog went away. The app never left - page up again the way of the first one; timers, polls and
+      // streams keep running.
+      dialogShown = false;
+      exitDialogAsked = true;
+      exitBack();
+      return;
+    }
+    // Only input and system events end the dialog state; the microphone stream and sysEvent 8 leave it alone.
+    if ((event as { audioEvent?: unknown }).audioEvent === undefined && systemType !== 8) {
+      dialogPending = false;
+      dialogShown = false;
+    }
+    // Not the microphone stream, and not the events that leave: only input and FOREGROUND_ENTER mean the app is back.
+    if ((event as { audioEvent?: unknown }).audioEvent === undefined && systemType !== 5 && systemType !== 6 && systemType !== 7) exitBack();
     // Native contextual menu: arrives on its own event, whatever container captures input.
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
       onMenu(menuId);
       return;
     }
-    const systemType = (event as { sysEvent?: { eventType?: number } }).sysEvent?.eventType;
     if (systemType === 4) {
       lastView = null;
       void draw();

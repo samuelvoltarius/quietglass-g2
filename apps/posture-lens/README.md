@@ -150,14 +150,14 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Limitation | Detail |
 |---|---|
-| **Not verified on hardware** | Built and tested against SDK 0.0.16 and the simulator. The IMU's behaviour on a physical G2 — sample scale, noise, drift — has not been measured by Quietglass. Thresholds may need tuning once it has. |
+| **Personal calibration matters** | Verified on physical G2 hardware. IMU noise, drift and a comfortable warning angle vary by wearer and fit, so calibrate in your normal upright pose and tune the thresholds on the phone. |
 | **Simulator has no real IMU** | The simulator does not produce head-motion data, so the measurement chain cannot be exercised end to end there. The maths and the state machine are covered by unit tests with synthetic vectors. |
 | Forward vs. sideways | 0.1.0 measures total deviation from your calibrated pose. It does not yet distinguish leaning forward from tilting sideways. |
 | Not a medical device | It counts degrees and minutes. It does not diagnose anything. |
 
 ## Roadmap
 
-- Separate forward tilt from lateral tilt, once the axis convention is known
+- Separate forward tilt from lateral tilt more precisely
   from real hardware.
 - Optional end-of-day summary on the phone.
 - A gentler first cue before the full warning.

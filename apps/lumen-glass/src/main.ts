@@ -5,11 +5,11 @@ import {
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import { buildView, type LumenView, type Phase } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
+import { createPage, forgetPage, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
 import { FLAP_STEP_MS, isFlapping, mothSprite, spriteKey } from "./glasses/sprite";
 import { loadWithStart, save, type LumenData } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
-import { createExitRequest } from "./exit";
+import { createExitRequest, isBackSignal } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
@@ -102,7 +102,11 @@ async function boot(): Promise<void> {
 
   const currentIcon = () => mothSprite(status?.moth.state ?? "eingerollt", Date.now());
 
+  // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
+  // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
+  let exitAsked = (): boolean => false;
   const drawOnce = async (): Promise<void> => {
+    if (exitAsked()) return;
     if (closed) return;
     const view = currentView();
     const icon = currentIcon();
@@ -130,6 +134,7 @@ async function boot(): Promise<void> {
 
   /** One page write at a time; a request during a write redraws once after it. */
   const draw = (): Promise<void> => {
+    if (exitAsked()) return Promise.resolve();
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -272,9 +277,20 @@ async function boot(): Promise<void> {
   };
   flapTimer = setInterval(flapTick, FLAP_STEP_MS);
 
+  // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
+  // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
   const requestExit = createExitRequest(bridge, {
-    onConfirmed: () => { closed = true; clearTimeout(timer); clearTimeout(confirmTimer); clearInterval(flapTimer); },
+    onBack: () => {
+      // The dialog took the page away. Put it up again the way of the
+      // first one (create), so the glasses deliver input - and the next 2x - to the app again.
+      if (closed) return;
+      pageReady = false;
+      lastView = null;
+      forgetPage(bridge);
+      return draw();
+    },
   }, "lumen");
+  exitAsked = requestExit.asked;
 
   /** Nothing waits for a confirming tap any more. */
   const disarm = (): void => {
@@ -313,7 +329,11 @@ async function boot(): Promise<void> {
   // this, or an unreachable LUMEN leaves the glasses deaf, even to the exit.
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
+    // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving:
+    // they must neither pause the polling nor redraw over the dialog.
+    if (requestExit.onLifecycle(event) !== null) return;
     const step = lifecycleFromEvent(event);
+    if (isBackSignal(event)) requestExit.back();
     if (step === "foregroundExit") { paused = true; clearTimeout(timer); return; }
     if (step === "foregroundEnter") {
       paused = false;
