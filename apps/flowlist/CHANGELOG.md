@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0] — 2026-10-20
+
+### Geändert (Quietglass UI-Standard QUS v1, „keine Textwand“)
+
+- **Brille: neue Startseite mit drei großen Einträgen** – `Ablauf · 3/7`, `Übersicht · 5 offen`, `Aufgaben · 7`. Wischen wählt (●), Tippen öffnet, 2× beendet die App (Beenden-Dialog nur noch hier). Ohne Liste steht dort der Hinweis, am Handy eine anzulegen.
+- **Übersicht als Cockpit-Bild** (Rain-Lens-Muster, ganzes Display als vier 288×144-Kacheln): rechts klein `FLOWLIST  14:05`, darunter **eine** große Aussage (`5 OFFEN` bzw. `ALLES ERLEDIGT`), dazu sechs Zellen (Schritt, Erledigt, Kritisch, Optional, Ausgelassen, Nächste); links ein Fortschrittsring (ein Bogen je Schritt, in der Mitte `erledigt/gesamt`) und der Listenname. Nur geänderte Kacheln werden gesendet; die Uhr ändert nur die Kachel oben rechts, ein unveränderter Stand sendet nichts. Tippen = Ablauf, 2× = zurück.
+- **Aufgabenliste**: höchstens fünf Zeilen mit `●` am Cursor, `→` beim aktuellen und `—` bei erledigten Schritten; Wischen bewegt nur den Punkt, ändert nichts am Ablauf.
+- **Der Ablauf hängt jetzt unter der Startseite**: 2× geht eine Ebene zurück (Fußzeile `2× = zurück`), erst auf der Startseite fragt 2× den Beenden-Dialog. Der Ablauf selbst (Schritt als großes Bild, Fortschrittsbalken, Tippen = erledigt, wichtige Schritte zweimal, Zurück/Auslassen vormerken) ist unverändert.
+- **Wo man war, bleibt gespeichert**: nach gesperrtem Handy kommt die App auf derselben Seite (Ablauf, Übersicht, Aufgaben) wieder.
+- Header der Listenseiten `Modus · ● live`, jeweils **eine** Fußzeile.
+- **Handy: genau drei Tabs in einer Zeile** – Jetzt / Aufgaben / Einstellungen – im Rain-Lens-Look: Kicker `QUIETGLASS / AUFGABEN`, Titel, Status-Pille mit der laufenden Liste, Statusbanner (der aktuelle Schritt), Hero-Karte mit **einem** großen Wert (offene Schritte), 2×2-Kennzahlen (Schritt, Erledigt, Wichtig, Ausgelassen), horizontale Karten-Leiste mit den nächsten Schritten, **ein** großer Knopf „Ablauf neu starten“ (fragt erst nach). Einstellungen in gruppierten Karten (Anzeige, Brille, Sprache, Über FlowList), Bedienung und Über eingeklappt; Erststart mit Drei-Schritte-Checkliste, bis dahin läuft die Beispielliste. Entfernen einer Liste fragt jetzt nach (zweites Tippen).
+- Texte am Handy und auf der Brille nach Glossar (`2×`, `Tippen`, `Wischen`, `Halten`).
+
+### Unverändert (bewusst)
+
+- `SIDE_MENU = false`, Beenden-Dialog (`src/exit.ts`, Ereignisse 4/5, Hintergrund/Zurückkommen, nichts zeichnen oder Kacheln senden, solange gefragt ist), `bounded()`-Zeitlimits, erste Seite = Rebuild + Create.
+
+### Intern
+
+- Neu: `src/screen/*` (byte-identisch aus Rain Lens), `src/cockpit/{model,compose}.ts`, `src/glasses/screens.ts`, `src/ui-state.ts`; `render.ts` baut Text-, Cockpit- und Ablaufseite; ein Seitenwechsel ist ein Rebuild, die Bild-Bahnen (Schritt, Balken) senden nur, solange die Ablaufseite steht.
+- Tests: reine Modelltests (Zellen, Überschrift, Startzeilen, Fußzeilen, Aufgabenliste), Kachel-Diff (unverändert → nichts senden, Uhr → nur oben rechts), Wächter für Kachel-Schreibzugriffe, Seitenwechsel und Beenden-Dialog im Hauptprogramm; Vorschau-PNGs mit `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` nach `store/preview-cockpit.png` und `store/preview-cockpit-done.png`.
+- QIS-Konformität: Fußzeilen über den gemeinsamen Helfer, `2× = zurück|Ende` überall.
+
 ## [0.5.6] — 2026-10-17
 
 ### Behoben (Hardware-Test, Schrittprotokoll)

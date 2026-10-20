@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { locales, type Locale } from "../src/i18n";
-import { buildView } from "../src/glasses/view";
-import { buildHelpView, HELP_PAGES } from "../src/glasses/menu-view";
+import { cockpitModel } from "../src/cockpit/model";
+import { buildMenuView } from "../src/glasses/menu-view";
 import { buildSensorView } from "../src/glasses/sensor-view";
-import { footer, FOOTER_WIDTH } from "../src/glasses/footer";
+import { armedMenuFooter, footer, FOOTER_WIDTH } from "../src/glasses/footer";
 import { HEADER_COLS, LINE_COLS } from "../src/glasses/fit";
 import { addSample, calibrate, createMonitor, DEFAULT_SETTINGS } from "../src/posture/monitor";
 import { createStats, startRecording } from "../src/imu/diagnostics";
@@ -19,22 +19,26 @@ function screens(locale: Locale): { name: string; view: { header: string; body: 
   const good = addSample(calibrate(createMonitor(), UPRIGHT, 0), UPRIGHT, fast, 10_000);
   const leaning = addSample(calibrate(createMonitor(), UPRIGHT, 0), TILTED, fast, 1000);
   const warned = addSample(leaning, TILTED, fast, 12_000);
-  const o = { locale };
+  // The cockpit's hint line stands in for the footer; its header is the app name.
+  const cockpit = (monitor: typeof fresh, now: number, extra: Record<string, unknown> = {}) => {
+    const model = cockpitModel({ monitor, settings: fast, locale, now, ...extra });
+    return { header: model.title, body: model.headline, footer: model.hint };
+  };
   return [
-    { name: "first run", view: buildView(fresh, fast, o, 0), end: "exit" },
-    { name: "good", view: buildView(good, fast, o, 10_000), end: "exit" },
-    { name: "saved", view: buildView(good, fast, { ...o, justCalibrated: true }, 10_000), end: "exit" },
-    { name: "leaning", view: buildView(leaning, fast, o, 4000), end: "exit" },
-    { name: "warned", view: buildView(warned, fast, o, 12_000), end: "exit" },
-    { name: "no sensor", view: buildView(fresh, fast, { ...o, sensorOff: true }, 0), end: "exit" },
-    { name: "tally cleared", view: buildView(good, fast, { ...o, note: messages[locale]["g.m.cleared"] ?? "" }, 10_000), end: "exit" },
-    ...Array.from({ length: HELP_PAGES }, (_, page) => ({ name: "help " + (page + 1), view: buildHelpView(locale, page), end: "back" as const })),
+    { name: "first run", view: cockpit(fresh, 0), end: "exit" },
+    { name: "good", view: cockpit(good, 10_000), end: "exit" },
+    { name: "saved", view: cockpit(good, 10_000, { justCalibrated: true }), end: "exit" },
+    { name: "leaning", view: cockpit(leaning, 4000), end: "exit" },
+    { name: "warned", view: cockpit(warned, 12_000), end: "exit" },
+    { name: "no sensor", view: cockpit(fresh, 0, { sensorOff: true }), end: "exit" },
+    { name: "list", view: buildMenuView({ locale, cursor: 0, resetArmed: false }), end: "back" },
+    { name: "list, tally cleared", view: buildMenuView({ locale, cursor: 0, resetArmed: false, note: messages[locale]["g.m.cleared"] ?? "" }), end: "back" },
     { name: "sensor test", view: buildSensorView(createStats(), { locale, pace: 1000, recording: null }), end: "back" },
     { name: "sensor recording", view: buildSensorView(createStats(), { locale, pace: 1000, recording: startRecording(0) }, 1000), end: "back" },
   ];
 }
 
-describe("footers follow QIS v1", () => {
+describe("hint lines and footers follow QIS v1", () => {
   for (const locale of locales) {
     it(`keeps every ${locale} header, row and footer inside the row width`, () => {
       for (const { name, view } of screens(locale)) {
@@ -72,12 +76,13 @@ describe("footers follow QIS v1", () => {
     expect(long).not.toContain("Wischen");
   });
 
-  it("QIS v1.2: the armed footers name the action; the tally one asks for the same menu entry again", () => {
+  it("QUS v1: the armed hint names the action; the tally one in the list asks for a second tap, the side-menu one for the same entry again", () => {
     const good = addSample(calibrate(createMonitor(), UPRIGHT, 0), UPRIGHT, fast, 10_000);
-    expect(buildView(good, fast, { locale: "en", confirm: "calibrate" }, 10_000).footer).toBe("Tap again = save again · Swipe/2× = cancel");
-    expect(buildView(good, fast, { locale: "en", confirm: "reset" }, 10_000).footer).toBe("Again in the menu = clear · 2× = cancel");
-    expect(buildView(good, fast, { locale: "de", confirm: "reset" }, 10_000).footer).toBe("Nochmal im Menü = löschen · 2× = abbrechen");
-    expect(buildView(good, fast, { locale: "de", confirm: "reset" }, 10_000).header).toBe("POSTURE · Zählung löschen?");
+    expect(cockpitModel({ monitor: good, settings: fast, locale: "en", now: 10_000, confirm: "calibrate" }).hint).toBe("Tap again = save again · Swipe/2× = cancel");
+    expect(cockpitModel({ monitor: good, settings: fast, locale: "de", now: 10_000, confirm: "calibrate" }).hint).toBe("Nochmal tippen = neu speichern · Wischen/2× = abbrechen");
+    expect(buildMenuView({ locale: "en", cursor: 1, resetArmed: true }).footer).toBe("Tap again = clear tally · Swipe/2× = cancel");
+    expect(armedMenuFooter("en", "clear")).toBe("Again in the menu = clear · 2× = cancel");
+    expect(armedMenuFooter("de", "löschen")).toBe("Nochmal im Menü = löschen · 2× = abbrechen");
   });
 
   it("builds the recording footer with the helper: countdown first, the way back still last", () => {

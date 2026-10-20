@@ -5,7 +5,8 @@ import {
   secondsOnDay, STOPPED, toCsv, totalSeconds, totalsByProject, type TimeEntry,
 } from "../src/tracking/clock";
 import { parseData, EMPTY_DATA, addProject, readTarget, removeProject } from "../src/storage/persist";
-import { buildView } from "../src/glasses/view";
+import { cockpitModel, shiftFigures } from "../src/cockpit/model";
+import { startRows, startView } from "../src/glasses/view";
 
 const ids = () => {
   let n = 0;
@@ -183,46 +184,6 @@ describe("storage", () => {
   });
 });
 
-describe("display", () => {
-  const projects = ["Client A", "Client B"];
-
-  it("asks for a project when none exist", () => {
-    expect(buildView(STOPPED, [], {}, 0).body.join(" ")).toContain("phone app");
-  });
-
-  it("shows the picker while choosing", () => {
-    const view = buildView(STOPPED, [], { projects, selecting: "Client B" }, 0);
-    expect(view.body).toContain("> Client B");
-    expect(view.footer).toContain("Tap = start");
-    expect(view.footer).toContain("2× = back");
-  });
-
-  it("shows the running clock and the project", () => {
-    const started = startProject(STOPPED, "Client A", 0, ids()).state;
-    const view = buildView(started, [], { projects }, 65_000);
-    expect(view.header).toBe("SHIFTCLOCK · Client A");
-    expect(view.body[0]).toBe("1:05");
-    expect(view.footer).toBe("Tap = stop · 2× = exit");
-  });
-
-  it("includes the running entry in today's total", () => {
-    const day = startOfDay(Date.now());
-    const earlier = entry({ startedAt: day, endedAt: day + 60_000 });
-    const started = startProject(STOPPED, "Client A", day + 120_000, ids()).state;
-
-    const view = buildView(started, [earlier], { projects }, day + 180_000);
-    // 60s recorded + 60s still running
-    expect(view.body).toContain("today 2:00");
-  });
-
-  it("states plainly when nothing is being tracked", () => {
-    const view = buildView(STOPPED, [], { projects }, 0);
-    expect(view.body).toContain("stopped");
-    expect(view.footer).toContain("Tap = choose project");
-    expect(view.body).toContain("today 0:00");
-  });
-});
-
 describe("days and midnight", () => {
   const at = (y: number, m: number, d: number, h: number, min = 0): number => new Date(y, m - 1, d, h, min).getTime();
 
@@ -235,9 +196,13 @@ describe("days and midnight", () => {
 
   it("regression: after midnight, today's total counts only today's part of the running entry", () => {
     const started = startProject(STOPPED, "Client A", at(2026, 3, 9, 23), ids()).state;
-    const view = buildView(started, [], { projects: ["Client A"] }, at(2026, 3, 10, 1));
-    expect(view.body[0]).toBe("2:00:00");
-    expect(view.body).toContain("today 1:00:00");
+    const figures = shiftFigures(started, [], at(2026, 3, 10, 1), null);
+    // The entry has run 2 h, one of them on the new day.
+    expect(figures.openSeconds).toBe(2 * 3600);
+    expect(figures.worked).toBe(3600);
+    const model = cockpitModel({ clock: started, entries: [], now: at(2026, 3, 10, 1), locale: "en", targetHours: null, armed: false, demo: false, projectCount: 1 });
+    expect(model.headline).toEqual(["ON 2:00"]);
+    expect(model.cells[3]).toEqual({ label: "Today", value: "1:00" });
   });
 
   it("regression: a day is a calendar day, not 24 hours, across a DST change", () => {
@@ -269,18 +234,20 @@ describe("days and midnight", () => {
 });
 
 describe("display budget", () => {
-  it("regression: a long project list keeps the picker within seven rows and the choice visible", () => {
+  it("regression: a long project list keeps three rows and the choice visible", () => {
     const many = Array.from({ length: 12 }, (_, i) => "Project " + i);
-    const view = buildView(STOPPED, [], { projects: many, selecting: "Project 10" }, 0);
-    expect(view.body.length).toBeLessThanOrEqual(7);
-    expect(view.body).toContain("> Project 10");
+    const rows = startRows(many, [], "en");
+    const view = startView(rows, 10, { locale: "en", demo: false, canGoBack: false });
+    expect(view.body.length).toBe(3);
+    expect(view.body.some((row) => row.startsWith("● Project"))).toBe(true);
+    expect(view.body).toContain("● Project 10");
   });
 
   it("regression: a long project name is cut to the line", () => {
     const name = "Very long client name with a job number and a task ".repeat(2);
-    const picker = buildView(STOPPED, [], { projects: [name], selecting: name }, 0);
-    for (const row of picker.body) expect(row.length).toBeLessThanOrEqual(46);
-    const running = buildView(startProject(STOPPED, name, 0, ids()).state, [], { projects: [name] }, 1000);
-    expect(running.header.length).toBeLessThanOrEqual(56);
+    const view = startView(startRows([name], [], "en"), 0, { locale: "en", demo: false, canGoBack: false });
+    for (const row of view.body) expect(row.length).toBeLessThanOrEqual(56);
+    const model = cockpitModel({ clock: startProject(STOPPED, name, 0, ids()).state, entries: [], now: 1000, locale: "en", targetHours: null, armed: false, demo: false, projectCount: 1 });
+    expect(model.hint.length).toBeLessThanOrEqual(56);
   });
 });

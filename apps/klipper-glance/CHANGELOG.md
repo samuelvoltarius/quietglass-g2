@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0] — 2026-10-20
+
+### Neu
+
+- **Daheim ohne Bridge:** Die App liest Moonraker direkt (an der echten Brille gemessen: die Even-App lädt Plugins über `http://127.0.0.1`, also blockiert iOS die http-Verbindung ins Heimnetz nicht). Am Handy reicht die Drucker-IP; „Drucker suchen“ prüft die üblichen Heimnetze auf Port 7125. Vorschaubild und 3D-Ansicht rechnet jetzt das Handy aus dem G-Code.
+- Pause/Weiter/Abbruch im Direktmodus nur, wenn am Handy eingeschaltet (zwei Tipper je Befehl bleiben).
+- **Bridge in einem Befehl** für unterwegs: `examples/install-bridge.sh` (Node prüfen, Dienst anlegen, Tailscale-Freigabe, Adresse ausgeben).
+- Store-Texte und Anleitung: „Daheim ohne Zusatzsoftware“.
+
 ## [0.5.10] — 2026-10-17
 
 ### Behoben (Hardware-Test)

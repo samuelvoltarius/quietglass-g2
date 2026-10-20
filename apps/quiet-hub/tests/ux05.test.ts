@@ -43,31 +43,21 @@ describe("overview shows everything at a glance", () => {
       approvals: [{ ...card, agentId: "hermes-spark" }],
     };
     const body = buildView(model("root", report), "de", T0).body;
-    expect(body[0]).toContain("2/3 online");
-    expect(body[0]).toContain("!*○"); // hermes waits, claude busy, codex offline
-    expect(body[0]).toContain("1 aktiv");
-    expect(body[0]).toContain("1 wartet");
-    expect(body[1]).toContain("2 Lichter an");
-    expect(body[1]).toContain("16 Geräte");
-    expect(body[2]).toContain("72 %");
-    expect(body[2]).toContain("41 min");
-    expect(body[3]).toContain("1 neu");
-    expect(body.join("\n")).toContain("Hilfe — Bedienung");
-    expect(body.join("\n")).toContain("hermes-spark fragt");
+    expect(body).toHaveLength(5);
+    expect(body[0]).toBe("> Agenten · 2/3 online · 1 wartet");
+    expect(body[1]).toBe("  Meldungen · 1");
+    expect(body[2]).toBe("  Übersicht");
+    expect(body[3]).toBe("    Zuhause");
+    expect(body[4]).toBe("    Drucker");
   });
 
   it("explains in one line what is missing", () => {
     const empty: HubReport = { ...noView(demoReport()), agents: [], home: { selected: 0, devices: [] }, inbox: { selected: 0, events: [] }, printer: { ...demoReport().printer, job: null, state: "ready" } };
     const de = buildView(model("root", empty), "de", T0).body;
     expect(de[0]).toContain("keiner verbunden");
-    expect(de[1]).toContain("keine Geräte");
-    expect(de.join("\n")).toContain("Relay auf dem PC starten");
-    expect(buildView(model("root", empty), "en", T0).body.join("\n")).toContain("Start the relay");
+    expect(buildView(model("root", empty), "en", T0).body[0]).toContain("none connected");
     expect(buildView(model("home", empty), "de", T0).body[0]).toContain("HA_DEVICES");
     expect(buildView(model("inbox", empty), "en", T0).body.join(" ")).toContain("No alerts yet");
-    const demo = { ...demoReport(), home: { ...demoReport().home, demo: true }, printer: { ...demoReport().printer, demo: true } };
-    expect(buildView(model("root", demo), "de", T0).body[1]).toContain("nicht eingerichtet");
-    expect(buildView(model("root", demo), "de", T0).body[2]).toContain("nicht eingerichtet");
   });
 
   it("agents come from the report alone — an empty list stays empty (no phantom agent)", () => {
@@ -77,18 +67,17 @@ describe("overview shows everything at a glance", () => {
 });
 
 describe("fixed status line", () => {
-  it("shows page, connection, unread and busy agents on every page, within the width", () => {
+  it("is `Modus · state` on every page, within the width (QUS v1)", () => {
     const report = patchAgents(demoReport(), (a) => (a.id === "claude-win" ? { busy: true } : {}));
     for (const locale of ["de", "en"] as const) {
-      for (const screen of ["root", "agent", "home", "printer", "inbox"] as const) {
+      for (const screen of ["root", "agent", "home", "printer", "inbox", "cockpit"] as const) {
         const line = statusLine(model(screen, report), locale);
         expect(line.length).toBeLessThanOrEqual(ROW_WIDTH);
-        expect(line).toMatch(/1 (neu|new)/);
-        expect(line).toMatch(/1 (aktiv|busy)/);
         expect(line).not.toContain("…");
       }
     }
-    expect(statusLine(model("printer", report), "de")).toBe("QUIET HUB · Drucker · Demo · 1 neu · 1 aktiv");
+    expect(statusLine(model("printer", report), "de")).toBe("Drucker · Demo");
+    expect(statusLine(model("root", report), "de")).toBe("Quiet Hub · Demo");
   });
 
   it("is the header and counts pending approvals", () => {

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.0] — 2026-10-20
+
+Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.
+
+### Brille
+
+- **Hauptbild als Cockpit-Bild** (Muster Rain Lens, `src/screen/*` unverändert aus Rain Lens): das ganze Display ist ein Bild aus vier Kacheln. Links oben ein **Ring mit den fünf Pulszonen** (der Puls steht in der Mitte, die aktuelle Zone ist dick und hell), darunter Leistung und Kadenz groß, darunter `RAD · LIVE`. Rechts der Kopf `ENDURANCE HUD  14:05`, **eine** Überschrift (Rad: `31.4 KM/H`, Laufen: `5:42 /KM`) und sechs Werte in drei Spalten (SPORT, ZEIT, DISTANZ, Ø TEMPO bzw. Ø PACE, ZONE, PULS MAX). Zone 5 bekommt einen Rahmen. Helligkeit statt Farbe (Text 15, Label 8, gedimmt 4).
+- **Nur geänderte Kacheln werden gesendet:** dieselben Werte senden nichts, die Uhr ändert nur die Kachel oben rechts, neue Leistung/Kadenz nur die unten links. Während der Beenden-Dialog offen sein kann, wird keine Kachel geschrieben.
+- Eine Hinweiszeile unten über den gemeinsamen Helfer: Tippen = neu, Wischen = Sport, 2× = Ende. Verspätete oder ausgefallene Werte zeigen weiter `VERALTET 12s` (in der Zeile links unten), Beispieldaten `DEMO`.
+- Entfallen: Textzeilen, die Hilfeseite (Halten tut nichts mehr, die Bedienung steht am Handy), die Sportliste und das Rad-/Lauf-Symbol.
+- Beibehalten: `SIDE_MENU = false`, die Beenden-Dialog-Logik unverändert (`src/exit.ts`, kein Zeichnen und keine Kachel, solange er offen sein kann), Zeitlimits für jeden Aufruf an die Brille, erste Seite mit Rebuild + Create, Abfrage der Bridge alle 2 s mit höchstens einer Anfrage zugleich.
+
+### Handy
+
+- **Genau drei Tabs in einer Zeile: Jetzt / Verlauf / Einstellungen** im Rain-Look: Kicker `QUIETGLASS / SPORT`, Titel, Status-Pille, Statusbanner, Hero-Karte mit dem Hauptwert, 2×2-Kennzahlen (Puls mit Zone, Leistung, Kadenz, Distanz) und ein Hauptknopf („Jetzt neu laden“). *Verlauf* zeigt Distanz, Zeit, Ø und Max Puls, Ø Leistung und eine waagrechte Kartenleiste mit einer Karte je Minute (nur im Speicher, solange die App offen ist). *Einstellungen* sind gruppierte Karten (Verbindung, Sport und Puls mit Maximalpuls für die Zonen, Brille, Sprache, Mehr); beim ersten Start steht eine Drei-Schritte-Checkliste oben und die Seite öffnet dort. Ohne Bridge läuft ein Beispiel-Training.
+- Alle fünf Sprachen (de, en, fr, es, it) auch für die neuen Texte.
+- Die Seite folgt jeder Abfrage, ohne Eingaben zu stören.
+
+### Technik
+
+- Reine Modellfunktionen mit Tests: `src/cockpit/model.ts` (Überschrift, Zellen, Ring, Hinweis), `src/cockpit/compose.ts` (nur Layout), `src/telemetry/model.ts` (Zustand, Zonen, Mittelwerte, Verlauf). Neue Tests: Zellen, Überschrift, Ring, Hinweise in allen Sprachen, Kachel-Diff, Beenden-Dialog ohne Kachel-Sendungen, Handy-Modelle.
+- Vorschau (nicht ausgeliefert): `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit.png` und `store/preview-cockpit-run.png`.
+
+QIS: Fußzeilen über den gemeinsamen Helfer, `2× = zurück|Ende`.
+
 ## [0.5.6] — 2026-10-17
 
 ### Behoben (Hardware-Test, Schrittprotokoll)

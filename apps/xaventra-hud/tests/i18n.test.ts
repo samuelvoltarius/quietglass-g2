@@ -53,13 +53,13 @@ describe("message catalogue", () => {
     expect(messages.en["p.save"]).toBe("Save and connect");
   });
 
-  it("QIS v1.2: no HTTP status codes on the glasses, no 'Doppeltippen' on the phone, help is a list row (side menu off)", () => {
+  it("QIS v1.2: no HTTP status codes on the glasses, no 'Doppeltippen' on the phone, no help page (QUS v1)", () => {
     for (const locale of locales) {
       for (const [key, text] of Object.entries(messages[locale])) {
         if (key.startsWith("g.")) expect(text, key).not.toMatch(/\b[1-5]\d\d\b|\{status\}/);
         expect(text, key).not.toMatch(/Doppeltipp|[Dd]ouble tap/);
       }
-      expect(messages[locale]["g.opt.help"]).toBe(locale === "de" ? "Hilfe" : "Help");
+      expect(Object.keys(messages[locale]).filter((key) => /help/i.test(key)), locale).toEqual([]);
     }
   });
 

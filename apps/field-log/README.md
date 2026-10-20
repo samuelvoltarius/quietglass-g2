@@ -9,10 +9,9 @@
 >
 > **In 3 Schritten loslegen**
 > 1. FieldLog installieren und auf der Brille öffnen.
-> 2. Tipp an die Brille – ein Rundgang startet (mit Datum als Name).
-> 3. Nochmal tippen, mit Wischen eine Schnellnotiz wählen („Beschädigt“, „Fehlt“ …),
->    tippen zum Speichern. Halten macht ein Foto (ohne Rundgang: Hilfe). Am Handy kannst du Notizen auch
->    eintippen, Bereiche setzen und den Bericht exportieren.
+> 2. Auf der Startseite „Schnellnotiz“ antippen – ein Rundgang startet (mit Datum als Name).
+> 3. Mit Wischen eine Schnellnotiz wählen („Beschädigt“, „Fehlt“ …), tippen zum Speichern.
+>    Am Handy kannst du Notizen auch eintippen, Bereiche setzen, Fotos machen und den Bericht exportieren.
 >
 > **Tabelle (CSV):** Neben dem CSV-Knopf wählst du das Format. „Für Excel (DE/AT)“
 > (Standard bei deutscher App-Sprache) öffnet sich per Doppelklick richtig im deutschen
@@ -41,20 +40,21 @@ FieldLog lets you say it and carry on.
 
 Works out of the box, with no server:
 
-1. **Tap** — with nothing open, an inspection starts, named after the date and time.
-2. **Tap** — the quick-note list opens (*OK, Damaged, Missing, Dirty, Not working,
+1. The start page lists at most three entries: *Quick note* (or *Record* with a speech server), *Notes · n* and *Type · note*. **Swipe** moves, **tap** opens.
+2. **Tap** on *Quick note* — with nothing open an inspection starts, named after the date and time, and the quick-note list opens (*OK, Damaged, Missing, Dirty, Not working,
    Check later, See photo* — edit the list on the phone). **Swipe** to choose,
    **tap** to save. The last row is *Cancel*.
-3. **Hold** takes a photo with the phone camera and attaches it. With no entry yet, the
-   photo becomes an entry of its own. With no inspection open, a hold opens the help.
-4. On the phone you can also **type** a note, set the area, and export.
+3. *Notes* lists the entries of the walk, newest first; a tap opens one as a reading view (a tap goes on to the next note, a swipe turns the pages, 2× goes back).
+4. Photos are taken on the phone (button *Take a photo*), or under review with *Keep + photo*.
+5. On the phone you can also **type** a note, set the area, and export.
 
-With a speech server set up (Advanced, optional), tap dictates instead:
-**tap** to speak, **tap** to stop (safety cap 10 min), then choose *Keep*,
+With a speech server set up (Advanced, optional), *Record* dictates instead. While recording the glasses show a cockpit image
+(*RECORDING 0:42*, the level of the microphone, today's notes, the last one, the sync source, the length); when the text is made
+it says *RECOGNISING*, and between notes *READY*. **Tap** to speak, **tap** to stop (safety cap 10 min), then choose *Keep*,
 *Keep + photo* or *Discard* with a swipe and tap. *Discard* is armed first: a second single tap
 within 4 s discards the text.
 
-Severity (`note` · `minor` · `major`) is chosen with a swipe on the resting screen (the last stop is *Help*) and applies to the next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
+Severity (`note` · `minor` · `major`) is the *Type* row of the start page (a tap sets the next one) and applies to the next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
 entry inherits the current one, so the report groups itself.
 
 ## Every transcript is confirmed
@@ -102,7 +102,7 @@ behaves exactly as described above.
 ## Photos
 
 The glasses have no camera. FieldLog uses the SDK's phone-camera picker, which
-is user-initiated by design — holding on the resting screen (or choosing *Keep + photo* under review) opens the camera on your
+is user-initiated by design — the phone page's photo button (or choosing *Keep + photo* under review) opens the camera on your
 phone, and the photo attaches to the entry you just made.
 
 ## Export
@@ -153,10 +153,11 @@ Major: 1 · Minor: 2 · Notes: 0
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start an inspection · open quick notes · save the highlighted note · (with a server: dictate · finish · keep) |
-| **Swipe** | Only moves: type of the next entry (note · minor · major · *Help*), quick-note list, *Keep*/*Keep + photo*/*Discard*. Never deletes or discards anything |
-| **Hold** | Photo with the phone camera (with no inspection: opens the help; under *Keep this?*: jumps to *Keep + photo*) |
-| **2×** | Back one level (quick notes, help); at the resting screen leave FieldLog. Does nothing while recording or under *Keep this?* |
+| **Tap** | Open the selected start entry · save the highlighted quick note · open a note · (with a server: dictate · finish · keep) |
+| **Swipe** | Only moves: start list, notes, quick notes, pages of a note, *Keep*/*Keep + photo*/*Discard*. Never deletes or discards anything |
+| **2×** | Back one level (notes, recorder, quick notes); at the start page leave FieldLog. Does nothing while recording or under *Keep this?* |
+
+The hold never reaches the app on the real glasses, so nothing depends on it.
 
 ## Language
 

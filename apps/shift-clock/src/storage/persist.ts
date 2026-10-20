@@ -18,7 +18,7 @@ export interface ClockData {
    */
   readonly open: ClockState;
   readonly invertScroll: boolean;
-  /** Optional hours per day, marked on the day bar. Null: no target. */
+  /** Optional hours per day, the ring on the glasses is drawn against it. Null: no target. */
   readonly dailyTargetHours: number | null;
   /** Export format the user chose. Null: follow the app language. */
   readonly csvFormat: CsvFormat | null;

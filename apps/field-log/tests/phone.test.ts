@@ -53,13 +53,14 @@ describe("phone page", () => {
     const inspection = addEntry(addEntry(data.inspections[0]!, "one", "note", 1), "two", "note", 2);
     data = upsertInspection(data, inspection);
     const page = mount(data);
+    // The list shows the newest first: the first select belongs to "two".
     const [first, second] = page.root.querySelectorAll(".sev");
     first!.value = "major";
     first!.fire("change");
     page.root.querySelectorAll(".sev")[1]!.value = "minor";
     page.root.querySelectorAll(".sev")[1]!.fire("change");
     expect(second).toBeDefined();
-    expect(page.data().inspections[0]!.entries.map((e) => e.severity)).toEqual(["major", "minor"]);
+    expect(page.data().inspections[0]!.entries.map((e) => e.severity)).toEqual(["minor", "major"]);
   });
 
   it("regression: a validation message is actually shown", () => {
@@ -120,7 +121,7 @@ describe("phone page for beginners", () => {
 
   it("follows the device language and says what to do first", () => {
     const page = mountIn("de-AT");
-    expect(page.root.innerHTML).toContain("Tipp an die Brille, um einen Rundgang zu starten");
+    expect(page.root.innerHTML).toContain("Kein Rundgang offen.");
     expect(page.root.innerHTML).toContain('<option value="de" selected>');
   });
 
@@ -161,16 +162,48 @@ describe("phone page for beginners", () => {
     expect(page.data().quickNotes).toEqual([]);
   });
 
-  it("is split into tabs, with the speech server in the last one", () => {
-    const html = mountIn("de-AT", open()).root.innerHTML;
+  it("has exactly three tabs in one row: Now / Notes / Settings, the server in the last one", () => {
+    const html = mountIn("en-US", open()).root.innerHTML;
     expect(html).toContain('<nav class="tabbar"');
-    for (const id of ["walk", "archive", "glasses", "more"]) {
+    expect(html.match(/data-tab-go="/g)).toHaveLength(3);
+    for (const id of ["now", "notes", "settings"]) {
       expect(html).toContain(`data-tab="${id}"`);
       expect(html).toContain(`data-tab-go="${id}"`);
     }
-    expect(html).toContain('class="chip on">Flat 3');
-    expect(html.indexOf('data-tab="more"')).toBeLessThan(html.indexOf('id="stt"'));
-    expect(html.indexOf('data-tab="walk"')).toBeLessThan(html.indexOf('id="add-note"'));
+    expect(html).toContain('id="pill"');
+    expect(html).toContain("QUIETGLASS / NOTES");
+    expect(html.indexOf('data-tab="settings"')).toBeLessThan(html.indexOf('id="stt"'));
+    expect(html.indexOf('data-tab="notes"')).toBeLessThan(html.indexOf('id="add-note"'));
+    expect(html.indexOf('data-tab="now"')).toBeLessThan(html.indexOf("hero-card"));
+  });
+
+  it("opens Settings with the checklist on the first start, and folds the server once it is set up", () => {
+    const first = mountIn("en-US").root.innerHTML;
+    expect(first).toContain('class="card setup"');
+    expect(first).toContain('<details class="fold card" open>');
+    const done = mountIn("en-US", { ...open(), sttUrl: "https://stt.test" }).root.innerHTML;
+    expect(done).not.toContain('class="card setup"');
+    expect(done).toContain("Speech server · set up");
+    expect(done).not.toMatch(/<details class="fold card" open>/);
+  });
+
+  it("deleting an entry takes two taps: the first asks, the second deletes", () => {
+    let data = open();
+    data = upsertInspection(data, addEntry(data.inspections[0]!, "one", "note", 1));
+    const page = mountIn("en-US", data);
+    page.root.get(".drop").fire("click");
+    expect(page.data().inspections[0]!.entries).toHaveLength(1);
+    expect(page.root.innerHTML).toContain("Tap again");
+    page.root.get(".drop").fire("click");
+    expect(page.data().inspections[0]!.entries).toHaveLength(0);
+  });
+
+  it("removing a walk takes two taps as well", () => {
+    const page = mountIn("en-US", open());
+    page.root.get(".remove-walk").fire("click");
+    expect(page.data().inspections).toHaveLength(1);
+    page.root.get(".remove-walk").fire("click");
+    expect(page.data().inspections).toHaveLength(0);
   });
 
   it("keeps the speech server under Advanced, marked optional", () => {

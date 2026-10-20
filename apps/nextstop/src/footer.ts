@@ -31,7 +31,7 @@ const WORDS = {
  * source of the times) stands in front. Too wide for the row: the swipe goes
  * first, then the lead, then the hold. The 2× never goes.
  */
-export function footer(locale: Locale, parts: FooterParts, end: FooterEnd = "back", lead = ""): string {
+export function footer(locale: Locale, parts: FooterParts, end: FooterEnd = "back", lead = "", limit = ROW_WIDTH): string {
   const w = WORDS[locale];
   const tail = `2× = ${end === "exit" ? w.exit : w.back}`;
   const build = (p: FooterParts, withLead: boolean): string => [
@@ -46,11 +46,11 @@ export function footer(locale: Locale, parts: FooterParts, end: FooterEnd = "bac
   const candidates: Array<[FooterParts, boolean]> = [[parts, true], [noSwipe, true], [noSwipe, false], [tapOnly, false]];
   for (const [candidate, withLead] of candidates) {
     const row = build(candidate, withLead);
-    if (row.length <= ROW_WIDTH) return row;
+    if (row.length <= limit) return row;
   }
   // Still too wide: the tap label gives way, the 2× stays.
   const head = `${w.tap} = `;
-  const room = Math.max(1, ROW_WIDTH - head.length - ` · ${tail}`.length);
+  const room = Math.max(1, limit - head.length - ` · ${tail}`.length);
   const label = parts.tap ?? "";
   return `${head}${label.length <= room ? label : label.slice(0, room - 1).trimEnd() + "…"} · ${tail}`;
 }

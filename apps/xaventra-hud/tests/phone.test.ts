@@ -32,7 +32,9 @@ describe("phone page", () => {
   it("is split into tabs with a tab bar and keeps every control", () => {
     const { root } = mount({ serverUrl: "", invertScroll: false });
     expect(root.innerHTML).toContain('class="tabbar"');
-    for (const id of ["xaventra", "glasses", "server", "more"]) expect(root.innerHTML).toContain(`data-tab-go="${id}"`);
+    // QUS v1: exactly three tabs in one row.
+    for (const id of ["now", "cards", "settings"]) expect(root.innerHTML).toContain(`data-tab-go="${id}"`);
+    expect((root.innerHTML.match(/data-tab-go=/g) ?? []).length).toBe(3);
     for (const id of ["#url", "#token", "#save", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
   });
 
@@ -89,7 +91,7 @@ describe("phone page", () => {
   });
 
   it("shows the connection state, with the reason for an error", () => {
-    expect(mount({ serverUrl: "https://x.example", invertScroll: false }, { kind: "ok" }).root.innerHTML).toContain("Verbunden.");
+    expect(mount({ serverUrl: "https://x.example", invertScroll: false }, { kind: "ok" }).root.innerHTML).toContain("Alles ruhig");
     expect(mount({ serverUrl: "https://x.example", invertScroll: false }, { kind: "error", reason: "Token abgelehnt (401)" }).root.innerHTML).toContain("Fehler: Token abgelehnt (401)");
   });
 

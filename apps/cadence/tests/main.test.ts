@@ -2,11 +2,17 @@ import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge to check the run loop without hardware.
-const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+const harness = vi.hoisted(() => ({ bridge: null as unknown, models: [] as import("../src/cockpit/model").CockpitModel[] }));
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
+// The cockpit is an image: the tests read the model that was drawn last.
+vi.mock("../src/cockpit/compose", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/cockpit/compose")>();
+  return { ...real, composeCockpit: (model: import("../src/cockpit/model").CockpitModel, backend: import("../src/screen/text").TextBackend) => { harness.models.push(model); return real.composeCockpit(model, backend); } };
+});
+const last = (): import("../src/cockpit/model").CockpitModel => harness.models[harness.models.length - 1]!;
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
@@ -15,28 +21,24 @@ function fakeBridge(writeDelayMs = 0, storage = new Map<string, string>()) {
   let handler: ((event: unknown) => void) | undefined;
   // Plain functions, not vi.fn: vitest's spies attach handlers to returned promises, which would hide unhandled rejections.
   const shutdown = { calls: 0, fail: false, confirm: true, modes: [] as (number | undefined)[] };
-  const writes = { count: 0, creates: 0, rebuilds: 0, inFlight: 0, maxInFlight: 0, body: "" };
-  const write = async (content: string, isBody: boolean): Promise<void> => {
+  const writes = { count: 0, creates: 0, rebuilds: 0, inFlight: 0, maxInFlight: 0, tiles: 0 };
+  const write = async (): Promise<void> => {
     writes.count += 1;
     writes.inFlight += 1;
     writes.maxInFlight = Math.max(writes.maxInFlight, writes.inFlight);
     if (writeDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, writeDelayMs));
-    if (isBody) writes.body = content;
     writes.inFlight -= 1;
   };
   const bridge = {
     getLocalStorage: async (key: string) => storage.get(key) ?? "",
     setLocalStorage: async (key: string, value: string) => { storage.set(key, value); return true; },
     rebuildPageContainer: async () => { writes.rebuilds += 1; return true; },
-    createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => { writes.creates += 1;
-      await write((page.textObject ?? []).find((part) => part.containerID === 2)?.content ?? "", true);
+    createStartUpPageContainer: async () => { writes.creates += 1;
+      await write();
       return 0;
     },
-    textContainerUpgrade: async (update: { containerID?: number; content?: string }) => {
-      await write(update.content ?? "", update.containerID === 2);
-      return true;
-    },
-    updateImageRawData: async () => "success",
+    textContainerUpgrade: async () => true,
+    updateImageRawData: async () => { writes.tiles += 1; await write(); return "success"; },
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
@@ -47,6 +49,7 @@ function fakeBridge(writeDelayMs = 0, storage = new Map<string, string>()) {
 describe("cadence run loop", () => {
   beforeEach(() => {
   resetGestureDedupe();
+    harness.models.length = 0;
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
     // The glasses follow the device language; these assertions read the English text.
@@ -69,12 +72,12 @@ describe("cadence run loop", () => {
     const fake = await boot();
     fake.emit(0); // start
     await vi.advanceTimersByTimeAsync(60_000); // 100 beats at 100 bpm
-    expect(fake.writes.body).toContain("100 bpm");
-    expect(fake.writes.body).toContain("bar 26");
+    expect(last().headline[0]).toBe("100 BPM");
+    expect(last().graphic.center).toBe("26");
     fake.emit(1); // tempo +4
     await vi.advanceTimersByTimeAsync(10);
-    expect(fake.writes.body).toContain("104 bpm");
-    expect(fake.writes.body).toContain("bar 26");
+    expect(last().headline[0]).toBe("104 BPM");
+    expect(last().graphic.center).toBe("26");
   });
 
   it("never writes two frames to the glasses at once", async () => {
@@ -134,7 +137,7 @@ describe("cadence run loop", () => {
     // Gestures still work after staying.
     fake.emit(1);
     await vi.advanceTimersByTimeAsync(10);
-    expect(fake.writes.body).toContain("104 bpm");
+    expect(last().headline[0]).toBe("104 BPM");
     await vi.advanceTimersByTimeAsync(5000);
     expect(fake.writes.count).toBeGreaterThan(writesAtCancel);
   });
@@ -234,13 +237,13 @@ describe("cadence run loop", () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(fake.writes.body).toContain("bar 26");
+    expect(last().graphic.center).toBe("26");
     fake.emit(9);
     await vi.advanceTimersByTimeAsync(700);
-    expect(fake.writes.body).toContain("bar 1");
-    expect(fake.writes.body).not.toContain("paused");
+    expect(last().graphic.center).toBe("1");
+    expect(last().headline[1]).toBe("RUNNING");
     await vi.advanceTimersByTimeAsync(2400);
-    expect(fake.writes.body).toContain("bar 2");
+    expect(last().graphic.center).toBe("2");
   });
 
   it("picks the beat up again after a restart (phone locked, app unloaded)", async () => {
@@ -252,11 +255,10 @@ describe("cadence run loop", () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(storage.get("quietglass.cadence.run.v1")).toContain('"running":true');
 
-    const second = await boot(0, storage);
+    await boot(0, storage);
     await vi.advanceTimersByTimeAsync(1100);
-    expect(second.writes.body).toContain("bar ");
-    expect(second.writes.body).not.toContain("bar 1 ");
-    expect(second.writes.body).not.toContain("paused");
+    expect(last().headline[1]).toBe("RUNNING");
+    expect(Number(last().graphic.center)).toBeGreaterThan(1);
   });
 
   it("stops drawing in the background and rebuilds on return", async () => {

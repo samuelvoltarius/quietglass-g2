@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createPage, PAGE_CALL_MS, TEXT_CALL_MS, updatePage } from "../src/glasses/render";
+import { COCKPIT_TILES, createCockpitPage, createPage, guardedTileSend, IMAGE_CALL_MS, PAGE_CALL_MS, TEXT_CALL_MS, updatePage, updateTextPage } from "../src/glasses/render";
 import type { LogView } from "../src/glasses/view";
 
 // Draws run one after another. A call into the glasses whose answer never
@@ -57,5 +57,47 @@ describe("calls into the glasses are bounded", () => {
     const before = upgrade.mock.calls.length;
     expect((await updatePage(b, nextView)).ok).toBe(true);
     expect(upgrade.mock.calls.length - before).toBe(3);
+  });
+});
+
+describe("the cockpit page and its tiles", () => {
+  it("only the text containers whose text changed are written", async () => {
+    const upgrade = vi.fn(async () => true);
+    const b = bridge({ textContainerUpgrade: upgrade });
+    await createPage(b, view);
+    await updateTextPage(b, nextView, view);
+    // Header unchanged, body and footer changed.
+    expect(upgrade).toHaveBeenCalledTimes(2);
+    await updateTextPage(b, nextView, nextView);
+    expect(upgrade).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates the cockpit as one input container and four image tiles", async () => {
+    const create = vi.fn(async () => 0);
+    expect((await createCockpitPage(bridge({ createStartUpPageContainer: create }))).ok).toBe(true);
+    const page = (create.mock.calls[0] as unknown as [{ textObject: Array<{ containerID: number }>; imageObject: Array<{ containerID: number }> }])[0];
+    expect(page.textObject.map((text) => text.containerID)).toEqual([20]);
+    expect(page.imageObject.map((image) => image.containerID)).toEqual(COCKPIT_TILES.map((tile) => tile.id));
+  });
+
+  it("no tile is written while the exit dialog may be on screen (the sender's guard says no)", async () => {
+    const update = vi.fn(async () => "success");
+    const b = bridge({ updateImageRawData: update });
+    let allowed = false;
+    const send = guardedTileSend(b, () => allowed);
+    expect(await send(COCKPIT_TILES[0], new Uint8Array(1))).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+    allowed = true;
+    expect(await send(COCKPIT_TILES[0], new Uint8Array(1))).toBe(true);
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up on a tile that never gets an answer", async () => {
+    vi.useFakeTimers();
+    const b = bridge({ updateImageRawData: vi.fn(() => never()) });
+    const pending = guardedTileSend(b, () => true)(COCKPIT_TILES[1], new Uint8Array(1));
+    const caught = pending.then(() => "resolved", (error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(IMAGE_CALL_MS + 100);
+    expect(await caught).toMatch(/no answer from the glasses/);
   });
 });

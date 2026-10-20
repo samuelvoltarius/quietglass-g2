@@ -1,18 +1,15 @@
+/* Babel Glass phone page - QUS v1, the look of Rain Lens (dark, teal accent). */
 :root {
-  --bg: #0f1115;
-  --card: #171a21;
-  --line: #262b36;
-  --text: #e7e9ee;
-  --muted: #9aa3b2;
-  --accent: #6ee7a8;
-  color-scheme: dark light;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f7f9; --card: #ffffff; --line: #e2e5ea;
-    --text: #15181d; --muted: #5d6675; --accent: #0f9d58;
-  }
+  --bg: #0b1020;
+  --card: #121a2b;
+  --soft: #1b2438;
+  --line: #2b3752;
+  --text: #f5f7fb;
+  --muted: #9ca8c2;
+  --accent: #14b8a6;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -238,3 +235,39 @@ details.fold[open] > summary::after { transform: rotate(90deg); }
 /* Meine Wörter */
 .count { margin: 0 0 8px; font-size: 14px; color: var(--muted); }
 #words ul.memory li { padding: 12px 0; }
+
+/* ---- 1.1.0 / QUS v1: banner, hero card, key figures, strip ---- */
+.brand h1 { font-size: 30px; line-height: 1.15; font-weight: 700; }
+.chip.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+
+.banner {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: var(--soft);
+  border-left: 3px solid var(--muted); font-weight: 600;
+}
+.banner .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.banner.tone-ok { border-left-color: var(--accent); }
+.banner.tone-ok .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+.hero-card { border-top: 3px solid var(--accent); }
+.hero { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 4px 0 18px; }
+.hero div { display: grid; min-width: 0; }
+.hero span { color: var(--accent); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.hero strong { font-size: clamp(34px, 11vw, 56px); line-height: 1; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+.hero p { margin: 0 0 6px; color: var(--muted); white-space: nowrap; }
+
+.stats {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--line);
+}
+.stats div { min-width: 0; padding: 11px 10px; background: var(--soft); }
+.stats span, .stats small { display: block; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.stats b { font-size: 22px; }
+.hero-card .modes { margin-top: 16px; }
+
+.strip-title { margin: 4px 0 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.strip { display: grid; grid-auto-columns: minmax(132px, 1fr); grid-auto-flow: column; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 8px; scrollbar-color: var(--line) transparent; }
+.host { display: grid; gap: 3px; align-content: start; padding: 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--accent); }
+.host b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host span { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabbar button { white-space: nowrap; }

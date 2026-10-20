@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/decibel-guard",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "description": "Quietglass DecibelGuard — noise dose over time, level only",
   "author": "Quietglass",
   "license": "MIT",

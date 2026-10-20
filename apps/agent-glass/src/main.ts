@@ -1,12 +1,16 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { EMPTY_STATE, applyEvent, type AgentState, type Session } from "./terminal/types";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { answerPages, buildView, helpView, sessionList, type AgentView, type Armed } from "./glasses/view";
+import { answerPages, buildView, helpView, sessionList, showsCockpit, type AgentView, type Armed, type ViewMode } from "./glasses/view";
 import { sameView } from "./glasses/diff";
 import { footer } from "./glasses/footer";
-import { createPage, forgetPage, faceKey, updatePage, type MenuSpec } from "./glasses/render";
+import { COCKPIT_TILES, createPage, forgetPage, guardedTileSend, updatePage, type MenuSpec } from "./glasses/render";
 import { t } from "./messages";
-import { MASCOT_STEP_MS, headerIcon, isOffline } from "./glasses/face";
+import { isOffline } from "./glasses/face";
+import { cockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { load, parsePairingUrl, save, type Settings } from "./storage/persist";
 import { mountPhoneUi } from "./ui/phone";
 import { AgentNarrator, createBrowserSpeechEngine } from "./speech/narrator";
@@ -177,8 +181,10 @@ async function boot(): Promise<void> {
   /** The request the cursor belongs to. */
   let choiceFor: AgentState["pending"] = null;
 
+  /** Which page of the open session is up: the status cockpit (default) or the answer text. */
+  let mode: ViewMode = "status";
   let lastView: AgentView | null = null;
-  let lastFace = "";
+  let lastLayout: "text" | "cockpit" | null = null;
   let pageReady = false;
   /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
   let rebuildWanted = false;
@@ -232,7 +238,7 @@ async function boot(): Promise<void> {
         listable: backend().capabilities.sessions,
         now: new Date(),
       })
-      : buildView(state, new Date(), locale, page, { choice, armed, decisions: backend().capabilities.decisions });
+      : buildView(state, new Date(), locale, page, { choice, armed, decisions: backend().capabilities.decisions, mode });
     // Demo: nothing but 2× works, so the footer says what to do instead (QIS §7).
     return demo ? { ...view, footer: footer(locale, { hint: t(locale, "g.demoFoot") }, "exit") } : view;
   };
@@ -240,6 +246,15 @@ async function boot(): Promise<void> {
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+  /** True while the status cockpit is the page on the glasses: only then may a tile be written. */
+  let cockpitPage = false;
+  let textBackend: TextBackend | null = null;
+  /**
+   * The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. The write is refused
+   * while the exit dialog may be on screen, after the app closed, in the background and whenever the page is not
+   * the cockpit - a tile write could cover the dialog or land on containers that are gone.
+   */
+  const tileSender = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused && cockpitPage && pageReady));
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
     if (closed || paused) return;
@@ -248,12 +263,32 @@ async function boot(): Promise<void> {
     // Only what was actually drawn may be answered by a swipe.
     const shown = decisionOnScreen(screen, state) ? state.pending : null;
     const now = Date.now();
-    const face = headerIcon(screen, state, isOffline(state, demo || settings.token !== "", streamGap !== null), now);
-    const key = faceKey(face);
-    if (pageReady && sameView(lastView, view) && key === lastFace) { gate.displayed(shown, now); return; }
-    const result = pageReady ? await updatePage(bridge, view, face, lastView) : await createPage(bridge, view, face, sideMenu(locale));
+    const offline = isOffline(state, demo || settings.token !== "", streamGap !== null);
+    if (showsCockpit(screen, state, mode)) {
+      if (!pageReady || lastLayout !== "cockpit") {
+        cockpitPage = false;
+        const installed = await createPage(bridge, view, sideMenu(locale), "cockpit");
+        if (closed) return;
+        if (!installed.ok) { pageReady = false; gate.displayed(null, Date.now()); console.warn("[agent-glass] draw failed:", installed.reason); return; }
+        pageReady = true; lastView = view; lastLayout = "cockpit";
+        cockpitPage = true;
+        // A new page starts with blank images.
+        tileSender.reset();
+      }
+      textBackend ??= autoBackend();
+      gate.displayed(shown, now);
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tileSender.push(composeCockpit(cockpitModel({
+        state, now: new Date(now), locale, demo, offline, armed,
+        canInterrupt: state.busy && state.controllable,
+      }), textBackend));
+      return;
+    }
+    cockpitPage = false;
+    if (pageReady && lastLayout === "text" && sameView(lastView, view)) { gate.displayed(shown, now); return; }
+    const result = pageReady && lastLayout === "text" ? await updatePage(bridge, view, lastView) : await createPage(bridge, view, sideMenu(locale), "text");
     if (closed) return;
-    if (result.ok) { pageReady = true; lastView = view; lastFace = key; gate.displayed(shown, Date.now()); return; }
+    if (result.ok) { pageReady = true; lastView = view; lastLayout = "text"; gate.displayed(shown, Date.now()); return; }
     pageReady = false;
     gate.displayed(null, Date.now());
     console.warn("[agent-glass] draw failed:", result.reason);
@@ -295,6 +330,7 @@ async function boot(): Promise<void> {
 
     state = { ...EMPTY_STATE, session };
     screen = "agent";
+    mode = "status";
     page = 0;
     transcript = [];
     transcriptChanged();
@@ -465,11 +501,12 @@ async function boot(): Promise<void> {
   // The elapsed counter moves with the clock and the face blinks or writes:
   // redraw twice a second, but only on the page that shows them. Unchanged
   // frames cost nothing (see draw).
-  const ticker = setInterval(() => { if (screen === "agent" && !paused) void draw(); }, MASCOT_STEP_MS);
+  const ticker = setInterval(() => { if (screen === "agent" && !paused) void draw(); }, 1000);
 
   /** Everything off for good: after the exit dialog, a system exit or a crash. */
   const shutDown = (): void => {
     closed = true;
+    tileSender.close();
     generation += 1;
     clearInterval(ticker);
     clearTimeout(armTimer);
@@ -530,7 +567,7 @@ async function boot(): Promise<void> {
     const action = routeGesture(gesture.gesture, {
       screen, state, selected, sessionCount: rows().length,
       decisions: backend().capabilities.decisions, demo,
-      page, pages: answerPages(state), choice, armed,
+      page, pages: answerPages(state), choice, armed, mode,
     });
 
     // Anything but the confirming tap itself lapses an armed action.
@@ -571,6 +608,12 @@ async function boot(): Promise<void> {
 
       case "page":
         page = action.page;
+        void draw();
+        return;
+
+      case "mode":
+        mode = action.mode;
+        page = 0;
         void draw();
         return;
 

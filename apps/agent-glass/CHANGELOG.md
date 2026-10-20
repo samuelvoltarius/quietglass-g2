@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0] — 2026-10-20
+
+### Geändert (QUS v1 „keine Textwand“)
+
+- **Brille: der Status der offenen Sitzung ist jetzt ein Cockpit-Bild.** Links das Maskottchen in einem Ring (schreibt, solange der Agent arbeitet; Ring gestrichelt, wenn der Unterbrechen-Dialog offen ist, blass ohne Verbindung), darunter der Sitzungstitel; rechts klein „AGENT  14:05“, **eine große Aussage** (ARBEITET / BEREIT / OFFLINE) und sechs Kennzahlen in drei Spalten (Agent, Sitzung, Dauer, Schritte, Werkzeug, Zugriff). Unten eine Hinweiszeile. Es werden nur geänderte Kacheln gesendet (das Maskottchen bewegt sich alle 1,5 s, die Dauer ist auf 5 s bzw. Minuten gerundet, damit nicht jede Sekunde ein Bild über Bluetooth geht); während der Beenden-Dialog offen sein kann, in der Pause und nach dem Beenden wird keine Kachel gesendet.
+- **Wischen auf dem Cockpit öffnet die Antwort als Lesetext** (Kopfzeile mit Sitzungstitel, Neuestes unten, Wischen blättert seitenweise, Tippen = neueste Seite); **2× geht zurück zum Cockpit**, auf dem Cockpit fragt 2× nach dem Beenden. Tippen auf dem Cockpit liest die Antwort vor, Halten schlägt Unterbrechen vor (wie bisher erst nach zweitem Tippen).
+- Freigaben, Fragen, Fehler, Sitzungsliste und Hilfe bleiben Textseiten und nehmen das ganze Display (die Liste Erlauben/Ablehnen mit Bestätigen ist unverändert). Das kleine Gesicht in der Kopfzeile entfällt, die Kopfzeile ist eine volle Zeile.
+- Neu im Zustand: `steps` zählt die Werkzeuge seit der letzten Anweisung (Zelle „Schritte“).
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Sitzungen / Einstellungen) im Look von Rain Lens: Statusbanner, Hero-Karte mit dem Zustand, 2×2-Kennzahlen, ein Senden-Knopf; Sitzungen mit Liste, Verwalten (eingeklappt) und dem ganzen Verlauf; Einstellungen mit Verbindungskarte (eingeklappt, sobald ein Token da ist), Brille, Vorlesen (eingeklappt) und Sprache. Erststart: Drei-Schritt-Checkliste, die Demo läuft ohne Token.
+- Vorschau-Bilder: `store/preview-cockpit.png` (+ `-warn`), erzeugt mit `QG_PREVIEW=1 npx vitest run tests/cockpit.test.ts`.
+- Unverändert: kein Seitenmenü, Beenden-Dialog (4/5-Ablauf, `onBack`-Wiederaufbau), begrenzte Aufrufe, Neuaufbau der ersten Seite, Freigaben nie als Wischrichtung.
+
 ## [0.9.6] — 2026-10-17
 
 ### Behoben (Hardware-Schrittprotokoll)

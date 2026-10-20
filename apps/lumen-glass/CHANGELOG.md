@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.8.0] — 2026-10-20
+
+### Neu: Quietglass-UI-Standard QUS v1 („keine Textwand“)
+
+- **Brille: Startseite mit zwei großen Einträgen** (Quest, Motte). Kopfzeile `Lumen · ● live`, unten genau eine Hinweiszeile. Die Hilfe-Seite entfällt (Wischen öffnet sie nicht mehr; die Gesten stehen in der Hinweiszeile, die Einrichtung am Handy).
+- **Quest als Lesepage:** Kopfzeile `Quest · ● live`, darunter der Kurzname als Überschrift, die Anweisung, Medium und Dauer. Tippen = Foto, Halten = neue Quest (wie bisher erst vormerken, dann nochmal tippen), 2× = zurück. Foto-Ablauf (Aufnahme, Senden, Ergebnis, Fehler) unverändert, jetzt mit `Lumen · …` in der Kopfzeile.
+- **Motte als Cockpit-Bild** (576×288, vier Kacheln wie Rain Lens/Status Glass): links ein Ring, gefüllt bis zum Licht der Motte (Mitte „72%“), rechts „LUMEN 14:05“, groß LUMENs eigenes Wort für den Zustand (`WACH`), darunter die Zellen Serie, nächste goldene/blaue Stunde („Gold 24 min“) und Offen; links unten LUMENs eigene Beschreibung, was die Motte tut. Es werden nur geänderte Kacheln gesendet; die Uhr ändert nur die Kachel oben rechts. Das Pixel-Maskottchen in der Kopfzeile und die Flügelschläge entfallen.
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Quest / Einstellungen) im Rain-Lens-Look: Kicker `QUIETGLASS / KREATIV`, Status-Pille, Statusbanner, Hero-Karte mit dem Licht der Motte, 2×2-Kennzahlen (Zustand, Serie, Fenster, Offen), ein Hauptknopf „Foto machen und senden“, Karte der aktuellen Quest. „Quest“ zeigt die offene Quest in voller Länge. Einstellungen als gruppierte Karten (Verbindung und Anmeldung eingeklappt sobald eingerichtet), Erststart-Checkliste in drei Schritten; ohne Adresse läuft die Demo.
+
+### Unverändert (Hardware-getestet)
+
+- Kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (während er offen sein kann, wird nichts gezeichnet und keine Kachel gesendet; 2× während der Aufnahme fragt ihn ohne den Schuss zu stoppen), zeitbegrenzte Aufrufe an die Brille, Wiederaufbau der ersten Seite nach „Nein“.
+
+### Tests
+
+- Reine Modelltests (Zellen, Überschrift, Startzeilen, Fußzeile in beiden Sprachen), Kachel-Diff (unverändert = nichts gesendet), Beenden-Dialog-Tests, Vorschau-PNGs (`QG_PREVIEW=1 npx vitest run tests/preview.test.ts` → `store/preview-cockpit*.png`).
+
+### QIS-Konformität
+
+- Fußzeilen über den gemeinsamen `footer()`, `2× = zurück|Ende`; Wischen ändert nie etwas; keine Fehlercodes auf der Brille.
+
 ## [0.7.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

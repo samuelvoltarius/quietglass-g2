@@ -197,6 +197,8 @@ describe("approvals on the glasses (integration)", () => {
     await boot();
     FakeEventSource.last?.onmessage?.({ data: JSON.stringify({ type: "permission_result", decision: "deny" }) });
     await vi.advanceTimersByTimeAsync(1000);
+    // The open session shows the status cockpit (an image); a swipe opens the answer text, where the footer is text.
+    await gesture(DOWN, 700);
     await gesture(9, 700);
     expect(page[3]).toBe("Tap again = interrupt · Swipe/2× = cancel");
     expect(posts.filter((post) => post.path === "/interrupt")).toEqual([]);

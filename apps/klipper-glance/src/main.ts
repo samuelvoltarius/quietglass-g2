@@ -4,6 +4,7 @@ import { traceBridge } from "./diag/bridge";
 import { VERSION } from "./version";
 import { settleRestore } from "./exit";
 import { createClient, createDemoPrinter, toApiError, type PrinterApi } from "./printer/client";
+import { createMoonrakerClient, isMoonrakerUrl } from "./printer/moonraker";
 import type { Command, PrinterStatus } from "./printer/status";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
@@ -62,6 +63,11 @@ async function boot(): Promise<void> {
   const makeApi = (): PrinterApi => {
     const url = effectiveUrl(settings);
     if (DEMO || !url) return createDemoPrinter(Date.now, Number.isFinite(DEMO_PERCENT) && DEMO_PERCENT > 0 ? DEMO_PERCENT : 42);
+    // Direct mode (0.6.0): a Moonraker address (port 7125) is read without any bridge.
+    if (isMoonrakerUrl(url)) {
+      diag("direct", { origin: (globalThis as { location?: { origin?: string } }).location?.origin ?? "" });
+      return createMoonrakerClient({ baseUrl: url, ...(settings.token ? { apiKey: settings.token } : {}), allowControl: settings.directControl === true });
+    }
     return createClient({ baseUrl: url, ...(settings.token ? { token: settings.token } : {}) });
   };
   let api: PrinterApi = makeApi();

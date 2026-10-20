@@ -39,7 +39,7 @@ describe("phone page", () => {
   it("is split into tabs with a tab bar and keeps every control", () => {
     const { root } = mount({ serverUrl: "", invertScroll: false });
     expect(root.innerHTML).toContain('class="tabbar"');
-    for (const id of ["day", "glasses", "connection", "more"]) expect(root.innerHTML).toContain(`data-tab-go="${id}"`);
+    for (const id of ["now", "projects", "settings"]) expect(root.innerHTML).toContain(`data-tab-go="${id}"`);
     for (const id of ["#url", "#token", "#save", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
   });
 

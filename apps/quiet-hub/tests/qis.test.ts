@@ -151,7 +151,7 @@ describe("QIS footers", () => {
 
   it("the header is APPNAME · state on every page", () => {
     for (const [, make] of screens) {
-      expect(buildView(make(), "de", T0).header).toMatch(/^QUIET HUB( · |$)/);
+      expect(buildView(make(), "de", T0).header).toMatch(/^(QUIET HUB|Quiet Hub|Agent|Zuhause|Drucker|Meldungen|Tagesstart|Übersicht)( · |$)/);
       expect(buildView(make(), "en", T0).header.length).toBeLessThanOrEqual(ROW_WIDTH);
     }
   });
@@ -171,15 +171,10 @@ describe("QIS footers", () => {
 });
 
 describe("QIS help page", () => {
-  it("is the last row of the overview list again while the side menu is off (step log 15.10.)", () => {
-    expect(ROOT_ITEMS.at(-1)).toBe("help");
+  it("has no help row any more on the start page (QUS v1); the overlay stays reachable by the side menu code", () => {
+    expect(ROOT_ITEMS).not.toContain("help");
     const root = model("root");
-    expect(buildView(root, "de", T0).body.join("\n")).toContain("Hilfe");
-    // tapping the last row opens the help overlay
-    const last = decide({ ...root, rootSelected: ROOT_ITEMS.length - 1 }, "click", T0).model;
-    expect(last.help).toBe(true);
-    // any gesture closes it again
-    expect(decide(last, "click", T0).model.help).toBe(false);
+    expect(buildView(root, "de", T0).body.join(" ")).not.toContain("Hilfe");
     // the side menu code is kept and still has it when switched on
     expect(menuFor(root, "de", true).items.map((i) => i.id)).toContain(MENU.help);
     expect(applyMenu(root, MENU.help, T0).model.help).toBe(true);

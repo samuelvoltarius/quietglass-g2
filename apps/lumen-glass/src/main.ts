@@ -3,12 +3,15 @@ import {
   blobFromBase64, fetchStatus, newQuest, submitPhoto, type ClientOptions, type LumenStatus,
 } from "./lumen/client";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { buildView, type LumenView, type Phase } from "./glasses/view";
+import { buildView, startRows, type LumenView, type Phase, type Screen } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, forgetPage, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
-import { FLAP_STEP_MS, isFlapping, mothSprite, spriteKey } from "./glasses/sprite";
+import { COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage } from "./glasses/page";
+import { cockpitModel } from "./cockpit/model";
+import { composeCockpit, modelKey } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { loadWithStart, save, type LumenData } from "./storage/persist";
-import { mountPhoneUi } from "./ui/phone";
+import { mountPhoneUi, type PhoneUi } from "./ui/phone";
 import { createExitRequest, isBackSignal } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { t } from "./messages";
@@ -16,20 +19,15 @@ import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 import { activeConfirm, CONFIRM_WINDOW_MS, type PendingConfirm } from "./input/confirm";
 
 const DEMO = new URLSearchParams(location.search).get("demo") === "1";
+/** `?demo=1&screen=moth|quest` opens straight on a screen (simulator screenshots); without it the start page. */
+const START_SCREEN = new URLSearchParams(location.search).get("screen");
 
 /** How often the moth and the light window refresh. */
 const POLL_MS = 60_000;
 /** A tap this soon after the menu click that armed the question is a slip of the same gesture and counts for nothing. */
 const ARM_GUARD_MS = 400;
-/**
- * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses, and while a page
- * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it a swipe
- * opens the help and a hold arms "new quest" again.
- */
-const SIDE_MENU = false;
-/** Side menu (QIS v1.2): item ids. */
-const MENU_HELP = 1;
-const MENU_NEW_QUEST = 2;
+/** The cockpit is redrawn this often: the clock stays current; an unchanged frame sends nothing. */
+const TICK_MS = 15_000;
 
 /** Sample data for the first start, before an address is saved (QIS v1.2 no. 7). */
 const DEMO_QUESTS: NonNullable<LumenStatus["quest"]>[] = [
@@ -60,10 +58,16 @@ async function boot(): Promise<void> {
   let result: { ok: boolean; text: string } | null = null;
   let error: string | null = null;
   let lastView: LumenView | null = null;
-  /** Key of the sprite the glasses show now; the image is only resent when it changes. */
-  let lastIcon: string | null = null;
-  let flapTimer: ReturnType<typeof setInterval> | undefined;
+  /** What is on the glasses: the start page, the quest (text) or the moth (a cockpit image). */
+  let screen: Screen = START_SCREEN === "moth" || START_SCREEN === "quest" ? START_SCREEN : "start";
+  let startCursor = 0;
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
   let pageReady = false;
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
+  let lastKey = "";
+  let textBackend: TextBackend | null = null;
+  let phone: PhoneUi | null = null;
   /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
   let rebuildWanted = false;
   /** In the background (system menu, another app): no polling, no wing beats. */
@@ -71,8 +75,6 @@ async function boot(): Promise<void> {
   /** The menu armed "new quest" (it would replace the open one); a single tap or the same menu item again within the window carries it out. */
   let pendingQuest: PendingConfirm<"newQuest"> | null = null;
   let armedAt = 0;
-  /** The help page (side menu) is open. */
-  let helpOpen = false;
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -89,46 +91,52 @@ async function boot(): Promise<void> {
   });
 
   const currentView = (): LumenView => buildView(status, {
-    phase, result, error, locale, confirmQuest: activeConfirm(pendingQuest, Date.now()) !== null, help: helpOpen, demo: isDemo(), sideMenu: SIDE_MENU,
+    phase, result, error, locale, confirmQuest: activeConfirm(pendingQuest, Date.now()) !== null, demo: isDemo(), screen: screen === "moth" ? "quest" : screen, startCursor,
   });
-
-  /** QIS v1.2: the side menu, in the current language; supplied again on every page (re)build. */
-  const menu = (): MenuSpec => ({
-    items: !SIDE_MENU ? [] : [
-      { id: MENU_HELP, label: t(locale, "m.help") },
-      { id: MENU_NEW_QUEST, label: t(locale, "m.newQuest") },
-    ],
-  });
-
-  const currentIcon = () => mothSprite(status?.moth.state ?? "eingerollt", Date.now());
 
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused && installed === "cockpit"));
+
+  /** The moth shows as an image while nothing else (a photo on its way, its result, an error) lies on top of it. */
+  const showsCockpit = (): boolean => screen === "moth" && phase === "idle";
+
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
-    if (closed) return;
-    const view = currentView();
-    const icon = currentIcon();
-    const iconKey = spriteKey(icon);
+    if (closed || paused) return;
     // A page lost with the link or left in the background is rebuilt even
     // when nothing changed; an unchanged view would otherwise leave it blank.
-    if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
-    const sameText = pageReady && sameView(lastView, view);
-    if (sameText && iconKey === lastIcon) return;
-
-    // Only the wings moved: send the small image, not the text.
-    if (sameText && pageReady) {
-      const quick = await updateIcon(bridge, icon);
-      // A lost image is retried with the next wing beat; the page itself stands.
-      if (quick.ok) lastIcon = iconKey;
-      else console.warn("[lumen] icon failed:", quick.reason);
+    if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; lastKey = ""; installed = null; }
+    if (showsCockpit()) {
+      const model = cockpitModel({ status, error, demo: isDemo(), locale, now: Date.now() });
+      const key = modelKey(model);
+      if (installed !== "cockpit") pageReady = false;
+      if (pageReady && key === lastKey) return;
+      if (!pageReady) {
+        const created = await createCockpitPage(bridge);
+        if (closed) return;
+        if (!created.ok) { pageReady = false; lastKey = ""; console.warn("[lumen] draw failed:", created.reason); return; }
+        pageReady = true; installed = "cockpit"; lastView = null;
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      lastKey = key;
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tiles.push(composeCockpit(model, textBackend));
       return;
     }
-
-    const outcome = pageReady ? await updatePage(bridge, view, icon) : await createPage(bridge, view, icon, menu());
-    if (outcome.ok) { pageReady = true; lastView = view; lastIcon = iconKey; return; }
+    const view = currentView();
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
+    if (pageReady && sameView(lastView, view)) return;
+    const outcome = pageReady ? await updateTextPage(bridge, view, lastView) : await createTextPage(bridge, view);
+    if (closed) return;
+    if (outcome.ok) { pageReady = true; installed = "text"; lastView = view; lastKey = ""; return; }
     pageReady = false;
+    lastView = null;
     console.warn("[lumen] draw failed:", outcome.reason);
   };
 
@@ -141,6 +149,7 @@ async function boot(): Promise<void> {
         do { drawAgain = false; await drawOnce(); } while (drawAgain && !closed);
       } finally {
         drawing = null;
+        phone?.refreshLive();
       }
     })();
     return drawing;
@@ -270,13 +279,6 @@ async function boot(): Promise<void> {
     await refresh(true);
   };
 
-  /** The wings only beat while the moth is awake and nothing else is on screen. */
-  const flapTick = (): void => {
-    if (closed || paused || !pageReady || !status || phase !== "idle" || error) return;
-    if (isFlapping(status.moth.state)) void draw();
-  };
-  flapTimer = setInterval(flapTick, FLAP_STEP_MS);
-
   // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
   // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
   const requestExit = createExitRequest(bridge, {
@@ -286,6 +288,8 @@ async function boot(): Promise<void> {
       if (closed) return;
       pageReady = false;
       lastView = null;
+      lastKey = "";
+      installed = null;
       forgetPage(bridge);
       return draw();
     },
@@ -322,7 +326,8 @@ async function boot(): Promise<void> {
     closed = true;
     clearTimeout(timer);
     clearTimeout(confirmTimer);
-    clearInterval(flapTimer);
+    clearInterval(tickTimer);
+    tiles.close();
   };
 
   // Gestures first: nothing native or on the network may be awaited before
@@ -343,22 +348,41 @@ async function boot(): Promise<void> {
       return;
     }
     if (isFinalExit(step)) { stopAll(); return; }
-    // QIS v1.2: a click in the glasses' side menu (hold). Help is a page; "new quest" is armed first.
-    const menuId = menuItemIdFromEvent(event);
-    if (menuId !== null) {
-      if (paused) return;
-      if (menuId === MENU_HELP && !helpOpen && phase === "idle") { disarm(); helpOpen = true; void draw(); return; }
-      if (menuId === MENU_NEW_QUEST && !helpOpen) { armNewQuest(true); return; }
-      return;
-    }
+    // The glasses' side menu is off (SIDE_MENU = false): a menu click never runs anything.
+    if (menuItemIdFromEvent(event) !== null) return;
 
     const gesture = gestureFromEvent(event, { invertScroll: data.invertScroll });
     if (!gesture) return;
 
     const armed = activeConfirm(pendingQuest, Date.now()) !== null;
+
+    // The start page: tap opens the entry, swipe moves, 2x asks the exit dialog.
+    if (screen === "start") {
+      switch (gesture.gesture) {
+        case "click": screen = startRows()[startCursor]?.kind === "moth" ? "moth" : "quest"; break;
+        case "scrollUp": startCursor = Math.max(0, startCursor - 1); break;
+        case "scrollDown": startCursor = Math.min(startRows().length - 1, startCursor + 1); break;
+        case "doubleClick": void requestExit(); return;
+        default: return;
+      }
+      void draw();
+      return;
+    }
+
+    // The moth: tap asks again, 2x goes back. (A photo's result lies on top and ends with a tap or 2x.)
+    if (screen === "moth" && phase === "idle") {
+      switch (gesture.gesture) {
+        case "click": void refresh(); return;
+        case "doubleClick": screen = "start"; break;
+        default: return;
+      }
+      void draw();
+      return;
+    }
+
+    // The quest.
     switch (gesture.gesture) {
       case "click":
-        if (helpOpen) { helpOpen = false; break; }
         if (armed) {
           // The tap that ends the hold is not the confirming one.
           if (Date.now() - armedAt < ARM_GUARD_MS) return;
@@ -372,30 +396,24 @@ async function boot(): Promise<void> {
         void shootAndSubmit();
         return;
       case "longPress":
-        // With a side menu the hold belongs to it; nothing happens in the app (it only leaves the help).
-        if (helpOpen) { helpOpen = false; break; }
-        if (SIDE_MENU) return;
-        // Without one, holding only asks (QIS v1): it arms "new quest", one single tap within the window carries it out.
+        // Holding only asks (QIS v1): it arms "new quest", one single tap within the window carries it out.
         armNewQuest(false);
         return;
       case "scrollUp":
       case "scrollDown":
-        // With a side menu a swipe changes nothing and fetches nothing (QIS v1.2); it only cancels an open question
-        // or leaves the help. Without one it opens the help (swiping again closes it and refreshes the moth).
+        // A swipe only cancels an open question; it never changes or fetches anything.
         if (armed) { disarm(); break; }
-        if (helpOpen) { helpOpen = false; if (!SIDE_MENU) void refresh(); break; }
-        if (SIDE_MENU || phase !== "idle") return;
-        helpOpen = true;
-        break;
+        return;
       case "doubleClick":
-        // 2× goes back one level: closes the help, cancels a question, leaves the result;
-        // it never stops a photo on its way. At the root it opens the system exit dialog (polling continues until confirmed).
-        if (helpOpen) { helpOpen = false; break; }
+        // 2× goes back one level: cancels a question, leaves the result, then the quest page;
+        // it never stops a photo on its way.
         if (armed) { disarm(); break; }
         if (phase === "result") { phase = "idle"; result = null; break; }
         if (phase === "submitting") return;
-        void requestExit();
-        return;
+        // A shot in progress is a running job: 2× opens the exit dialog without stopping it (QIS v1.2 no. 2).
+        if (phase === "shooting") { void requestExit(); return; }
+        screen = "start";
+        break;
       default:
         return;
     }
@@ -411,14 +429,14 @@ async function boot(): Promise<void> {
 
   void draw();
   if (!isDemo()) { void refresh().then(schedule, schedule); }
+  // The clock on the moth cockpit: redrawn every 15 s; an unchanged frame costs nothing.
+  tickTimer = setInterval(() => { void draw(); }, TICK_MS);
 
-  mountPhoneUi({
+  phone = mountPhoneUi({
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
       rememberLocale(bridge, next);
-      // The side menu carries the language: the page is rebuilt with it.
-      if (SIDE_MENU) rebuildWanted = true;
       void draw();
     },
     getData: () => data,
@@ -433,7 +451,8 @@ async function boot(): Promise<void> {
       });
       await refresh(true);
     },
-    shoot: () => { void shootAndSubmit(); },
+    // The photo flow (shutter, result) lives on the quest page: the phone's button brings the glasses there.
+    shoot: () => { screen = "quest"; void shootAndSubmit(); },
     getStatus: () => status,
   });
 }

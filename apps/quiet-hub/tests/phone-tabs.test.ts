@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mountPhoneUi, type PhoneState } from "../src/ui/phone";
+import { bannerFor, isFirstRun, mountPhoneUi, nowInner, sessionsInner, setupInner, summarize, TABS, type ConnView, type PhoneState } from "../src/ui/phone";
 import { createModel } from "../src/hub/model";
 import { demoReport } from "../src/api/demo";
 
-const state = (connected: boolean): PhoneState => ({
+// QUS v1 phone page: exactly three tabs (Jetzt / Sitzungen / Einstellungen), the Rain Lens look.
+const conn = (connected: boolean, configured = true): ConnView => ({ configured, connected, host: "pi.example", lastOkAt: null, problem: connected || !configured ? null : "unreachable", lastErrorAt: null, fails: 0 });
+const state = (connected: boolean, serverUrl = "https://pi.example:8443"): PhoneState => ({
   model: createModel(demoReport()),
   locale: "de",
-  settings: { serverUrl: "https://pi.example:8443", token: "x", autoOpenNotifications: true, invertScroll: false, voiceAutoSend: false, speakAnswers: false, quietWhileWorking: false },
-  conn: { configured: true, connected, host: "pi.example", lastOkAt: null, problem: connected ? null : "unreachable", lastErrorAt: null, fails: 0 },
+  settings: { serverUrl, token: "x", autoOpenNotifications: true, invertScroll: false, voiceAutoSend: false, speakAnswers: false, quietWhileWorking: false },
+  conn: conn(connected, serverUrl !== ""),
   speech: "off",
 });
 
@@ -19,65 +21,83 @@ function render(s: PhoneState): string {
   return html;
 }
 
-describe("phone page tabs", () => {
+describe("phone page tabs (QUS v1)", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("has a tab bar, a status chip and keeps every control", () => {
-    const html = render(state(true));
-    expect(html).toContain('<nav class="tabbar"');
-    for (const id of ["connect", "home", "glasses", "more"]) {
-      expect(html).toContain(`data-tab="${id}"`);
-      expect(html).toContain(`data-tab-go="${id}"`);
-    }
-    expect(html).toContain('class="chip on">verbunden');
-    for (const id of ["server", "token", "save", "test", "auto-open", "invert-scroll", "voice-auto", "quiet", "speak", "language"]) expect(html).toContain(`id="${id}"`);
-  });
-
-  it("has a Zuhause tab with the same favourites and areas and says where they are set", () => {
-    const html = render(state(true));
-    const tab = html.slice(html.indexOf('data-tab="home"'), html.indexOf('data-tab="glasses"'));
-    expect(tab).toContain("Favoriten");
-    expect(tab).toContain("» Abendlicht");
-    expect(tab).toContain("● Büro Decke</td><td>an · 60 %");
-    expect(tab).toContain("Haustür <span class=\"hint\">(zweites Tippen nötig)</span>");
-    expect(tab).toContain("<h3>Wohnzimmer</h3>");
-    expect(tab).toContain("Alle Lichter");
-    expect(tab).toContain("HA_FAVORITES");
-    expect(tab).toContain("Token bleibt auf dem Daemon");
-  });
-
-  it("has a Tagesstart tab with the same blocks, the morning setting and a reload button", () => {
-    const html = render(state(true));
-    const tab = html.slice(html.indexOf('data-tab="brief"'), html.indexOf('data-tab="home"'));
-    expect(html).toContain('data-tab-go="brief"');
-    expect(tab).toContain('id="brief-morning"');
-    expect(tab).toContain("Tagesstart als Startseite bis 11:00");
-    expect(tab).toContain('id="brief-reload"');
-    expect(tab).toContain("<strong>Termine · 4 heute");
-    expect(tab).toContain("Zucker · 118 mg/dL →");
-    expect(tab).toContain("keine Therapieentscheidungen");
-  });
-
-  it("orders the tabs [content] · Brille · Verbindung · Mehr (QIS v1)", () => {
+  it("has exactly three tabs in one row: Jetzt, Sitzungen, Einstellungen", () => {
+    expect(TABS.map((tab) => tab.id)).toEqual(["now", "sessions", "settings"]);
     const html = render(state(true));
     const bar = html.slice(html.indexOf('<nav class="tabbar"'));
-    const order = [...bar.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1]);
-    expect(order).toEqual(["brief", "home", "glasses", "connect", "more"]);
-    // the page bodies follow the same order
+    expect([...bar.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1])).toEqual(["now", "sessions", "settings"]);
+    expect(bar).toContain("Jetzt");
+    expect(bar).toContain("Sitzungen");
+    expect(bar).toContain("Einstellungen");
     const bodies = [...html.slice(0, html.indexOf('<nav class="tabbar"')).matchAll(/class="tab" data-tab="(\w+)"/g)].map((m) => m[1]);
-    expect(bodies).toEqual(order);
+    expect(bodies).toEqual(["now", "sessions", "settings"]);
   });
 
-  it("shows the offline chip and keeps the setup in the Verbindung tab", () => {
-    const html = render(state(false));
-    expect(html).toContain('class="chip">offline');
-    expect(html.indexOf('data-tab="connect"')).toBeLessThan(html.indexOf('id="server"'));
-    expect(html.indexOf('id="server"')).toBeLessThan(html.indexOf('data-tab="more"'));
-  });
-
-  it("lists the controls in QIS order: Tippen, Wischen, Halten, 2×", () => {
+  it("has the head: kicker, title, status pill", () => {
     const html = render(state(true));
-    const t = html.slice(html.indexOf("<h2>Brillensteuerung"));
+    expect(html).toContain("QUIETGLASS / AGENTEN");
+    expect(html).toContain("<h1>Quiet Hub</h1>");
+    expect(html).toContain('id="pill" class="chip on">● verbunden');
+    expect(render(state(false))).toContain('id="pill" class="chip">offline');
+  });
+
+  it("Jetzt: banner, hero card with one big value, 2x2 figures, one button, a card strip of sessions", () => {
+    const model = createModel(demoReport());
+    const html = nowInner(model, conn(true), "de");
+    expect(html).toContain('class="banner');
+    expect(html).toContain('class="card hero-card"');
+    expect(html.match(/<strong>/g)).toHaveLength(1);
+    expect(html.slice(html.indexOf('class="stats"'), html.indexOf("</section>")).match(/<b>/g)).toHaveLength(4);
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(html).toContain('id="refresh"');
+    expect(html).toContain('class="strip"');
+    expect(html.match(/class="host /g)).toHaveLength(model.report.agents.length);
+    expect(summarize(model).total).toBe(model.report.agents.length);
+  });
+
+  it("the banner carries the one message that counts", () => {
+    const model = createModel(demoReport());
+    expect(bannerFor({ ...model, setupHint: true }, conn(true), "de").text).toContain("Demo-Daten");
+    expect(bannerFor(model, conn(false), "de")).toMatchObject({ tone: "offline" });
+    const waiting = { ...model, report: { ...model.report, approvals: [{ id: "c", agentId: "claude-win", tool: "Bash", title: "x", detail: "x", createdAt: "", expiresAt: 0 }] } };
+    expect(bannerFor(waiting, conn(true), "de")).toMatchObject({ tone: "warn" });
+  });
+
+  it("Sitzungen lists a card per agent; an empty hub says so", () => {
+    const model = createModel(demoReport());
+    expect(sessionsInner(model, "de").match(/<section class="card server/g)).toHaveLength(model.report.agents.length);
+    expect(sessionsInner({ ...model, report: { ...model.report, agents: [] } }, "de")).toContain("Noch keine Agenten");
+  });
+
+  it("Einstellungen keeps every control; the server card is folded once connected and open on a first start", () => {
+    const html = render(state(true));
+    for (const id of ["server", "token", "save", "test", "scan", "auto-open", "invert-scroll", "voice-auto", "quiet", "speak", "language", "brief-morning", "brief-reload"]) expect(html).toContain(`id="${id}"`);
+    expect(html).toContain('<details class="fold card">');
+    expect(html).not.toContain('class="card setup"');
+    const first = render(state(false, ""));
+    expect(first).toContain('class="card setup"');
+    expect(first).toContain('<details class="fold card" open>');
+  });
+
+  it("the first-run checklist has three steps and ticks them off", () => {
+    const model = createModel(demoReport());
+    const s = state(false, "");
+    expect(isFirstRun(s.settings)).toBe(true);
+    const none = setupInner(s.settings, conn(false, false), model, "de");
+    expect(none.match(/<li/g)).toHaveLength(3);
+    expect(none).not.toContain("✓");
+    expect(none).toContain("Demo");
+    const added = { ...s.settings, serverUrl: "https://hub.test" };
+    expect(setupInner(added, conn(false), model, "de").match(/✓/g)).toHaveLength(1);
+    expect(setupInner(added, conn(true), model, "de").match(/✓/g)).toHaveLength(3);
+  });
+
+  it("lists the controls in the order Tippen, Wischen, Halten, 2×", () => {
+    const html = render(state(true));
+    const t = html.slice(html.indexOf("Bedienung der Brille"));
     const order = ["Tippen", "Wischen", "Halten", "2×"].map((w) => t.indexOf(`<td>${w}</td>`));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);

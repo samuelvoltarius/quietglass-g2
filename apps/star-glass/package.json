@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/star-glass",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "description": "Quietglass Star Glass — N.I.N.A. imaging status on the Even G2: exposure, guiding, focus, equipment and the newest frame",
   "author": "Quietglass",
   "license": "MIT",

@@ -19,6 +19,10 @@
  *                                     each draft attached to every task it belongs to
  *   customer.team (user names)      → on the team of every task of that customer's projects (only added,
  *                                     never removed – the team sees the tasks and their attachments)
+ *   brain.analysis.termine          → one appointment each (is_event, starts_at/ends_at or all day, location,
+ *                                     labels "vorschlag" + "termin"), created once under a stable key from
+ *                                     title + date, never updated or deleted – confirming (removing the label
+ *                                     "vorschlag") or deleting it is the team's business
  *
  * Read only on request of the server (shoot-day-inbox.mjs): the inbox (files dropped there
  * without a project), the attachments of a project's tasks; an inbox file is moved to its
@@ -41,6 +45,7 @@
  * Dependency-free (Node 18+).
  */
 import { createHash } from "node:crypto";
+import { isoWithOffset } from "./shoot-day-gcal.mjs";
 
 const UNASSIGNED = "unassigned";
 const TITLE_IDEAS = "Ideen & Notizen";
@@ -59,6 +64,12 @@ const FOOTER = "— aus Shoot Day, wird automatisch aktualisiert";
 export const DRAFT_PREFIX = "Entwurf – ";
 const docsWant = () => ({ title: TITLE_DOCS, description: "Entwürfe aus den Vorlagen. Die PDFs hängen an dieser Aufgabe.\n\n" + FOOTER });
 const DESC_MAX = 8000;
+/** Labels of an appointment: "termin"; a proposal also "vorschlag" (the team confirms it by removing that). */
+export const EVENT_LABEL = "termin";
+export const CANCELLED_LABEL = "abgesagt";
+const EVENT_NOTE = "Vorschlag der KI – bitte bestätigen oder löschen.";
+/** At most this many appointment proposals per project, ever (a model that keeps changing its mind cannot flood the dashboard). */
+const MAX_EVENT_PROPOSALS = 6;
 const DEFAULT_RETRY_MS = [30_000, 120_000, 600_000, 1_800_000];
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
@@ -365,6 +376,42 @@ export function lageTask(brain, timeZone) {
   return { title: TITLE_LAGE, description: clip(parts.join("\n\n"), DESC_MAX), labels: ["ki", INTERN_LABEL] };
 }
 
+/**
+ * An appointment proposal from the project understanding ({titel, datum, von, bis, ort, grund})
+ * → the dashboard task: a timed event with starts_at/ends_at in `tz`, or all day (starts_at null,
+ * start_date/due_date the day), or without a date at all.
+ */
+export function eventTask(termin, tz = "Europe/Vienna") {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(termin?.datum ?? "")) ? termin.datum : "";
+  const at = (hhmm) => {
+    const [y, m, d] = date.split("-").map(Number);
+    const [hh, mm] = String(hhmm).split(":").map(Number);
+    return isoWithOffset(Date.UTC(y, m - 1, d, hh, mm), tz);
+  };
+  const isTime = (v) => /^\d{2}:\d{2}$/.test(String(v ?? ""));
+  const timed = Boolean(date && isTime(termin?.von));
+  return {
+    title: clip(oneLine(termin?.titel, 200) || "Termin", 200),
+    description: (termin?.grund ? oneLine(termin.grund, 600) + "\n\n" : "") + EVENT_NOTE,
+    labels: [PROPOSAL_LABEL, EVENT_LABEL],
+    is_event: true,
+    starts_at: timed ? at(termin.von) : null,
+    ends_at: timed && isTime(termin?.bis) && termin.bis > termin.von ? at(termin.bis) : null,
+    location: oneLine(termin?.ort, 200) || null,
+    ...(date ? { start_date: date, due_date: date } : {}),
+  };
+}
+
+/** The stable key of a proposal: the same title (any case/spacing) and date → the same dashboard task. */
+export const eventKey = (termin) => "termin:" + hash([String(termin?.titel ?? "").toLowerCase().replace(/\s+/g, " ").trim(), String(termin?.datum ?? "")]).slice(0, 12);
+
+/** Label names of a task, lower case, from ["a"], [{name: "a"}] or "a, b". */
+export function labelNames(labels) {
+  const list = Array.isArray(labels) ? labels : typeof labels === "string" ? labels.split(",") : [];
+  return list.map((l) => (typeof l === "string" ? l : l?.name ?? l?.label ?? l?.title ?? "")).map((l) => String(l).trim().toLowerCase()).filter(Boolean);
+}
+const truthy = (value) => value === true || value === 1 || value === "true" || value === "1";
+
 // ---------------------------------------------------------------------------
 // The sync itself.
 // ---------------------------------------------------------------------------
@@ -381,6 +428,7 @@ export function createWdSync({
   debounceMs = 10_000, retryMs = DEFAULT_RETRY_MS, statusOpen = "open", statusDone = "done", timeZone = undefined, timeoutMs = 15_000,
   readDraft = null,
   isInternal = () => false,   // templates that are internal paperwork (never at a customer's task), from the server
+  eventTz = "Europe/Vienna",  // time zone of appointment times (starts_at/ends_at)
 }) {
   const enabled = Boolean(String(url).trim() && String(token).trim());
   const secrets = [String(url).trim(), String(url).trim().replace(/^https?:\/\//, "").replace(/\/.*$/, ""), String(token).trim()].filter((s) => s.length >= 4);
@@ -572,6 +620,7 @@ export function createWdSync({
     }
 
     await syncLage(pid, ctx);
+    await fileEvents(pid, ctx);
     await attachDrafts(pid, ctx);
     if (ctx.team.length) await ensureTeam(pid, ctx.team, ctx);
   }
@@ -594,6 +643,21 @@ export function createWdSync({
     p.wdTasks ??= { todo: {} };
     p.wdTasks.lageText = want.description;
     ctx.changed = true;
+  }
+
+  // ---- appointment proposals ---------------------------------------------------
+  /** Each proposal of the understanding once, as an appointment marked "vorschlag" – never touched again. */
+  async function fileEvents(pid, ctx) {
+    if (!state().projects[pid]?.wdId) return;
+    for (const termin of state().projects[pid]?.brain?.analysis?.termine ?? []) {
+      const now = state().projects[pid];
+      if (!now) return;
+      const key = eventKey(termin);
+      const known = now.wdTasks?.points ?? {};
+      if (known[key]) continue;
+      if (Object.keys(known).filter((k) => k.startsWith("termin:")).length >= MAX_EVENT_PROPOSALS) return;
+      await createOnce(pid, key, eventTask(termin, eventTz), ctx);
+    }
   }
 
   // ---- team ----------------------------------------------------------------
@@ -891,6 +955,34 @@ export function createWdSync({
     return out;
   }
 
+  // ---- appointments of all projects (for the Google Calendar, read-only) ------
+  /**
+   * Every appointment in the dashboard (one list_tasks without a project, then the
+   * projects and customers for the names): [{taskId, title, customer, project, status,
+   * labels, starts_at, ends_at, start_date, due_date, location}]. Tasks that are no
+   * appointment are left out. null when off or on any failure (then nothing may be
+   * taken as deleted); never throws.
+   */
+  async function events() {
+    if (!enabled) return null;
+    try {
+      const tasks = asList(await client.call("list_tasks", {}), "tasks").filter((t) => asId(t) !== "" && truthy(t?.is_event));
+      if (!tasks.length) return [];
+      const projects = asList(await client.call("list_projects", {}), "projects");
+      const customers = asList(await client.call("list_customers", {}), "customers");
+      const text = (v, max) => (v === null || v === undefined ? "" : oneLine(v, max));
+      return tasks.map((t) => {
+        const project = projects.find((x) => sameId(asId(x), t?.project_id ?? t?.projectId));
+        const customer = customers.find((x) => sameId(asId(x), project?.customer_id ?? project?.customerId ?? t?.customer_id));
+        return {
+          taskId: String(asId(t)), title: text(t.title, 200), customer: text(customer?.name ?? t?.customer_name, 120), project: text(project?.name, 120),
+          status: text(t.status, 40), labels: labelNames(t.labels), starts_at: text(t.starts_at, 40), ends_at: text(t.ends_at, 40),
+          start_date: text(t.start_date, 40), due_date: text(t.due_date, 40), location: text(t.location, 200),
+        };
+      });
+    } catch (error) { return failed("listing appointments", error); }
+  }
+
   // ---- files people put into the dashboard (read; moving and commenting only on request) ----
   const failed = (what, error) => { say("work dashboard: " + what + " failed: " + scrub(error?.message ?? String(error))); return null; };
   const listAttachments = async (taskId) => asList(await client.call("list_attachments", { task_id: taskId }), "attachments");
@@ -989,6 +1081,7 @@ export function createWdSync({
 
   return {
     enabled,
+    events,
     readBack,
     fingerprint,
     inbox,

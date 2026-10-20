@@ -175,3 +175,21 @@ body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .tabbar button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .tabbar button.on span { filter: none; opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .tab { animation: none; } }
+
+/* ---- QUS v1: exactly three tabs in one row, folded cards, first-run checklist ---- */
+.tabbar { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.tabbar button { min-width: 0; min-height: 44px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card.setup { border-color: var(--accent); }
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.steps li:last-child { border-bottom: 0; }
+.steps .num { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 600; border: 1px solid var(--line); color: var(--muted); }
+.steps li.done { color: var(--muted); }
+.steps li.done .num { background: var(--accent); border-color: var(--accent); color: #0b1f14; }
+details > summary { cursor: pointer; font-size: 14px; color: var(--muted); }
+details.fold > summary { list-style: none; min-height: 44px; display: flex; align-items: center; gap: 10px; font-size: 16px; color: var(--text); }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::after { content: "›"; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
+details.fold[open] > summary::after { transform: rotate(90deg); }
+details.advanced { margin-top: 12px; }
+button, input[type="text"], select { min-height: 44px; }

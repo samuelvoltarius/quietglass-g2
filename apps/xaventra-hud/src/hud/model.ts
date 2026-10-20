@@ -19,17 +19,19 @@ import { MAX_BODY_ROWS, fit, wrap, type ScreenView } from "../glasses/screen";
  *    discards it. Nothing goes out on the release alone when the text is known.
  *  - While a voice reply is on screen, a tap only closes it - it never answers
  *    the card behind it.
- *  - Help lives in the glasses' side menu (v1.2 #1) when SIDE_MENU is on, else it is the last list row.
+ *  - There is no help page (QUS v1): the gestures are in the footer line, the setup is on the phone.
  *  - "Always allow" does not exist on the glasses.
  *  - The choice belongs to one card id and never carries over to another card.
  */
 
 /**
- * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses and a hold
- * opens the menu instead of reaching the app (step log of 15.10.2026), so a hold speaks again and the
- * help is the last row of the answer list again ("Hilfe").
+ * The glasses' side menu. Off: its clicks never reach the app on the real glasses and a hold
+ * opens the menu instead of reaching the app (step log of 15.10.2026), so a hold speaks.
  */
 export const SIDE_MENU = false;
+
+/** What is on the glasses: the start page, the status cockpit or the open questions. */
+export type Screen = "start" | "status" | "cards";
 
 export type RecPhase = "off" | "opening" | "listening" | "sending";
 
@@ -40,6 +42,13 @@ export interface VoiceReply {
 
 export interface HudModel {
   readonly configured: boolean;
+  /** The first-start sample data (no server entered): the glasses say so in the start page. */
+  readonly demo: boolean;
+  readonly screen: Screen;
+  /** The cursor of the start page. */
+  readonly startCursor: number;
+  /** When the feed was last answered (ms since epoch), 0 = never. */
+  readonly feedAt: number;
   readonly online: boolean;
   /** Short, already localised problem text shown instead of the feed. */
   readonly problem: string;
@@ -51,10 +60,6 @@ export interface HudModel {
   readonly confirm: string | null;
   /** Card id on which "Nein" is selected (swiped to); null = "Ja" is selected. */
   readonly nein: string | null;
-  /** The cursor is on the last list entry, "Hilfe" (only without the side menu). */
-  readonly helpStop: boolean;
-  /** The help page is open (from the list row, or from the side menu when it is on). */
-  readonly help: boolean;
   /** One transient line, already localised (shown in the body, never as the footer). */
   readonly message: string;
   readonly voice: VoiceReply | null;
@@ -68,8 +73,8 @@ export interface HudModel {
 }
 
 export const EMPTY_MODEL: HudModel = {
-  configured: false, online: false, problem: "", fault: false, feed: null, index: 0,
-  confirm: null, nein: null, helpStop: false, help: false, message: "", voice: null, rec: "off", live: "", recSince: 0, draft: "",
+  configured: false, demo: false, screen: "start", startCursor: 0, feedAt: 0, online: false, problem: "", fault: false, feed: null, index: 0,
+  confirm: null, nein: null, message: "", voice: null, rec: "off", live: "", recSince: 0, draft: "",
 };
 
 /** The second tap must come within this time. */
@@ -80,9 +85,12 @@ export type HudGesture = "click" | "doubleClick" | "scrollUp" | "scrollDown";
 export type HudAction =
   | { readonly kind: "answer"; readonly cardId: string; readonly answer: Answer }
   | { readonly kind: "confirm"; readonly cardId: string }
-  | { readonly kind: "move"; readonly index: number; readonly nein: string | null; readonly helpStop: boolean }
+  | { readonly kind: "move"; readonly index: number; readonly nein: string | null }
   | { readonly kind: "disarm" }
-  | { readonly kind: "help"; readonly open: boolean }
+  | { readonly kind: "open"; readonly screen: Screen }
+  | { readonly kind: "startMove"; readonly cursor: number }
+  | { readonly kind: "refresh" }
+  | { readonly kind: "back" }
   | { readonly kind: "dismiss" }
   | { readonly kind: "sendDraft" }
   | { readonly kind: "discardDraft" }
@@ -111,35 +119,49 @@ export function spokenAnswer(text: string): Answer | null {
   return null;
 }
 
+/** The rows of the start page: the open questions first (the thing to act on), then the status cockpit. */
+export type StartRow = { readonly kind: "cards"; readonly count: number } | { readonly kind: "status" };
+
+export function startRows(model: HudModel): StartRow[] {
+  return [{ kind: "cards", count: model.feed?.cards.length ?? 0 }, { kind: "status" }];
+}
+
 /**
- * Tap = arm the chosen entry, second tap = send, swipe = move the cursor
- * through Ja/Nein of each card, double tap = cancel an armed answer, else
- * leave. Never sends on a swipe. With recognised text waiting: tap = send it,
- * double tap = discard it.
+ * Start page: tap opens the entry, swipe moves, 2x leaves. Status cockpit: tap asks again, 2x goes back.
+ * Questions: tap = arm the chosen entry, second tap = send, swipe = move the cursor through Ja/Nein of each
+ * card, double tap = cancel an armed answer, else back. Never sends on a swipe. With recognised text
+ * waiting: tap = send it, double tap = discard it.
  */
 export function decide(model: HudModel, gesture: HudGesture): HudAction {
   if (model.voice) return { kind: "dismiss" };
-  if (model.help) return gesture === "click" || gesture === "doubleClick" ? { kind: "help", open: false } : { kind: "none" };
   if (model.draft) {
     if (gesture === "click") return { kind: "sendDraft" };
     if (gesture === "doubleClick") return { kind: "discardDraft" };
     return { kind: "none" };
   }
-  if (gesture === "doubleClick") return model.confirm !== null ? { kind: "disarm" } : { kind: "exit" };
+  if (model.screen === "start") {
+    const rows = startRows(model);
+    if (gesture === "doubleClick") return { kind: "exit" };
+    if (gesture === "click") return { kind: "open", screen: rows[model.startCursor]?.kind === "status" ? "status" : "cards" };
+    return { kind: "startMove", cursor: Math.min(rows.length - 1, Math.max(0, model.startCursor + (gesture === "scrollDown" ? 1 : -1))) };
+  }
+  if (model.screen === "status") {
+    if (gesture === "click") return { kind: "refresh" };
+    if (gesture === "doubleClick") return { kind: "back" };
+    return { kind: "none" };
+  }
+  if (gesture === "doubleClick") return model.confirm !== null ? { kind: "disarm" } : { kind: "back" };
   const card = currentCard(model);
   const cards = model.feed?.cards ?? [];
   if (gesture === "scrollUp" || gesture === "scrollDown") {
     if (!card) return { kind: "none" };
-    // Two stops per card (Ja, Nein), then one last stop: Hilfe (without the side menu).
-    const last = cards.length * 2;
-    const stops = SIDE_MENU ? last : last + 1;
-    const at = !SIDE_MENU && model.helpStop ? last : Math.min(model.index, cards.length - 1) * 2 + (neinSelected(model) ? 1 : 0);
+    // Two stops per card (Ja, Nein).
+    const stops = cards.length * 2;
+    const at = Math.min(model.index, cards.length - 1) * 2 + (neinSelected(model) ? 1 : 0);
     const next = (at + (gesture === "scrollDown" ? 1 : -1) + stops) % stops;
-    if (!SIDE_MENU && next === last) return { kind: "move", index: cards.length - 1, nein: null, helpStop: true };
     const index = Math.floor(next / 2);
-    return { kind: "move", index, nein: next % 2 === 1 ? cards[index]?.id ?? null : null, helpStop: false };
+    return { kind: "move", index, nein: next % 2 === 1 ? cards[index]?.id ?? null : null };
   }
-  if (!SIDE_MENU && (!card || model.helpStop)) return { kind: "help", open: true };
   if (!card) return { kind: "none" };
   if (model.confirm !== card.id) return { kind: "confirm", cardId: card.id };
   return { kind: "answer", cardId: card.id, answer: neinSelected(model) ? "nein" : "ja" };
@@ -177,10 +199,18 @@ export function elapsed(ms: number): string {
 
 const MARK_ON = "● ";
 const MARK_OFF = "○ ";
+const START_ON = "● ";
+
+/** The state in the header: `● live`, `Demo`, `offline` or `verbinde`. */
+export function liveLabel(model: HudModel, locale: Locale): string {
+  if (model.demo) return t(locale, "g.state.demo");
+  if (model.online) return "● " + t(locale, "g.live");
+  return t(locale, model.problem ? "g.state.offline" : "g.state.connecting");
+}
 
 export function buildView(model: HudModel, locale: Locale, now: Date): ScreenView {
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
-  const state = (what: string): string => fit(`${x("g.title")} · ${what}`);
+  const state = (what: string, title: string = x("g.title")): string => fit(`${title} · ${what}`);
   const messageRows = (rows: number): string[] => (model.message ? ["", ...wrap(model.message).slice(0, rows)] : []);
 
   if (model.rec !== "off") {
@@ -202,14 +232,6 @@ export function buildView(model: HudModel, locale: Locale, now: Date): ScreenVie
     return { header, body: ["", x("g.rec.listen")], footer: hint };
   }
 
-  if (model.help) {
-    return {
-      header: state(x("g.state.help")),
-      body: ["", ...[1, 2, 3, 4, 5].flatMap((n) => wrap(x("g.help." + n)).slice(0, 1))],
-      footer: footer(locale, { tap: x("g.f.close") }, "back"),
-    };
-  }
-
   if (model.voice) {
     const you = wrap(`${x("g.you")} ${model.voice.transcript}`).slice(0, 2);
     const reply = model.voice.reply ? wrap(`${x("g.reply")} ${model.voice.reply}`).slice(0, MAX_BODY_ROWS - you.length - 1) : [];
@@ -225,15 +247,26 @@ export function buildView(model: HudModel, locale: Locale, now: Date): ScreenVie
     };
   }
 
-  const root = footer(locale, { hold: x("g.f.speak") }, "exit");
   if (!model.configured) {
     return { header: state(x("g.state.setup")), body: ["", x("g.setup1"), x("g.setup2")], footer: footer(locale, {}, "exit") };
   }
+
+  if (model.screen !== "cards") {
+    // The start page: at most three entries (QUS 1.1), the cursor is a dot; the status cockpit is an image (src/cockpit).
+    const rows = startRows(model);
+    const at = Math.min(Math.max(0, model.startCursor), rows.length - 1);
+    const body = rows.map((row, index) => fit((index === at ? START_ON : "  ") + (row.kind === "cards" ? `${x("g.start.cards")} · ${row.count}` : x("g.start.status"))));
+    if (model.problem && !model.online) body.push(...wrap(model.problem).slice(0, 1));
+    else if (model.message) body.push(...wrap(model.message).slice(0, 1));
+    if (model.demo) body.push(x("g.demoHint"));
+    return { header: state(liveLabel(model, locale)), body, footer: footer(locale, { tap: x("g.f.open"), swipe: true, hold: x("g.f.speak") }, "exit") };
+  }
+
   if (!model.feed) {
     return {
       header: state(x(model.problem ? "g.state.offline" : "g.state.connecting")),
       body: ["", ...wrap(model.problem || x("g.state.connecting")).slice(0, 3)],
-      footer: footer(locale, {}, "exit"),
+      footer: footer(locale, {}, "back"),
     };
   }
 
@@ -244,9 +277,9 @@ export function buildView(model: HudModel, locale: Locale, now: Date): ScreenVie
     if (model.problem) lines.push("", ...wrap(model.problem).slice(0, 2));
     else lines.push(...messageRows(2));
     return {
-      header: state(x(model.online ? "g.state.idle" : "g.state.offline")),
-      body: SIDE_MENU ? lines.slice(0, MAX_BODY_ROWS) : [...lines.slice(0, MAX_BODY_ROWS - 1), MARK_ON + x("g.opt.help")],
-      footer: SIDE_MENU ? root : footer(locale, { tap: x("g.f.help"), hold: x("g.f.speak") }, "exit"),
+      header: state(liveLabel(model, locale), x("g.start.cards")),
+      body: lines.slice(0, MAX_BODY_ROWS),
+      footer: footer(locale, { hold: x("g.f.speak") }, "back"),
     };
   }
 
@@ -254,21 +287,21 @@ export function buildView(model: HudModel, locale: Locale, now: Date): ScreenVie
   const effect = effectLabel(card.effect, locale);
   const armed = model.confirm === card.id;
   const position = x("g.state.card", { n: Math.min(model.index, total - 1) + 1, total });
-  const header = state(armed ? x("g.state.armed") : position + (effect ? ` · ${effect}` : ""));
+  const header = state(armed ? x("g.state.armed") : liveLabel(model, locale), position);
   const nein = neinSelected(model);
-  // List rows at the bottom: the answers (and the help page without the side menu); the cursor is the filled dot.
+  // List rows at the bottom: the answers; the cursor is the filled dot.
   const options = [
-    fit((!nein && !model.helpStop ? MARK_ON : MARK_OFF) + x("g.opt.yes")),
-    fit((nein && !model.helpStop ? MARK_ON : MARK_OFF) + x("g.opt.no")),
-    ...(SIDE_MENU ? [] : [fit((model.helpStop ? MARK_ON : MARK_OFF) + x("g.opt.help"))]),
+    fit((!nein ? MARK_ON : MARK_OFF) + x("g.opt.yes")),
+    fit((nein ? MARK_ON : MARK_OFF) + x("g.opt.no")),
   ];
   const note = model.message ? wrap(model.message).slice(0, 1) : [];
   const room = MAX_BODY_ROWS - status.length - options.length - note.length;
-  const titleRows = cut(wrap(card.title), Math.min(2, Math.max(1, room - 1)));
+  // What the card does outside shows in front of its title (an internal card says nothing).
+  const titleRows = cut(wrap(effect ? `${effect}: ${card.title}` : card.title), Math.min(2, Math.max(1, room - 1)));
   const textRows = cut(wrap(card.text), Math.max(0, room - titleRows.length));
   const body = [...status, ...titleRows, ...textRows].slice(0, MAX_BODY_ROWS - options.length - note.length).concat(note, options);
   const foot = armed
     ? armedFooter(locale, x(nein ? "g.f.sendNo" : "g.f.sendYes"))
-    : footer(locale, { tap: x(model.helpStop ? "g.f.help" : "g.f.choose"), swipe: true, hold: x("g.f.speak") }, "exit");
+    : footer(locale, { tap: x("g.f.choose"), swipe: true, hold: x("g.f.speak") }, "back");
   return { header, body, footer: foot };
 }

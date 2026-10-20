@@ -8,12 +8,14 @@ import { buildSteps, guideState, type Step } from "../src/route/guide";
 import { arrivalOf, departureOf, type TransitLeg, type WalkLeg } from "../src/route/journey";
 import type { TurnType, WalkNav } from "../src/route/walk";
 import { beatOf, guideScene, plainScene, type Scene } from "../src/route/scene";
+import { cameraFor } from "../src/map/camera";
+import type { WalkMapInput } from "../src/map/draw";
 import { stopNamer } from "../src/glasses/view";
 import { menuFor } from "../src/route/menu";
 import { buildPage, createPage, rebuildPage, updatePage } from "../src/glasses/render";
 import { sameScene } from "../src/glasses/diff";
 import {
-  ARROW_SIZE, BODY_ID, CARD_HEIGHT, CARD_WIDTH, IMAGES, RIDE_BAND, SCREEN_HEIGHT, SCREEN_WIDTH, STREET_HEIGHT, STREET_HALF,
+  ARROW_SIZE, BODY_ID, CARD_HEIGHT, CARD_WIDTH, IMAGES, RIDE_BAND, SCREEN_HEIGHT, SCREEN_WIDTH,
   WAIT_BAND, type PageKind,
 } from "../src/glasses/layout";
 import { ARROW_GRID, pixelArrowFor } from "../src/glasses/icons";
@@ -27,7 +29,8 @@ import { BUS_CYCLE, BUS_FRAMES, busFrame, drawBusScene } from "../src/glasses/bu
 import { fitText } from "../src/glasses/words";
 import { fitStreetText, MAX_FONT_PX, MIN_FONT_PX } from "../src/glasses/street";
 import { departureBoard } from "../src/glasses/view";
-import { boardScene } from "../src/glasses/board";
+import { boardScene } from "../src/cockpit/scene";
+import type { Departure } from "../src/transit/types";
 import { placesView } from "../src/route/view";
 import { locales } from "../src/i18n";
 
@@ -50,10 +53,18 @@ function nav(toNext: number, type: TurnType = "left", street: string | null = "S
   };
 }
 
-/** The scene of step `index` for a walker at the stop, `walk` as given. */
+/** The map of a walk on a straight route from the start of the first walk to its end. */
+function mapOf(leg: WalkLeg, user: { lat: number; lon: number }): WalkMapInput {
+  const shape = [{ lat: leg.fromLat, lon: leg.fromLon }, { lat: leg.toLat, lon: leg.toLon }];
+  const target = { lat: leg.toLat, lon: leg.toLon };
+  return { view: cameraFor(shape, user, target), shape, target, targetKind: leg.toDestination ? "goal" : "stop", streets: null, routeKey: "r", streetsKey: "none" };
+}
+
+/** The scene of the first step for a walker at the stop, `walk` as given (the map is there whenever the route is). */
 function walkScene(walk: WalkNav | null, locale: "de" | "en" = "de"): Scene {
   const now = new Date(T0.getTime() + 60000);
-  return guideScene(guideState(steps, now, at(now)), now, at(now), locale, { walk });
+  const position = at(now);
+  return guideScene(guideState(steps, now, position), now, position, locale, { walk, map: walk ? mapOf(walk1, position) : null });
 }
 
 function size(png: Uint8Array): [number, number] {
@@ -270,66 +281,41 @@ describe("words as pictures", () => {
 });
 
 describe("the walking page", () => {
-  it("shows arrow, distance and street as pictures, and the next vehicle as one small line", () => {
+  it("is the cockpit: four tiles, the hint stands in the view, nothing animates", () => {
     const scene = walkScene(nav(400));
-    expect(scene.kind).toBe("walk");
+    expect(scene.kind).toBe("cockpit");
     expect(scene.images.map((image) => image.id)).toEqual([4, 5, 6, 7]);
-    expect(scene.view.body).toHaveLength(1);
-    expect(scene.view.body[0]).toMatch(/^Dann: O-Bus 2 Richtung .+ · in \d+ min$/);
-    expect(scene.view.body[0]!.length).toBeLessThanOrEqual(50);
+    expect(scene.view.footer).toMatch(/^1\/\d+ · (GPS|Uhr) · Tippen = weiter · 2× = Ende$/);
+    expect(scene.view.body).toEqual([]);
     expect(scene.animated).toBe(false);
   });
 
-  it("draws every picture at the size of its container", async () => {
+  it("draws every tile at 288 x 144", async () => {
     const scene = walkScene(nav(400));
     const sizes = await Promise.all(scene.images.map(async (image) => size(await image.render())));
-    expect(sizes).toEqual([[144, 144], [288, 144], [288, STREET_HEIGHT], [288, STREET_HEIGHT]]);
-    expect(STREET_HALF * 2).toBe(576);
+    expect(sizes).toEqual([[288, 144], [288, 144], [288, 144], [288, 144]]);
   });
 
-  it("sends a new distance only when the rounded label or a bar block changes", () => {
-    const key = (m: number) => walkScene(nav(m)).images.find((image) => image.id === 5)!.key;
-    expect(key(412)).toBe(key(398));
-    expect(key(412)).not.toBe(key(360));
-    // Inside 50 m the bar is full; 10 m steps still change the label.
-    expect(key(48)).not.toBe(key(31));
-    expect(key(300)).not.toBe(key(140));
-    expect(key(500)).toBe(key(510));
+  it("changes only the right tiles when only the distance changes (the map is the same)", () => {
+    const keys = (scene: Scene) => scene.images.map((image) => image.key);
+    const near = keys(walkScene(nav(100)));
+    const far = keys(walkScene(nav(400)));
+    // NW and SW (the left half) are the map; NE and SE carry the words and numbers.
+    expect(near[0]).toBe(far[0]);
+    expect(near[1]).not.toBe(far[1]);
   });
 
-  it("fills the bar completely under 50 m and puts the distance in the card key", () => {
-    expect(walkScene(nav(49)).images.find((image) => image.id === 5)!.key).toContain("|8");
-    expect(walkScene(nav(49)).images.find((image) => image.id === 5)!.key).toContain("50 m");
-    expect(walkScene(nav(300)).images.find((image) => image.id === 5)!.key).toContain("|0");
-  });
-
-  it("changes the arrow with the turn, and names the street, or the turn when there is none", () => {
-    const keyOf = (scene: Scene, id: number) => scene.images.find((image) => image.id === id)!.key;
-    expect(keyOf(walkScene(nav(100, "left")), 4)).not.toBe(keyOf(walkScene(nav(100, "right")), 4));
-    expect(keyOf(walkScene(nav(100, "left")), 6)).toBe("street:Sterneckstraße");
-    expect(keyOf(walkScene(nav(100, "left", null)), 6)).toBe("street:links abbiegen");
-    expect(keyOf(walkScene(nav(100, "left", null), "en"), 6)).toBe("street:turn left");
-    expect(keyOf(walkScene(nav(40, "arrive", null)), 6)).toBe("street:Salzburg Vogelweiderstraße");
-  });
-
-  it("falls back to text while there is no walking route, and shows 'what is left' for a walk to the goal", () => {
+  it("falls back to text while there is no walking route or no map, and shows the walk to the goal as a cockpit too", () => {
     expect(walkScene(null).kind).toBe("text");
     const now = new Date(T0.getTime() + 60000);
+    const position = at(now);
+    expect(guideScene(guideState(steps, now, position), now, position, "de", { walk: nav(250) }).kind).toBe("text");
     const last = steps.findIndex((step) => step.kind === "walk" && (step as Extract<Step, { kind: "walk" }>).leg.toDestination);
-    const state = guideState(steps, now, at(now), { index: last, autoAtSet: 0 });
+    const state = guideState(steps, now, position, { index: last, autoAtSet: 0 });
     expect(state.step.kind).toBe("walk");
-    const scene = guideScene(state, now, at(now), "de", { walk: nav(250, "right") });
-    expect(scene.kind).toBe("walk");
-    expect(scene.view.body[0]).toMatch(/^noch 5[0-9]0 m · \d+ min zu Fuß$/);
-  });
-
-  it("keeps the 'in 4 min' when the vehicle's headsign is too long for the line", () => {
-    const long: TransitLeg = { ...bus1, headsign: "Salzburg Bergheim Gewerbegebiet Süd Betriebsgelände Ost" };
-    const walkStep: Step = { kind: "walk", leg: walk1, transfer: false, next: long };
-    const state = { ...guideState(steps, T0, at(T0)), step: walkStep };
-    const scene = guideScene(state, T0, at(T0), "de", { walk: nav(120) });
-    expect(scene.view.body[0]!.length).toBeLessThanOrEqual(50);
-    expect(scene.view.body[0]).toMatch(/… · in \d+ min$/);
+    const goal = (state.step as Extract<Step, { kind: "walk" }>).leg;
+    const scene = guideScene(state, now, position, "de", { walk: nav(250, "arrive", null), map: mapOf(goal, position) });
+    expect(scene.kind).toBe("cockpit");
   });
 });
 
@@ -531,6 +517,11 @@ describe("riding", () => {
 
 // ---- container limits -------------------------------------------------------------
 
+function sampleDeparture(now: Date, minutes: number): Departure {
+  const when = new Date(now.getTime() + minutes * 60000);
+  return { line: "3", headsign: "Salzburg Hbf", inMinutes: minutes, scheduled: when, expected: when, source: "realtime", track: "B", cancelled: false, tripId: "t1" };
+}
+
 function sampleScenes(): Record<PageKind, Scene> {
   const waitNow = new Date(departureOf(bus1).getTime() - 150000);
   const stop = bus1.stops[0]!.stop;
@@ -539,10 +530,10 @@ function sampleScenes(): Record<PageKind, Scene> {
   const ride = guideScene(guideState(steps, rideNow, null), rideNow, null, "de");
   return {
     text: plainScene(placesView([{ id: "a", name: "Heim", lat: 0, lon: 0, isNow: false }], 0, T0, "de")),
-    walk: walkScene(nav(300)),
     wait,
     ride,
     board: boardScene({ id: "x", name: "Salzburg Mirabellplatz", lat: 0, lon: 0 }, [], 40, "de", 0, T0),
+    cockpit: boardScene({ id: "x", name: "Salzburg Mirabellplatz", lat: 0, lon: 0 }, [sampleDeparture(T0, 4)], 40, "de", 0, T0),
   };
 }
 
@@ -551,10 +542,10 @@ describe("the pages obey the container limits of the glasses", () => {
   const menu = menuFor("guide", "de");
 
   it("has a sample of every kind", () => {
-    expect(Object.entries(scenes).map(([kind, scene]) => `${kind}=${scene.kind}`)).toEqual(["text=text", "walk=walk", "wait=wait", "ride=ride", "board=board"]);
+    expect(Object.entries(scenes).map(([kind, scene]) => `${kind}=${scene.kind}`)).toEqual(["text=text", "wait=wait", "ride=ride", "board=board", "cockpit=cockpit"]);
   });
 
-  for (const kind of ["text", "walk", "wait", "ride", "board"] as const) {
+  for (const kind of ["text", "wait", "ride", "board", "cockpit"] as const) {
     it(`${kind}: at most four images of 20…288 x 20…144, exactly one event capture, all on the display, valid for the SDK`, () => {
       const page = buildPage(scenes[kind], menu);
       const images = page.imageObject ?? [];
@@ -580,7 +571,7 @@ describe("the pages obey the container limits of the glasses", () => {
       }));
       for (const text of texts) {
         const t = [text.xPosition!, text.yPosition!, text.xPosition! + text.width!, text.yPosition! + text.height!] as const;
-        if (kind !== "text") for (const b of boxes) expect(t[2] <= b[0] || b[2] <= t[0] || t[3] <= b[1] || b[3] <= t[1], text.containerName).toBe(true);
+        if (kind !== "text" && kind !== "cockpit") for (const b of boxes) expect(t[2] <= b[0] || b[2] <= t[0] || t[3] <= b[1] || b[3] <= t[1], text.containerName).toBe(true);
         expect(t[3]).toBeLessThanOrEqual(SCREEN_HEIGHT);
       }
       const result = validateEvenHubPageContainer(page);
@@ -588,12 +579,13 @@ describe("the pages obey the container limits of the glasses", () => {
     });
   }
 
-  it("the walking page is the OpenGlance layout: arrow 144, card 288 x 144, street across the full width", () => {
-    const page = buildPage(scenes.walk, menu);
-    const [arrow, card, left, right] = page.imageObject!;
-    expect([arrow!.width, arrow!.height, card!.width, card!.height]).toEqual([144, 144, 288, 144]);
-    expect([left!.xPosition, right!.xPosition, left!.width, right!.width]).toEqual([0, 288, 288, 288]);
-    expect(page.containerTotalNum).toBe(6);
+  it("the cockpit page is four 288 x 144 tiles over the whole display plus one empty input container", () => {
+    const page = buildPage(scenes.cockpit, menu);
+    expect(page.imageObject!.map((image) => [image.xPosition, image.yPosition, image.width, image.height])).toEqual([
+      [0, 0, 288, 144], [288, 0, 288, 144], [0, 144, 288, 144], [288, 144, 288, 144],
+    ]);
+    expect(page.textObject).toHaveLength(1);
+    expect(page.textObject![0]).toMatchObject({ isEventCapture: 1, containerID: BODY_ID, content: " " });
   });
 
   it("the ride page puts the stop count in the middle of the display, the words around it", () => {
@@ -624,29 +616,31 @@ function recordingBridge() {
 describe("sending pages and pictures", () => {
   it("creates the first page once and sends each of its pictures once", async () => {
     const { bridge, log } = recordingBridge();
-    const scenes = sampleScenes();
     const menu = menuFor("guide", "de");
-    expect((await createPage(bridge, scenes.walk, menu)).ok).toBe(true);
+    const walking = walkScene(nav(300));
+    expect((await createPage(bridge, walking, menu)).ok).toBe(true);
     expect(log.filter((entry) => entry === "create")).toHaveLength(1);
-    expect(log.filter((entry) => entry.startsWith("image:"))).toEqual(["image:arrow", "image:distance", "image:street-left", "image:street-right"]);
+    expect(log.filter((entry) => entry.startsWith("image:"))).toEqual(["image:cockpit-nw", "image:cockpit-ne", "image:cockpit-sw", "image:cockpit-se"]);
 
-    // The same pictures again: only the text moves.
+    // The same pictures again: nothing goes out.
     log.length = 0;
-    expect((await updatePage(bridge, scenes.walk)).ok).toBe(true);
-    expect(log).toEqual(["text:body", "text:footer"]);
+    expect((await updatePage(bridge, walkScene(nav(300)))).ok).toBe(true);
+    expect(log).toEqual([]);
 
-    // One distance block further: exactly one picture goes out.
+    // The walker came closer, the map did not move: the map tiles stay, only the words are sent.
     log.length = 0;
-    const next = walkScene(nav(100));
-    await updatePage(bridge, next);
-    expect(log.filter((entry) => entry.startsWith("image:"))).toEqual(["image:distance"]);
+    await updatePage(bridge, walkScene(nav(100)));
+    const sent = log.filter((entry) => entry.startsWith("image:"));
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent).not.toContain("image:cockpit-nw");
+    expect(sent).not.toContain("image:cockpit-sw");
   });
 
   it("changes the page kind by rebuilding with the other containers, and never creates a second time", async () => {
     const { bridge, log } = recordingBridge();
     const scenes = sampleScenes();
     const menu = menuFor("guide", "de");
-    await createPage(bridge, scenes.walk, menu);
+    await createPage(bridge, scenes.cockpit, menu);
     log.length = 0;
     expect((await rebuildPage(bridge, scenes.wait, menu)).ok).toBe(true);
     expect(log).toEqual(["rebuild:countdown+bus", "image:countdown", "image:bus"]);
@@ -659,7 +653,7 @@ describe("sending pages and pictures", () => {
     expect(log).not.toContain("create");
     // Back on a picture page after a text page: pictures that look the same as before are sent again.
     log.length = 0;
-    await rebuildPage(bridge, scenes.walk, menu);
+    await rebuildPage(bridge, scenes.cockpit, menu);
     expect(log.filter((entry) => entry.startsWith("image:"))).toHaveLength(4);
   });
 
@@ -693,7 +687,7 @@ describe("sending pages and pictures", () => {
         return ImageRawDataUpdateResult.success;
       },
     } as never;
-    const scene = sampleScenes().walk;
+    const scene = sampleScenes().cockpit;
     const result = await createPage(refusing, scene, menuFor("guide", "de"));
     expect(result.ok).toBe(true);
     expect(result.partial).toBe(true);
@@ -701,6 +695,26 @@ describe("sending pages and pictures", () => {
     log.length = 0;
     expect(await updatePage(refusing, scene)).toEqual({ ok: true });
     expect(log.filter((entry) => entry.startsWith("image:"))).toHaveLength(4);
+  });
+
+  it("the cockpit sends only the tiles whose pixels changed: nothing when unchanged, one for the clock", async () => {
+    const { bridge, log } = recordingBridge();
+    const board = (now: Date) => boardScene({ id: "x", name: "Salzburg Mirabellplatz", lat: 0, lon: 0 }, [sampleDeparture(T0, 4)], 40, "de", 0, now);
+    const first = board(T0);
+    expect((await createPage(bridge, first, null)).ok).toBe(true);
+    expect(log.filter((entry) => entry.startsWith("image:"))).toHaveLength(4);
+    log.length = 0;
+    await updatePage(bridge, board(T0));
+    expect(log).toEqual([]);
+    expect(sameScene(first, board(T0))).toBe(true);
+    // A minute later the clock and the countdown change: exactly the tiles whose pixels differ go out, no text.
+    log.length = 0;
+    const minute = board(new Date(T0.getTime() + 60_000));
+    const changed = minute.images.filter((image, index) => image.key !== first.images[index]!.key).map((image) => image.id);
+    expect(changed.length).toBeGreaterThan(0);
+    await updatePage(bridge, minute);
+    expect(log.filter((entry) => entry.startsWith("image:"))).toHaveLength(changed.length);
+    expect(log.filter((entry) => entry.startsWith("text:"))).toEqual([]);
   });
 
   it("treats departure board pages as plain text scenes, with no pictures", () => {

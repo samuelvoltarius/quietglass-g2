@@ -72,6 +72,8 @@ export interface AgentState {
    * that it is only watching.
    */
   readonly controllable: boolean;
+  /** How many tools the agent has started since the last instruction (the cockpit's "Schritte"). */
+  readonly steps?: number;
 }
 
 export interface PendingDecision {
@@ -147,7 +149,7 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
       // A new instruction resets everything; the old answer is no longer
       // what the agent is doing.
       return { ...state, text: "", tool: null, pending: null, busy: true,
-        error: null, startedAt: new Date() };
+        error: null, startedAt: new Date(), steps: 0 };
 
     case "text_delta":
       return { ...state, text: state.text + event.text, busy: true,
@@ -158,7 +160,7 @@ export function applyEvent(state: AgentState, event: AgentEvent): AgentState {
         startedAt: state.startedAt ?? new Date() };
 
     case "tool_start":
-      return { ...state, tool: event.tool ?? event.text ?? null, busy: true };
+      return { ...state, tool: event.tool ?? event.text ?? null, busy: true, steps: (state.steps ?? 0) + 1 };
 
     case "tool_end":
       return { ...state, tool: null };

@@ -6,20 +6,21 @@ import {
   addSample, calibrate, createMonitor, reset, type PostureMonitor,
 } from "./posture/monitor";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { buildView, type PostureView } from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, forgetPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
-import { GAUGE, drawGauge, gaugeAngle, gaugeKey, type GaugeState } from "./glasses/gauge";
-import { createImageLane } from "./glasses/lane";
-import { angleKey, drawAngle, ANGLE_IMAGE, type AngleState } from "./glasses/digits";
-import { FIGURE_IMAGE, drawFigure, figureKey, nextStage, type FigureStage, type FigureState } from "./glasses/figure";
-import { quantize } from "./glasses/bitmap";
-import { encodePng } from "./glasses/pixel";
+import {
+  COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage, type MenuSpec, type TextView,
+} from "./glasses/page";
+import { gaugeAngle, quantize } from "./glasses/quant";
+import { cockpitModel, type CockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { load, save, type PostureData } from "./storage/persist";
-import { mountPhoneUi, type PhoneUi } from "./ui/phone";
+import { mountPhoneUi, type PhoneLive, type PhoneUi } from "./ui/phone";
+import { EMPTY_BUCKETS, updateBuckets, type BucketState } from "./posture/buckets";
 import { addToStats, createStats, record, recordingDone, startRecording, type Recording, type SensorStats } from "./imu/diagnostics";
 import { buildSensorView } from "./glasses/sensor-view";
-import { buildHelpView, buildMenuView, HELP_PAGES, MENU_ENTRIES } from "./glasses/menu-view";
+import { buildMenuView, MENU_ENTRIES } from "./glasses/menu-view";
 import { createExitRequest, settleRestore } from "./exit";
 import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
@@ -39,16 +40,15 @@ const TICK_MS = 1000;
 const SENSOR_REFRESH_MS = 200;
 
 /** Side-menu item ids (QIS v1.2: help, sensor test and the tally live in the glasses' side menu). */
-const MENU_HELP = 1;
-const MENU_SENSOR = 2;
-const MENU_RESET = 3;
+const MENU_SENSOR = 1;
+const MENU_RESET = 2;
 
 /**
  * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app and, while a page carries it, a hold
  * opens it instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages carry
  * no menu and a hold opens the app's own menu list again (sensor test, clear tally, help).
  */
-const SIDE_MENU = false;
+export const SIDE_MENU = false;
 
 /** How long the "saved" confirmation stays after a calibration. */
 const CONFIRM_MS = 8000;
@@ -72,8 +72,11 @@ async function boot(): Promise<void> {
   let data: PostureData = await load(bridge);
   let monitor: PostureMonitor = createMonitor();
   let lastSample: Vec3 | null = null;
-  let lastView: PostureView | null = null;
+  let lastView: TextView | null = null;
   let pageReady = false;
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
+  let textBackend: TextBackend | null = null;
   /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
   let rebuildWanted = false;
   /** In the background: the IMU is off and nothing is drawn. */
@@ -84,14 +87,11 @@ async function boot(): Promise<void> {
    */
   let pending: PendingConfirm<"calibrate" | "reset"> | null = null;
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The help page (side menu); "none" is the posture screen. */
-  let menuScreen: "none" | "menu" | "help" = "none";
+  /** The app's own list (hold); "none" is the posture screen. */
+  let menuScreen: "none" | "menu" = "none";
   let menuCursor = 0;
   /** Shown in the own menu's header until the next gesture ("Tally cleared"), only without the side menu. */
   let menuNote: string | null = null;
-  let helpPage = 0;
-  /** When today's tally was cleared; the header says so for a few seconds. */
-  let clearedAt: number | null = null;
   /** Key of the side menu the page on the glasses carries; a different one (language) needs a rebuild. */
   let pageMenuKey = "";
   let demoTimer: ReturnType<typeof setInterval> | undefined;
@@ -109,7 +109,6 @@ async function boot(): Promise<void> {
   let gaugeDeg: number | null = null;
   /** Angle as last drawn in the big digits, in whole degrees. */
   let digitsDeg: number | null = null;
-  let figure: FigureStage | null = null;
   /** Sensor test (long press, or the phone's "More" tab): raw values instead of the posture screen. */
   let sensorMode = false;
   /** The pace the sensor test asks for; the posture screen always uses IMU_PACE. */
@@ -119,34 +118,44 @@ async function boot(): Promise<void> {
   let diagRecReported = false;
   let diagTimer: ReturnType<typeof setInterval> | undefined;
   let phone: PhoneUi | null = null;
-  /** Images are written at most every 700 ms and only when their picture changes. */
-  const lane = createImageLane((target, imageData) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, target, imageData)), 700);
+  /** The tally in slices of ten minutes, for the phone only (memory, never written). */
+  let buckets: BucketState = EMPTY_BUCKETS;
 
   // A stored calibration makes the app usable immediately after a restart.
   if (data.reference) {
     monitor = { ...monitor, reference: data.reference, state: "good" };
   }
 
-  const currentView = (): PostureView => sensorMode
-    ? buildSensorView(diagStats, { locale, pace: diagPace, recording: diagRec, sensorOff })
-    : menuScreen === "help"
-      ? buildHelpView(locale, helpPage)
-      : menuScreen === "menu"
-        ? buildMenuView({ locale, cursor: menuCursor, resetArmed: activeConfirm(pending, Date.now())?.kind === "reset", note: menuNote })
-        : buildView(monitor, data.settings, {
-        holdMenu: !SIDE_MENU,
-        showAngleWhenGood: data.showAngleWhenGood,
-        locale,
-        sensorOff,
-        justCalibrated: calibratedAt !== null && Date.now() - calibratedAt < CONFIRM_MS,
-        confirm: activeConfirm(pending, Date.now())?.kind ?? null,
-        note: clearedAt !== null && Date.now() - clearedAt < CONFIRM_MS ? t(locale, "g.m.cleared") : null,
-      });
+  type Scene =
+    | { readonly kind: "text"; readonly view: TextView }
+    | { readonly kind: "cockpit"; readonly model: CockpitModel };
+
+  /** Everything on the glasses for one moment: the sensor test and the list are text, the posture screen is the cockpit image. */
+  const currentScene = (): Scene => {
+    if (sensorMode) return { kind: "text", view: buildSensorView(diagStats, { locale, pace: diagPace, recording: diagRec, sensorOff }) };
+    if (menuScreen === "menu") {
+      return { kind: "text", view: buildMenuView({ locale, cursor: menuCursor, resetArmed: activeConfirm(pending, Date.now())?.kind === "reset", note: menuNote }) };
+    }
+    const now = Date.now();
+    const calibrated = monitor.reference !== null && !sensorOff;
+    const alert = monitor.state === "leaning" || monitor.state === "warned";
+    // The needle moves in 2 degree steps and the number in whole degrees, both with hysteresis (a tile is only sent when they change).
+    gaugeDeg = calibrated ? gaugeAngle(gaugeDeg, monitor.angle) : null;
+    digitsDeg = calibrated && (alert || (data.showAngleWhenGood && monitor.angle !== null)) ? quantize(digitsDeg, monitor.angle, 1) : null;
+    return {
+      kind: "cockpit",
+      model: cockpitModel({
+        monitor, settings: data.settings, locale, now, showAngleWhenGood: data.showAngleWhenGood, sensorOff,
+        justCalibrated: calibratedAt !== null && now - calibratedAt < CONFIRM_MS,
+        confirm: activeConfirm(pending, now)?.kind === "calibrate" ? "calibrate" : null,
+        digitsAngle: digitsDeg, gaugeAngle: gaugeDeg,
+      }),
+    };
+  };
 
   const menuSpec = (): MenuSpec => !SIDE_MENU ? { key: "none", items: [] } : ({
     key: `menu:${locale}`,
     items: [
-      { id: MENU_HELP, label: t(locale, "g.m.help") },
       { id: MENU_SENSOR, label: t(locale, "g.m.sensor") },
       { id: MENU_RESET, label: t(locale, "g.m.reset") },
     ],
@@ -164,54 +173,48 @@ async function boot(): Promise<void> {
     void persist(data);
   };
 
-  /**
-   * Asks the lane for the head gauge. The key is quantised, so most calls
-   * change nothing and send nothing; the lane is never awaited.
-   */
-  const requestGauge = (): void => {
-    if (!pageReady || closed) return;
-    const calibrated = monitor.reference !== null && !sensorOff;
-    gaugeDeg = calibrated ? gaugeAngle(gaugeDeg, monitor.angle) : null;
-    const state: GaugeState = { calibrated, angle: gaugeDeg, warnAngle: data.settings.warnAngle, alert: monitor.state === "leaning" || monitor.state === "warned" };
-    lane.request(GAUGE, gaugeKey(state), () => encodePng(drawGauge(state)));
-    const alert = state.alert;
-    // The figure straightens or slumps in four steps; it is sent only when the step changes.
-    figure = nextStage(figure, calibrated ? monitor.angle : null, data.settings.warnAngle);
-    const fig: FigureState = { stage: figure, alert };
-    lane.request(FIGURE_IMAGE, figureKey(fig), () => encodePng(drawFigure(fig)));
-    // The lean as big digits: only while it matters (leaning, warned, or if the user asked to see it).
-    const show = calibrated && (alert || (data.showAngleWhenGood && monitor.angle !== null));
-    digitsDeg = show ? quantize(digitsDeg, monitor.angle, 1) : null;
-    const angle: AngleState = { show, deg: digitsDeg, alert };
-    lane.request(ANGLE_IMAGE, angleKey(angle), () => encodePng(drawAngle(angle)));
-  };
-
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up or after the cockpit was left. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused && installed === "cockpit"));
+
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
     if (closed || paused) return;
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
-    const view = currentView();
+    const scene = currentScene();
     const menu = menuSpec();
+    if (scene.kind === "cockpit") {
+      if (installed !== "cockpit" || (pageReady && menu.key !== pageMenuKey)) pageReady = false;
+      if (!pageReady) {
+        const result = await createCockpitPage(bridge, menu);
+        if (closed) return;
+        if (!result.ok) { pageReady = false; console.warn("[posturelens] draw failed:", result.reason); return; }
+        pageReady = true;
+        installed = "cockpit";
+        pageMenuKey = menu.key;
+        lastView = null;
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next sample.
+      void tiles.push(composeCockpit(scene.model, textBackend));
+      return;
+    }
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
     // The side menu travels with the page: a different one (language) means one rebuild.
     if (pageReady && menu.key !== pageMenuKey) pageReady = false;
-    if (!pageReady || !sameView(lastView, view)) {
-      const created = !pageReady;
-      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, menu);
-      if (!result.ok) {
-        pageReady = false;
-        console.warn("[posturelens] draw failed:", result.reason);
-        return;
-      }
-      pageReady = true;
-      if (created) pageMenuKey = menu.key;
-      lastView = view;
-      // A new page starts with a blank image.
-      if (created) lane.invalidate();
-    }
-    requestGauge();
+    if (pageReady && sameView(lastView, scene.view)) return;
+    const result = pageReady ? await updateTextPage(bridge, scene.view, lastView) : await createTextPage(bridge, scene.view, menu);
+    if (closed) return;
+    if (!result.ok) { pageReady = false; console.warn("[posturelens] draw failed:", result.reason); return; }
+    pageReady = true;
+    installed = "text";
+    pageMenuKey = menu.key;
+    lastView = scene.view;
   };
 
   /** One page write at a time; a request during a write redraws once after it. */
@@ -251,7 +254,7 @@ async function boot(): Promise<void> {
     clearInterval(tick);
     clearInterval(demoTimer);
     clearTimeout(confirmTimer);
-    lane.close();
+    tiles.close();
   };
 
   /** Every IMU sample, from the glasses or the demo. */
@@ -313,6 +316,7 @@ async function boot(): Promise<void> {
       if (closed) return;
       pageReady = false;
       lastView = null;
+      installed = null;
       forgetPage(bridge);
       return draw();
     },
@@ -339,12 +343,7 @@ async function boot(): Promise<void> {
   /** An item of the glasses' side menu. */
   const onMenu = (itemId: number): void => {
     if (paused) return;
-    if (itemId === MENU_HELP) {
-      disarm();
-      if (sensorMode) setSensorMode(false);
-      menuScreen = "help";
-      helpPage = 0;
-    } else if (itemId === MENU_SENSOR) {
+    if (itemId === MENU_SENSOR) {
       disarm();
       menuScreen = "none";
       setSensorMode(true);
@@ -354,7 +353,6 @@ async function boot(): Promise<void> {
       if (!confirmed("reset")) { void draw(); return; }
       pending = null;
       monitor = reset(monitor);
-      clearedAt = Date.now();
     } else {
       return;
     }
@@ -430,15 +428,6 @@ async function boot(): Promise<void> {
       return;
     }
 
-    if (menuScreen === "help") {
-      if (gesture.gesture === "scrollDown") helpPage = (helpPage + 1) % HELP_PAGES;
-      else if (gesture.gesture === "scrollUp") helpPage = (helpPage + HELP_PAGES - 1) % HELP_PAGES;
-      else if (gesture.gesture === "doubleClick") menuScreen = SIDE_MENU ? "none" : "menu";
-      else return;
-      void draw();
-      return;
-    }
-
     if (menuScreen === "menu") {
       switch (gesture.gesture) {
         case "scrollUp":
@@ -459,7 +448,6 @@ async function boot(): Promise<void> {
           }
           disarm();
           if (entry === "sensor") setSensorMode(true);
-          else if (entry === "help") { menuScreen = "help"; helpPage = 0; }
           break;
         }
         case "doubleClick":
@@ -519,7 +507,11 @@ async function boot(): Promise<void> {
     }
   });
 
-  tick = setInterval(() => { void draw(); }, TICK_MS);
+  tick = setInterval(() => {
+    buckets = updateBuckets(buckets, monitor.goodSeconds, monitor.leaningSeconds, Date.now());
+    void draw();
+    phone?.refreshLive();
+  }, TICK_MS);
 
   // The page first (imuControl needs one), then the IMU — both in the
   // background, so neither can hold up the gestures above.
@@ -546,6 +538,15 @@ async function boot(): Promise<void> {
       void draw();
     },
     getSensorOff: () => sensorOff,
+    getLive: (): PhoneLive => ({ monitor, sensorOff, buckets: buckets.buckets }),
+    // The phone's button is as deliberate as a tap on the glasses (the page asks before it overwrites a saved posture).
+    calibrate: () => {
+      if (closed) return;
+      pending = null;
+      if (lastSample) calibrateTo(lastSample); else calibratePending = true;
+      void draw();
+      phone?.refresh();
+    },
     getData: () => data,
     setData: async (next) => {
       data = next;

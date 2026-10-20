@@ -1,26 +1,53 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   MenuContainerProperty,
   MenuItemProperty,
-  TextContainerProperty,
-  TextContainerUpgrade,
   RebuildPageContainer,
   StartUpPageCreateResult,
+  TextContainerProperty,
+  TextContainerUpgrade,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { LogView } from "./view";
+import { tileSlots, type TileSend, type TileSlot } from "../screen/sender";
 
 /**
- * Renders the inspection log onto the G2.
+ * Puts Field Log on the G2. Two kinds of page on the 576 x 288 display:
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display.
- * After the page exists, updates go through `textContainerUpgrade`, which
- * changes text without rebuilding the page — on real hardware a rebuild falls
- * back to a full page creation and costs seconds, discarding input meanwhile.
+ *  - a text page (start, notes, reading, quick notes, review): header, body, footer, in the
+ *    three text containers every Quietglass app uses;
+ *  - the cockpit page (QUS v1): the whole display is four 288 x 144 image
+ *    tiles (drawn by src/cockpit), plus one empty text container that owns
+ *    the input.
+ *
+ * `createStartUpPageContainer` runs exactly once. Every later page - also the
+ * other kind - is a `rebuildPageContainer`; everything else goes through
+ * `textContainerUpgrade` and `updateImageRawData`, and only when something
+ * changed: on real hardware a rebuild costs seconds and discards input.
  */
 
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
+
+/**
+ * Every call into the glasses is bounded. Draws run one after another, so a
+ * single answer that never comes (a Bluetooth write lost on the way) used to
+ * freeze the display for good on its last page. A call that times out counts
+ * as failed: the draw fails, the page is marked broken and the next draw
+ * rebuilds it.
+ */
+export const PAGE_CALL_MS = 8_000;
+export const TEXT_CALL_MS = 5_000;
+export const IMAGE_CALL_MS = 10_000;
+
+export function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 interface ContainerSpec {
   readonly id: number;
@@ -29,11 +56,16 @@ interface ContainerSpec {
   readonly height: number;
 }
 
-const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> = {
-  header: { id: 1, name: "header", y: 0, height: 32 },
-  body: { id: 2, name: "body", y: 36, height: 214 },
-  footer: { id: 3, name: "footer", y: 252, height: 34 },
-};
+const HEADER: ContainerSpec = { id: 1, name: "header", y: 0, height: 32 };
+const BODY: ContainerSpec = { id: 2, name: "body", y: 36, height: 214 };
+const FOOTER: ContainerSpec = { id: 3, name: "footer", y: 252, height: 34 };
+
+/** Rows the text body shows at most (QUS 1.3: lists show five). */
+export const BODY_ROWS = 5;
+
+/** The cockpit's four image containers; the input container sits under them. */
+export const COCKPIT_TILES = tileSlots(21, "fieldlog");
+const COCKPIT_INPUT_ID = 20;
 
 export interface RenderResult {
   readonly ok: boolean;
@@ -41,11 +73,11 @@ export interface RenderResult {
   readonly reason?: string;
 }
 
-/** QIS v1.2: one item of the glasses' side menu (id > 0, label at most 32 bytes). */
+/** One item of the glasses' side menu (id > 0, label at most 32 bytes). Off while SIDE_MENU (main.ts) is false. */
 export interface MenuItemSpec { readonly id: number; readonly label: string }
 export interface MenuSpec { readonly items: readonly MenuItemSpec[] }
 
-/** The side menu as the SDK wants it (`menuObject` of the page), as in Babel Glass. */
+/** The side menu as the SDK wants it (`menuObject` of the page). */
 export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefined {
   if (menu === null || menu.items.length === 0) return undefined;
   return new MenuContainerProperty({
@@ -53,26 +85,7 @@ export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefi
   });
 }
 
-export function buildPage(view: LogView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
-  const menuObject = buildMenu(menu);
-  return new CreateStartUpPageContainer({
-    ...(menuObject === undefined ? {} : { menuObject }),
-    containerTotalNum: 3,
-    textObject: [
-      text(CONTAINER.header, view.header, 1, false),
-      // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true),
-      text(CONTAINER.footer, view.footer, 3, false),
-    ],
-  });
-}
-
-function text(
-  spec: ContainerSpec,
-  content: string,
-  zOrderIndex: number,
-  captureEvents: boolean,
-): TextContainerProperty {
+function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
@@ -87,28 +100,43 @@ function text(
   });
 }
 
-/**
- * Every call into the glasses is bounded. Draws run one after another, so a
- * single answer that never comes (a Bluetooth write lost on the way) used to
- * freeze the display for good on whatever it showed last. A call that times
- * out counts as failed: the caller marks the page broken and the next draw
- * rebuilds it.
- */
-export const PAGE_CALL_MS = 8_000;
-export const TEXT_CALL_MS = 5_000;
-export const IMAGE_CALL_MS = 10_000;
+export function buildTextPage(view: LogView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
+  return new CreateStartUpPageContainer({
+    containerTotalNum: 3,
+    textObject: [
+      text(HEADER, view.header, 1, false),
+      // Exactly one container may capture input; the body owns it.
+      text(BODY, view.body.join("\n"), 2, true),
+      text(FOOTER, view.footer, 3, false),
+    ],
+    ...(menuObject === undefined ? {} : { menuObject }),
+  });
+}
 
-function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+export function buildCockpitPage(menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
+  return new CreateStartUpPageContainer({
+    containerTotalNum: 1 + COCKPIT_TILES.length,
+    textObject: [new TextContainerProperty({
+      containerID: COCKPIT_INPUT_ID, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+      paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+    })],
+    imageObject: COCKPIT_TILES.map((tile, index) => new ImageContainerProperty({
+      containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+    })),
+    ...(menuObject === undefined ? {} : { menuObject }),
+  });
 }
 
 /**
- * Puts the page on the glasses: created once per bridge, every later call
- * (reconnect) rebuilds it. The caller resends all images afterwards.
+ * Puts a page on the glasses. The very first time on a bridge, one
+ * `rebuildPageContainer` goes out first (result ignored, failure swallowed: on
+ * real glasses it is what registers the input route) and then
+ * `createStartUpPageContainer` runs exactly once. Every later page replaces it
+ * with `rebuildPageContainer`; a second creation would be refused as "invalid".
  */
-const started = new WeakSet<object>();
+const started = new WeakSet<EvenAppBridge>();
 
 /**
  * The next page goes the way of the very first one again (rebuild + create).
@@ -120,37 +148,33 @@ export function forgetPage(bridge: EvenAppBridge): void {
   started.delete(bridge);
 }
 
-export async function createPage(bridge: EvenAppBridge, view: LogView, menu: MenuSpec | null = null): Promise<RenderResult> {
-  // A rebuild without the menu would clear it, so every rebuild supplies it again.
-  const page = buildPage(view, menu);
+async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
-  // One creation per bridge, then only rebuilds: a rebuild before the first
-  // creation or a second creation leaves the page without its input route.
-  if (started.has(bridge)) {
-    try {
+  try {
+    if (!started.has(bridge)) {
+      try {
+        await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
+      } catch {
+        // Expected on current firmware; the creation below is the real path.
+      }
+      const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
+      if (result !== StartUpPageCreateResult.success) return { ok: false, reason: describeCreateResult(result) };
+      started.add(bridge);
+    } else {
       const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
-      return ok ? { ok: true } : { ok: false, reason: "rebuild refused" };
-    } catch (error) {
-      return { ok: false, reason: errorMessage(error) };
+      // A refused rebuild leaves the old page in place.
+      if (!ok) return { ok: false, reason: "rebuild refused" };
     }
-  }
-  try {
-    // Measured on real glasses: the first page needs one rebuild call before the creation
-    // (it registers input); the result is ignored.
-    await bounded(bridge.rebuildPageContainer(new RebuildPageContainer({ ...page })), PAGE_CALL_MS, "rebuild");
-  } catch {
-    // Expected to fail before the first page.
-  }
-  try {
-    const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
-    if (result === StartUpPageCreateResult.success) { started.add(bridge); return { ok: true }; }
-    return { ok: false, reason: describeCreateResult(result) };
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
 }
 
-/** Fast path: change the text of the three containers in place. */
+export const createTextPage = (bridge: EvenAppBridge, view: LogView, menu: MenuSpec | null = null): Promise<RenderResult> =>
+  installPage(bridge, buildTextPage(view, menu));
+export const createCockpitPage = (bridge: EvenAppBridge, menu: MenuSpec | null = null): Promise<RenderResult> =>
+  installPage(bridge, buildCockpitPage(menu));
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
@@ -168,15 +192,20 @@ function guarded(specId: number, content: string): { content: string; contentLen
   return { content: text, contentLength: length };
 }
 
-export async function updatePage(bridge: EvenAppBridge, view: LogView): Promise<RenderResult> {
-  const updates: Array<[ContainerSpec, string]> = [
-    [CONTAINER.header, view.header],
-    [CONTAINER.body, view.body.join("\n")],
-    [CONTAINER.footer, view.footer],
-  ];
+/** Counters for tests and diagnostics. */
+export const renderStats = { upgrades: 0 };
 
+/** Only the containers whose text changed are written. */
+export async function updateTextPage(bridge: EvenAppBridge, view: LogView, previous: LogView | null = null): Promise<RenderResult> {
+  const updates: Array<[ContainerSpec, string, string | undefined]> = [
+    [HEADER, view.header, previous?.header],
+    [BODY, view.body.join("\n"), previous?.body.join("\n")],
+    [FOOTER, view.footer, previous?.footer],
+  ];
   try {
-    for (const [spec, content] of updates) {
+    for (const [spec, content, before] of updates) {
+      if (before !== undefined && before === content) continue;
+      renderStats.upgrades += 1;
       await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
@@ -187,6 +216,22 @@ export async function updatePage(bridge: EvenAppBridge, view: LogView): Promise<
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+}
+
+/** One image tile to the glasses; resolves true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, imageData: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
+
+/**
+ * The tile sender's write function. It writes only while `allowed()` says so:
+ * not while the system exit dialog may be on screen (a page call could cover
+ * it) and not after the cockpit page has been left (its containers are gone).
+ * A refused tile counts as failed and is tried again with the next frame.
+ */
+export function guardedTileSend(bridge: EvenAppBridge, allowed: () => boolean): TileSend {
+  return (slot, png) => (allowed() ? sendTile(bridge, slot, png) : Promise.resolve(false));
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {
@@ -202,3 +247,8 @@ export function describeCreateResult(result: StartUpPageCreateResult): string {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/** The earlier names of the text-page calls. */
+export const createPage = createTextPage;
+export const updatePage = updateTextPage;
+export const buildPage = buildTextPage;

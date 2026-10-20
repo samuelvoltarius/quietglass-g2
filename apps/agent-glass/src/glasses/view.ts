@@ -97,11 +97,24 @@ export interface ChoiceUi {
   readonly armed: Armed | null;
   /** Whether the backend can answer approvals at all (hermes/openclaw cannot). */
   readonly decisions: boolean;
+  /** Which page of the open session: the status cockpit (default) or the answer text (2x goes back to the cockpit). */
+  readonly mode?: ViewMode;
+}
+
+/** The two pages of an open session: the cockpit image and the reading text. */
+export type ViewMode = "status" | "answer";
+
+/**
+ * Whether the glasses show the status cockpit (QUS v1, an image) instead of text: a session is open and
+ * nothing needs a decision or says "error" - those take the whole display as text.
+ */
+export function showsCockpit(screen: "agent" | "sessions" | "help", state: AgentState, mode: ViewMode): boolean {
+  return screen === "agent" && mode === "status" && state.session !== null && state.error === null && state.pending === null;
 }
 
 const NO_UI: ChoiceUi = { choice: 0, armed: null, decisions: true };
-/** The header leaves the top-right corner to the face, so it is a little shorter than a body row. */
-const HEADER_WIDTH = 48;
+/** The header is one full row (QUS v1: no face in the corner any more). */
+const HEADER_WIDTH = 56;
 
 const MARK_ON = "● ";
 const MARK_OFF = "○ ";
@@ -183,7 +196,7 @@ export function buildView(state: AgentState, now: Date, locale: Locale = "en", p
     return {
       header: headerLine(locale, x("g.s.page", { n: paged.pages - paged.page, total: paged.pages }), title),
       body: paged.lines,
-      footer: footer(locale, { tap: x("g.f.newest"), swipe: true }, "exit"),
+      footer: footer(locale, { tap: x("g.f.newest"), swipe: true }, ui.mode === "answer" ? "back" : "exit"),
     };
   }
 
@@ -210,7 +223,7 @@ export function buildView(state: AgentState, now: Date, locale: Locale = "en", p
   return {
     header: headerLine(locale, status, title),
     body,
-    footer: footer(locale, { tap: x("g.f.replay"), ...(paged.pages > 1 ? { swipe: true as const } : {}), hold }, "exit"),
+    footer: footer(locale, { tap: x("g.f.replay"), ...(paged.pages > 1 ? { swipe: true as const } : {}), hold }, ui.mode === "answer" ? "back" : "exit"),
   };
 }
 

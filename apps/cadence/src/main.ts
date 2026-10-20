@@ -1,27 +1,23 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import {
-  clampBpm, createState, msPerBeat, msToNextBeat, restartCount, retime, toggle, type MetronomeState,
+  clampBpm, createState, msPerBeat, msToNextBeat, positionAt, restartCount, retime, toggle, type MetronomeState,
 } from "./metronome/engine";
-import { addSession, nextSessionId, type PracticeSession } from "./practice/log";
+import { addSession, bestTempoByItem, nextSessionId, sessionsToday, totalSeconds, type PracticeSession } from "./practice/log";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { ARM_MS, buildView, type CadenceView } from "./glasses/view";
-import { sameView } from "./glasses/diff";
-import { createPage, forgetPage, updatePage, ICON_HEIGHT, ICON_WIDTH, type MenuSpec } from "./glasses/render";
-import { PENDULUM_MIDSWING_MAX_BPM, bpmFrame, pendulumFrame, pendulumSwing } from "./glasses/charts";
-import { bitmapKey, iconBitmap } from "./glasses/gfx";
+import { ARM_MS, cockpitModel, type CockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { COCKPIT_TILES, createCockpitPage, forgetPage, guardedTileSend } from "./glasses/page";
+import { PENDULUM_MIDSWING_MAX_BPM } from "./glasses/charts";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { load, loadRunRaw, parseRun, RUN_RESUME_MS, save, saveRun, setSettings, type CadenceData } from "./storage/persist";
 import { lifecycleFromEvent } from "./lifecycle";
-import { mountPhoneUi } from "./ui/phone";
+import { mountPhoneUi, type PhoneLive, type PhoneUi } from "./ui/phone";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
-import { t } from "./messages";
 import { createExitRequest, settleRestore } from "./exit";
 
-const METRONOME_SIGN = ["....##....", "...####...", "...####...", "...#..#...", "..##..##..", "..#.#..#..", ".##.#..##.", ".########.", "##########"] as const;
-
-/** Side menu entries of the glasses (QIS v1.2). */
-const MENU_HELP = 1;
 /** The glasses' side menu (QIS v1.2). Off: its clicks do not arrive on current firmware and a hold opens it instead of reaching the app (step log 15.10.2026). */
-const SIDE_MENU = false;
+export const SIDE_MENU = false;
 
 /** Tempo step for a swipe on the glasses. */
 const BPM_STEP = 4;
@@ -34,8 +30,6 @@ async function boot(): Promise<void> {
   let data: CadenceData = await load(bridge);
   let state: MetronomeState = createState();
   let sessionStartedAt: number | null = null;
-  let lastView: CadenceView | null = null;
-  let lastFrames = "";
   let pageReady = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let midTimer: ReturnType<typeof setTimeout> | undefined;
@@ -49,52 +43,57 @@ async function boot(): Promise<void> {
   /** A pause is waiting for its confirming tap (QIS v1: arm, then confirm within ARM_MS). */
   let armedUntil = 0;
   let armTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The help page is open. */
-  let helpOpen = false;
+  let phone: PhoneUi | null = null;
+  let textBackend: TextBackend | null = null;
   let locale: Locale = await resolveLocale(bridge);
-
-  // Without a working side menu (see SIDE_MENU) the pages carry none; a hold on the stopped beat opens the help again.
-  const menu = (): MenuSpec => ({ items: SIDE_MENU ? [{ id: MENU_HELP, label: t(locale, "g.m.help") }] : [] });
 
   const isArmed = (): boolean => armedUntil > Date.now() && state.running;
   const disarm = (): void => { armedUntil = 0; clearTimeout(armTimer); armTimer = undefined; };
 
-  const currentView = (): CadenceView =>
-    buildView(state, data.settings, {
-      locale,
-      armed: isArmed(),
-      help: helpOpen,
+  const sessionSecondsNow = (): number | undefined =>
+    sessionStartedAt !== null ? (Date.now() - sessionStartedAt) / 1000 : undefined;
+
+  const currentModel = (): CockpitModel => {
+    const now = Date.now();
+    const today = sessionsToday(data.sessions, now);
+    const best = data.activeItem ? bestTempoByItem(data.sessions).find((entry) => entry.item === data.activeItem)?.bpm ?? null : null;
+    const seconds = sessionSecondsNow();
+    return cockpitModel({
+      state, settings: data.settings, now, locale, armed: isArmed(),
+      todaySeconds: totalSeconds(today), todayCount: today.length, best,
       ...(data.activeItem ? { item: data.activeItem } : {}),
-      ...(sessionStartedAt !== null
-        ? { sessionSeconds: (Date.now() - sessionStartedAt) / 1000 }
-        : {}),
+      ...(seconds !== undefined ? { sessionSeconds: seconds } : {}),
     });
+  };
+
+  const liveInfo = (): PhoneLive => ({
+    running: state.running,
+    paused: !state.running && state.beatsBefore > 0,
+    bar: positionAt(state, data.settings, Date.now()).bar,
+    sessionSeconds: sessionSecondsNow() ?? 0,
+  });
 
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused));
+
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
     if (closed || paused) return;
-    const view = currentView();
-    // Pictures are pure in (tempo) and (state, now); they are only sent when they differ from what is shown.
-    const frames = {
-      icon: iconBitmap(METRONOME_SIGN, ICON_WIDTH, ICON_HEIGHT),
-      bpm: bpmFrame(data.settings.bpm),
-      pendulum: pendulumFrame(pendulumSwing(state, data.settings, Date.now())),
-    };
-    const key = [frames.icon, frames.bpm, frames.pendulum].map(bitmapKey).join("|");
-    if (pageReady && sameView(lastView, view) && key === lastFrames) return;
-
-    const result = pageReady ? await updatePage(bridge, view, frames, lastView) : await createPage(bridge, view, frames, menu());
-    if (result.ok) {
+    const model = currentModel();
+    if (!pageReady) {
+      const result = await createCockpitPage(bridge);
+      if (closed) return;
+      if (!result.ok) { console.warn("[cadence] draw failed:", result.reason); return; }
       pageReady = true;
-      lastView = view;
-      lastFrames = key;
-      return;
+      // A new page starts with blank images.
+      tiles.reset();
     }
-    pageReady = false;
-    console.warn("[cadence] draw failed:", result.reason);
+    textBackend ??= autoBackend();
+    // Never awaited: a slow transfer must not hold up the next beat.
+    void tiles.push(composeCockpit(model, textBackend));
   };
 
   /**
@@ -196,14 +195,13 @@ async function boot(): Promise<void> {
     tick = setInterval(() => {
       if (state.running && Date.now() - lastHeartbeat >= HEARTBEAT_MS) persistRun();
       void draw();
+      phone?.refreshLive();
     }, 1000);
   };
   const resume = (): void => {
     if (!paused || closed) return;
     paused = false;
     pageReady = false;
-    lastView = null;
-    lastFrames = "";
     startTick();
     scheduleBeat();
     void draw();
@@ -217,8 +215,6 @@ async function boot(): Promise<void> {
       // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
       if (closed) return;
       pageReady = false;
-      lastView = null;
-      lastFrames = "";
       forgetPage(bridge);
       return draw();
     },
@@ -226,6 +222,15 @@ async function boot(): Promise<void> {
   exitAsked = requestExit.asked;
 
   await draw();
+
+  /** Starts or stops the beat (glasses tap after the arm step, or the phone's button). */
+  const togglePlay = (now: number): void => {
+    state = toggle(state, data.settings, now);
+    if (state.running) sessionStartedAt = sessionStartedAt ?? now;
+    else endSession();
+    persistRun();
+    scheduleBeat();
+  };
 
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
@@ -241,6 +246,7 @@ async function boot(): Promise<void> {
       state = createState();
       persistRun();
       closed = true;
+      tiles.close();
       stopTimers();
       disarm();
       return;
@@ -248,11 +254,10 @@ async function boot(): Promise<void> {
     // A gesture means the app is on the glasses again, even if no "foreground" came.
     const wasPaused = paused;
     resume();
-    // The side menu: Hilfe. It cancels a pending pause like any other input; the beat keeps running.
+    // The glasses' side menu (off while SIDE_MENU is false). A menu click only cancels a pending pause; the beat keeps running.
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
       disarm();
-      if (menuId === MENU_HELP) helpOpen = true;
       void draw();
       return;
     }
@@ -264,12 +269,6 @@ async function boot(): Promise<void> {
     if (gesture.gesture !== "click" && isArmed()) {
       disarm();
       void draw();
-      return;
-    }
-
-    // The help page: only the double tap does something (back).
-    if (helpOpen) {
-      if (gesture.gesture === "doubleClick") { helpOpen = false; void draw(); }
       return;
     }
 
@@ -286,11 +285,7 @@ async function boot(): Promise<void> {
           }
           disarm();
         }
-        state = toggle(state, data.settings, now);
-        if (state.running) sessionStartedAt = sessionStartedAt ?? now;
-        else endSession();
-        persistRun();
-        scheduleBeat();
+        togglePlay(now);
         break;
       }
       case "scrollUp":
@@ -304,13 +299,9 @@ async function boot(): Promise<void> {
         scheduleBeat();
         break;
       case "longPress":
-        // Stopped: the help (with the side menu it lives there instead). Running:
-        if (!state.running) {
-          if (SIDE_MENU) return;
-          helpOpen = true;
-          break;
-        }
-        // From the top: bar 1 again, a running beat keeps running.
+        // Stopped: nothing (the help lives on the phone).
+        if (!state.running) return;
+        // Running: from the top: bar 1 again, a running beat keeps running.
         state = restartCount(state, Date.now());
         persistRun();
         scheduleBeat();
@@ -337,15 +328,22 @@ async function boot(): Promise<void> {
   startTick();
   scheduleBeat();
 
-  mountPhoneUi({
+  phone = mountPhoneUi({
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;
-      pageReady = false; // the side menu is part of the page: rebuilt in the new language
       rememberLocale(bridge, next);
       void draw();
     },
     getData: () => data,
+    getLive: liveInfo,
+    toggle: () => {
+      if (closed) return;
+      disarm();
+      togglePlay(Date.now());
+      void draw();
+      phone?.refreshLive();
+    },
     setData: async (next) => {
       applySettings(next);
       await persist(next);

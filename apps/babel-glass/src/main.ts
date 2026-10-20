@@ -15,7 +15,11 @@ import {
 } from "./glasses/view";
 import { createThrottle } from "./glasses/throttle";
 import { sameView } from "./glasses/diff";
-import { createPage, forgetPage, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
+import { COCKPIT_TILES, createCockpitPage, createPage, forgetPage, guardedTileSend, updateIcon, updatePage, type MenuSpec } from "./glasses/render";
+import { talkCockpitModel, talkStats, modelKey as cockpitKey, type TalkCockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { startBody, startRows, type StartRow } from "./glasses/start";
 import { iconFrame, ICON_STEP_MS, type IconKind } from "./glasses/icon";
 import {
@@ -137,6 +141,8 @@ async function boot(): Promise<void> {
   const shownSummary = (): SummaryState | null => (summaryHidden ? null : summary);
   /** Page of a finished summary on the glasses (swipe). */
   let summaryPage = 0;
+  /** QUS v1: a finished summary opens as the cockpit picture (duration, speaker shares); a swipe turns to the text pages. */
+  let summaryCockpit = true;
   /** Bumped on clear/new summary: answers for an older request are dropped. */
   let summaryRun = 0;
   let insights: PhoneInsight[] = [];
@@ -643,6 +649,7 @@ async function boot(): Promise<void> {
     summary = { state: "working" };
     summaryHidden = false;
     summaryPage = 0;
+    summaryCockpit = true;
     void draw();
     schedulePhone();
     const result = await llm.summarize(log, locale, (partial) => {
@@ -655,6 +662,7 @@ async function boot(): Promise<void> {
     if (run !== summaryRun) return;
     streamDraw.cancel();
     summaryPage = 0;
+    summaryCockpit = true;
     summary = result.ok
       ? { state: "done", short: result.value.short, long: result.value.long }
       : { state: "error", error: result.error };
@@ -692,6 +700,18 @@ async function boot(): Promise<void> {
     return "off";
   };
 
+  /** The summary picture, only while nothing else claims the display and the conversation has numbers to show. */
+  const cockpitNow = (): TalkCockpitModel | null => {
+    if (listening || enrollMic || help !== null || notice || !summaryCockpit) return null;
+    if (menuArmedKind(menuPending, Date.now())) return null;
+    if (shownSummary()?.state !== "done") return null;
+    const live = md();
+    return talkCockpitModel({
+      log, locale, now: Date.now(), translating: translationEnabled(live),
+      sourceLanguage: live.sourceLanguage, targetLanguage: live.targetLanguage,
+    });
+  };
+
   const currentView = (): CaptionView =>
     buildView(buffer, {
       mode: data.mode,
@@ -720,7 +740,7 @@ async function boot(): Promise<void> {
 
   let iconBusy = false;
   const drawIcon = async (): Promise<void> => {
-    if (closed || !pageReady || iconBusy) return;
+    if (closed || !pageReady || iconBusy || installed === "cockpit") return;
     iconBusy = true;
     try { await updateIcon(bridge, iconFrame(iconKind(), Date.now())); } finally { iconBusy = false; }
   };
@@ -728,6 +748,14 @@ async function boot(): Promise<void> {
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
+  let textBackend: TextBackend | null = null;
+  let lastCockpitKey = "";
+  let lastCockpitPush = 0;
+  let lastCockpitFrame: ReturnType<typeof composeCockpit> | null = null;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && installed === "cockpit"));
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
     if (closed || paused) return;
@@ -736,8 +764,39 @@ async function boot(): Promise<void> {
     // when the text did not change: it was lost, and an unchanged view used to
     // skip the rebuild and leave the glasses blank.
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; }
-    const view = currentView();
     const menu = menuSpec();
+    const cockpit = cockpitNow();
+    if (cockpit) {
+      if (installed !== "cockpit" || (pageReady && menu.key !== pageMenuKey)) pageReady = false;
+      if (!pageReady) {
+        const made = await createCockpitPage(bridge, menu);
+        if (closed) return;
+        if (!made.ok) { pageReady = false; console.warn("[babelglass] draw failed:", made.reason); return; }
+        pageReady = true;
+        installed = "cockpit";
+        pageMenuKey = menu.key;
+        lastView = null;
+        lastCockpitKey = "";
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      const key = cockpitKey(cockpit);
+      const now = Date.now();
+      if (key !== lastCockpitKey || lastCockpitFrame === null) {
+        textBackend ??= autoBackend();
+        lastCockpitFrame = composeCockpit(cockpit, textBackend);
+        lastCockpitKey = key;
+      } else if (now - lastCockpitPush < 5_000) {
+        return;
+      }
+      lastCockpitPush = now;
+      // Never awaited: a slow transfer must not hold up the next gesture. An unchanged frame sends nothing; a tile that failed is retried.
+      void tiles.push(lastCockpitFrame);
+      return;
+    }
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
+    const view = currentView();
     // The side menu travels with the page: a different menu (mode, language) means one rebuild.
     if (pageReady && menu.key !== pageMenuKey) pageReady = false;
     if (pageReady && sameView(lastView, view)) { void drawIcon(); return; }
@@ -746,6 +805,7 @@ async function boot(): Promise<void> {
     if (result.ok) {
       if (!pageReady) pageMenuKey = menu.key;
       pageReady = true;
+      installed = "text";
       lastView = view;
       void drawIcon();
       return;
@@ -1140,6 +1200,7 @@ async function boot(): Promise<void> {
   /** Everything off for good: after the exit dialog, a system exit or a crash. */
   const shutDown = (): void => {
     closed = true;
+    tiles.close();
     clearTimeout(confirmTimer);
     clearMenuArm();
     cancelVoice();
@@ -1271,7 +1332,12 @@ async function boot(): Promise<void> {
         const now = Date.now();
         lastScrollAt = now;
         if (help !== null) { help = Math.max(0, help - 1); break; }
-        if (!listening && shownSummary()?.state === "done") { summaryPage = Math.max(0, summaryPage - 1); break; }
+        if (!listening && shownSummary()?.state === "done") {
+          // Page 0 of the text: back to the cockpit picture, when the conversation has one.
+          if (summaryPage === 0 && !summaryCockpit && talkStats(log)) summaryCockpit = true;
+          else summaryPage = Math.max(0, summaryPage - 1);
+          break;
+        }
         // Stopped, a swipe only moves the cursor of the start screen.
         if (!listening) { if (!shownSummary()) cursor = Math.max(0, cursor - 1); break; }
         offset = Math.min(offset + rows, 200);
@@ -1289,6 +1355,7 @@ async function boot(): Promise<void> {
           break;
         }
         const paged = shownSummary();
+        if (!listening && paged?.state === "done" && cockpitNow()) { summaryCockpit = false; summaryPage = 0; break; }
         if (!listening && paged?.state === "done") {
           summaryPage = Math.min(summaryPage + 1, summaryPageCount(paged.short, paged.long ?? []) - 1);
           break;

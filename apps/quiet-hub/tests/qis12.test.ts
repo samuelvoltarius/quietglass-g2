@@ -109,9 +109,9 @@ describe("QIS v1.2 #3: discarding the voice note is armed", () => {
 });
 
 describe("no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", () => {
-  it("the overview has the Hilfe row again; the menu code is kept", () => {
+  it("the start page has no Hilfe row (QUS v1); the menu code is kept", () => {
     const body = buildView(createModel(report), "de", T0).body;
-    expect(body.join("\n")).toMatch(/Hilfe/);
+    expect(body.join("\n")).not.toMatch(/Hilfe/);
     expect(menuFor(createModel(report), "de", true).items.at(-1)?.id).toBe(MENU.help);
   });
 
@@ -126,9 +126,8 @@ describe("no side menu while its clicks do not arrive on the real glasses (step 
     expect(new Set((["root", "agent", "home"] as const).map((screen) => menuFor({ ...createModel(report), screen }, "de").key)).size).toBe(1);
   });
 
-  it("help by gesture: the last row of the overview, any gesture closes it", () => {
-    const m = { ...createModel(report), rootSelected: 5 };
-    const helped = decide(m, "click", T0).model;
+  it("the help overlay (only reachable through the side menu code) is closed by any gesture", () => {
+    const helped = applyMenu(createModel(report), MENU.help, T0).model;
     expect(helped.help).toBe(true);
     expect(buildView(helped, "de", T0).body.join("\n")).toContain("Bedienung");
     expect(decide(helped, "doubleClick", T0).model.help).toBe(false);

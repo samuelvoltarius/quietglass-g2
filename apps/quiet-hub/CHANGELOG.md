@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0] — 2026-10-20
+
+### Geändert (Quietglass-UI-Standard QUS v1, „keine Textwand“)
+
+- **Brille, Startseite:** höchstens drei große Einträge – **Agenten**, **Meldungen** und **Übersicht** (das Cockpit); Zuhause, Drucker und Tagesstart hängen eingerückt darunter. Die Hilfe-Zeile ist weg (Halten und Seitenmenü erreichen die App auf der Hardware nicht). Kopfzeile aller Seiten: `Modus · ● live`, darunter eine Fußzeile mit den Gesten.
+- **Brille, Übersicht als Cockpit-Bild:** links das Maskottchen (die bekannten Gesichter, auf die linke Hälfte vergrößert, animiert), rechts klein `QUIET HUB  HH:MM`, darunter **eine** große Aussage – ARBEITET, WARTET, BEREIT (OFFLINE, KEIN SERVER) – und die Zellen Agent, Sitzung, Dauer, Schritte, Ungelesen; unten links, was der Agent gerade tut. Die Dauer ändert sich nur einmal pro Minute. Das ganze Display ist ein Bild aus vier Kacheln; gesendet werden nur geänderte Kacheln: die Maskottchen-Animation ändert nur die linken, die Uhr nur die Kachel oben rechts. Tippen öffnet die Agenten, Wischen tut nichts, 2× geht zur Startseite. Der Renderer (`src/screen/*`) ist byte-gleich aus Rain Lens kopiert.
+- **Gespräche und Antworten** bleiben Leseansicht (Kopf mit Kontext, Neuestes unten, seitenweises Wischen).
+- **Handy:** genau drei Tabs in einer Reihe – **Jetzt**, **Sitzungen**, **Einstellungen** – im Rain-Lens-Look: Kicker `QUIETGLASS / AGENTEN`, Titel, Status-Pille, Statusbanner, Hero-Karte mit einem großen Wert, 2×2-Kennzahlen, ein Hauptknopf („Neu laden“) und eine horizontale Kartenleiste der Sitzungen. Einstellungen in gruppierten Karten, die Verbindungskarte klappt zu, sobald der Server eingerichtet ist; beim Erststart steht eine 3-Schritt-Checkliste oben, ohne Server läuft die Demo. Zuhause und Tagesstart sind nun in Einstellungen eingeklappt.
+- Eingabe im Server-Feld geht beim Nachladen durch eine Abfrage nicht mehr verloren.
+- Unverändert: kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (kein Zeichnen und keine Kachel, solange er offen sein kann), begrenzte Aufrufe an die Brille, Wiederaufbau der ersten Seite (rebuild + create), Daemon-Protokoll, Vorlesen und Spracheingabe.
+- Tests: Zellen, Aussage, Startzeilen, Kopf-/Fußzeile, Kachel-Unterschied, Handy-Tabs (`tests/qus.test.ts`, `tests/phone-tabs.test.ts`); Vorschaubilder mit `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` nach `store/preview-cockpit*.png`.
+
 ## [0.9.6] — 2026-10-17
 
 ### Behoben (Hardware-Schrittprotokoll)

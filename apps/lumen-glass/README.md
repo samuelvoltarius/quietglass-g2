@@ -44,30 +44,40 @@ that actually gets you out the door — **how long until the light is good.**
 
 ## What you see
 
-```
-   (~)
-eingerollt — wartet. Er geht nicht weg.
+Three screens (QUS v1, "no wall of text"):
 
+```
+Lumen · ● live              start page: two entries
+● Quest · Bird's Eye Pattern
+  Motte · 72 %
+Tap = open · Swipe = select · 2× = exit
+```
+
+```
+Quest · ● live              the quest, to read
+Bird's Eye Pattern
 Finde ein wiederkehrendes Muster von oben
 (Acker, Parkplatz).
 VIDEO — use the camera app · 30 min
-
-[--------] · golden in 46m
-Tap = photo · Swipe = help · Hold = quest · 2× = exit
+Tap = photo · Hold = quest · 2× = back
 ```
 
-Five states, matching LUMEN's own thresholds. The wings tell you the state
-before you read a word:
+The moth is a cockpit image (576x288, four tiles): on the left a ring filled to the
+moth's light, on the right `LUMEN 14:05`, LUMEN's own word for the state in big letters
+(`WACH`) and the cells Serie, the next golden/blue hour (`Gold 24 min`) and Offen.
+Only changed tiles are sent.
 
-| Light | State | Shape |
-|---|---|---|
-| 80+ | `leuchtet` | wide open, in motion |
-| 55+ | `wach` | open and steady |
-| 32+ | `matt` | half folded |
-| 14+ | `schläfrig` | folded together |
-| 0+ | `eingerollt` | curled up, waiting |
+Five states, matching LUMEN's own thresholds:
 
-The wording under it — "wartet. Er geht nicht weg." — comes straight from
+| Light | State |
+|---|---|
+| 80+ | `leuchtet` |
+| 55+ | `wach` |
+| 32+ | `matt` |
+| 14+ | `schläfrig` |
+| 0+ | `eingerollt` |
+
+The wording under the ring - "wartet. Er geht nicht weg." - comes straight from
 LUMEN, so the glasses and the web app never say different things.
 
 ## Taking the photo
@@ -88,10 +98,10 @@ than letting you shoot and have it rejected.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Take a photo and send it |
-| **Hold** | Arms *New quest* (it replaces an open one); one single tap within 4 s fetches it, a swipe, 2× or a pause cancels |
-| **Swipe** | Opens the help; swiping again closes it and refreshes the moth (a swipe also cancels an open question) |
-| **2×** | Back (closes the help, cancels a question, leaves a result); at the root: leave Lumen Glass |
+| **Tap** | Start page: open the entry · Quest: take a photo and send it · Moth: refresh |
+| **Hold** | In the quest: arms *New quest* (it replaces an open one); one single tap within 4 s fetches it, a swipe, 2× or a pause cancels |
+| **Swipe** | Start page: choose. Otherwise no function (a swipe cancels an open question) |
+| **2×** | Back (cancels a question, leaves a result, leaves the quest or the moth); on the start page: leave Lumen Glass |
 
 ## Setup
 

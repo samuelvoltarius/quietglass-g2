@@ -4,7 +4,7 @@ import {
   sessionsToday, toCsv, totalsByItem, totalSeconds, type PracticeSession,
 } from "../src/practice/log";
 import { parseData, EMPTY_DATA, addItem, removeItem } from "../src/storage/persist";
-import { buildView, beatRow, gapFor, signatureLabel } from "../src/glasses/view";
+import { beatDots, cockpitModel, minutesShort, signatureLabel, truncate } from "../src/cockpit/model";
 import { createState, start, type MetronomeSettings } from "../src/metronome/engine";
 import { csvFormatFor, defaultCsvFormat, numberCell, textCell } from "../src/csv";
 
@@ -206,59 +206,61 @@ describe("storage", () => {
 describe("beat display", () => {
   const settings: MetronomeSettings = { bpm: 120, signature: { beats: 4, unit: 4 }, mark: "beat" };
 
-  it("draws one marker per beat", () => {
-    expect(beatRow(settings, 1, false).split(gapFor(4))).toHaveLength(4);
+  it("draws one dot per beat", () => {
+    expect(beatDots(settings, 1, false)).toHaveLength(4);
+    expect(beatDots({ ...settings, signature: { beats: 7, unit: 8 } }, 1, false)).toHaveLength(7);
   });
 
   it("lights the whole row on the downbeat, so the top of the bar needs no counting", () => {
-    expect(beatRow(settings, 1, true)).toBe(["●", "●", "●", "●"].join(gapFor(4)));
-    // No accent glyph the G2 font is not known to draw.
-    expect(beatRow(settings, 1, true)).not.toContain("◆");
+    expect(beatDots(settings, 1, true)).toEqual([true, true, true, true]);
   });
 
-  it("fills the current beat", () => {
-    expect(beatRow(settings, 2, true).split(gapFor(4))[1]).toBe("●");
+  it("lights the current beat", () => {
+    expect(beatDots(settings, 2, true)).toEqual([false, true, false, false]);
   });
 
-  it("marks nothing while stopped", () => {
-    expect(beatRow(settings, 2, false)).not.toContain("●");
+  it("lights nothing while stopped", () => {
+    expect(beatDots(settings, 2, false)).toEqual([false, false, false, false]);
   });
 
-  it("marks only the downbeat in bar mode", () => {
+  it("lights only the downbeat in bar mode", () => {
     const barMode: MetronomeSettings = { ...settings, mark: "bar" };
-    expect(beatRow(barMode, 2, true)).not.toContain("●");
-    expect(beatRow(barMode, 1, true)).toBe(["●", "●", "●", "●"].join(gapFor(4)));
+    expect(beatDots(barMode, 2, true)).toEqual([false, false, false, false]);
+    expect(beatDots(barMode, 1, true)).toEqual([true, true, true, true]);
   });
 
   it("labels the signature", () => {
     expect(signatureLabel(settings)).toBe("4/4");
   });
 
-  it("shows tempo, signature and bar in the body", () => {
-    const view = buildView(start(createState(), 0), settings, {}, 0);
-    expect(view.body[1]).toContain("120 bpm");
-    expect(view.body[1]).toContain("4/4");
-    expect(view.body[1]).toContain("bar 1");
+  it("shows tempo, state and bar in the cockpit", () => {
+    const model = cockpitModel({ state: start(createState(), 0), settings, now: 0, locale: "en" });
+    expect(model.headline).toEqual(["120 BPM", "RUNNING"]);
+    expect(model.graphic.center).toBe("1");
+    expect(model.cells[0]).toEqual({ label: "TIME SIG", value: "4/4" });
   });
 
-  it("names the practised item in the body and the state in the header", () => {
-    const view = buildView(createState(), settings, { item: "Scales" }, 0);
-    expect(view.header).toBe("CADENCE · ready");
-    expect(view.body).toContain("Scales");
+  it("names the practised item as the caption", () => {
+    const model = cockpitModel({ state: createState(), settings, now: 0, locale: "en", item: "Scales" });
+    expect(model.caption).toBe("Scales");
   });
 
-  it("keeps a long item name on one body row", () => {
-    // Regression: the user's item went to the header unshortened and wrapped off the 32 px header; it now sits in the body.
+  it("keeps a long item name on one caption line", () => {
     const item = "Bach Partita No. 2 in D minor, Chaconne, bars 1 to 132 slowly";
-    const view = buildView(createState(), settings, { item }, 0);
-    expect(view.header.length).toBeLessThanOrEqual(48);
-    const row = view.body.find((line) => line.startsWith("Bach Partita")) ?? "";
-    expect(row.length).toBeLessThanOrEqual(30);
-    expect(row.endsWith("…")).toBe(true);
+    const caption = cockpitModel({ state: createState(), settings, now: 0, locale: "en", item }).caption;
+    expect(caption.length).toBeLessThanOrEqual(24);
+    expect(caption.endsWith("…")).toBe(true);
+    expect(truncate("short", 24)).toBe("short");
   });
 
-  it("states the transport in the footer", () => {
-    expect(buildView(createState(), settings, {}, 0).footer).toContain("Tap = start");
-    expect(buildView(start(createState(), 0), settings, {}, 0).footer).toContain("Tap = pause");
+  it("states the transport in the hint line", () => {
+    expect(cockpitModel({ state: createState(), settings, now: 0, locale: "en" }).hint).toContain("Tap = start");
+    expect(cockpitModel({ state: start(createState(), 0), settings, now: 0, locale: "en" }).hint).toContain("Tap = pause");
+  });
+
+  it("counts practice time in whole minutes so the cell changes once a minute", () => {
+    expect(minutesShort(0)).toBe("0 min");
+    expect(minutesShort(119)).toBe("1 min");
+    expect(minutesShort(3600 + 300)).toBe("1:05 h");
   });
 });

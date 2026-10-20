@@ -27,3 +27,25 @@ export function parseTimestamp(value: unknown): number | null { if (typeof value
 export function ageLabel(ms: number): string { const seconds = Math.max(0, Math.floor(ms / 1000)); return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`; }
 /** Age label ("12s") when the data must be shown as stale — too old, or the last poll failed — otherwise null. A future timestamp (clock skew) counts as age 0. */
 export function staleAge(updatedAt: number, now: number, failed: boolean, maxAgeMs = STALE_AFTER_MS): string | null { const age = Math.max(0, now - updatedAt); return failed || age > maxAgeMs ? ageLabel(age) : null; }
+/** How the data stands: sample data, live, or stale (the watch stopped posting / the bridge stopped answering) with its age label. */
+export type Mode = { readonly kind: "demo" } | { readonly kind: "live" } | { readonly kind: "stale"; readonly age: string };
+export function modeOf(data: Telemetry, receivedAt: number, now: number, failed: boolean): Mode { if (data.source === "demo") return { kind: "demo" }; const age = staleAge(parseTimestamp(data.updatedAt) ?? receivedAt, now, failed); return age ? { kind: "stale", age } : { kind: "live" }; }
+/** Heart-rate zone 1..5 from the share of the maximum heart rate (below 60 % = 1, from 90 % = 5); 0 without a reading. */
+export const DEFAULT_MAX_HR = 190;
+export function hrZone(heartRate: number, maxHr: number): number { if (!(heartRate > 0) || !(maxHr > 0)) return 0; const share = heartRate / maxHr; return share < 0.6 ? 1 : share < 0.7 ? 2 : share < 0.8 ? 3 : share < 0.9 ? 4 : 5; }
+/** The average of the main value over the whole workout: km/h on the bike, s/km on foot; 0 before there is a distance and a time. */
+export function averageOf(data: Telemetry, sport: Sport): number { if (!(data.distanceKm > 0) || !(data.elapsedSeconds > 0)) return 0; return sport === "run" ? data.elapsedSeconds / data.distanceKm : data.distanceKm / (data.elapsedSeconds / 3600); }
+/**
+ * The workout so far, kept in memory only (nothing is written): counters for the averages and one snapshot a minute for the
+ * strip on the phone. A workout restarts it when the elapsed time runs backwards.
+ */
+export interface Snapshot { readonly at: number; readonly elapsedSeconds: number; readonly speedKph: number; readonly paceSecPerKm: number; readonly heartRate: number; readonly powerWatts: number }
+export interface Session { readonly samples: number; readonly hrSum: number; readonly hrCount: number; readonly hrMax: number; readonly powerSum: number; readonly powerCount: number; readonly lastElapsed: number; readonly history: readonly Snapshot[] }
+export const EMPTY_SESSION: Session = { samples: 0, hrSum: 0, hrCount: 0, hrMax: 0, powerSum: 0, powerCount: 0, lastElapsed: 0, history: [] };
+const HISTORY_EVERY_MS = 60_000;
+const HISTORY_KEEP = 60;
+export function addSample(session: Session, data: Telemetry, now: number): Session { const base = data.elapsedSeconds + 30 < session.lastElapsed ? EMPTY_SESSION : session; const last = base.history[base.history.length - 1]; const snap = !last || now - last.at >= HISTORY_EVERY_MS ? [...base.history, { at: now, elapsedSeconds: data.elapsedSeconds, speedKph: data.speedKph, paceSecPerKm: data.paceSecPerKm, heartRate: data.heartRate, powerWatts: data.powerWatts }].slice(-HISTORY_KEEP) : base.history; return { samples: base.samples + 1, hrSum: base.hrSum + (data.heartRate > 0 ? data.heartRate : 0), hrCount: base.hrCount + (data.heartRate > 0 ? 1 : 0), hrMax: Math.max(base.hrMax, data.heartRate > 0 ? data.heartRate : 0), powerSum: base.powerSum + (data.powerWatts > 0 ? data.powerWatts : 0), powerCount: base.powerCount + (data.powerWatts > 0 ? 1 : 0), lastElapsed: data.elapsedSeconds, history: snap }; }
+/** The sample workout of the first start (and of every start without a bridge): eight minutes, so the history is not empty. */
+export function demoSession(now: number): Session { const history = Array.from({ length: 8 }, (_, index): Snapshot => ({ at: now - (8 - index) * HISTORY_EVERY_MS, elapsedSeconds: 2540 - (8 - index) * 60, speedKph: 29 + (index % 3) * 1.2, paceSecPerKm: 125 - (index % 3) * 4, heartRate: 142 + index * 2, powerWatts: 220 + (index % 4) * 9 })); return { samples: 8, hrSum: history.reduce((sum, snap) => sum + snap.heartRate, 0), hrCount: 8, hrMax: 158, powerSum: history.reduce((sum, snap) => sum + snap.powerWatts, 0), powerCount: 8, lastElapsed: 2540, history }; }
+export const averageHr =(session: Session): number => (session.hrCount > 0 ? session.hrSum / session.hrCount : 0);
+export const averagePower = (session: Session): number => (session.powerCount > 0 ? session.powerSum / session.powerCount : 0);

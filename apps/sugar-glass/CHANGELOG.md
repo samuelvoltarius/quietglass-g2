@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0] — 2026-10-20
+
+### Neu: Quietglass-UI-Standard QUS v1 („keine Textwand“)
+
+- **Brille: Startseite mit zwei großen Einträgen** (Zucker, Pumpe). Kopfzeile `Sugar Glass · ● live`, unten genau eine Hinweiszeile; ein kritischer Alarm (niedrig, hoch, veraltet …) steht zusätzlich als eigene Zeile. Die Hilfe-Seite entfällt, Halten hat keine Funktion mehr.
+- **Zucker als Cockpit-Bild** (576×288, vier Kacheln wie Rain Lens/Status Glass): links die Kurve der letzten 3 Stunden mit dem Zielbereich als Band und dem Trendpfeil, rechts „SUGAR GLASS 14:05“, groß der Wert, darunter Trend als Wort oder der schlimmste Alarm („NIEDRIG“, „FÄLLT SCHNELL“, „VERALTET“), darunter Zellen Trend, Zeit, Ziel, IOB, Reservoir, Sensor. Zellen mit Warnung bekommen einen Rahmen. Es werden nur geänderte Kacheln gesendet; die Uhr ändert nur die Kachel oben rechts.
+- **Pumpe als Cockpit-Bild:** IOB groß, Modus als Wort, Balken für Pumpen-Akku, Handy-Akku und Restzeit des Sensors, Zellen Reservoir, Sensor, Stand, Mahlzeit, Bolus, Zeit.
+- Das Pulsieren der Warnung (alle 0,6 s) entfällt: der Alarm steht dauerhaft als Wort in der Überschrift; das Bild wird nur noch alle 15 s oder bei neuen Werten neu gezeichnet.
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Verlauf / Einstellungen) im Rain-Lens-Look: Kicker `QUIETGLASS / GESUNDHEIT`, Status-Pille mit dem Wert, Statusbanner, Hero-Karte mit dem Zucker, 2×2-Kennzahlen (Trend, Ziel, IOB, Reservoir), ein Hauptknopf, Karten-Leiste der Pumpe. „Verlauf“ zeigt die letzten Werte als Karten-Leiste und die letzte Mahlzeit. Einstellungen als gruppierte Karten (Server eingeklappt sobald eingerichtet, Einheit & Grenzen eingeklappt), Erststart-Checkliste in drei Schritten; ohne Server läuft die Demo. Der Hinweis „nur zur Information, keine Therapieentscheidungen“ bleibt auf „Jetzt“ und unter „Über Sugar Glass“.
+
+### Unverändert (Hardware-getestet)
+
+- Kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (2× auf der Startseite; während er offen sein kann, wird nichts gezeichnet und keine Kachel gesendet), zeitbegrenzte Aufrufe an die Brille, Wiederaufbau der ersten Seite nach „Nein“, Alarmlogik und Grenzwerte.
+
+### Tests
+
+- Reine Modelltests (Zellen, Überschrift, Startzeilen, Fußzeile in beiden Sprachen), Kachel-Diff (unverändert = nichts gesendet), Beenden-Dialog-Tests, Vorschau-PNGs (`QG_PREVIEW=1 npx vitest run tests/preview.test.ts` → `store/preview-cockpit*.png`).
+
+### QIS-Konformität
+
+- Fußzeilen über den gemeinsamen `footer()`, `2× = zurück|Ende`; Wischen bewegt nur; keine Fehlercodes auf der Brille.
+
 ## [0.3.6] — 2026-10-17
 
 ### Behoben (Hardware-Protokoll)

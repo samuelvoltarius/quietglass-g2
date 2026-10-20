@@ -292,10 +292,10 @@ describe("German output stays exactly as reviewed", () => {
     expect(elements.get("#next")?.textContent).toBe(nextStep(true, 2, "de"));
     expect(nextStep(true, 2, "de")).toBe("Fertig. Auf der Brille: wischen = Abfahrt wählen, tippen = mitfahren.");
     expect(elements.get("#backend-hint")?.textContent).toBe(
-      "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe Tab „Mehr“.",
+      "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – Adresse unten unter „Erweitert“.",
     );
     expect(html).toContain('<nav class="tabbar"');
-    expect(html).toContain("</span>Haltestellen</button>");
+    expect(html).toContain("</span>Jetzt</button>");
     expect(html).toContain('<option value="motis">Überall – Fahrplan (funktioniert sofort)</option>');
     expect(html).toContain("<strong>Tippen</strong> — Bus verfolgen: wann er kommt, dann der nächste Halt; zum Beenden der Fahrt zweimal einzeln tippen<br />");
     expect(html).toContain('<label for="refresh">Abfahrten neu laden alle <span id="refresh-value"></span> s</label>');
@@ -389,15 +389,18 @@ describe("switching the language on the phone", () => {
     // Device language German: glasses and phone start in German.
     await vi.waitFor(() => expect(root.innerHTML).toContain("Woher kommen die Abfahrten?"));
     // The headline is drawn as a picture now; the hint and the footer stay text.
-    await vi.waitFor(() => expect(glasses.body).toContain("Erlaube den Standort in der Even-App."));
-    expect(glasses.footer).toBe("2× = Ende");
+    // The start page names the app and says what is missing in its header.
+    await vi.waitFor(() => expect(glasses.header).toBe("NEXTSTOP · kein Standort"));
+    expect(glasses.body).toContain("Abfahrten");
+    expect(glasses.footer.endsWith("2× = Ende")).toBe(true);
 
     const language = root.querySelector("#language");
     language.value = "en";
     language.fire("change");
 
-    await vi.waitFor(() => expect(glasses.body).toContain("Allow location in the Even app."));
-    expect(glasses.footer).toBe("2× = exit");
+    await vi.waitFor(() => expect(glasses.header).toBe("NEXTSTOP · no location"));
+    expect(glasses.body).toContain("Departures");
+    expect(glasses.footer.endsWith("2× = exit")).toBe(true);
     expect(root.innerHTML).toContain("Where do the departures come from?");
     expect(root.innerHTML).toContain('<option value="en" selected>');
     expect(root.innerHTML).not.toContain("Woher");
@@ -408,7 +411,7 @@ describe("switching the language on the phone", () => {
     const again = root.querySelector("#language");
     again.value = "de";
     again.fire("change");
-    await vi.waitFor(() => expect(glasses.body).toContain("Erlaube den Standort in der Even-App."));
+    await vi.waitFor(() => expect(glasses.body).toContain("Abfahrten"));
     expect(saved).toBe("de");
   });
 });

@@ -1,13 +1,10 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { sortWarnings, type Action, type CarState, type CarWarning } from "../car/model";
-import { ageText, deg, dec, duration, km, kw, pct, volt, warningLong, warningShort } from "../format";
+import { ageText, deg, dec, km, kw, pct, warningLong, warningShort } from "../format";
 import { CONTROL_ITEMS, blockedReason, finalArmed, openConfirm, type Confirm, type ControlItem, type ControlState, type Page } from "../pages";
-import type { Bitmap } from "./gfx";
-import {
-  ICON_STEP_MS, carIcon, chargeBarFrame, chargeKwFrame, chargeSocFrame, energyFrame, lockFrame, speedFrame, tyresFrame,
-  type IconKind,
-} from "./pics";
+/** The blinking warning header changes this often. */
+export const ICON_STEP_MS = 500;
 import { SIDE_MENU } from "../side-menu";
 import { fit, MAX_BODY_ROWS, wrap } from "./screen";
 import { armedFooter, footer as gestureFooter } from "./footer";
@@ -22,8 +19,8 @@ export type Connection =
   | { readonly kind: "ok" }
   | { readonly kind: "error"; readonly code: string; readonly status?: number };
 
-/** drive/charge/status: pictures + rows below; plain: full-width text. */
-export type Layout = "drive" | "charge" | "status" | "plain";
+/** cockpit: drive, charge and status pages are one image of four tiles (src/cockpit); plain: full-width text. */
+export type Layout = "cockpit" | "plain";
 
 /** A command result the bridge never saw (refused before sending, unreachable). */
 export interface LocalResult {
@@ -57,8 +54,8 @@ export interface PageView {
 
 export const HEADER_WIDTH = 50;
 export const ROW_WIDTH = 56;
-/** Rows under the pictures. */
-export const ROWS: Readonly<Record<Layout, number>> = { drive: 2, charge: 2, status: 3, plain: MAX_BODY_ROWS };
+/** Rows of the text body. */
+export const ROWS: Readonly<Record<Layout, number>> = { cockpit: 0, plain: MAX_BODY_ROWS };
 /** A finished command stays on the control page this long. */
 const RESULT_MS = 5 * 60_000;
 
@@ -77,7 +74,7 @@ function onOff(locale: Locale, value: boolean | null): string {
   return t(locale, value === null ? "g.unknown" : value ? "g.on" : "g.off");
 }
 
-function cells(car: CarState, locale: Locale): string {
+export function cells(car: CarState, locale: Locale): string {
   const { cellTMin: lo, cellTMax: hi } = car.battery;
   if (lo === null && hi === null) return "– °C";
   if (lo === null || hi === null || Math.round(lo) === Math.round(hi)) return deg(lo ?? hi, locale);
@@ -130,46 +127,16 @@ function appHeader(state: string): string {
   return "BYD · " + state;
 }
 
-function staleRow(state: ViewState, car: CarState): string | null {
+export function staleRow(state: ViewState, car: CarState): string | null {
   if (state.connection.kind === "error") {
     return t(state.locale, "g.row.server", { reason: errorReason(state.locale, state.connection.code, state.connection.status) });
   }
   return car.stale ? t(state.locale, "g.stale", { age: ageText(state.locale, car.ageS) }) : null;
 }
 
-function driveRows(state: ViewState, car: CarState): string[] {
-  const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
-  const first = L("g.drive.cons", { cons: dec(car.drive.cons50, 1, state.locale), trip: dec(car.drive.tripKm, 1, state.locale) });
-  const second = staleRow(state, car)
-    ?? L("g.drive.extra", { ext: deg(car.body.extTemp, state.locale), ac: onOff(state.locale, car.body.acOn), v12: volt(car.battery.volt12, state.locale) });
-  return rows([first, second], ROWS.drive);
-}
-
-function chargeRows(state: ViewState, car: CarState): string[] {
-  const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
-  const c = car.charge;
-  let first: string;
-  if (c.active) first = L("g.charge.eta", { eta: duration(c.etaMin), kwh: dec(c.kwh, 1, state.locale), type: L(c.dc ? "g.charge.dc" : "g.charge.ac") });
-  else if (c.done) first = L("g.charge.done", { soc: pct(car.battery.soc) });
-  else first = L("g.charge.idle", { soc: pct(car.battery.soc), range: km(car.battery.rangeKm) });
-  const second = staleRow(state, car) ?? L("g.charge.range", { range: km(car.battery.rangeKm), cells: cells(car, state.locale) });
-  return rows([first, second], ROWS.charge);
-}
-
 /** The charge level; marked when it comes from the BYD cloud (the car itself is silent, values lag behind). */
-function socText(state: ViewState, car: CarState): string {
+export function socText(state: ViewState, car: CarState): string {
   return pct(car.battery.soc) + (car.battery.src === "cloud" && car.battery.soc !== null ? " " + t(state.locale, "g.cloud") : "");
-}
-
-function statusRows(state: ViewState, car: CarState): string[] {
-  const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
-  const doors = car.body.doorOpen === null ? L("g.unknown") : L(car.body.doorOpen ? "g.doors.open" : "g.doors.closed");
-  const age = car.stale ? ageText(state.locale, car.ageS) : L("g.live");
-  return rows([
-    L("g.status.1", { lock: lockWord(state.locale, car), doors, v12: volt(car.battery.volt12, state.locale) }),
-    L("g.status.2", { soh: pct(car.battery.soh), cells: cells(car, state.locale), ext: deg(car.body.extTemp, state.locale) }),
-    state.connection.kind === "error" ? (staleRow(state, car) ?? "") : L("g.status.3", { ac: onOff(state.locale, car.body.acOn), setpoint: deg(car.body.setpoint, state.locale), age }),
-  ], ROWS.status);
 }
 
 // ---- control ------------------------------------------------------------------
@@ -289,7 +256,7 @@ function overlayView(state: ViewState, list: readonly CarWarning[]): PageView {
 
 // ---- assembly -------------------------------------------------------------------
 
-function footer(state: ViewState, car: CarState): string {
+export function pageFooter(state: ViewState, car: CarState): string {
   const L = (key: string): string => t(state.locale, key);
   if (state.page === "control") {
     const confirm = openConfirm(state.control, state.now);
@@ -335,70 +302,11 @@ export function buildView(state: ViewState): PageView {
   }
   const head = header(state, car);
   switch (state.page) {
-    case "drive": return { layout: "drive", header: head, body: driveRows(state, car), footer: footer(state, car) };
-    case "charge": return { layout: "charge", header: head, body: chargeRows(state, car), footer: footer(state, car) };
-    case "status": return { layout: "status", header: head, body: statusRows(state, car), footer: footer(state, car) };
-    case "control": return { layout: "plain", header: head, body: controlRows(state), footer: footer(state, car) };
+    case "drive":
+    case "charge":
+    case "status": return { layout: "cockpit", header: head, body: [], footer: pageFooter(state, car) };
+    case "control": return { layout: "plain", header: head, body: controlRows(state), footer: pageFooter(state, car) };
   }
-}
-
-// ---- pictures -------------------------------------------------------------------
-
-export function iconKind(state: ViewState): IconKind {
-  const car = state.car;
-  if (!car) return state.connection.kind === "error" ? "offline" : "loading";
-  if (state.overlay?.length || car.warnings.some((w) => w.level === "crit")) return "alert";
-  if (state.connection.kind === "error" || car.stale) return "offline";
-  return car.mode === "driving" ? "drive" : car.mode === "charging" ? "charge" : "park";
-}
-
-export interface Frames {
-  readonly icon: Bitmap;
-  readonly a?: Bitmap;
-  readonly b?: Bitmap;
-  readonly c?: Bitmap;
-}
-
-export function buildFrames(state: ViewState, layout: Layout): Frames {
-  const car = state.car;
-  const P = (key: string): string => t(state.locale, "pic." + key);
-  const icon = carIcon(iconKind(state), state.now, {
-    left: !!car && car.mode === "driving" && (car.drive.turnLeft || car.drive.hazard),
-    right: !!car && car.mode === "driving" && (car.drive.turnRight || car.drive.hazard),
-    highBeam: !!car && car.mode === "driving" && car.drive.highBeam,
-  });
-  if (!car || layout === "plain") return { icon };
-  if (layout === "drive") {
-    return {
-      icon,
-      a: speedFrame({ speed: car.drive.speed, gear: car.drive.gear, limitWarn: car.drive.limitWarn, stale: car.stale, unit: P("kmh"), limitLabel: P("limit") }),
-      b: energyFrame({ soc: car.battery.soc, rangeKm: car.battery.rangeKm, powerKw: car.drive.powerKw, km: P("km"), kw: P("kw"), regen: P("regen") }),
-    };
-  }
-  if (layout === "charge") {
-    const c = car.charge;
-    return {
-      icon,
-      a: chargeSocFrame(car.battery.soc, car.battery.rangeKm, P("km")),
-      b: chargeKwFrame({ kw: c.active ? c.kw : null, dc: c.dc, etaMin: c.active ? c.etaMin : null, done: c.done && !c.active, kwLabel: P("kw"), minLabel: P("min"), doneLabel: P("done") }),
-      c: chargeBarFrame(car.battery.soc, state.now, c.active && !car.stale),
-    };
-  }
-  const tyre = (w: "fl" | "fr" | "rl" | "rr") => ({
-    text: car.tyres[w].kpa === null ? null : dec(car.tyres[w].kpa! / 100, 1, state.locale),
-    leak: car.tyres[w].leak,
-    low: car.tyres[w].low,
-  });
-  return {
-    icon,
-    a: tyresFrame({ fl: tyre("fl"), fr: tyre("fr"), rl: tyre("rl"), rr: tyre("rr") }),
-    b: lockFrame({
-      locked: car.body.locked,
-      doorOpen: car.body.doorOpen === true,
-      word: P(car.body.locked === null ? "unknown" : car.body.locked ? "locked" : "unlocked"),
-      doorWord: P("door"),
-    }),
-  };
 }
 
 /** For the phone page: "Reifen HR …, 12 V schwach …". */

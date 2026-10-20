@@ -108,6 +108,27 @@ export function openSecondsOnDay(state: ClockState, dayStart: number, now: numbe
   return overlapSeconds(state.startedAt, now, dayStart, nextDayStart(dayStart));
 }
 
+/** Seconds of closed entries within [from, to) - a week, a month. */
+export function secondsInRange(entries: readonly TimeEntry[], from: number, to: number): number {
+  let total = 0;
+  for (const e of entries) total += overlapSeconds(e.startedAt, e.endedAt, from, to);
+  return total;
+}
+
+/** Seconds the open entry has run within [from, to). */
+export function openSecondsInRange(state: ClockState, from: number, to: number, now: number): number {
+  if (state.startedAt === null) return 0;
+  return overlapSeconds(state.startedAt, now, from, to);
+}
+
+/** Monday 00:00 (local) of the week containing `timestamp`. */
+export function startOfWeek(timestamp: number): number {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return date.getTime();
+}
+
 function overlapSeconds(start: number, end: number, from: number, to: number): number {
   return Math.max(0, Math.round((Math.min(end, to) - Math.max(start, from)) / 1000));
 }
@@ -164,6 +185,12 @@ export function formatClock(totalSecs: number): string {
   return hours > 0
     ? hours + ":" + pad(minutes) + ":" + pad(rest)
     : minutes + ":" + pad(rest);
+}
+
+/** `2:15` (hours:minutes, no seconds): what the cockpit shows; it changes once a minute, not every second. */
+export function formatHM(totalSecs: number): string {
+  const minutes = Math.floor(Math.max(0, totalSecs) / 60);
+  return Math.floor(minutes / 60) + ":" + String(minutes % 60).padStart(2, "0");
 }
 
 /** Decimal hours, the unit invoices use. */

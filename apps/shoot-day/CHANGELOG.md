@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0] — 2026-10-20
+
+### Geändert (Quietglass-UI-Standard QUS v1, „keine Textwand“)
+
+- **Brille, Startseite:** höchstens drei große Einträge — **Takes**, **Teleprompter**, **Drehtag** —, darunter eingerückt, was dazugehört: das **Storyboard** (Server 0.5.0+) unter den Takes, die **Packliste** unter dem Drehtag. Takes steht oben, weil der Zeiger dort startet und Takes am Set hundertmal gebraucht werden. Kein Hilfe-Eintrag mehr (weder in der Startliste noch in der Kundenliste); die Auswahl ist ein Punkt (● / eingerückt).
+- **Brille, Drehtag als Cockpit-Bild** (ersetzt „Tagesplan“ als Textseite): rechts klein `SHOOT DAY  HH:MM`, **eine** große Überschrift = nächste Szene (Uhrzeit, darunter Was), Zellen Szene (n/gesamt), Ort, Kunde, Ruf, Ende, Licht; links eine **Tageslinie** (Punkte für vorbei / jetzt / als Nächstes / später) und darunter „in 25 min“. Ein Tippen darauf öffnet die Licht-Ansicht (Sonnenbild wie bisher), 2× geht von dort zurück zum Drehtag. Es gehen nur geänderte Kacheln über Bluetooth (die Uhr ändert nur die Kachel oben rechts); solange der Beenden-Dialog offen sein kann, wird keine Kachel gesendet.
+- **Brille, Laufansichten** (Takes, Teleprompter, Packliste, Aufnahme, Storyboard, Kundenlisten): Kopfzeile `Modus · ● live` (oder `Demo` / `offline` als Wort), unten **eine** Hinweiszeile.
+- **Handy:** genau **drei Tabs** in einer Zeile — **Jetzt** (Statusbanner, Heldenkarte mit der Uhrzeit der nächsten Szene, 2×2-Kennzahlen, ein Hauptknopf „Neu laden“, waagrechte Kartenleiste der Szenen, Licht eingeklappt), **Projekte** (Kunden und Projekte), **Einstellungen** (gruppierte Karten: Server — eingeklappt, sobald eingerichtet —, Brille, Sprache, Über). Erster Start: Einstellungen offen mit 3-Schritt-Liste; ohne Server läuft die Demo. Look wie Rain Lens / Status Glass (Kicker QUIETGLASS / FILM).
+
+### Unverändert (bewusst)
+
+- `SIDE_MENU = false`, die Beenden-Dialog-Logik (dialogPending/dialogShown, Wiederaufbau nach „Nein“, 2× im Hintergrund), die begrenzten Aufrufe (`bounded()`), erste Seite = rebuild + create, Aufnahme/Prompter/Outbox.
+- Die Textseite „Tagesplan“ und ihr Tagesbalken bleiben im Code, sind aber nicht mehr über die Startliste erreichbar (der Drehtag ersetzt sie).
+- QIS v1: Fußzeilen über den gemeinsamen Baustein, `2× = zurück`/`Ende`, scharfgestellte Aktionen (nochmal tippen).
+
 ## [0.7.6] — 2026-10-17
 
 ### Behoben (Hardware-Schrittprotokoll)

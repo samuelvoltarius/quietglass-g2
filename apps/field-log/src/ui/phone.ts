@@ -6,14 +6,18 @@ import {
   addEntry, countBySeverity, finish, removeEntry, setSection, setSeverity, startInspection,
   toCsv, toMarkdown, type Severity,
 } from "../log/entries";
+import { lastNoteAt, notesToday } from "../cockpit/model";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { autoTitle, quickNotes, severityName, t } from "../messages";
 import { csvFormatFor } from "../csv";
 
 /**
- * The phone companion: starting an inspection, reviewing entries, exporting.
+ * The phone companion (QUS v1, the look of Rain Lens and Status Glass):
+ * exactly three tabs - Jetzt (the state at a glance), Notizen (the entries of
+ * the walk, export, all walks) and Einstellungen (language, speech server,
+ * glasses).
  *
- * Reviewing belongs here rather than on the glasses — during a walk the
+ * Reviewing belongs here rather than on the glasses - during a walk the
  * glasses should not slow you down, and afterwards a phone screen is simply
  * better for reading a report.
  */
@@ -41,17 +45,24 @@ const SIZE_WARN_BYTES = 4 * 1024 * 1024;
 /** Text fields that hold an unsaved draft and must survive a re-render. */
 const DRAFT_FIELDS = ["title", "note", "quick", "stt", "stt-token", "lang"] as const;
 
-/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
-const TABS: readonly { id: string; icon: string; key: string }[] = [
-  { id: "walk", icon: "🎯", key: "p.tabWalk" },
-  { id: "archive", icon: "🗂️", key: "p.tabArchive" },
-  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
-  { id: "more", icon: "⚙️", key: "p.tabMore" },
+/** Exactly three tabs (QUS v1): the state now, the notes, the settings. */
+export const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "now", icon: "🎙️", key: "p.tabNow" },
+  { id: "notes", icon: "📝", key: "p.tabNotes" },
+  { id: "settings", icon: "⚙️", key: "p.tabSettings" },
 ];
 const TAB_KEY = "quietglass.field-log.tab";
+/** How long the second tap on a destructive button is waited for. */
+const ARM_MS = 4000;
 
-function readTab(): string {
-  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "walk"; } catch { return "walk"; }
+/** Nothing set up yet: Einstellungen opens first, with the three-step checklist. */
+export function isFirstRun(data: FieldLogData): boolean {
+  return data.inspections.length === 0 && !hasSpeechServer(data);
+}
+
+function readTab(firstRun: boolean): string {
+  try { const v = localStorage.getItem(TAB_KEY); if (TABS.some((tab) => tab.id === v)) return v!; } catch { /* no storage */ }
+  return firstRun ? "settings" : "now";
 }
 
 /** Shows only the active tab; the choice survives redraws and restarts. */
@@ -68,10 +79,16 @@ const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
 
 type Commit = (next: FieldLogData, options?: { readonly keepDraft?: boolean; readonly notice?: string }) => void;
 
+/** Asks for a second tap on `key` within ARM_MS before `run` happens (destructive buttons). */
+type Arm = (key: string, run: () => void) => void;
+
 interface View {
   readonly locale: Locale;
   readonly notice: string;
   readonly canPhoto: boolean;
+  readonly now: number;
+  /** The destructive button waiting for its second tap, if any. */
+  readonly armed: string | null;
 }
 
 export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
@@ -80,27 +97,29 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
 
   let notice = "";
   let locale: Locale = ports.locale?.() ?? getLocale();
-  let tab = readTab();
+  let tab = readTab(isFirstRun(ports.getData()));
+  let armed: { key: string; until: number } | null = null;
 
   // Re-rendered after every change. Handlers always read the current data:
   // the glasses file entries while this page is open, and a change computed
   // from the data of the last render would write those entries away again.
   const render = (keepDraft = true): void => {
     const draft = keepDraft ? readDraft(root) : null;
-    root.innerHTML = template(ports.getData(), { locale, notice, canPhoto: Boolean(ports.takePhoto) });
+    const armedKey = armed !== null && armed.until > Date.now() ? armed.key : null;
+    root.innerHTML = template(ports.getData(), { locale, notice, canPhoto: Boolean(ports.takePhoto), now: Date.now(), armed: armedKey });
     notice = "";
     if (draft) writeDraft(root, draft);
     const notify = (message: string): void => { notice = message; render(); };
     applyTab(root, tab);
     root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
       button.addEventListener("click", () => {
-        tab = button.dataset["tabGo"] ?? "walk";
+        tab = button.dataset["tabGo"] ?? "now";
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
         applyTab(root, tab);
         window.scrollTo({ top: 0 });
       });
     });
-    wire(root, ports, commit, notify, locale);
+    wire(root, ports, commit, notify, locale, arm);
     root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
       const value = (event.target as HTMLSelectElement).value;
       if (value !== "de" && value !== "en") return;
@@ -110,6 +129,13 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
       // Drafts are dropped: the quick-note box would keep the old language.
       render(false);
     });
+  };
+
+  const arm: Arm = (key, run) => {
+    if (armed !== null && armed.key === key && armed.until > Date.now()) { armed = null; run(); return; }
+    armed = { key, until: Date.now() + ARM_MS };
+    render();
+    setTimeout(() => { if (armed?.key === key) { armed = null; render(); } }, ARM_MS + 50);
   };
 
   const commit: Commit = (next, options = {}) => {
@@ -143,93 +169,168 @@ function writeDraft(root: HTMLElement, draft: Map<string, string>): void {
   }
 }
 
+// ---- pure view models (tests read these) ----------------------------------------------
+
+export interface PhoneSummary {
+  /** Notes made today, over every walk. */
+  readonly today: number;
+  /** Entries of the open walk. */
+  readonly walk: number;
+  readonly major: number;
+  readonly minor: number;
+  readonly note: number;
+  readonly photos: number;
+  readonly lastAt: number | null;
+}
+
+export function summarize(data: FieldLogData, now: number): PhoneSummary {
+  const active = activeInspection(data);
+  const entries = active?.entries ?? [];
+  const counts = active ? countBySeverity(active) : { major: 0, minor: 0, note: 0 };
+  return {
+    today: notesToday(data.inspections, now),
+    walk: entries.length,
+    major: counts.major,
+    minor: counts.minor,
+    note: counts.note,
+    photos: entries.filter((entry) => entry.attachment).length,
+    lastAt: lastNoteAt(data.inspections),
+  };
+}
+
+export interface Banner { readonly tone: "ok" | "none"; readonly text: string }
+
+/** The one message that counts right now. */
+export function bannerFor(data: FieldLogData, locale: Locale): Banner {
+  const active = activeInspection(data);
+  return active
+    ? { tone: "ok", text: t(locale, "p.bannerRunning", { title: active.title }) }
+    : { tone: "none", text: t(locale, "p.bannerNone") };
+}
+
+/** The status pill: a dot while a speech server is set up, a word otherwise. */
+export function pillOf(data: FieldLogData, locale: Locale): { text: string; on: boolean } {
+  return hasSpeechServer(data)
+    ? { text: t(locale, "p.pillLive"), on: true }
+    : { text: t(locale, "p.pillLocal"), on: false };
+}
+
+const esc = (text: string): string => escapeHtml(text);
+
+/** "Jetzt": banner, hero card with one big value, 2 x 2 key figures, the one button, a strip of the latest notes. */
+export function nowInner(data: FieldLogData, view: Pick<View, "locale" | "canPhoto" | "now">): string {
+  const { locale } = view;
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const active = activeInspection(data);
+  const sum = summarize(data, view.now);
+  const banner = bannerFor(data, locale);
+  const stat = (label: string, value: number, unit: string, alert = false): string =>
+    `<div${alert ? ' class="alert"' : ""}><span>${esc(label)}</span><b>${value}</b><small>${esc(unit)}</small></div>`;
+  const recent = active ? [...active.entries].reverse().slice(0, 8) : [];
+  const cards = recent.map((entry) => {
+    const time = new Date(entry.at);
+    const clock = `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
+    return `<div class="host note-card sev-${entry.severity}"><em>${esc(severityName(locale, entry.severity))}</em><b>${esc(entry.text)}</b><span>${esc(clock)}${entry.attachment ? " 📷" : ""}</span></div>`;
+  });
+  const primary = active
+    ? (view.canPhoto ? `<button id="photo" type="button" class="big">${esc(x("p.photoButton"))}</button>` : "")
+    : `<label for="title">${esc(x("p.titleLabel"))}</label>
+      <input id="title" type="text" placeholder="${esc(x("p.titlePlaceholder"))}" />
+      <button id="start" type="button" class="big">${esc(x("p.startButton"))}</button>`;
+  return `
+    <p class="banner tone-${banner.tone}">${esc(banner.text)}</p>
+    <section class="card hero-card">
+      <div class="hero">
+        <div><span>${esc(x("p.heroLabel"))}</span><strong>${sum.today}</strong></div>
+        <p>${esc(active ? x("p.heroSide", { n: sum.walk }) : "–")}</p>
+      </div>
+      <div class="stats">
+        ${stat(x("p.statMajor"), sum.major, x("p.unitEntries"), sum.major > 0)}
+        ${stat(x("p.statMinor"), sum.minor, x("p.unitEntries"))}
+        ${stat(x("p.statNote"), sum.note, x("p.unitEntries"))}
+        ${stat(x("p.statPhotos"), sum.photos, x("p.unitPhotos"))}
+      </div>
+      ${primary}
+      ${active ? `<button id="finish" type="button" class="quiet">${esc(x("p.finish"))}</button>` : ""}
+    </section>
+    <h2 class="strip-title">${esc(x("p.stripTitle"))}</h2>
+    ${cards.length > 0 ? `<div class="strip">${cards.join("")}</div>` : `<p class="hint">${esc(x("p.stripEmpty"))}</p>`}`;
+}
+
+/** First-run checklist: pure, so tests can read it. */
+export function setupInner(data: FieldLogData, locale: Locale): string {
+  const x = (key: string): string => t(locale, key);
+  const started = data.inspections.length > 0;
+  const noted = data.inspections.some((inspection) => inspection.entries.length > 0);
+  const server = hasSpeechServer(data);
+  const step = (n: number, done: boolean, key: string): string =>
+    `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${esc(x(key))}</span></li>`;
+  return `<ol class="steps">${step(1, started, "p.setup1")}${step(2, noted, "p.setup2")}${step(3, server, "p.setup3")}</ol>`
+    + (server ? "" : `<p class="hint">${esc(x("p.setupDemo"))}</p>`);
+}
+
 function template(data: FieldLogData, view: View): string {
   const { locale } = view;
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const active = data.activeId ? data.inspections.find((i) => i.id === data.activeId) : null;
   const bytes = approximateBytes(data);
   const voice = hasSpeechServer(data);
+  const firstRun = isFirstRun(data);
+  const pill = pillOf(data, locale);
   const csvFormat = csvFormatFor(data.csvFormat, locale);
   const severityOptions = (selected: Severity): string => SEVERITIES.map((s) =>
     '<option value="' + s + '"' + (s === selected ? " selected" : "") + ">" + escapeHtml(severityName(locale, s)) + "</option>").join("");
+  /** A destructive button: the first tap asks, the second one does it. */
+  const dangerButton = (cls: string, id: string, label: string, aria: string): string => {
+    const on = view.armed === cls + ":" + id;
+    return `<button type="button" class="${cls} remove${on ? " danger" : ""}" data-id="${escapeHtml(id)}" aria-label="${escapeHtml(aria)}">${escapeHtml(on ? L("p.confirmDrop") : label)}</button>`;
+  };
 
-  return `
-  <header class="brand bar">
-    <div>
-      <span class="brand-mark">Quietglass</span>
-      <h1>FieldLog</h1>
-      <p class="hint">${L("p.lede")}</p>
-    </div>
-    <span class="chip${active ? " on" : ""}">${escapeHtml(active ? active.title : L("p.chipNone"))}</span>
-  </header>
-
-  ${view.notice ? '<p class="notice">' + escapeHtml(view.notice) + "</p>" : ""}
-
-  <div class="tab" data-tab="walk">
-  <section class="card">
-    <h2>${L("p.start")}</h2>
-    ${active
-      ? `<p>${L("p.running", { title: escapeHtml(active.title) })} ${L(voice ? "p.nextVoice" : "p.nextQuick")}</p>`
-      : `<p>${L("p.noneYet")}</p>`}
-  </section>
-
-  <section class="card">
-    <h2>${active ? L("p.current") : L("p.startTitle")}</h2>
-    ${active ? `
-      <p class="hint"><strong>${escapeHtml(active.title)}</strong> — ${L("p.entryCount", { n: active.entries.length })}</p>
-      <label for="section">${L("p.section")}</label>
-      <input id="section" type="text" value="${escapeHtml(active.section)}" placeholder="${L("p.sectionPlaceholder")}" />
-      <p class="hint">${L("p.sectionHint")}</p>
-      <button id="finish" type="button">${L("p.finish")}</button>
-    ` : `
-      <label for="title">${L("p.titleLabel")}</label>
-      <input id="title" type="text" placeholder="${L("p.titlePlaceholder")}" />
-      <button id="start" type="button">${L("p.startButton")}</button>
-    `}
-  </section>
-
+  const notesTab = `
   ${active ? `
   <section class="card">
     <h2>${L("p.addNote")}</h2>
     <input id="note" type="text" placeholder="${L("p.notePlaceholder")}" />
     <label for="note-sev">${L("p.noteSeverity")}</label>
     <select id="note-sev">${severityOptions(data.severity)}</select>
-    <button id="add-note" type="button">${L("p.addNoteButton")}</button>
-    ${view.canPhoto ? `<button id="photo" type="button" class="secondary">${L("p.photoButton")}</button>
-    <p class="hint">${L("p.photoHint")}</p>` : ""}
+    <button id="add-note" type="button" class="big">${L("p.addNoteButton")}</button>
+    <label for="section">${L("p.section")}</label>
+    <input id="section" type="text" value="${escapeHtml(active.section)}" placeholder="${L("p.sectionPlaceholder")}" />
+    <p class="hint">${L("p.sectionHint")}</p>
   </section>
 
   <section class="card">
-    <h2>${L("p.entries")}</h2>
+    <h2>${L("p.entries")} · ${active.entries.length}</h2>
     ${active.entries.length === 0 ? `<p class="hint">${L("p.entriesEmpty")}</p>` : `
-      <table class="keys">
-        ${active.entries.map((e) => `
-          <tr>
-            <td>${severityBadge(e.severity)}</td>
-            <td>${escapeHtml(e.text)}${e.attachment ? " 📷" : ""}<br />
-                <small>${escapeHtml(e.section ?? "")}</small></td>
-            <td>
-              <select class="sev" data-id="${escapeHtml(e.id)}">${severityOptions(e.severity)}</select>
-              <button type="button" class="drop" data-id="${escapeHtml(e.id)}" title="${L("p.removeEntry")}" aria-label="${L("p.removeEntry")}">✕</button>
-            </td>
-          </tr>`).join("")}
-      </table>
-      <button id="md" type="button" class="secondary">${L("p.exportMd")}</button>
-      <button id="md-img" type="button" class="secondary">${L("p.exportMdImg")}</button>
-      <label for="csv-format">${L("p.csvFormat")}</label>
-      <select id="csv-format">
-        <option value="excel-de"${csvFormat === "excel-de" ? " selected" : ""}>${L("p.csvExcel")}</option>
-        <option value="standard"${csvFormat === "standard" ? " selected" : ""}>${L("p.csvStandard")}</option>
-      </select>
-      <button id="csv" type="button" class="secondary">${L("p.exportCsv")}</button>
-      <p class="hint">${L("p.csvHint")}</p>
-    `}
-  </section>` : ""}
-  </div>
+      <ul class="scripts entries">
+        ${[...active.entries].reverse().map((e) => `
+          <li>
+            <span>${severityBadge(e.severity)}${escapeHtml(e.text)}${e.attachment ? " 📷" : ""}<br />
+              <small>${escapeHtml(e.section ?? "")}</small></span>
+            <span class="row-actions">
+              <select class="sev" data-id="${escapeHtml(e.id)}" aria-label="${L("p.noteSeverity")}">${severityOptions(e.severity)}</select>
+              ${dangerButton("drop", e.id, "✕", L("p.removeEntry"))}
+            </span>
+          </li>`).join("")}
+      </ul>`}
+  </section>
 
-  <div class="tab" data-tab="archive">
-  <section class="card">
-    <h2>${L("p.past")}</h2>
+  ${active.entries.length > 0 ? `
+  <details class="fold card">
+    <summary>${L("p.exportTitle")}</summary>
+    <button id="md" type="button" class="secondary">${L("p.exportMd")}</button>
+    <button id="md-img" type="button" class="secondary">${L("p.exportMdImg")}</button>
+    <label for="csv-format">${L("p.csvFormat")}</label>
+    <select id="csv-format">
+      <option value="excel-de"${csvFormat === "excel-de" ? " selected" : ""}>${L("p.csvExcel")}</option>
+      <option value="standard"${csvFormat === "standard" ? " selected" : ""}>${L("p.csvStandard")}</option>
+    </select>
+    <button id="csv" type="button" class="secondary">${L("p.exportCsv")}</button>
+    <p class="hint">${L("p.csvHint")}</p>
+  </details>` : ""}` : `<p class="hint">${L("p.noEntriesYet")}</p>`}
+
+  <details class="fold card">
+    <summary>${L("p.past")} · ${data.inspections.length}</summary>
     ${data.inspections.length === 0 ? `<p class="hint">${L("p.pastEmpty")}</p>` : `
       <ul class="scripts">
         ${data.inspections.map((i) => {
@@ -239,8 +340,8 @@ function template(data: FieldLogData, view: View): string {
             <span>${escapeHtml(i.title)}<br />
               <small>${L("p.pastLine", { date, n: i.entries.length, major: counts.major })}${i.finishedAt === null ? " · " + L("p.stillOpen") : ""}</small></span>
             <span class="row-actions">
-              ${i.id === data.activeId ? "" : '<button type="button" class="open" data-id="' + escapeHtml(i.id) + '">' + L("p.open") + "</button>"}
-              <button type="button" class="remove" data-id="${escapeHtml(i.id)}">${L("p.remove")}</button>
+              ${i.id === data.activeId ? "" : '<button type="button" class="open secondary" data-id="' + escapeHtml(i.id) + '">' + L("p.open") + "</button>"}
+              ${dangerButton("remove-walk", i.id, L("p.remove"), L("p.remove"))}
             </span>
           </li>`;
         }).join("")}
@@ -249,38 +350,17 @@ function template(data: FieldLogData, view: View): string {
       ${L("p.size", { kb: Math.round(bytes / 1024) })}
       ${bytes > SIZE_WARN_BYTES ? "<strong>" + L("p.sizeWarn") + "</strong>" : ""}
     </p>
-  </section>
-  </div>
+  </details>`;
 
-  <div class="tab" data-tab="glasses">
-  <section class="card">
-    <h2>${L("p.quick")}</h2>
-    <label for="quick">${L("p.quickHint")}</label>
-    <textarea id="quick" rows="7">${escapeHtml(quickNotes(locale, data.quickNotes).join("\n"))}</textarea>
-    <button id="save-quick" type="button">${L("p.quickSave")}</button>
-  </section>
+  const settingsTab = `
+  ${firstRun ? `<section class="card setup"><h2>${L("p.setupTitle")}</h2>${setupInner(data, locale)}</section>` : ""}
 
-  <section class="card">
-    <h2>${L("p.controls")}</h2>
-    <table class="keys">
-      <tr><td>${L("p.key.tap")}</td><td>${L(voice ? "p.key.tapVoice" : "p.key.tapQuick")}</td></tr>
-      <tr><td>${L("p.key.swipe")}</td><td>${L("p.key.swipeDo")}</td></tr>
-      <tr><td>${L("p.key.hold")}</td><td>${L("p.key.holdDo")}</td></tr>
-      <tr><td>${L("p.key.double")}</td><td>${L("p.key.doubleDo")}</td></tr>
-    </table>
-    <p class="hint">${L("p.discardHint")}</p>
-    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
-    <p class="hint">${L("p.invertHint")}</p>
-  </section>
-  </div>
-
-  <div class="tab" data-tab="more">
-  <section class="card">
+  <section class="card compact">
     ${languageSelect(locale)}
   </section>
 
-  <section class="card">
-    <h2>${L("p.advanced")}</h2>
+  <details class="fold card"${firstRun || !voice ? " open" : ""}>
+    <summary>${voice ? L("p.sttFolded") : L("p.advanced")}</summary>
     <p class="hint">${L("p.advancedHint")}</p>
     <p class="hint"><strong>${L(voice ? "p.modeVoice" : "p.modeQuick")}</strong></p>
     <label for="stt">${L("p.server")}</label>
@@ -289,10 +369,54 @@ function template(data: FieldLogData, view: View): string {
     <input id="stt-token" type="password" />
     <label for="lang">${L("p.speechLanguage")}</label>
     <input id="lang" type="text" value="${escapeHtml(data.language)}" placeholder="auto, de, en …" />
-    <button id="save-stt" type="button">${L("p.saveServer")}</button>
-  </section>
+    <button id="save-stt" type="button" class="big">${L("p.saveServer")}</button>
+  </details>
 
-  <footer class="card hint">${L("p.privacy")}</footer>
+  <details class="fold card">
+    <summary>${L("p.quick")}</summary>
+    <label for="quick">${L("p.quickHint")}</label>
+    <textarea id="quick" rows="7">${escapeHtml(quickNotes(locale, data.quickNotes).join("\n"))}</textarea>
+    <button id="save-quick" type="button" class="big">${L("p.quickSave")}</button>
+  </details>
+
+  <details class="fold card">
+    <summary>${L("p.controls")}</summary>
+    <table class="keys">
+      <tr><td>${L("p.key.tap")}</td><td>${L("p.key.tapDo")}</td></tr>
+      <tr><td>${L("p.key.swipe")}</td><td>${L("p.key.swipeDo")}</td></tr>
+      <tr><td>${L("p.key.double")}</td><td>${L("p.key.doubleDo")}</td></tr>
+    </table>
+    <p class="hint">${L("p.discardHint")}</p>
+    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${L("p.invert")}</label>
+    <p class="hint">${L("p.invertHint")}</p>
+  </details>
+
+  <details class="fold card">
+    <summary>${L("p.settingsData")}</summary>
+    <p class="hint">${L("p.privacy")}</p>
+  </details>`;
+
+  return `
+  <header class="brand bar">
+    <div>
+      <div class="brand-mark">${L("p.kicker")}</div>
+      <h1>FieldLog</h1>
+    </div>
+    <span id="pill" class="chip${pill.on ? " on" : ""}">${escapeHtml(pill.text)}</span>
+  </header>
+
+  ${view.notice ? '<p class="notice">' + escapeHtml(view.notice) + "</p>" : ""}
+
+  <div class="tab" data-tab="now">
+    ${nowInner(data, view)}
+  </div>
+
+  <div class="tab" data-tab="notes">
+    ${notesTab}
+  </div>
+
+  <div class="tab" data-tab="settings">
+    ${settingsTab}
   </div>
 
   <nav class="tabbar" role="tablist">
@@ -301,8 +425,8 @@ function template(data: FieldLogData, view: View): string {
 }
 
 function severityBadge(severity: Severity): string {
-  if (severity === "major") return "<strong>!</strong>";
-  if (severity === "minor") return "·";
+  if (severity === "major") return "<strong>!</strong> ";
+  if (severity === "minor") return "· ";
   return "";
 }
 
@@ -312,6 +436,7 @@ function wire(
   commit: Commit,
   notify: (message: string) => void,
   locale: Locale,
+  arm: Arm,
 ): void {
   const current = ports.getData;
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
@@ -362,11 +487,15 @@ function wire(
     });
   });
 
+  // Deleting asks twice: the first tap turns the button into "Tap again", the second (within 4 s) deletes.
   root.querySelectorAll<HTMLButtonElement>(".drop").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      const open = active();
-      if (open && id) commit(upsertInspection(current(), removeEntry(open, id)));
+      if (!id) return;
+      arm("drop:" + id, () => {
+        const open = active();
+        if (open) commit(upsertInspection(current(), removeEntry(open, id)));
+      });
     });
   });
 
@@ -377,10 +506,11 @@ function wire(
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>(".remove").forEach((button) => {
+  root.querySelectorAll<HTMLButtonElement>(".remove-walk").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (id) commit(removeInspection(current(), id));
+      if (!id) return;
+      arm("remove-walk:" + id, () => commit(removeInspection(current(), id)));
     });
   });
 
@@ -437,7 +567,7 @@ function wire(
 export function safeName(title: string): string {
   const plain = title.toLowerCase()
     .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    .normalize("NFD").replace(/[̀-ͯ]/g, "");
   return plain.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "inspection";
 }
 

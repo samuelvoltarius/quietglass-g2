@@ -1,6 +1,5 @@
 import type { Locale } from "../i18n";
 import { t } from "../messages";
-import { LINE_COLS } from "./fit";
 
 /**
  * The footer line of every glasses screen (Quietglass interaction standard, QIS v1).
@@ -11,7 +10,7 @@ import { LINE_COLS } from "./fit";
  */
 
 /** Characters one footer row holds (same limit as every other row). */
-export const FOOTER_WIDTH = LINE_COLS;
+export const FOOTER_WIDTH = 56;
 
 /** Between two footer parts. */
 export const FOOTER_SEPARATOR = " · ";

@@ -57,6 +57,7 @@ async function fakeDashboard() {
     list_tasks: (a) => db.tasks.filter((t) => !a.project_id || t.project_id === a.project_id),
     create_task: (a) => { const { participant_ids: team = [], ...rest } = a; const t = { id: id(), status: "open", ...rest }; db.tasks.push(t); db.team[t.id] = [...team]; return t; },
     update_task: (a) => { const t = db.tasks.find((x) => x.id === a.id); Object.assign(t, a); return t; },
+    delete_task: (a) => { const i = db.tasks.findIndex((x) => x.id === a.id); if (i < 0) throw new Error("no task"); db.tasks.splice(i, 1); return { deleted: true }; },
     list_comments: (a) => db.comments.filter((c) => c.task_id === a.task_id),
     create_comment: (a) => { const c = { id: id(), ...a }; db.comments.push(c); return c; },
     list_users: () => db.users,
@@ -661,6 +662,63 @@ describe("Work Dashboard sync (shoot-day-wd.mjs)", () => {
     expect(lines.join("\n")).not.toContain(TOKEN);
   });
 
+  it("appointment proposals of the understanding: each once as an event with labels, never touched again", async () => {
+    const dash = await dashboard();
+    const state = example();
+    const p = state.projects.p_000000000001;
+    p.brain = { hash: "x", at: Date.UTC(2026, 9, 20, 9, 0), sources: 3, analysis: {
+      lage: "Imagefilm.", zusammenhaenge: [], unterlagen: [], offen: [],
+      termine: [
+        { titel: "Drehtag 1", datum: "2026-10-22", von: "08:00", bis: "16:00", ort: "Beispielgasse 1", grund: "Donnerstag, kein Ruhetag", quellen: [] },
+        { titel: "Drehtag 2 (ganztägig)", datum: "2026-10-29", von: "", bis: "", ort: "", grund: "", quellen: [] },
+      ],
+    } };
+    const { sync } = setup(dash, state);
+    await sync.syncAll();
+    const events = dash.db.tasks.filter((t) => t.is_event);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      title: "Drehtag 1", is_event: true, labels: ["vorschlag", "termin"], status: "open", location: "Beispielgasse 1",
+      starts_at: "2026-10-22T08:00:00+02:00", ends_at: "2026-10-22T16:00:00+02:00", start_date: "2026-10-22", due_date: "2026-10-22",
+    });
+    expect(events[0].description).toBe("Donnerstag, kein Ruhetag\n\nVorschlag der KI – bitte bestätigen oder löschen.");
+    expect(events[1]).toMatchObject({ title: "Drehtag 2 (ganztägig)", starts_at: null, ends_at: null, location: null, start_date: "2026-10-29" });
+    expect(dash.db.comments).toEqual([]);   // no notifications
+    // confirmed and moved in the dashboard, the other deleted: a new understanding with the same proposals changes nothing
+    Object.assign(events[0], { labels: ["termin"], starts_at: "2026-10-22T09:00:00+02:00" });
+    dash.db.tasks.splice(dash.db.tasks.indexOf(events[1]), 1);
+    p.brain = { ...p.brain, at: Date.UTC(2026, 9, 20, 10, 0), analysis: { ...p.brain.analysis, termine: [...p.brain.analysis.termine.map((t) => ({ ...t, titel: "  " + t.titel.toUpperCase() + " " }))] } };
+    dash.reset();
+    await sync.syncAll();
+    expect(dash.names().filter((n) => n === "create_task" || n === "update_task" || n === "delete_task")).toEqual(["update_task"]);   // only "Projektlage (KI)"
+    expect(dash.db.tasks.filter((t) => t.is_event)).toHaveLength(1);
+    expect(dash.db.tasks.find((t) => t.is_event)).toMatchObject({ labels: ["termin"], starts_at: "2026-10-22T09:00:00+02:00" });
+    // a new date is a new proposal
+    p.brain.analysis.termine = [{ titel: "Drehtag 1", datum: "2026-11-05", von: "", bis: "", ort: "", grund: "", quellen: [] }];
+    await sync.syncAll();
+    expect(dash.db.tasks.filter((t) => t.is_event).map((t) => t.start_date)).toEqual(["2026-10-22", "2026-11-05"]);
+  });
+
+  it("lists every appointment of the dashboard with customer and project; null on failure", async () => {
+    const dash = await dashboard();
+    const state = example();
+    const { sync } = setup(dash, state);
+    await sync.syncAll();
+    const projectId = dash.db.projects[0].id;
+    dash.db.tasks.push(
+      { id: 700, project_id: projectId, title: "Dreh", is_event: true, starts_at: "2026-10-22T09:00:00+02:00", ends_at: null, location: "Hof", labels: [{ name: "Termin" }], status: "open" },
+      { id: 701, project_id: projectId, title: "Keine Termin-Aufgabe", status: "open" },
+    );
+    const list = await sync.events();
+    expect(list).toEqual([{
+      taskId: "700", title: "Dreh", customer: "Beispiel Café", project: "Imagefilm", status: "open", labels: ["termin"],
+      starts_at: "2026-10-22T09:00:00+02:00", ends_at: "", start_date: "", due_date: "", location: "Hof",
+    }]);
+    expect(dash.calls.at(-3)).toEqual({ name: "list_tasks", args: {} });
+    dash.fail = true;
+    expect(await sync.events()).toBeNull();
+  });
+
   it("is off without URL or token", async () => {
     const sync = createWdSync({ url: "", token: TOKEN, getState: () => example(), persist: async () => undefined });
     expect(sync.enabled).toBe(false);
@@ -1127,6 +1185,104 @@ describe("Work Dashboard sync in the Shoot Day server", () => {
     expect(logs).not.toContain(TOKEN);
     expect(logs).not.toContain(new URL(dash.url).host);
     expect(logs).not.toContain("Neue Fassung");
+  }, 40000);
+
+  it("appointments: an entry is understood (model, else rules); confirmed dashboard appointments reach Google, cancelled ones leave it", async () => {
+    const dash = await fakeDashboard();
+    cleanup.push(() => dash.close());
+    // the local model: answers the appointment prompt, anything else with a plain overview
+    const prompts = [];
+    let modelUp = true;
+    const llm = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const { messages } = JSON.parse(body);
+        if (!modelUp) { response.writeHead(503); response.end(); return; }
+        let content = "{\"lage\":\"Ein Projekt.\"}";
+        if (messages[0].content.startsWith("Du liest eine kurze Termin-Eingabe")) {
+          prompts.push(messages[1].content);
+          const id = Number(/wdProjectId: (\d+) \| Kunde: Gasthof Musterwirt/.exec(messages[1].content)?.[1]);
+          content = JSON.stringify({ title: "Drehtag Sommerreel", wdProjectId: id, date: "2026-10-21", start: "09:00", end: "12:00", location: "", hints: [] });
+        }
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ choices: [{ message: { content } }] }));
+      });
+    });
+    await new Promise((resolve) => llm.listen(0, "127.0.0.1", resolve));
+    cleanup.push(() => new Promise((resolve) => llm.close(resolve)));
+    // a fake Apps Script bridge (answers directly, without the redirect)
+    const google = new Map();
+    const bridgeCalls = [];
+    const bridge = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const d = JSON.parse(body);
+        bridgeCalls.push(d);
+        let result = { ok: true };
+        if (d.action === "delete") google.delete(d.project);
+        else { result = { ok: true, eventId: google.get(d.project)?.eventId ?? "g" + bridgeCalls.length }; google.set(d.project, { ...d, eventId: result.eventId }); }
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(result));
+      });
+    });
+    await new Promise((resolve) => bridge.listen(0, "127.0.0.1", resolve));
+    cleanup.push(() => new Promise((resolve) => bridge.close(resolve)));
+
+    const { base, dataFile } = await startServer({
+      SHOOT_WD_URL: dash.url, SHOOT_WD_TOKEN: TOKEN, SHOOT_WD_DEBOUNCE_MS: "100", SHOOT_WD_POLL_MS: "200",
+      SHOOT_LLM_URL: "http://127.0.0.1:" + llm.address().port + "/v1",
+      SHOOT_GCAL_WEBHOOK: "http://127.0.0.1:" + bridge.address().port + "/exec", SHOOT_GCAL_SECRET: "geheim-test-wort", SHOOT_GCAL_RETRY_MS: "100",
+    }, cleanup);
+    const customer = await (await post(base, "/api/customers", { name: "Gasthof Musterwirt", notes: "Ruhetag Mo/Di" })).json();
+    await post(base, "/api/projects", { customerId: customer.id, name: "Sommerreel", place: "Hauptplatz 3" });
+    expect((await post(base, "/api/wd/sync", {})).status).toBe(200);
+    const wdProject = dash.db.projects.find((x) => x.name === "Sommerreel");
+    expect(wdProject).toBeTruthy();
+
+    // the model proposes a Wednesday although the text says Thursday: the words win
+    const parsed = await (await post(base, "/api/events/parse", { text: "Dreh bei Musterwirt nächsten Donnerstag 9 bis 12 Uhr", today: "2026-10-20" })).json();
+    expect(parsed).toMatchObject({ ok: true, source: "model", proposal: {
+      title: "Drehtag Sommerreel", wdProjectId: wdProject.id, customer: "Gasthof Musterwirt", project: "Sommerreel",
+      date: "2026-10-22", start: "09:00", end: "12:00", location: "Hauptplatz 3",
+    } });
+    expect(parsed.proposal.hints).toContain("Gasthof Musterwirt hat Mo/Di Ruhetag – Donnerstag passt");
+    expect(prompts[0]).toContain("Kundennotizen: Ruhetag Mo/Di");
+    // without the model: the rules
+    modelUp = false;
+    const rules = await (await post(base, "/api/events/parse", { text: "Sommerreel Besprechung Montag 10:00", today: "2026-10-20" })).json();
+    expect(rules).toMatchObject({ ok: true, source: "rules", proposal: { wdProjectId: wdProject.id, date: "2026-10-26", start: "10:00", end: "" } });
+    expect(rules.proposal.hints).toContain("Gasthof Musterwirt hat Mo/Di Ruhetag – Montag fällt auf einen Ruhetag");
+    expect((await post(base, "/api/events/parse", {})).status).toBe(400);
+    // parsing creates nothing
+    expect(dash.db.tasks.some((t) => t.is_event)).toBe(false);
+
+    // appointments in the dashboard: confirmed → Google; a proposal and an internal one never
+    dash.db.tasks.push(
+      { id: 800, project_id: wdProject.id, title: "Drehtag", is_event: true, starts_at: "2026-10-22T09:00:00+02:00", ends_at: "2026-10-22T12:00:00+02:00", location: "Hauptplatz 3", labels: ["termin"], status: "open" },
+      { id: 801, project_id: wdProject.id, title: "Reserve", is_event: true, starts_at: null, ends_at: null, start_date: "2026-10-29", due_date: "2026-10-29", labels: ["vorschlag", "termin"], status: "open" },
+      { id: 802, project_id: wdProject.id, title: "Teamessen", is_event: true, starts_at: null, start_date: "2026-10-30", labels: ["intern"], status: "open" },
+    );
+    expect(await until(() => google.has("wd:800"), 8000)).toBe(true);
+    expect(google.get("wd:800")).toMatchObject({ title: "Gasthof Musterwirt – Drehtag", start: "2026-10-22T09:00:00+02:00", end: "2026-10-22T12:00:00+02:00", location: "Hauptplatz 3", allDay: false });
+    expect(google.get("wd:800").description).toContain("aus dem Work Dashboard");
+    const sent = bridgeCalls.length;
+    await new Promise((resolve) => setTimeout(resolve, 600));   // a few more polls: nothing changed, nothing sent
+    expect(bridgeCalls.length).toBe(sent);
+    // the proposal is confirmed, the first one cancelled
+    dash.db.tasks.find((t) => t.id === 801).labels = ["termin"];
+    Object.assign(dash.db.tasks.find((t) => t.id === 800), { status: "done", labels: ["termin", "abgesagt"] });
+    expect(await until(() => google.has("wd:801") && !google.has("wd:800"), 8000)).toBe(true);
+    expect(google.get("wd:801")).toMatchObject({ allDay: true, date: "2026-10-29", title: "Gasthof Musterwirt – Reserve" });
+    // deleted in the dashboard → gone from Google
+    dash.db.tasks.splice(dash.db.tasks.findIndex((t) => t.id === 801), 1);
+    expect(await until(() => !google.has("wd:801"), 8000)).toBe(true);
+    expect(bridgeCalls.some((c) => c.project === "wd:802")).toBe(false);
+    // the bookkeeping follows right after the bridge's answer
+    expect(await until(async () => (await (await fetch(base + "/api/gcal/status")).json()).events.synced === 0)).toBe(true);
+    expect((await (await fetch(base + "/api/gcal/status")).json()).events).toMatchObject({ enabled: true, lastError: "" });
+    expect(await until(() => Object.keys(JSON.parse(readFileSync(dataFile, "utf8")).gcalEvents ?? { x: 1 }).length === 0)).toBe(true);
   }, 40000);
 
   it("is off without SHOOT_WD_URL / SHOOT_WD_TOKEN", async () => {

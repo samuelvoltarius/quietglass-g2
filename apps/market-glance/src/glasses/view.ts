@@ -1,58 +1,67 @@
-import { cents, money, providerTag, shorten, staleAge, type Position, type ProviderError } from "../markets/model";
-import { ROW_WIDTH } from "./footer";
-import type { TextView } from "./text";
-
-/** Rows the 214 px body container shows without clipping (same as the sibling apps). */
-export const BODY_ROWS = 7;
-/** Roughly the characters that fit across the 576 px display (proportional font). */
-export const LINE_WIDTH = ROW_WIDTH;
-/** Title + blank line, then two rows per position. */
-export const PAGE_SIZE = Math.floor((BODY_ROWS - 2) / 2);
-
-/** `controls` is the footer under the list; `demoHint` (demo only) takes the blank row under the title. */
-export interface ViewLabels { readonly mode: string; readonly title: string; readonly empty: string; readonly controls: string; readonly demoHint?: string; /** Set (no side menu): "Hilfe" is the last list entry, with `helpControls` as its footer. */ readonly help?: string; readonly helpControls?: string; }
-
-export function positionLines(position: Position, selected: boolean): [string, string] {
-  const tag = providerTag(position.provider);
-  const tail = ` ${cents(position.price)}  ${money(position.pnl)}`;
-  // The outcome is the free-text field, so it gives way; price and P/L never truncate.
-  const outcome = shorten(position.outcome, Math.max(1, LINE_WIDTH - 2 - tail.length));
-  return [`${selected ? ">" : " "} ${tag} ${shorten(position.title, 38)}`, `  ${outcome}${tail}`];
-}
-
-/** What the bridge last delivered: `updatedAt` is the data's age reference (ms), `failed` whether the latest refresh failed. */
-export interface FeedStatus { readonly source: "live" | "demo"; readonly updatedAt: number; readonly failed: boolean; readonly errors: readonly ProviderError[]; }
-export interface ModeWords { readonly live: string; readonly demo: string; readonly stale: string; }
-
-/** Header mode: DEMO, LIVE, or "STALE 3m" once live data is old or the bridge stopped answering; failed providers are appended ("LIVE  K ERR"). */
-export function modeLabel(status: FeedStatus, now: number, words: ModeWords): string {
-  if (status.source === "demo") return words.demo;
-  const age = staleAge(status.updatedAt, now, status.failed);
-  const base = age ? `${words.stale} ${age}` : words.live;
-  return status.errors.length ? `${base}  ${[...new Set(status.errors.map((error) => providerTag(error.provider)))].join("")} ERR` : base;
-}
+import type { Locale } from "../i18n";
+import { cents, money, providerTag, shorten, type Position } from "../markets/model";
+import { feedLabel, feedWord, totals, usd, type FeedStatus } from "../cockpit/model";
+import { t } from "../text";
+import { footer, ROW_WIDTH } from "./footer";
+import type { TextView } from "./page";
 
 /**
- * The list is the positions, followed by the Hilfe entry when `labels.help` is
- * set (no side menu); `cursor` indexes that list. The selected entry is the first one shown.
+ * What the text pages of the glasses show (QUS v1): the start page and the
+ * position list. The portfolio and each position are the cockpit image
+ * (src/cockpit), not text. Every page is a header `Mode · ● live`, a body of
+ * at most five rows and ONE footer line.
  */
-export function glassesView(positions: readonly Position[], cursor: number, labels: ViewLabels): TextView {
-  const withHelp = labels.help !== undefined;
-  const total = positions.length + (withHelp ? 1 : 0);
-  const start = Math.min(Math.max(0, cursor), Math.max(0, total - 1));
-  const room = BODY_ROWS - 2;
-  const rows: string[] = [];
-  for (let i = start; i < total; i += 1) {
-    const position = positions[i];
-    if (!position && !withHelp) break;
-    const entry = position ? positionLines(position, i === start) : [`${i === start ? ">" : " "} ${labels.help}`];
-    if (rows.length + entry.length > room) break;
-    rows.push(...entry);
-  }
-  if (positions.length === 0) rows.unshift(labels.empty);
-  return {
-    header: `MARKET GLANCE · ${labels.mode}`,
-    body: [labels.title, labels.demoHint ?? "", ...rows],
-    footer: withHelp && start === positions.length ? (labels.helpControls ?? labels.controls) : labels.controls,
-  };
+
+/** Rows a list shows at most (QUS 1.3). */
+export const VISIBLE_ROWS = 5;
+/** Roughly the characters that fit across the 576 px display (proportional font). */
+export const LINE_WIDTH = ROW_WIDTH;
+
+export type StartRow =
+  | { readonly kind: "overview" }
+  | { readonly kind: "positions"; readonly count: number };
+
+/** The selectable rows: at most three entries, here the overview and the position list. */
+export function startRows(positions: readonly Position[]): StartRow[] {
+  return [{ kind: "overview" }, { kind: "positions", count: positions.length }];
+}
+
+/** `Market Glance · ● live`: the mode, the state as a dot or a word. */
+export function headerLine(locale: Locale, title: string, status: FeedStatus, now: number): string {
+  return `${title} · ${feedLabel(feedWord(status, now), locale)}`;
+}
+
+/** The window of `rows` around the cursor: where it starts. */
+export function windowStart(total: number, cursor: number, rows: number): number {
+  return Math.max(0, Math.min(cursor - Math.floor(rows / 2), total - rows));
+}
+
+export function startView(positions: readonly Position[], cursor: number, status: FeedStatus, now: number, locale: Locale): TextView {
+  const rows = startRows(positions);
+  const at = Math.min(Math.max(0, cursor), rows.length - 1);
+  const total = totals(positions);
+  const body = rows.map((row, index) => {
+    const mark = index === at ? "● " : "  ";
+    return mark + (row.kind === "overview"
+      ? `${t(locale, "startOverview")} · ${positions.length === 0 ? "–" : usd(total.value)}`
+      : `${t(locale, "startPositions")} · ${row.count}`);
+  });
+  if (status.source === "demo") body.push(t(locale, "demoHint"));
+  return { header: headerLine(locale, t(locale, "title"), status, now), body, footer: footer(locale, { tap: t(locale, "open"), swipe: t(locale, "pick") }, "exit") };
+}
+
+/** One list row: cursor dot, provider tag, title, price and P/L (price and P/L never truncate). */
+export function positionRow(position: Position, selected: boolean): string {
+  const tail = ` ${cents(position.price)} ${money(position.pnl)}`;
+  const head = `${selected ? "● " : "  "}${providerTag(position.provider)} `;
+  return head + shorten(position.title, Math.max(4, LINE_WIDTH - head.length - tail.length)) + tail;
+}
+
+export function listView(positions: readonly Position[], cursor: number, status: FeedStatus, now: number, locale: Locale): TextView {
+  const header = headerLine(locale, t(locale, "startPositions"), status, now);
+  if (positions.length === 0) return { header, body: [t(locale, "empty")], footer: footer(locale, {}, "back") };
+  const at = Math.min(Math.max(0, cursor), positions.length - 1);
+  const first = windowStart(positions.length, at, VISIBLE_ROWS);
+  const body = positions.slice(first, first + VISIBLE_ROWS).map((position, index) => positionRow(position, first + index === at));
+  return { header, body, footer: footer(locale, { tap: t(locale, "open"), swipe: t(locale, "pick") }, "back") };
 }

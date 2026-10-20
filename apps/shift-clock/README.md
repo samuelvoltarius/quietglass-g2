@@ -13,12 +13,12 @@
 > 3. Zum Stoppen tippen und innerhalb von 4 s nochmal tippen (ein einzelner Tipper stoppt nie). Weitere Projekte (Kunden, Aufträge) legst du am Handy
 >    an; dann wählst du mit Wischen und startest mit Tippen.
 >
-> Verlassen (doppeltippen) stoppt die Zeit **nicht**. Links auf der Brille füllt
-> sich ein **Tagesbalken** (0–10 Stunden, auf Wunsch mit Tagesziel). Am Handy
+> Verlassen (doppeltippen) stoppt die Zeit **nicht**. Die laufende Schicht ist ein
+> **Cockpit-Bild** mit Ring (Tag gegen Tagesziel) und der Hauptzeile „NOCH 2:15“. Am Handy
 > siehst du den Tag und exportierst eine Tabelle – standardmäßig so, dass sie
 > sich in deutschem Excel mit Doppelklick richtig öffnet.
 
-A day bar beside the text shows at a glance how much of the day is worked.
+The running shift is one cockpit picture: a ring shows the day against the daily target, one big line says what is left.
 
 For a non-persistent simulator showcase, open the development URL with `?demo=1`.
 
@@ -42,31 +42,42 @@ On glasses it is one gesture, and the elapsed time is already in front of you.
 
 ## What you see
 
+Quietglass UI standard QUS v1: no wall of text. A start page with at most three
+big entries, and the shift itself as one picture (four 288 × 144 tiles).
+
 ```
-        Client A
- 10 ┌┐
-    ││   1:23
-  5 ├┤◀
-    ██   target 8 h · 3:45 to go
-  0 ██
-        Tap = stop  ·  2× = exit
+ Start page                      Shift (cockpit)
+ Shift · ● live                  ┌────────────┬──────────────────────┐
+                                 │   ring     │ SHIFT          14:05 │
+ ● Client A                      │  "64%"     │ NOCH 2:50            │
+   Client B                      │  of 8 h    │ START   ENDE   PAUSE │
+                                 │            │ 08:30   16:55  0:25  │
+ Tap = start · Swipe = choose    │ Client A   │ HEUTE   WOCHE        │
+   · 2× = exit                   ├────────────┴──────────────────────┤
+                                 │ Tap = stop · 2× = exit            │
+                                 └───────────────────────────────────┘
 ```
 
-![Day bar states](docs/graphic-preview.png)
+The one big line says where the day stands:
 
-*The day bar in five states, drawn by the app's own function
-(`node tools/preview.mjs`): empty; 4 h recorded; 3 h recorded plus 1:20
-running with an 8 h target; target reached; past the 10 h scale.*
+| State | Headline |
+|---|---|
+| running, daily target set | `NOCH 2:50` (time left; past the target `PLUS 0:30`) |
+| running, no target | `LÄUFT 1:23` (time of the running entry) |
+| first tap of a stop | `STOPP?` (the hint line asks for the second tap) |
+| stopped, target not reached | `PAUSE 0:12` (since the last stop) |
+| stopped, target reached | `FEIERABEND` |
 
-The **day bar** on the left fills from the bottom: 0 to 10 hours, one pixel
-per five minutes. Recorded time is solid, the entry still running is striped
-and marked by a pointer, and an optional **daily target** (set on the phone)
-is a mark across the bar. With a target, the body also says how much is left.
+Cells: **Start** (first start today), **Ende** (the last stop; while running the
+expected end = now + what is left), **Pause** (time not worked since the first
+start), **Heute** and **Woche** (Monday to now). Everything counts whole
+minutes, so the picture changes once a minute: the clock costs one tile, a tap
+only the tiles it touches, and an unchanged frame sends nothing.
 
-Every image is a Bluetooth transfer, so the bar moves in **five-minute steps**:
-while the clock runs it is resent at most every five minutes, and never while
-nothing changes. It runs on its own lane, so a slow image transfer never holds
-up the timer text, which still updates every second.
+The **ring** on the left is today against the daily target (a mark at the top
+is the target; the running entry is dashed; without a target the ring stands
+for ten hours). The previews in `store/` (`preview-cockpit*.png`) are written by
+`QG_PREVIEW=1 npx vitest run tests/preview.test.ts`.
 
 The day total **includes the entry still running**, so the number on screen is
 what the day actually stands at — not what it stood at an hour ago.
@@ -89,18 +100,18 @@ new one's start time are the same number.
 
 ## Controls
 
-| Gesture | Stopped | Running |
+| Gesture | Start page | Shift page |
 |---|---|---|
-| **Tap** | Start the only project · or open the picker, then start | Arm the stop, then tap again within 4 s to stop |
-| **Swipe** | Move through the projects (last row: *Cancel*) | Cancels a pending stop |
-| **Hold** | *Help* (in the picker: the last row *Help*) | *Help* · cancels a pending stop instead |
+| **Tap** | Start the project under the dot | Running: arm the stop, then tap again within 4 s to stop · paused: resume with the last project |
+| **Swipe** | Move the dot (three rows at a time) | Cancels a pending stop · paused: offer the other projects |
+| **Hold** | nothing | nothing (cancels a pending stop) |
+| **2×** | Leave (clock keeps running); from the pause page back to it | Leave (clock keeps running); cancels a pending stop instead |
 
-(The glasses' own side menu is off for now, `SIDE_MENU = false`: its clicks do not arrive on the real glasses.)
-| **2×** | Back one level; at the start screen: leave (clock keeps running) | Leave (clock keeps running); cancels a pending stop instead |
+(The glasses' own side menu is off for now, `SIDE_MENU = false`: its clicks do not arrive on the real glasses. There is no help page; Hold stays free.)
 
-The picker opens on your **most recently used project**, which is nearly always
-the one you want again. With just one project there is no picker: the tap
-starts it.
+The start page lists the projects, the **most recently used first**, which is
+nearly always the one you want again. With nothing recorded today the start
+page opens; once something is, the pause page does.
 
 ## First run
 
@@ -139,8 +150,8 @@ are written bare. Only the header row follows the app language
 ## Language
 
 German and English, following the phone's language (English otherwise), with a
-picker on the phone page. Every glasses string is tested against its row: 46
-characters in the header and footer, 38 beside the day bar.
+picker on the phone page. Every glasses string is tested against its row (56
+characters).
 
 ## Install
 
@@ -148,7 +159,7 @@ characters in the header and footer, 38 beside the day bar.
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5194
 npm run build      # typecheck + production bundle
-npm test           # 129 unit tests
+npm test           # unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -177,8 +188,6 @@ See [docs/PRIVACY.md](docs/PRIVACY.md).
 - Editing and deleting individual entries on the phone.
 - Optional idle detection: ask whether a long gap should be trimmed.
 - Weekly summary view.
-- Optional "remaining" label on the day bar itself, once checked on hardware
-  that the 4-bit gray levels read as intended outdoors.
 
 ## License
 

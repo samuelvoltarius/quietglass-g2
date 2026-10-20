@@ -4,11 +4,24 @@ import { PLACES_KEY, serializePlaces } from "../src/route/places";
 
 // Boots the real app against a fake bridge and walks through the route pages:
 // menu, goals, connections, guide, and back out again.
-const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+const harness = vi.hoisted(() => ({
+  bridge: null as unknown,
+  /** Told every scene after it went to the glasses (per bridge): a cockpit page has no footer container, its hint is in the picture. */
+  onScene: null as null | ((bridge: unknown, scene: { kind: string; view: { footer: string } }) => void),
+}));
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
+vi.mock("../src/glasses/render", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/glasses/render")>();
+  return {
+    ...real,
+    createPage: async (bridge: never, scene: never, menu: never) => { const result = await real.createPage(bridge, scene, menu); harness.onScene?.(bridge, scene); return result; },
+    rebuildPage: async (bridge: never, scene: never, menu: never) => { const result = await real.rebuildPage(bridge, scene, menu); harness.onScene?.(bridge, scene); return result; },
+    updatePage: async (bridge: never, scene: never) => { const result = await real.updatePage(bridge, scene); harness.onScene?.(bridge, scene); return result; },
+  };
+});
 
 const nodeProcess = (globalThis as unknown as {
   process: {
@@ -24,7 +37,7 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
   const state = {
     shutdowns: 0, header: "", body: "", footer: "",
     menus: [] as string[][], rebuilds: 0, creates: 0, saved: new Map<string, string>(),
-    /** The page kind on the glasses, told by its picture containers: "text", "walk" (arrow), "wait" (bus), "ride" (digits). */
+    /** The page kind on the glasses, told by its picture containers: "text", "cockpit" (tiles: the board, a followed bus, the walk), "wait" (bus), "ride" (digits). */
     kind: "text",
     /** Every picture sent: `containerName:bytes`. */
     images: [] as string[],
@@ -33,7 +46,7 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
   const adopt = (page: Page): void => {
     state.header = "";
     const names = (page.imageObject ?? []).map((image) => image.containerName);
-    state.kind = names.includes("arrow") ? "walk" : names.includes("bus") ? "wait" : names.includes("count") ? "ride" : names.includes("big") ? "board" : "text";
+    state.kind = names.includes("cockpit-nw") ? "cockpit" : names.includes("bus") ? "wait" : names.includes("count") ? "ride" : names.includes("big") ? "board" : "text";
     // A page without a header container shows none.
     for (const text of page.textObject ?? []) record(text.containerID, text.content);
   };
@@ -45,6 +58,7 @@ function fakeBridge(options: { stored?: Record<string, string>; fix?: { latitude
   const note = (page: { menuObject?: { menuItems?: MenuItem[] } }): void => {
     state.menus.push((page.menuObject?.menuItems ?? []).map((item) => item.itemName ?? ""));
   };
+  harness.onScene = (from, scene) => { if (from === bridge && scene.kind === "cockpit") state.footer = scene.view.footer; };
   const bridge = {
     getLocalStorage: async (key: string) => options.stored?.[key] ?? "",
     setLocalStorage: async (key: string, value: string) => { state.saved.set(key, value); return true; },
@@ -122,11 +136,11 @@ describe("the route pages", () => {
 
   it("walks from the departures to a guide and back, by menu and gestures", async () => {
     const fake = fakeBridge();
-    await boot(fake, "?demo=1&lang=de");
-    // The board: O-Bus 3 big (pictures), the next ones as rows.
-    await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
-    expect(fake.state.kind).toBe("board");
-    expect(fake.state.footer).toBe("1/4 · Tippen = folgen · Halten = Ziel · 2× = Ende");
+    await boot(fake, "?demo=1&lang=de&scene=board");
+    // The board is the cockpit picture (QUS v1): four tiles, one empty input container.
+    await vi.waitFor(() => expect(fake.state.kind).toBe("cockpit"));
+    await vi.waitFor(() => expect(fake.state.images.filter((entry) => entry.startsWith("cockpit-")).length).toBeGreaterThanOrEqual(4));
+    expect(fake.state.body.trim()).toBe("");
     // No page carries the native menu while its clicks do not arrive on the real glasses (step log 15.10.).
     expect(fake.state.menus[0]).toEqual([]);
 
@@ -136,7 +150,7 @@ describe("the route pages", () => {
     expect(fake.state.menus.at(-1)).toEqual([]);
     // One rebuild before the single creation (it registers input on the glasses), one for the new menu.
     expect(fake.state.creates).toBe(1);
-    expect(fake.state.rebuilds).toBe(2);
+    expect(fake.state.rebuilds).toBe(4);
 
     fake.gesture(DOWN);
     await vi.waitFor(() => expect(fake.state.body).toContain("> Heim"));
@@ -154,14 +168,14 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/4 · /));
 
     fake.gesture(CLICK);
-    // The walk to the stop: as soon as its route is in, the big arrow page with "Dann: ..." beneath.
-    await vi.waitFor(() => expect(fake.state.kind).toBe("walk"), { timeout: 5000 });
-    expect(fake.state.body).toMatch(/^Dann: O-Bus 10 Richtung .+ · in \d+ min$/);
+    // The walk to the stop: as soon as its route is in, the cockpit with the map (QUS v1) and the hint beneath.
+    await vi.waitFor(() => expect(fake.state.kind).toBe("cockpit"), { timeout: 5000 });
     expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr) · Tippen = weiter · 2× = Ende$/);
+    expect(fake.state.body.trim()).toBe("");
     expect(fake.state.menus.at(-1)).toEqual([]);
-    // Arrow, distance and the two street halves, sent once each for the first fix.
-    const walkPictures = new Set(["arrow", "distance", "street-left", "street-right"]);
-    await vi.waitFor(() => expect(fake.state.images.map((entry) => entry.split(":")[0]).filter((name) => walkPictures.has(name ?? "")).slice(0, 4)).toEqual(["arrow", "distance", "street-left", "street-right"]));
+    // The four tiles (map left, words right), sent once each for the first fix.
+    const tiles = (): string[] => fake.state.images.map((entry) => entry.split(":")[0] ?? "").filter((name) => name.startsWith("cockpit-"));
+    await vi.waitFor(() => expect(tiles().slice(-4)).toEqual(["cockpit-nw", "cockpit-ne", "cockpit-sw", "cockpit-se"]));
 
     // A tap steps by hand, scrolling goes back, the menu does the same.
     fake.gesture(CLICK);
@@ -169,7 +183,8 @@ describe("the route pages", () => {
     expect(fake.state.body.split("\n")[0]).toMatch(/^O-Bus 10 Richtung /);
     await vi.waitFor(() => expect(fake.state.images.slice(-2).map((entry) => entry.split(":")[0])).toEqual(["countdown", "bus"]));
     fake.gesture(UP);
-    await vi.waitFor(() => expect(fake.state.kind).toBe("walk"));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    expect(fake.state.kind).toBe("cockpit");
     fake.menu(6);
     await vi.waitFor(() => expect(fake.state.kind).toBe("wait"));
 
@@ -188,11 +203,12 @@ describe("the route pages", () => {
 
     fake.gesture(DOUBLE); // connections -> goals
     await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\? · /));
-    fake.gesture(DOUBLE); // goals -> departures
-    await vi.waitFor(() => expect(fake.state.body).toContain("O-Bus 5"));
+    fake.gesture(DOUBLE); // goals -> start page
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · /));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
     expect(fake.state.shutdowns).toBe(0);
 
-    fake.gesture(DOUBLE); // on the first page: the system exit dialog, as before
+    fake.gesture(DOUBLE); // on the start page: the system exit dialog
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
   });
 
@@ -200,7 +216,7 @@ describe("the route pages", () => {
     for (const cancel of [UP, DOWN, DOUBLE, HOLD]) {
       const fake = fakeBridge({ confirmExit: false });
       await boot(fake, "?demo=1&lang=de&scene=guide");
-      await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+      await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
       fake.gesture(HOLD);
       await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
       fake.gesture(cancel);
@@ -209,7 +225,7 @@ describe("the route pages", () => {
     }
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de&scene=guide");
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
     fake.gesture(HOLD);
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
     fake.gesture(CLICK); // the second single tap ends the guide
@@ -220,21 +236,44 @@ describe("the route pages", () => {
   it("leaves the guide at once from the menu", async () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de&scene=guide");
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
     fake.menu(8); // arms only
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
     fake.gesture(CLICK); // the second single tap ends the guide
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
   });
 
+  it("sends no map tile while the exit dialog may be up, and none once the guide is left", async () => {
+    const fake = fakeBridge({ confirmExit: false });
+    // A fast demo clock: the walker keeps moving, so the map would be redrawn every few seconds.
+    await boot(fake, "?demo=1&lang=de&scene=guide&speed=30");
+    const mapTiles = (): number => fake.state.images.filter((entry) => entry.startsWith("cockpit-nw") || entry.startsWith("cockpit-sw")).length;
+    await vi.waitFor(() => expect(fake.state.kind).toBe("cockpit"), { timeout: 5000 });
+    await vi.waitFor(() => expect(mapTiles()).toBeGreaterThanOrEqual(4), { timeout: 12_000 });
+    // 2x: the system exit dialog is asked (and declined, as far as the app knows); from now on nothing may draw.
+    fake.gesture(DOUBLE);
+    await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
+    const sent = fake.state.images.length;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    expect(fake.state.images.length).toBe(sent);
+    // The first signal after the dialog restores the page; leaving the guide then ends the map for good.
+    fake.gesture(HOLD);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/), { timeout: 5000 });
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.kind).toBe("board"), { timeout: 5000 });
+    const after = mapTiles();
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    expect(mapTiles()).toBe(after);
+  }, 40_000);
+
   it("a 2x never ends the running guide: it asks the system to exit, and the guide stays when the passenger stays", async () => {
     const fake = fakeBridge({ confirmExit: false });
     await boot(fake, "?demo=1&lang=de&scene=guide");
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
     fake.menu(8); // armed ...
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
     fake.gesture(DOUBLE); // ... 2x only cancels
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
     expect(fake.state.shutdowns).toBe(0);
     fake.gesture(DOUBLE); // not armed: the system exit dialog, which the passenger can decline
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
@@ -246,18 +285,20 @@ describe("the route pages", () => {
   it("a stale arm is gone after 4 s: the next tap only steps", async () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de&scene=guide");
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
     fake.menu(8);
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /), { timeout: 6000 });
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/\d+ · /));
-  });
+  }, 12_000);
 
   it("says what is missing when there is no location, instead of searching", async () => {
     const stored = { [PLACES_KEY]: serializePlaces({ favorites: [{ id: "h", name: "Heim", lat: 47.796, lon: 13.016 }], now: null }) };
     const fake = fakeBridge({ stored, fix: null });
     await boot(fake, "");
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
+    fake.gesture(CLICK); // the departures: without a location they say what is missing
     await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
 
     fake.menu(1);
@@ -281,6 +322,7 @@ describe("the route pages", () => {
     vi.resetModules();
     await import("../src/main");
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    fake.gesture(CLICK); // start page: open the departures
     // The failed first request shows on the next beat of the 2 s redraw.
     await vi.waitFor(() => expect(fake.state.body).toContain("Bitte gleich nochmal versuchen."), { timeout: 5000 });
 

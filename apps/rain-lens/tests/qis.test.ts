@@ -127,6 +127,15 @@ describe("QIS v1 on the glasses", () => {
     expect(offline.last("header")).toBe("RAINLENS · offline");
   });
 
+  it("QUS v1: the header reads `RAINLENS · Ansicht · ● live` and the phone has exactly three tabs in a three-column row", async () => {
+    const fake = await boot("de");
+    expect(fake.last("header")).toBe("RAINLENS · JETZT · ● live");
+    const fs = (await import(/* @vite-ignore */ "node:" + "fs")) as unknown as { readFileSync(path: string, encoding: string): string };
+    const css = fs.readFileSync("src/ui/phone.css", "utf8");
+    expect(css).toMatch(/\.tabbar \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+    expect(css).not.toMatch(/repeat\(4,[^)]*\)[^;]*tabbar/);
+  });
+
   it("the footer drops the swipe first, then the hold, never the 2×", () => {
     expect(footer("de", { tap: "neu", swipe: "Ansicht", hold: "Hilfe" })).toBe("Tippen = neu · Halten = Hilfe · 2× = Ende");
     expect(footer("en", { tap: "refresh", swipe: "view", hold: "help" })).toBe("Tap = refresh · Swipe = view · Hold = help · 2× = exit");
@@ -207,12 +216,12 @@ describe("QIS v1 on the glasses", () => {
     expect(inverted.last("header")).toContain("STUNDEN");
   });
 
-  it("offers the switch in the phone tab Brille, ahead of Mehr", async () => {
+  it("offers the switch in the settings tab; exactly three tabs", async () => {
     const app = { innerHTML: "", querySelectorAll: () => [] };
     vi.stubGlobal("document", { querySelector: (selector: string) => (selector === "#app" ? app : null), querySelectorAll: () => [] });
     await boot("de");
     const tabs = [...app.innerHTML.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1]);
-    expect(tabs).toEqual(["weather", "place", "glasses", "more"]);
+    expect(tabs).toEqual(["now", "forecast", "settings"]);
     expect(app.innerHTML).toContain('id="invert"');
     expect(app.innerHTML).toContain("Wischrichtung umkehren");
   });

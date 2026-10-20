@@ -78,16 +78,16 @@ describe("phone page", () => {
     vi.stubGlobal("document", { getElementById: () => dom.root });
     mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined });
     const html = dom.root.innerHTML;
-    for (const tab of ["main", "warn", "more"]) {
+    for (const tab of ["now", "today", "settings"]) {
       expect(html).toContain('data-tab="' + tab + '"');
       expect(html).toContain('data-tab-go="' + tab + '"');
     }
     expect(html).toContain('class="tabbar"');
-    expect(html.indexOf('id="angle"')).toBeGreaterThan(html.indexOf('data-tab="warn"'));
-    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
+    expect(html.indexOf('id="angle"')).toBeGreaterThan(html.indexOf('data-tab="settings"'));
+    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('id="angle"'));
   });
 
-  it("offers the sensor test under More, with live numbers, pace and a 20 s recording as CSV", () => {
+  it("offers the sensor test under Mehr in Einstellungen, with live numbers, pace and a 20 s recording as CSV", () => {
     vi.useFakeTimers();
     try {
       const dom = fakeRoot();
@@ -105,7 +105,7 @@ describe("phone page", () => {
       };
       mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de", sensor });
       let html = dom.root.innerHTML;
-      expect(html.indexOf('id="sensor-toggle"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
+      expect(html.indexOf('id="sensor-toggle"')).toBeGreaterThan(html.indexOf('data-tab="settings"'));
       expect(html).toContain("Sensor-Test starten");
       expect(html).not.toContain('id="sensor-record"');
 

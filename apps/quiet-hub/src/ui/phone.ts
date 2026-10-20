@@ -1,6 +1,12 @@
 /** Phone-side setup and status UI. Glasses remain deliberately minimal. */
 import { languageSelect, type Locale } from "../i18n";
 import type { HubModel } from "../hub/model";
+import { unreadEvents } from "../hub/model";
+import type { AgentInfo } from "../api/types";
+import { tr } from "../i18n";
+import { messages } from "../messages";
+import { describeActivity } from "../hub/activity";
+import { durationText, finishedSteps, focusAgent, hubState } from "../cockpit/model";
 import { areaEntries, entityLabel, homeViewOf, stateText } from "../hub/zuhause";
 import { briefBlocks } from "../hub/brief";
 import type { LocateState } from "../hub/place";
@@ -70,10 +76,20 @@ export interface PhoneHandlers {
   readonly onSpeechActivate: () => void;
   /** Tagesstart tab: fetch every source again (same as a tap on the glasses). */
   readonly onBriefRefresh?: () => Promise<void>;
+  /** "Neu laden" on Jetzt: ask the hub again right now. */
+  readonly onRefresh?: () => void;
 }
 
 const copy = {
   de: {
+    kicker: "QUIETGLASS / AGENTEN", tabNow: "Jetzt", tabSessions: "Sitzungen", tabSettings: "Einstellungen",
+    heroLabel: "Status", heroSide: "{online}/{total} Agenten online", refresh: "Neu laden",
+    statOnline: "Online", statBusy: "Aktiv", statWaiting: "Wartet", statUnread: "Ungelesen",
+    unitAgents: "Agenten", unitNow: "jetzt", unitApproval: "Freigaben", unitAlerts: "Meldungen",
+    stripTitle: "Sitzungen", sessionsEmpty: "Noch keine Agenten verbunden.", sessionNone: "keine Sitzung", sessionBusy: "arbeitet", sessionWaits: "wartet auf dich", sessionOffline: "offline", sessionIdle: "bereit", sessionTurns: "{n} Beiträge",
+    bannerDemo: "Demo-Daten – Verbindung in den Einstellungen einrichten.", bannerOffline: "Hub nicht erreichbar: {why}", bannerWait: "{agent} wartet auf deine Freigabe.", bannerWork: "{agent} arbeitet: {what}", bannerUnread: "{n} ungelesene Meldung(en).", bannerOk: "Alles ruhig – nichts wartet.", bannerLoading: "Warte auf die erste Antwort …",
+    setup1: "Server-Adresse eintragen oder QR-Code scannen", setup2: "Verbindung testen", setup3: "Die Agenten erscheinen unter „Jetzt“", setupDemo: "Bis dahin läuft die Demo mit Beispieldaten.",
+    gConnection: "Verbindung", gGlasses: "Brille", gVoice: "Vorlesen", gDay: "Tagesstart", gHome: "Zuhause", gLanguage: "Sprache", gControls: "Bedienung der Brille", showMore: "Anzeigen",
     agentsOnline: "Agenten online", connected: "Verbunden", disconnected: "Nicht verbunden", devices: "Geräte", notifications: "Meldungen",
     setup: "Einrichtung", scan: "▦ QR-Code vom Pi scannen", scanHint: "Öffnet die Handykamera. Server und Token werden aus dem QR-Code übernommen.", manual: "oder manuell",
     server: "Server-Adresse", token: "Zugangs-Token", save: "Speichern & Verbindung testen",
@@ -99,6 +115,14 @@ const copy = {
     p_insecure: "Server muss https sein – z. B. https://<pi>.<tailnet>.ts.net:8443",
   },
   en: {
+    kicker: "QUIETGLASS / AGENTS", tabNow: "Now", tabSessions: "Sessions", tabSettings: "Settings",
+    heroLabel: "Status", heroSide: "{online}/{total} agents online", refresh: "Reload",
+    statOnline: "Online", statBusy: "Busy", statWaiting: "Waiting", statUnread: "Unread",
+    unitAgents: "agents", unitNow: "now", unitApproval: "approvals", unitAlerts: "alerts",
+    stripTitle: "Sessions", sessionsEmpty: "No agents connected yet.", sessionNone: "no session", sessionBusy: "working", sessionWaits: "waits for you", sessionOffline: "offline", sessionIdle: "ready", sessionTurns: "{n} turns",
+    bannerDemo: "Demo data - set up the connection in Settings.", bannerOffline: "Hub unreachable: {why}", bannerWait: "{agent} waits for your approval.", bannerWork: "{agent} is working: {what}", bannerUnread: "{n} unread alert(s).", bannerOk: "All quiet - nothing is waiting.", bannerLoading: "Waiting for the first answer …",
+    setup1: "Enter the server address or scan the QR code", setup2: "Test the connection", setup3: "The agents show up under \"Now\"", setupDemo: "Until then the demo runs with sample data.",
+    gConnection: "Connection", gGlasses: "Glasses", gVoice: "Spoken answers", gDay: "Day start", gHome: "Home", gLanguage: "Language", gControls: "Glasses controls", showMore: "Show",
     agentsOnline: "agents online", connected: "Connected", disconnected: "Not connected", devices: "devices", notifications: "notifications",
     setup: "Setup", scan: "▦ Scan QR code from Pi", scanHint: "Opens the phone camera and imports the server and access token.", manual: "or enter manually",
     server: "Server address", token: "Access token", save: "Save & test connection",
@@ -125,19 +149,22 @@ const copy = {
   },
 } as const;
 
-/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
-const TABS = [
-  { id: "brief", icon: "☀️", key: "tabBrief" },
-  { id: "home", icon: "🏠", key: "tabHome" },
-  { id: "glasses", icon: "👓", key: "tabGlasses" },
-  { id: "connect", icon: "🔌", key: "tabConnect" },
-  { id: "more", icon: "⚙️", key: "tabMore" },
-] as const;
-const TAB_KEY = "quietglass.quiet-hub.tab";
+/** The phone page (QUS v1): exactly three tabs in one row - Jetzt, Sitzungen, Einstellungen. */
+export const TABS: readonly { id: string; icon: string; key: "tabNow" | "tabSessions" | "tabSettings" }[] = [
+  { id: "now", icon: "📊", key: "tabNow" },
+  { id: "sessions", icon: "💬", key: "tabSessions" },
+  { id: "settings", icon: "⚙️", key: "tabSettings" },
+];
+const TAB_KEY = "quietglass.quiet-hub.tab.v2";
 
-/** No stored choice (first start) opens "Verbindung": nothing else works before the hub is connected. */
-function readTab(): string {
-  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "connect"; } catch { return "connect"; }
+/** Nothing set up yet (no server): Einstellungen opens first with the three-step checklist. */
+export function isFirstRun(settings: AppSettings): boolean {
+  return settings.serverUrl.trim() === "";
+}
+
+function readTab(firstRun: boolean): string {
+  try { const v = localStorage.getItem(TAB_KEY); if (TABS.some((tab) => tab.id === v)) return v!; } catch { /* no storage */ }
+  return firstRun ? "settings" : "now";
 }
 
 /** Shows only the active tab; the choice survives redraws and restarts. */
@@ -148,6 +175,127 @@ function applyTab(root: HTMLElement, active: string): void {
     button.classList.toggle("on", on);
     button.setAttribute("aria-selected", String(on));
   });
+}
+
+// ---- pure view models (tests read these) --------------------------------------------------
+
+export interface PhoneSummary {
+  readonly total: number;
+  readonly online: number;
+  readonly busy: number;
+  readonly waiting: number;
+  readonly unread: number;
+}
+
+export function summarize(model: HubModel): PhoneSummary {
+  const agents = model.report.agents;
+  return {
+    total: agents.length,
+    online: agents.filter((agent) => agent.online).length,
+    busy: agents.filter((agent) => agent.busy).length,
+    waiting: model.report.approvals.length,
+    unread: unreadEvents(model.report.inbox).length,
+  };
+}
+
+export interface Banner { readonly tone: "ok" | "warn" | "critical" | "offline" | "none"; readonly text: string }
+
+/** The one message that counts right now. */
+export function bannerFor(model: HubModel, conn: ConnView, locale: Locale): Banner {
+  const c = copy[locale];
+  const fill = (text: string, vars: Record<string, string>): string => Object.entries(vars).reduce((out, [k, v]) => out.replaceAll(`{${k}}`, v), text);
+  if (model.setupHint === true) return { tone: "none", text: c.bannerDemo };
+  if (conn.problem !== null && !conn.connected) return { tone: "offline", text: fill(c.bannerOffline, { why: String(c[`p_${conn.problem}` as keyof typeof c]) }) };
+  if (!conn.connected) return { tone: "none", text: c.bannerLoading };
+  const waiting = model.report.approvals[0];
+  if (waiting !== undefined) return { tone: "warn", text: fill(c.bannerWait, { agent: waiting.agentId }) };
+  const busy = focusAgent(model);
+  if (busy?.busy === true) return { tone: "ok", text: fill(c.bannerWork, { agent: busy.label, what: describeActivity(busy.activity, locale).label }) };
+  const unread = unreadEvents(model.report.inbox).length;
+  if (unread > 0) return { tone: "warn", text: fill(c.bannerUnread, { n: String(unread) }) };
+  return { tone: "ok", text: c.bannerOk };
+}
+
+/** One card of the strip: an agent with its session. */
+function sessionCard(model: HubModel, agent: AgentInfo, locale: Locale): string {
+  const c = copy[locale];
+  const waiting = model.report.approvals.some((card) => card.agentId === agent.id);
+  const tone = !agent.online ? "offline" : waiting ? "warn" : agent.busy ? "ok" : "idle";
+  const word = !agent.online ? c.sessionOffline : waiting ? c.sessionWaits : agent.busy ? c.sessionBusy : c.sessionIdle;
+  const title = agent.session?.title ? agent.session.title : c.sessionNone;
+  const turns = agent.chat?.length ?? 0;
+  return `<div class="host tone-${tone}"><b>${esc(agent.label)}</b><em>${esc(word)}</em><span>${esc(title)}</span>${turns > 0 ? `<span><i>${esc(c.sessionTurns.replace("{n}", String(turns)))}</i></span>` : ""}</div>`;
+}
+
+/** "Jetzt": banner, hero card with the state, 2 x 2 key figures, the one button, a card per session. */
+export function nowInner(model: HubModel, conn: ConnView, locale: Locale): string {
+  const c = copy[locale];
+  const sum = summarize(model);
+  const banner = bannerFor(model, conn, locale);
+  const state = hubState(model);
+  const stat = (label: string, value: number, unit: string, alert = false): string =>
+    `<div${alert ? ' class="alert"' : ""}><span>${esc(label)}</span><b>${value}</b><small>${esc(unit)}</small></div>`;
+  const cards = model.report.agents.map((agent) => sessionCard(model, agent, locale));
+  return `
+    <p class="banner tone-${banner.tone}">${esc(banner.text)}</p>
+    <section class="card hero-card">
+      <div class="hero">
+        <div><span>${esc(c.heroLabel)}</span><strong>${esc(tr(messages, locale, `cp.${state === "noServer" ? "noServer" : state}`))}</strong></div>
+        <p>${esc(c.heroSide.replace("{online}", String(sum.online)).replace("{total}", String(sum.total)))}</p>
+      </div>
+      <div class="stats">
+        ${stat(c.statOnline, sum.online, c.unitAgents)}
+        ${stat(c.statBusy, sum.busy, c.unitNow)}
+        ${stat(c.statWaiting, sum.waiting, c.unitApproval, sum.waiting > 0)}
+        ${stat(c.statUnread, sum.unread, c.unitAlerts, sum.unread > 0)}
+      </div>
+      <button id="refresh" type="button" class="big">${esc(c.refresh)}</button>
+    </section>
+    ${cards.length > 0 ? `<h2 class="strip-title">${esc(c.stripTitle)}</h2><div class="strip">${cards.join("")}</div>` : ""}`;
+}
+
+/** "Sitzungen": one card per agent with its session and the last exchange. */
+export function sessionsInner(model: HubModel, locale: Locale): string {
+  const c = copy[locale];
+  const agents = model.report.agents;
+  if (agents.length === 0) return `<section class="card"><p class="hint">${esc(c.sessionsEmpty)}</p></section>`;
+  return agents.map((agent) => {
+    const last = agent.lastQuestion ?? "";
+    const answer = agent.answer ?? "";
+    const waiting = model.report.approvals.some((card) => card.agentId === agent.id);
+    const word = !agent.online ? c.sessionOffline : waiting ? c.sessionWaits : agent.busy ? c.sessionBusy : c.sessionIdle;
+    const tone = !agent.online ? "offline" : waiting ? "warn" : agent.busy ? "ok" : "idle";
+    return `
+    <section class="card server tone-${tone}">
+      <div class="server-head"><h2>${esc(agent.label)}</h2><span class="tag tone-${tone}">${esc(word)}</span></div>
+      <div class="stats three">
+        <div><span>${esc(copyKey(locale, "cp.session"))}</span><b>${esc(agent.session?.title ? agent.session.title : "–")}</b></div>
+        <div><span>${esc(copyKey(locale, "cp.steps"))}</span><b>${agent.busy ? finishedSteps(agent) : "–"}</b></div>
+        <div><span>${esc(copyKey(locale, "cp.duration"))}</span><b>${agent.busy && typeof agent.busySince === "number" ? esc(durationText(Date.now() - agent.busySince, locale)) : "–"}</b></div>
+      </div>
+      ${last !== "" ? `<p class="hint">› ${esc(clip(last, 120))}</p>` : ""}
+      ${answer !== "" ? `<p class="hint">${esc(clip(answer, 160))}</p>` : ""}
+    </section>`;
+  }).join("");
+}
+
+function copyKey(locale: Locale, key: string): string {
+  return tr(messages, locale, key);
+}
+
+function clip(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : flat.slice(0, max - 1).trimEnd() + "…";
+}
+
+/** First-run checklist: pure, so tests can read it. */
+export function setupInner(settings: AppSettings, conn: ConnView, model: HubModel, locale: Locale): string {
+  const c = copy[locale];
+  const added = settings.serverUrl.trim() !== "";
+  const step = (n: number, done: boolean, text: string): string =>
+    `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${esc(text)}</span></li>`;
+  return `<ol class="steps">${step(1, added, c.setup1)}${step(2, added && conn.connected, c.setup2)}${step(3, added && conn.connected && model.report.agents.length > 0, c.setup3)}</ol>`
+    + (added ? "" : `<p class="hint">${esc(c.setupDemo)}</p>`);
 }
 
 /** The Zuhause tab: the same favourites and areas as on the glasses, read-only. */
@@ -174,18 +322,14 @@ export function locationLine(state: LocateState, c: { locUsed: string; locDenied
 }
 
 /** The Tagesstart tab: the same blocks as on the glasses, one card each. */
-function briefSection(model: HubModel, locale: Locale, settings: AppSettings, c: (typeof copy)[Locale], location: LocateState = "pending"): string {
+function briefSection(model: HubModel, locale: Locale, c: (typeof copy)[Locale]): string {
   const blocks = briefBlocks(model.brief ?? model.report.brief, model.briefLoad ?? (model.report.brief ? "ready" : "loading"), locale, Date.now());
   const at = (model.brief ?? model.report.brief)?.at ?? null;
   const cards = blocks.map((rows) => {
     const [head = "", ...rest] = rows.map((row) => row.trim());
     return `<section class="card brief-block"><strong>${esc(head)}</strong>${rest.length > 0 ? `<ul>${rest.map((row) => `<li>${esc(row)}</li>`).join("")}</ul>` : ""}</section>`;
   }).join("");
-  return `<section class="card">
-        <label class="check"><input id="brief-morning" type="checkbox" ${settings.briefMorning === true ? "checked" : ""} /> ${c.briefMorning}</label>
-        <button id="brief-reload" type="button">${c.briefReload}</button>${at === null ? "" : ` <span class="hint">${c.briefAsOf} ${clock(at)}</span>`}
-      </section>
-      <p class="hint" id="brief-location">${locationLine(location, c)}</p>
+  return `${at === null ? "" : `<p class="hint">${c.briefAsOf} ${clock(at)}</p>`}
       ${cards}
       <p class="hint">${c.briefNote}</p>`;
 }
@@ -204,11 +348,11 @@ function esc(value: string): string {
 export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handlers: PhoneHandlers): () => void {
   let notice = "";
   let busy = false;
-  let tab = readTab();
+  let tab = readTab(isFirstRun(state().settings));
 
   const readForm = (): AppSettings => ({
-    serverUrl: (root.querySelector("#server") as HTMLInputElement | null)?.value.trim() ?? "",
-    token: (root.querySelector("#token") as HTMLInputElement | null)?.value.trim() ?? "",
+    serverUrl: (root.querySelector("#server") as HTMLInputElement | null)?.value.trim() ?? state().settings.serverUrl,
+    token: (root.querySelector("#token") as HTMLInputElement | null)?.value.trim() ?? state().settings.token,
     autoOpenNotifications: (root.querySelector("#auto-open") as HTMLInputElement | null)?.checked ?? true,
     invertScroll: (root.querySelector("#invert-scroll") as HTMLInputElement | null)?.checked ?? false,
     voiceAutoSend: (root.querySelector("#voice-auto") as HTMLInputElement | null)?.checked ?? false,
@@ -227,60 +371,69 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     const { model, locale, settings, conn } = state();
     const c = copy[locale];
     const connected = conn.connected;
+    const firstRun = isFirstRun(settings);
     const reason = conn.problem === null ? "" : c[`p_${conn.problem}` as keyof typeof c];
     const title = connected ? c.connected : conn.problem === "missing" || !conn.configured ? c.notConnectedServer : `${c.disconnected} · ${reason}`;
+    const pill = connected ? { text: "● " + c.chipOnline, on: true } : { text: model.setupHint === true ? "Demo" : c.chipOffline, on: false };
     const scanBlock = `<button id="scan" class="primary" type="button" ${busy ? "disabled" : ""}>${c.scan}</button><p class="hint">${c.scanHint}</p>`;
-    const unread = model.report.inbox.events.filter((event) => !event.read).length;
+    // Half-typed server fields survive a redraw caused by a poll.
+    const typedServer = (root.querySelector("#server") as HTMLInputElement | null)?.value;
+    const typedToken = (root.querySelector("#token") as HTMLInputElement | null)?.value;
+    const summary = (key: keyof typeof c): string => `<summary>${c[key]}</summary>`;
     root.innerHTML = `
-      <header class="brand bar"><span class="pixel-logo" aria-hidden="true">▦</span><div><div class="brand-mark">QUIETGLASS</div><h1>Quiet Hub</h1></div><span class="chip${connected ? " on" : ""}">${connected ? c.chipOnline : c.chipOffline}</span></header>
+      <header class="brand bar"><div><div class="brand-mark">${c.kicker}</div><h1>Quiet Hub</h1></div><span id="pill" class="chip${pill.on ? " on" : ""}">${esc(pill.text)}</span></header>
       ${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
-      <div class="tab" data-tab="brief">
-      ${briefSection(model, locale, settings, c, state().location)}
+      <div class="tab" data-tab="now" id="now-live">
+      ${nowInner(model, conn, locale)}
       </div>
-      <div class="tab" data-tab="home">
-      ${homeSection(model, locale, c)}
+      <div class="tab" data-tab="sessions" id="sessions-live">
+      ${sessionsInner(model, locale)}
       </div>
-      <div class="tab" data-tab="glasses">
+      <div class="tab" data-tab="settings">
+      ${firstRun ? `<section class="card setup"><h2>${c.setup}</h2>${setupInner(settings, conn, model, locale)}</section>` : ""}
+      <details class="fold card"${firstRun || !connected ? " open" : ""}>
+        ${summary("gConnection")}
+        <div class="status-card"><span class="dot ${connected ? "ok" : "bad"}"></span><strong>${esc(title)}</strong></div>
+        <div class="metrics"><span>${c.serverLabel}: ${esc(conn.host || "–")}</span><span>${c.lastOk}: ${conn.lastOkAt === null ? c.never : clock(conn.lastOkAt)}</span><span>${c.lastError}: ${conn.problem === null ? c.none : `${esc(String(reason))}${conn.lastErrorAt === null ? "" : ` (${clock(conn.lastErrorAt)})`}`}</span>${conn.fails > 0 ? `<span>${c.tries}: ${conn.fails}</span>` : ""}${conn.raw ? `<span>${c.technical}: ${esc(conn.raw)}</span>` : ""}</div>
+        ${scanBlock}
+        <div class="divider"><span>${c.manual}</span></div>
+        <label for="server">${c.server}</label>
+        <input id="server" type="url" value="${esc(typedServer ?? settings.serverUrl)}" placeholder="http://pi5:8787" autocomplete="url" />
+        <label for="token">${c.token}</label>
+        <input id="token" type="password" value="${esc(typedToken ?? settings.token)}" autocomplete="off" />
+        <button id="save" type="button" class="big" ${busy ? "disabled" : ""}>${c.save}</button>
+        <button id="test" type="button" class="remove" ${busy ? "disabled" : ""}>${c.test}</button>
+      </details>
       <section class="card">
-        <h2>${c.display}</h2>
+        <h2>${c.gGlasses}</h2>
         <label class="check"><input id="auto-open" type="checkbox" ${settings.autoOpenNotifications ? "checked" : ""} /> ${c.auto}</label>
         <label class="check"><input id="invert-scroll" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${c.invert}</label>
         <label class="check"><input id="voice-auto" type="checkbox" ${settings.voiceAutoSend ? "checked" : ""} /> ${c.voiceAuto}</label>
         <label class="check"><input id="quiet" type="checkbox" ${settings.quietWhileWorking ? "checked" : ""} /> ${c.quiet}</label>
+      </section>
+      <section class="card">
+        <h2>${c.gVoice}</h2>
         <label class="check"><input id="speak" type="checkbox" ${settings.speakAnswers ? "checked" : ""} /> ${c.speakAnswers}</label>
-        ${settings.speakAnswers ? `<button id="speak-on" type="button">${c.speakOn}</button> <span class="hint">${esc((c as Record<string, string>)[`speech_${state().speech.replace("-", "_")}`] ?? state().speech)}</span>` : ""}
-        <p class="hint">${c.agents}</p>
+        ${settings.speakAnswers ? `<button id="speak-on" type="button" class="remove">${c.speakOn}</button> <span class="hint">${esc((c as Record<string, string>)[`speech_${state().speech.replace("-", "_")}`] ?? state().speech)}</span>` : ""}
       </section>
       <section class="card">
-        <h2>${c.controls}</h2>
-        <table class="keys"><tr><td>${c.tap}</td><td>${c.open}</td></tr><tr><td>${c.swipe}</td><td>${c.select}</td></tr><tr><td>${c.hold}</td><td>${c.speak}</td></tr><tr><td>${c.double}</td><td>${c.back}</td></tr><tr><td>${c.menuKey}</td><td>${c.menu}</td></tr><tr><td>${c.ring}</td><td>${c.ringDo}</td></tr></table>
+        <h2>${c.gDay}</h2>
+        <label class="check"><input id="brief-morning" type="checkbox" ${settings.briefMorning === true ? "checked" : ""} /> ${c.briefMorning}</label>
+        <button id="brief-reload" type="button" class="remove">${c.briefReload}</button>
+        <p class="hint" id="brief-location">${locationLine(state().location ?? "pending", c)}</p>
       </section>
-      </div>
-      <div class="tab" data-tab="connect">
-      <section class="card status-card">
-        <div><span class="dot ${connected ? "ok" : "bad"}"></span><strong>${esc(title)}</strong></div>
-        <div class="metrics"><span>${c.serverLabel}: ${esc(conn.host || "–")}</span><span>${c.lastOk}: ${conn.lastOkAt === null ? c.never : clock(conn.lastOkAt)}</span><span>${c.lastError}: ${conn.problem === null ? c.none : `${esc(String(reason))}${conn.lastErrorAt === null ? "" : ` (${clock(conn.lastErrorAt)})`}`}</span>${conn.fails > 0 ? `<span>${c.tries}: ${conn.fails}</span>` : ""}${conn.raw ? `<span>${c.technical}: ${esc(conn.raw)}</span>` : ""}</div>
-        ${connected ? "" : scanBlock}
-        <div class="metrics"><span>${model.report.agents.filter((agent) => agent.online).length}/${model.report.agents.length} ${c.agentsOnline}</span><span>${model.report.home.devices.length} ${c.devices}</span><span>${unread} ${c.notifications}</span></div>
-      </section>
+      <details class="fold card">${summary("tabBrief")}${briefSection(model, locale, c)}</details>
+      <details class="fold card">${summary("gHome")}${homeSection(model, locale, c)}</details>
       <section class="card">
-        <h2>${c.setup}</h2>
-        ${connected ? scanBlock : ""}
-        <div class="divider"><span>${c.manual}</span></div>
-        <label for="server">${c.server}</label>
-        <input id="server" type="url" value="${esc(settings.serverUrl)}" placeholder="http://pi5:8787" autocomplete="url" />
-        <label for="token">${c.token}</label>
-        <input id="token" type="password" value="${esc(settings.token)}" autocomplete="off" />
-        <button id="save" type="button" ${busy ? "disabled" : ""}>${c.save}</button>
-        <button id="test" type="button" ${busy ? "disabled" : ""}>${c.test}</button>
-      </section>
-      </div>
-      <div class="tab" data-tab="more">
-      <section class="card">
-        <h2>${c.language}</h2>
+        <h2>${c.gLanguage}</h2>
         ${languageSelect(locale)}
       </section>
-      <footer class="hint">Quiet Hub ${esc(model.screen)} · ${c.private}</footer>
+      <details class="fold card">
+        ${summary("gControls")}
+        <table class="keys"><tr><td>${c.tap}</td><td>${c.open}</td></tr><tr><td>${c.swipe}</td><td>${c.select}</td></tr><tr><td>${c.hold}</td><td>${c.speak}</td></tr><tr><td>${c.double}</td><td>${c.back}</td></tr><tr><td>${c.ring}</td><td>${c.ringDo}</td></tr></table>
+        <p class="hint">${c.agents}</p>
+      </details>
+      <footer class="hint">Quiet Hub 0.10.0 · ${c.private}</footer>
       </div>
       <nav class="tabbar" role="tablist">
         ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${c[key]}</button>`).join("")}
@@ -290,12 +443,13 @@ export function mountPhoneUi(root: HTMLElement, state: () => PhoneState, handler
     applyTab(root, tab);
     root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
       button.addEventListener("click", () => {
-        tab = button.dataset["tabGo"] ?? "connect";
+        tab = button.dataset["tabGo"] ?? "now";
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
         applyTab(root, tab);
         window.scrollTo({ top: 0 });
       });
     });
+    root.querySelector("#refresh")?.addEventListener("click", () => { handlers.onRefresh?.(); });
     root.querySelector("#language")?.addEventListener("change", (event) => handlers.onLocale((event.target as HTMLSelectElement).value as Locale));
     root.querySelector("#auto-open")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });
     root.querySelector("#invert-scroll")?.addEventListener("change", () => { void handlers.onSettings(readForm()); });

@@ -57,7 +57,6 @@ describe("phone page", () => {
       getData: () => store,
       // Like main.ts: the new data is applied at once, the save takes a while.
       setData: async (next) => { store = next; writes.push(next); await pending; },
-      getLevel: () => ({ dbfs: null, listening: false }),
     });
 
     const offset = dom.byId("offset");
@@ -81,21 +80,18 @@ describe("phone page", () => {
     const dom = fakeRoot();
     vi.stubGlobal("document", { getElementById: () => dom.root });
     vi.stubGlobal("setInterval", () => 0);
-    mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLevel: () => ({ dbfs: null, listening: false }) });
+    mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined });
     const html = dom.root.innerHTML;
-    for (const tab of ["main", "set", "glasses", "more"]) {
+    for (const tab of ["now", "today", "settings"]) {
       expect(html).toContain('data-tab="' + tab + '"');
       expect(html).toContain('data-tab-go="' + tab + '"');
     }
     expect(html).toContain('class="tabbar"');
     // The sliders are in the settings tab, the language switch in the last one.
-    expect(html.indexOf('id="offset"')).toBeGreaterThan(html.indexOf('data-tab="set"'));
-    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
-    // QIS v1.2: Brille comes right before Mehr, and the swipe switch lives there.
-    const order = ["main", "set", "glasses", "more"].map((tab) => html.indexOf('data-tab-go="' + tab + '"'));
-    expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(html.indexOf('id="invert"')).toBeGreaterThan(html.indexOf('data-tab="glasses"'));
-    expect(html.indexOf('id="invert"')).toBeLessThan(html.indexOf('data-tab="more"'));
+    expect(html.indexOf('id="offset"')).toBeGreaterThan(html.indexOf('data-tab="settings"'));
+    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('id="invert"'));
+    const order = ["now", "today", "settings"].map((tab) => html.indexOf('data-tab-go="' + tab + '"'));
+    expect(order).toEqual([...order].sort((x, y) => x - y));
     expect(html).not.toMatch(/Doppeltipp|Double tap/);
   });
 
@@ -104,7 +100,7 @@ describe("phone page", () => {
     vi.stubGlobal("document", { getElementById: () => dom.root });
     vi.stubGlobal("setInterval", () => 0);
     let store: NoiseData = EMPTY_DATA;
-    mountPhoneUi({ getData: () => store, setData: async (next) => { store = next; }, getLevel: () => ({ dbfs: null, listening: false }) });
+    mountPhoneUi({ getData: () => store, setData: async (next) => { store = next; } });
     expect(dom.root.innerHTML).toContain('id="invert"');
     const box = dom.byId("invert") as FakeElement & { checked?: boolean };
     box.checked = true;

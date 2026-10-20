@@ -11,12 +11,18 @@ import { fit, marked, MAX_BODY_ROWS, ROW_WIDTH, wrap, type ScreenView } from "./
  * display limit in the tests, in both languages, with worst-case content.
  */
 
-export type Mode = "customers" | "projects" | "brief" | "menu" | "board" | "takes" | "prompter" | "schedule" | "pack" | "light" | "help";
-export type Module = "board" | "takes" | "prompter" | "schedule" | "pack" | "light";
-/** The project's modules. A server before 0.5.0 (no customers, no storyboards) gets exactly these. */
-export const MENU: readonly Module[] = ["takes", "prompter", "schedule", "pack", "light"];
-/** With customers (server 0.5.0+) the storyboard comes first: it is what a shoot runs along. */
-export const CUSTOMER_MENU: readonly Module[] = ["board", ...MENU];
+export type Mode = "customers" | "projects" | "brief" | "menu" | "board" | "day" | "takes" | "prompter" | "schedule" | "pack" | "light" | "help";
+export type Module = "board" | "day" | "takes" | "prompter" | "schedule" | "pack" | "light";
+/**
+ * The start page (QUS v1): three big entries - the takes (what is used a hundred times on set, so the
+ * cursor starts there), the teleprompter and the day (cockpit; the light view opens from it) - and
+ * indented under them what belongs to them: the storyboard (server 0.5.0+, customers) under the takes,
+ * the packing list under the day.
+ */
+export const MENU: readonly Module[] = ["takes", "prompter", "day", "pack"];
+export const CUSTOMER_MENU: readonly Module[] = ["takes", "board", "prompter", "day", "pack"];
+/** The entries that hang one step under a big one. */
+export const SUB_ENTRIES: readonly Module[] = ["pack", "board"];
 /**
  * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses and a hold
  * opens the menu instead of reaching the app (step log of 15.10.2026). So Hilfe is a list row again
@@ -24,9 +30,9 @@ export const CUSTOMER_MENU: readonly Module[] = ["board", ...MENU];
  * hold dictates again.
  */
 export const SIDE_MENU = false;
-/** Hilfe is the last entry of the root list: of the menu on a server without customers, of the customer list otherwise. */
-export type MenuEntry = Module | "help";
-export const ROOT_MENU: readonly MenuEntry[] = SIDE_MENU ? MENU : [...MENU, "help"];
+/** No help page on the glasses (QUS v1 1.1): the start page is the list of entries. */
+export type MenuEntry = Module;
+export const ROOT_MENU: readonly MenuEntry[] = MENU;
 export const menuFor = (customerMode: boolean): readonly MenuEntry[] => (customerMode ? CUSTOMER_MENU : ROOT_MENU);
 export type TakeScreen = "card" | "actions" | "notes";
 /** "roll" starts (or, while a take is running, cancels) a take; the menu opens on "ok". */
@@ -148,10 +154,24 @@ export const HEADER_WIDTH = 46;
 /** Rows of the packing list shown at once; the last body row is for feedback. */
 export const PACK_ROWS = 6;
 
+/** `Modus · ● live` (QUS v1 1.1): a dot while live, the state as a word otherwise. */
+export type LiveWord = "live" | "demo" | "offline";
+export function liveWord(state: ViewState): LiveWord {
+  if (state.demo) return "demo";
+  return state.load.kind === "error" ? "offline" : "live";
+}
+export function liveText(locale: Locale, word: LiveWord): string {
+  return t(locale, word === "live" ? "g.live" : word === "demo" ? "g.demoWord" : "g.offlineWord");
+}
+
 export function buildView(state: ViewState): ScreenView {
   const view = build(state);
+  // Every run view starts with the mode and the state: the mode gives way when the row is full, the state never.
+  const tail = " · " + liveText(state.locale, liveWord(state));
+  const header = fit(view.header, HEADER_WIDTH - tail.length) + tail;
+  const withHeader = { ...view, header };
   // Whatever is armed (also from the side menu, on any screen) says what the next tap does.
-  return state.armed ? { ...view, footer: fit(armedFooter(state.locale, armLabel(state))) } : view;
+  return state.armed ? { ...withHeader, footer: fit(armedFooter(state.locale, armLabel(state))) } : withHeader;
 }
 
 function build(state: ViewState): ScreenView {
@@ -164,6 +184,8 @@ function build(state: ViewState): ScreenView {
     case "brief": return withLoad(state, t(state.locale, "g.brief.title"), () => briefView(state));
     case "board": return withLoad(state, t(state.locale, "g.menu.board").toUpperCase(), () => boardView(state));
     case "menu": return menuView(state);
+    // The day and the light view are full-screen pictures (src/day, src/sun); this text stands in only where no picture can be drawn.
+    case "day": return screen(t(state.locale, "g.menu.day").toUpperCase(), [], footer(state.locale, { tap: t(state.locale, "g.f.light") }, "back"));
     case "takes": return withLoad(state, t(state.locale, "g.menu.takes").toUpperCase(), () => takesView(state));
     case "prompter": return withLoad(state, "TELEPROMPTER", () => prompterView(state));
     case "schedule": return withLoad(state, t(state.locale, "g.menu.schedule").toUpperCase(), () => scheduleView(state));
@@ -177,7 +199,7 @@ function build(state: ViewState): ScreenView {
 /** Fits every row and pads nothing: what is returned is exactly what is drawn. */
 function screen(header: string, body: readonly string[], foot: string): ScreenView {
   return {
-    header: fit(header.startsWith(APP_NAME) ? header : `${APP_NAME} · ${header}`, HEADER_WIDTH),
+    header: fit(header, HEADER_WIDTH),
     body: body.slice(0, MAX_BODY_ROWS).map((row) => fit(row)),
     footer: fit(foot),
   };
@@ -197,7 +219,8 @@ function foot(state: ViewState, parts: { tap?: string; swipe?: string; hold?: st
 /** "Tippen = nochmal · 2× = zurück": the footer of a screen that is loading, empty or failed. */
 const retryFoot = (state: ViewState, end: FooterEnd = "back"): string => foot(state, { tap: "again" }, end);
 
-const demoTag = (state: ViewState, header: string): string => (state.demo ? header + " · " + t(state.locale, "g.demo") : header);
+/** The state word is added once by buildView; kept so the callers read the same. */
+const demoTag = (_state: ViewState, header: string): string => header;
 
 /** The label of the action that waits for its second tap. */
 const armLabel = (state: ViewState): string => t(state.locale, "g.arm." + (state.armed ?? "roll"));
@@ -218,11 +241,16 @@ function withLoad(state: ViewState, title: string, ready: () => ScreenView): Scr
   return ready();
 }
 
+/** The start rows: the cursor is a dot, the entries that belong to a big one hang one step under it. */
+export function startLines(locale: Locale, customerMode: boolean, cursor: number): string[] {
+  return menuFor(customerMode).map((entry, index) =>
+    fit((index === cursor ? "● " : "  ") + (SUB_ENTRIES.includes(entry) ? "  " : "") + t(locale, "g.menu." + entry)));
+}
+
 function menuView(state: ViewState): ScreenView {
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
-  if (state.customerMode) return projectMenuView(state);
-  const body = ROOT_MENU.map((mode, index) => marked(L("g.menu." + mode), index === state.menuCursor));
-  // Entries leave rows for one note: the most important one wins.
+  const body = startLines(state.locale, state.customerMode, state.menuCursor);
+  // One note under the entries: the most important one wins.
   let info = "";
   if (!state.configured && !state.demo) info = L("g.noServer.1");
   else if (state.load.kind === "error") info = errorText(state.locale, state.load.code, state.load.status);
@@ -230,9 +258,9 @@ function menuView(state: ViewState): ScreenView {
   else if (state.message) info = state.message;
   else if (state.pendingCount > 0) info = L("g.pending", { count: state.pendingCount });
   else if (state.demo) info = L("g.demoHint");
-  body.push(info);
-  const header = state.project ? L("g.menu.projectHeader", { project: state.project }) : `${L("g.title")} · ${L("g.menu.name")}`;
-  return screen(demoTag(state, header), body, foot(state, { tap: "open", swipe: "choose" }, "exit"));
+  body.push("", info);
+  const header = state.project ? `${L("g.title")} · ${L("g.menu.projectHeader", { project: state.project })}` : L("g.title");
+  return screen(header, body, foot(state, { tap: "open", swipe: "choose" }, state.customerMode ? "back" : "exit"));
 }
 
 function takesView(state: ViewState): ScreenView {
@@ -413,7 +441,7 @@ function windowed(labels: readonly string[], cursor: number, rows = LIST_ROWS): 
 function customersView(state: ViewState): ScreenView {
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
   const { list, cursor } = state.customers;
-  const labels = [L("g.cust.new"), ...list.map((c) => c.name + (c.company && c.company !== c.name ? " · " + c.company : "")), ...(SIDE_MENU ? [] : [L("g.cust.help")])];
+  const labels = [L("g.cust.new"), ...list.map((c) => c.name + (c.company && c.company !== c.name ? " · " + c.company : "")), ];
   const body = windowed(labels, cursor);
   if (list.length === 0) body.push(L("g.cust.none"));
   while (body.length < LIST_ROWS) body.push("");
@@ -444,19 +472,6 @@ function projectsView(state: ViewState): ScreenView {
   body.splice(LIST_ROWS);
   body.push(state.message);
   return screen(demoTag(state, L("g.proj.header", { name: customer?.name ?? "–" })), body, foot(state, { tap: "open", swipe: "choose" }));
-}
-
-function projectMenuView(state: ViewState): ScreenView {
-  const L = (key: string, vars: Record<string, string | number> = {}): string => t(state.locale, key, vars);
-  const body = CUSTOMER_MENU.map((mode, index) => marked(L("g.menu." + mode), index === state.menuCursor));
-  let info = state.message;
-  if (state.load.kind === "error") info = errorText(state.locale, state.load.code, state.load.status);
-  else if (!info && state.load.kind === "loading" && !state.project) info = L("g.loading");
-  else if (!info && state.pendingCount > 0) info = L("g.pending", { count: state.pendingCount });
-  else if (!info && state.demo) info = L("g.demoHint");
-  body.push(info);
-  const header = state.project ? L("g.menu.projectHeader", { project: state.project }) : `${L("g.title")} · ${L("g.menu.name")}`;
-  return screen(demoTag(state, header), body, foot(state, { tap: "open", swipe: "choose" }));
 }
 
 /** Everything on the card before an appointment, as rows; the view pages through them. */

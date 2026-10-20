@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr } from "../src/i18n";
 import { messages } from "../src/messages";
-import { buildView, composeView } from "../src/glasses/view";
-import { BODY_COLS, BODY_ROWS, LINE_COLS } from "../src/glasses/fit";
+import { cockpitModel, type CockpitInput } from "../src/cockpit/model";
+import { FOOTER_WIDTH } from "../src/glasses/footer";
 import { createDose, DEFAULT_DOSE, formatDuration } from "../src/noise/dose";
 import { effectiveOffset, EMPTY_DATA, ESTIMATED_OFFSET } from "../src/storage/persist";
 import { mountPhoneUi } from "../src/ui/phone";
@@ -74,137 +74,127 @@ describe("language choice", () => {
   });
 });
 
-describe("glasses text budget", () => {
-  const dose = (fraction: number) => ({ ...createDose(), fraction });
+const NOW = new Date(2026, 9, 17, 14, 5).getTime();
+const input = (patch: Partial<CockpitInput> = {}): CockpitInput => ({
+  dose: createDose(), settings: DEFAULT_DOSE, listening: false, level: null, calibrated: true, locale: "de", now: NOW, ...patch,
+});
+
+describe("glasses cockpit text", () => {
+  const dose = (fraction: number) => ({ ...createDose(), fraction, measuredSeconds: 35_999, overSeconds: 20_000, peakDb: 130, levelSeconds: 35_999 * 90 });
 
   for (const locale of ["de", "en"] as const) {
-    it(`fits every ${locale} screen into 7 rows before any safety cut`, () => {
-      const views = [];
+    it(`keeps every ${locale} cockpit line short (headline, cells, hint) before any cut`, () => {
+      const models = [];
       for (const calibrated of [true, false]) {
-        views.push(composeView(dose(0), DEFAULT_DOSE, { listening: false, level: null, calibrated, locale }));
-        views.push(composeView(dose(0.4), DEFAULT_DOSE, { listening: false, level: null, calibrated, locale }));
-        views.push(composeView(dose(9.99), DEFAULT_DOSE, { listening: false, level: null, calibrated, locale }));
-        views.push(composeView(dose(0), DEFAULT_DOSE, { listening: false, level: null, calibrated, locale, micError: true }));
-        views.push(composeView(dose(0), DEFAULT_DOSE, { listening: true, level: null, calibrated, locale }));
-        views.push(composeView(dose(0.01), DEFAULT_DOSE, { listening: true, level: 71, calibrated, locale }));
-        views.push(composeView(dose(0.6), DEFAULT_DOSE, { listening: true, level: 85, calibrated, locale }));
-        views.push(composeView(dose(50), DEFAULT_DOSE, { listening: true, level: 130, calibrated, locale }));
         for (const listening of [false, true]) {
-          views.push(buildView(dose(9.99), DEFAULT_DOSE, { listening, level: 80, calibrated, locale, armed: "reset" }));
-          views.push(buildView(dose(9.99), DEFAULT_DOSE, { listening, level: 80, calibrated, locale, armed: "stop" }));
-          for (const helpPage of [0, 1]) views.push(buildView(dose(0), DEFAULT_DOSE, { listening, level: 80, calibrated, locale, helpPage }));
+          for (const fraction of [0, 0.4, 0.6, 9.99]) {
+            for (const armed of [null, "reset", "stop"] as const) {
+              models.push(cockpitModel(input({ dose: dose(fraction), listening, level: 130, barLevel: 129, peak: 132, calibrated, locale, armed })));
+            }
+          }
         }
+        models.push(cockpitModel(input({ calibrated, locale, micError: true })));
       }
-      for (const view of views) {
-        expect(view.header.length).toBeLessThanOrEqual(LINE_COLS);
-        expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_COLS);
-        expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
-        for (const line of view.body) expect(line.length, line).toBeLessThanOrEqual(BODY_COLS);
+      for (const model of models) {
+        expect(model.hint.length, model.hint).toBeLessThanOrEqual(FOOTER_WIDTH);
+        expect(model.headline.length).toBeLessThanOrEqual(2);
+        for (const line of model.headline) expect(line.length, line).toBeLessThanOrEqual(14);
+        expect(model.cells).toHaveLength(6);
+        for (const cell of model.cells) {
+          expect(cell.label.length, cell.label).toBeLessThanOrEqual(10);
+          expect(cell.value.length, cell.value).toBeLessThanOrEqual(10);
+        }
       }
     });
   }
 
   it("keeps the microphone indicator in German too", () => {
-    const view = composeView(createDose(), DEFAULT_DOSE, { listening: true, level: 60, calibrated: false, locale: "de" });
-    expect(view.footer.startsWith("● MIKRO AN")).toBe(true);
+    const model = cockpitModel(input({ listening: true, level: 60, calibrated: false }));
+    expect(model.hint.startsWith("● MIKRO AN")).toBe(true);
+    expect(model.caption).toBe("● MIKRO AN");
   });
 });
 
 describe("first run", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it("tells the user on the glasses exactly what to do", () => {
-    const view = buildView(createDose(), DEFAULT_DOSE, { listening: false, level: null, calibrated: false, locale: "de" });
-    expect(view.body).toEqual(["Misst gerade nicht.", "Wischen = Hilfe", "Werte sind Schätzwerte, siehe Handy."]);
-    expect(view.footer).toBe("Tippen = messen · Halten = Dosis löschen · 2× = Ende");
+  it("the glasses say what is going on and what to tap, in German", () => {
+    const model = cockpitModel(input({ calibrated: false }));
+    expect(model.headline).toEqual(["BEREIT", "NICHT AKTIV"]);
+    expect(model.hint).toBe("Tippen = messen · Halten = Dosis löschen · 2× = Ende");
+    expect(model.caption).toBe("Schätzwert");
   });
 
   it("measures something useful without any calibration", () => {
     expect(effectiveOffset(EMPTY_DATA)).toBe(ESTIMATED_OFFSET);
     expect(effectiveOffset({ ...EMPTY_DATA, calibrationOffset: 104 })).toBe(104);
-    const view = buildView(createDose(), DEFAULT_DOSE, { listening: true, level: 72.4, calibrated: false, locale: "de" });
-    expect(view.body).toEqual([]);
+    const model = cockpitModel(input({ listening: true, level: 72.4, calibrated: false }));
+    expect(model.headline[0]).toBe("~72 DB");
+    expect(model.bars[0]!.text).toBe("~72 dB");
   });
 
   it("says what to do when the microphone is refused", () => {
-    const view = buildView(createDose(), DEFAULT_DOSE, { listening: false, level: null, calibrated: false, locale: "de", micError: true });
-    expect(view.body.join(" ")).toContain("Mikrofon nicht verfügbar");
-    expect(view.footer).toBe("Tippen = nochmal versuchen · 2× = Ende");
-    expect(view.footer).not.toContain("MIKRO AN");
+    const model = cockpitModel(input({ calibrated: false, micError: true }));
+    expect(model.headline).toEqual(["MIKROFON", "NICHT BEREIT"]);
+    expect(model.hint).toBe("Tippen = nochmal versuchen · 2× = Ende");
+    expect(model.hint).not.toContain("MIKRO AN");
   });
 
-  it("leads the phone page with the next step, in German", () => {
+  it("opens the phone on Einstellungen with the three-step checklist, in German", () => {
     let html = "";
     const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     vi.stubGlobal("setInterval", () => 0);
-    mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLevel: () => ({ dbfs: null, listening: false }), getLocale: () => "de" });
-    expect(html).toContain("Tippe einmal auf den Bügel der Brille");
+    mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de" });
+    expect(html).toContain("Erste Schritte");
+    expect(html.match(/class="num"/g)).toHaveLength(3);
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf("card next")).toBeLessThan(html.indexOf("Worum es geht"));
   });
 });
 
 describe("QIS v1 layout", () => {
-  const dose = (fraction: number) => ({ ...createDose(), fraction });
-
   for (const locale of ["de", "en"] as const) {
-    it(`${locale}: header is DECIBELGUARD · state, footer keeps the gesture order and ends in back/exit, within the row`, () => {
+    it(`${locale}: the hint keeps the gesture order and ends in back/exit/cancel, within the row`, () => {
       const order = locale === "de" ? ["Tippen", "Wischen", "Halten", "2×"] : ["Tap", "Swipe", "Hold", "2×"];
-      const views = [];
       for (const listening of [false, true]) {
-        for (const fraction of [0, 0.6, 1.2, 9.99]) {
-          const base = { listening, level: 80, calibrated: true, locale } as const;
-          views.push(buildView(dose(fraction), DEFAULT_DOSE, base));
-          views.push(buildView(dose(fraction), DEFAULT_DOSE, { ...base, armed: "reset" }));
-          views.push(buildView(dose(fraction), DEFAULT_DOSE, { ...base, armed: "stop" }));
-          views.push(buildView(dose(fraction), DEFAULT_DOSE, { ...base, helpPage: 0 }));
-          views.push(buildView(dose(fraction), DEFAULT_DOSE, { ...base, helpPage: 1 }));
+        for (const armed of [null, "reset", "stop"] as const) {
+          const model = cockpitModel(input({ listening, level: 80, locale, armed }));
+          expect(model.title).toBe("DECIBELGUARD");
+          expect(model.hint.length, model.hint).toBeLessThanOrEqual(FOOTER_WIDTH);
+          const back = locale === "de" ? /2× = (zurück|Ende|abbrechen)$/ : /2× = (back|exit|cancel)$/;
+          expect(model.hint, model.hint).toMatch(back);
+          const positions = order.map((word) => model.hint.indexOf(word)).filter((i) => i >= 0);
+          expect(positions, model.hint).toEqual([...positions].sort((a, b) => a - b));
         }
-      }
-      views.push(buildView(dose(0), DEFAULT_DOSE, { listening: false, level: null, calibrated: true, locale, micError: true }));
-      for (const view of views) {
-        expect(view.header.startsWith("DECIBELGUARD · "), view.header).toBe(true);
-        expect(view.header.length, view.header).toBeLessThanOrEqual(LINE_COLS);
-        expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_COLS);
-        const back = locale === "de" ? /2× = (zurück|Ende|abbrechen)$/ : /2× = (back|exit|cancel)$/;
-        expect(view.footer, view.footer).toMatch(back);
-        const positions = order.map((word) => view.footer.indexOf(word)).filter((i) => i >= 0);
-        expect(positions, view.footer).toEqual([...positions].sort((a, b) => a - b));
       }
     });
   }
 
   it("uses the glossary: German has no Tap, Wisch or 2x on the glasses", () => {
     const german = Object.entries(messages.de).filter(([key]) => key.startsWith("g.")).map(([, text]) => text).join(" ");
-    expect(german).not.toMatch(/Tap|Wisch|2x|Doppeltipp/);
+    expect(german).not.toMatch(/\bTap\b|\bWisch\b|2x|Doppeltipp/);
   });
 
-  it("keeps the microphone indicator on the confirm questions and on the help while measuring", () => {
+  it("keeps the microphone indicator on the confirm questions while measuring", () => {
     for (const locale of ["de", "en"] as const) {
-      const base = { listening: true, level: 80, calibrated: true, locale } as const;
-      expect(buildView(createDose(), DEFAULT_DOSE, { ...base, armed: "reset" }).footer).toMatch(/^● MI/);
-      expect(buildView(createDose(), DEFAULT_DOSE, { ...base, armed: "stop" }).footer).toMatch(/^● MI/);
-      expect(buildView(createDose(), DEFAULT_DOSE, { ...base, helpPage: 0 }).footer).toMatch(/^● MI/);
+      for (const armed of ["reset", "stop"] as const) {
+        expect(cockpitModel(input({ listening: true, level: 80, locale, armed })).hint).toMatch(/^● MI/);
+      }
     }
   });
 });
 
 describe("QIS v1.2", () => {
-  it("builds every footer with the helper: the stop question names the action and keeps the indicator", () => {
-    const view = buildView(createDose(), DEFAULT_DOSE, { listening: true, level: 80, calibrated: true, locale: "de", armed: "stop" });
-    expect(view.header).toBe("DECIBELGUARD · Messung stoppen?");
-    expect(view.footer).toBe("● MIKRO AN · Nochmal tippen = stoppen · 2× = abbrechen");
-    const en = buildView(createDose(), DEFAULT_DOSE, { listening: true, level: 80, calibrated: true, locale: "en" });
-    expect(en.footer).toBe("● MIC · Tap = stop · Hold = reset · 2× = exit");
+  it("builds every hint with the helper: the stop question names the action and keeps the indicator", () => {
+    const model = cockpitModel(input({ listening: true, level: 80, armed: "stop" }));
+    expect(model.headline).toEqual(["MESSUNG", "STOPPEN?"]);
+    expect(model.hint).toBe("● MIKRO AN · Nochmal tippen = stoppen · 2× = abbrechen");
+    const en = cockpitModel(input({ listening: true, level: 80, locale: "en" }));
+    expect(en.hint).toBe("● MIC · Tap = stop · Hold = reset · 2× = exit");
   });
 
-  it("points at the swipe for the help, not at the side menu (its clicks do not arrive on the glasses)", () => {
-    for (const locale of ["de", "en"] as const) {
-      const view = buildView(createDose(), DEFAULT_DOSE, { listening: false, level: null, calibrated: true, locale });
-      expect(view.body.join(" ")).toMatch(/Wischen = Hilfe|Swipe = help/);
-      expect(view.body.join(" ")).not.toMatch(/Menü|menu/i);
-    }
+  it("never points at a side menu (its clicks do not arrive on the glasses)", () => {
     expect(Object.values(messages.de).join(" ")).not.toMatch(/Seitenmenü|Menü der Brille/);
     expect(Object.values(messages.en).join(" ")).not.toMatch(/side menu|glasses menu/i);
   });

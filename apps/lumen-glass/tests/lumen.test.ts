@@ -308,20 +308,12 @@ describe("the display", () => {
   const idle = { phase: "idle" as const, result: null, error: null, locale: "en" as const };
   const status = parseStatus(statusPayload);
 
-  it("shows the moth above everything else", () => {
+  it("shows the quest's short name as the heading, then the instruction (QUS v1: a reading view)", () => {
     const view = buildView(status, idle);
-    expect(view.body.slice(0, 3).join("")).toMatch(/[\\/=(]/);
-  });
-
-  it("shows the instruction, not just the short name", () => {
-    const view = buildView(status, idle);
+    expect(view.header).toBe("Quest · ● live");
+    expect(view.body[0]).toBe(status.quest!.title);
     expect(view.body.join(" ")).toContain("Muster von oben");
-    expect(view.footer).toBe("Tap = photo · Swipe = help · Hold = quest · 2× = exit");
-    expect(buildView(status, { ...idle, sideMenu: true }).footer).toBe("Tap = photo · Hold = menu · 2× = exit");
-  });
-
-  it("shows the streak once there is one", () => {
-    expect(buildView(status, idle).body.join(" ")).toContain("3d");
+    expect(view.footer).toBe("Tap = photo · Hold = quest · 2× = back");
   });
 
   it("warns up front when a quest wants video, which the glasses cannot supply", () => {
@@ -333,15 +325,11 @@ describe("the display", () => {
     expect(questMeta({ medium: "video", minutes: 30 }, "en")).toContain("camera");
   });
 
-  it("keeps the light window on the display (in the body; the footer carries the gestures) — the reason to stand up now", () => {
-    expect(buildView(status, idle).body.at(-1)).toContain("golden in 51m");
-  });
-
   it("offers a quest when there is none", () => {
     const without = parseStatus({ kreatur: { licht: 40 } });
     const view = buildView(without, idle);
     expect(view.body.join(" ")).toContain("No open quest.");
-    expect(view.footer).toBe("Swipe = help · Hold = quest · 2× = exit");
+    expect(view.footer).toBe("Hold = quest · 2× = back");
   });
 
   it("says so while the camera and upload are busy", () => {
@@ -351,9 +339,9 @@ describe("the display", () => {
 
   it("reports the outcome plainly", () => {
     const ok = buildView(status, { ...idle, phase: "result", result: { ok: true, text: "Sent." } });
-    expect(ok.header).toBe("LUMEN · Accepted");
+    expect(ok.header).toBe("Lumen · Accepted");
     const bad = buildView(status, { ...idle, phase: "result", result: { ok: false, text: "HTTP 500" } });
-    expect(bad.header).toBe("LUMEN · Not accepted");
+    expect(bad.header).toBe("Lumen · Not accepted");
     // QIS v1.2 no. 8: no HTTP code on the glasses.
     expect(bad.body.join(" ")).not.toMatch(/HTTP|500/);
     expect(bad.body.join(" ")).toContain("LUMEN reported an error");
@@ -391,7 +379,11 @@ describe("the display", () => {
     expect(view.body.length).toBeLessThanOrEqual(7);
     expect(view.body.every((line) => line.length <= 56)).toBe(true);
     expect(view.body.join(" ")).toContain("FOTO");
-    expect(view.body.join(" ")).toContain("…");
+    const endless = parseStatus({ ...statusPayload, quest: { ...statusPayload.quest, aufgabe: "Wort ".repeat(80) } });
+    const cut = buildView(endless, idle);
+    expect(cut.body.length).toBeLessThanOrEqual(7);
+    expect(cut.body.join(" ")).toContain("…");
+    expect(cut.body.at(-1)).toContain("30 min");
 
     const demo = parseStatus({ kreatur: { licht: 72, zustand: "wach", geste: "circling in the light", streak: 6 }, quest: { id: 1, titel: "Reflected Light", aufgabe: "Photograph a reflection that changes the scene.", medium: "foto", dauer_min: 15 } });
     expect(buildView(demo, idle).body.length).toBeLessThanOrEqual(7);

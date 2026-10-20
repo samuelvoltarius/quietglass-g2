@@ -7,7 +7,7 @@
 > **So startest du:**
 > 1. NextStop in der Even-App installieren und öffnen.
 > 2. Den Standort erlauben, wenn die Even-App fragt. Die Brille zeigt dann die Abfahrten der nächsten Haltestelle.
-> 3. **Wischen** wählt eine Abfahrt, **Tippen** fährt mit (nächster Halt), **Halten** springt zur nächsten Haltestelle, **Doppeltippen** beendet.
+> 3. Die Startseite hat zwei große Einträge: **Abfahrten** und **Ziele und Route**. Auf der Abfahrtstafel (als Bild: Linie und Minuten groß, Steig, Verspätung, Halt) wählt **Wischen** eine Abfahrt, **Tippen** fährt mit (nächster Halt), **Halten** sagt ein Ziel, **2×** geht zurück; auf der Startseite beendet **2×** (System-Dialog).
 >
 > **Optional:** ÖBB-Echtzeit in Österreich (Verspätungen bis zum Stadtbus). Dafür läuft ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe [ÖBB-Echtzeit](#öbb-echtzeit-optional). Ohne es funktioniert alles mit Fahrplanzeiten.
 >
@@ -17,7 +17,7 @@
 >
 > 1. Install and open NextStop in the Even app.
 > 2. Allow location when the Even app asks. The glasses then show the departures of the nearest stop.
-> 3. **Swipe** picks a departure, **tap** rides along (next stop), **hold** jumps to the next stop nearby, **double-tap** exits.
+> 3. The start page has two big entries: **Departures** and **Goals and route**. On the departure board (drawn as a picture: line and minutes big, track, delay, stop) **swipe** picks a departure, **tap** rides along (next stop), **hold** says a destination, **2×** goes back; on the start page **2×** exits (system dialog).
 >
 > `●` = live, `~` = timetable only, `+3` = three minutes late. Optional: ÖBB live times in Austria need a small add-on on a computer on the same Wi-Fi (see [ÖBB-Echtzeit](#öbb-echtzeit-optional)); without it everything works with timetable times.
 >
@@ -154,15 +154,20 @@ aktuellen Standort neu berechnet („Neu berechnet“ in der Fußzeile). Die Eta
 selbst (Fußweg → „Warte auf Bus 3“ → Fahrt mit „Danach aussteigen“ einen Halt vorher →
 Umstiegsweg → … → „Ziel erreicht“); der Kopf zeigt Etappe, Uhrzeit und die erwartete Ankunft.
 Ein verpasstes Fahrzeug erkennt die App am Standort und bietet per Tippen eine neue Verbindung an.
-**Große Bilder statt kleinem Text (seit 0.3.1):** Die Brille kann Text nicht vergrößern, deshalb
-haben die drei Etappen eigene Bildseiten. *Zu Fuß*: großer Pfeil links, die Entfernung bis zur
-Abbiegung in rund 70 px hohen Pixelziffern (50-m-Schritte ab 200 m, darunter 10 m), ein dicker
-Annäherungsbalken (voll ab 50 m vor der Abbiegung), die Straße fett über die ganze Breite und
-darunter klein `Dann: O-Bus 2 Richtung Walserfeld · in 4 min`. *Warten*: der Countdown („2 min“)
+**Karte und Bilder statt kleinem Text:** Die Brille kann Text nicht vergrößern, deshalb haben die
+Etappen eigene Bildseiten. *Zu Fuß* (seit 0.9.0) ist ein Cockpit-Bild (QUS v1): links eine kleine
+**Karte** (Straßen gedimmt aus OpenStreetMap/Overpass, der Rest des Wegs als helle Linie, Haltestelle
+als Ring, Ziel als Quadrat, du als Pfeilspitze, die Karte dreht sich mit dem Weg), rechts die eine große
+Anweisung (`LINKS · 80 M`, `HALTESTELLE · 320 M`, `ZIEL · 120 M`), die Straße, und die Zellen WEG,
+ABFAHRT (am Ziel ANKUNFT), PUFFER (gerahmt unter 2 min), LINIE, STEIG; Hinweiszeile unten
+(`1/5 · GPS · Tippen = weiter · 2× = Ende`). Die Straßen werden einmal je Fußetappe geladen (höchstens
+8 s; ohne Antwort wird die Karte ohne Straßen gezeichnet), die Karte nur bei merklicher Bewegung
+(8 m, 10°, höchstens alle 4 s) neu gesendet. Netz-Freigaben dafür: `overpass-api.de` und
+`overpass.private.coffee`. *Warten*: der Countdown („2 min“)
 groß, Linie und Richtung als Text, daneben eine Haltestelle, in die in der letzten Minute ein Bus
 einfährt. *Fahrt*: „noch 2 Halte“ als große Ziffern, darunter `Aussteigen: Mirabellplatz · an 02:06`;
 einen Halt vorher blinkt „Aussteigen“. Bilder werden nur bei Änderung gesendet; der 500-ms-Takt
-läuft nur, solange eine animierte Seite offen ist. Pfeilformen und Aufbau stammen aus OpenGlance Nav.
+läuft nur, solange eine animierte Seite offen ist. Kartenzeichnung und Overpass-Abfrage stammen aus OpenGlance Nav.
 
 Die Ziele liegen auf dem Handy (SDK-Speicher, mit localStorage als Spiegel). Orte
 sucht die App über die Ortssuche von Transitous (`/api/v1/geocode`), Verbindungen über
@@ -209,7 +214,7 @@ Alles, was eine laufende Fahrt oder Begleitung beendet, ist **scharf geschaltet*
 erst tippen bzw. in der Begleitung halten, dann `Nochmal tippen = Fahrt abbrechen` innerhalb von
 4 s; Wischen, 2× oder 4 s ohne Eingabe brechen ab. 2× beendet nie eine laufende Fahrt oder
 Begleitung (in der Begleitung öffnet es den System-Dialog zum Verlassen, den du ablehnen
-kannst). Die Wischrichtung lässt sich am Handy unter „Brille“ umkehren.
+kannst). Die Wischrichtung lässt sich am Handy unter „Einstellungen“ umkehren.
 
 ## Einrichten
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0] — 2026-10-20
+
+### Neu: Quietglass-UI-Standard QUS v1 („keine Textwand“)
+
+- **Brille: Startseite mit zwei großen Einträgen** (Untertitel, Übersicht). Kopfzeile `PodCaption · ● läuft`, unten genau eine Hinweiszeile. Die Hilfe-Seite entfällt (Halten hat keine Funktion mehr; die Gesten stehen in der Hinweiszeile, die Einrichtung am Handy).
+- **Untertitel als Leseansicht:** Kopfzeile `Untertitel · ● läuft · Datei`, darunter die Folge als Kopf und die Untertitel; Tippen = Start/Pause, Wischen blättert, 2× = zurück. Das Abspielen läuft auch weiter, wenn man zur Startseite zurückgeht.
+- **Übersicht als ruhiges Cockpit-Bild** (576×288, vier Kacheln wie Rain Lens/Status Glass): links ein Ring, gefüllt bis zum Fortschritt durch die Untertitel, rechts „PODCAPTION 14:05“, groß `LÄUFT` oder `PAUSE`, darunter die Zellen Zeile, Zeit, Dauer und Quelle; links unten die Folge. Tippen = Start/Pause. Es werden nur geänderte Kacheln gesendet; die Uhr ändert nur die Kachel oben rechts.
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Untertitel / Einstellungen) im Rain-Lens-Look: Kicker `QUIETGLASS / ACCESSIBILITY`, Status-Pille, Statusbanner, Hero-Karte mit dem Fortschritt, 2×2-Kennzahlen, ein Hauptknopf (Abspielen/Pause), Karten-Leiste der nächsten Untertitel. „Untertitel“ zeigt, was als Nächstes kommt, und die Karte zum Öffnen einer Datei oder eines Texts. Einstellungen als gruppierte Karten (Feed-Bridge eingeklappt), Erststart-Checkliste in drei Schritten; ohne Datei läuft das Beispiel.
+- Das Beispiel-Untertitel sagt nicht mehr „Halten zeigt die Hilfe“, sondern „2× geht zurück, auf der Startseite beendet es die App“ (in allen fünf Sprachen).
+
+### Unverändert (Hardware-getestet)
+
+- Kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (während er offen sein kann, wird nichts gezeichnet und keine Kachel gesendet; das Abspielen läuft weiter), zeitbegrenzte Aufrufe an die Brille, Wiederaufbau der ersten Seite nach „Nein“.
+
+### Tests
+
+- Reine Modelltests (Zellen, Überschrift, Startzeilen, Fußzeile in fünf Sprachen), Kachel-Diff (unverändert = nichts gesendet), Beenden-Dialog-Tests, Vorschau-PNGs (`QG_PREVIEW=1 npx vitest run tests/preview.test.ts` → `store/preview-cockpit*.png`).
+
+### QIS-Konformität
+
+- Fußzeilen über den gemeinsamen `footer()` (zu breit: erst Wischen, dann Halten weg, 2× nie); Wischen blättert nur; keine Fehlercodes auf der Brille.
+
 ## [0.4.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

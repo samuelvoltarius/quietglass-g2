@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.9.0] — 2026-10-20
+
+### Neu: Quietglass-Bedienstandard QUS v1 („keine Textwand“)
+
+**Brille**
+- **Startseite mit höchstens drei großen Einträgen:** *Aufnehmen* (ohne Sprachserver: *Schnellnotiz*), *Notizen · n* (nur wenn es welche gibt) und *Art · Notiz*. Wischen wählt (Punkt ●), Tippen öffnet. Kopfzeile `FIELDLOG · ● live` (ohne Server `lokal`), unten eine Hinweiszeile.
+- **Bereit, Aufnahme und Erkennen sind jetzt ein Bild (Cockpit)** wie bei Rain Lens und Status Glass: rechts klein `FIELDLOG  HH:MM`, eine große Überschrift (`BEREIT` · `AUFNAHME 0:42` · `WIRD ERKANNT`, bei einem Fehler `MIKRO GESPERRT` · `NICHTS VERSTANDEN` · `SERVER FEHLER` · `KEIN FOTO`), vier Zellen (*Heute* = Notizen heute, *Letzte*, *Sync*, *Länge*); links beim Aufnehmen der Pegelverlauf des Mikrofons, sonst ein Ring aus den Notizen des Rundgangs (eine Strecke je Notiz, nach Art). Es werden nur die Kacheln gesendet, deren Bild sich geändert hat; solange der Beenden-Dialog offen sein kann, wird keine Kachel gesendet.
+- **Notizen:** Liste mit höchstens fünf Zeilen (neueste zuerst, Punkt ● an der Auswahl); ein Tipp öffnet die Notiz als **Leseansicht** mit Kontextzeile (`Notiz 2/7 · 14:02 · Mangel`), lange Notizen blättern mit Wischen, Tippen springt zur nächsten, 2× zurück.
+- **Schnellnotizen und „Behalten?“** sind Listen mit Punkt ● und der Art in der Kopfzeile; „Verwerfen“ bleibt zweistufig (Tippen, nochmal Tippen innerhalb von 4 s).
+- **Entfernt:** die Hilfe-Seite und alles, was am Halten hing (Foto per Halten, Hilfe per Halten, Art per Wischen auf der Ruheseite). Halten erreicht die App an der Brille nie. Fotos gibt es am Handy und unter „Behalten + Foto“; die Art des nächsten Eintrags ist die Zeile *Art* der Startseite (Tippen setzt die nächste).
+- Unverändert: kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (nur auf der Startseite; Aufnahme und „Behalten?“ ignorieren 2×; während er offen sein kann, wird nichts gezeichnet), begrenzte Aufrufe (`bounded()`), erste Seite per Rebuild + Create, Mikrofon- und Spracherkennungs-Logik.
+
+**Handy**
+- **Genau drei Tabs in einer Zeile: Jetzt · Notizen · Einstellungen**, im Look von Status Glass: Kicker `QUIETGLASS / NOTIZEN`, Titel, Status-Pille, Statusbanner, Heldenkarte mit einem großen Wert (Notizen heute), 2×2-Kennzahlen (Wichtig · Mängel · Notizen · Fotos), ein primärer Knopf, waagrechte Kartenleiste der letzten Notizen.
+- *Notizen*: Notiz eintippen, Einträge des Rundgangs (Löschen mit Bestätigung: erst „Nochmal tippen“), Export und alle Rundgänge eingeklappt.
+- *Einstellungen*: gruppierte Karten (Sprache, Sprachserver, Schnellnotizen, Bedienung, Daten); die Server-Karte ist eingeklappt, sobald ein Sprachserver eingerichtet ist; beim ersten Start steht oben eine Checkliste mit drei Schritten, und ohne Server läuft alles mit Schnellnotizen.
+
+### Technik
+- Renderer-Bausteine `src/screen/*` aus Rain Lens (byte-gleich), `src/cockpit/{model,compose}.ts` (reines Modell, getrennt vom Zeichnen), `src/glasses/render.ts` mit Text- und Cockpit-Seite.
+- Tests: Modell (Überschrift, Zellen, Grafik, Hinweiszeile), Startzeilen, Listen und Leseansicht, Kachel-Diff (unveränderter Zustand sendet nichts, die Uhr nur die Kachel oben rechts), Footer, Beenden-Dialog, Handy. Vorschaubilder: `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit.png` (Aufnahme) und `store/preview-cockpit-idle.png` (Bereit).
+
 ## [0.8.7] — 2026-10-17
 
 ### Behoben (Hardware-Test, Schrittprotokoll)

@@ -1,5 +1,8 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
   MenuContainerProperty,
   MenuItemProperty,
   TextContainerProperty,
@@ -8,32 +11,28 @@ import {
   StartUpPageCreateResult,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import type { Bitmap } from "./gfx";
-import type { Frames, Layout, PageView } from "./views";
-import { ImageLink, imageContainer, bounded, PAGE_CALL_MS, TEXT_CALL_MS, type ImageSlot } from "./images";
+import type { Layout, PageView } from "./views";
+import { bounded, PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS } from "./images";
+import { tileSlots, type TileSend, type TileSlot } from "../screen/sender";
 export { PAGE_CALL_MS, TEXT_CALL_MS, IMAGE_CALL_MS } from "./images";
-import { BIG_HEIGHT, CHARGE_BAR_HEIGHT, CHARGE_TOP_HEIGHT, HALF, ICON_HEIGHT, ICON_WIDTH, STATUS_HEIGHT } from "./pics";
 
 /**
  * Puts a page view onto the G2 (576 x 288).
  *
- *  - drive:  speed (288 x 144) left, battery + power bar (288 x 144) right, two rows below
- *  - charge: charge % and kW (288 x 100 each), the battery bar (288 x 36) centred, two rows
- *  - status: tyres and lock (288 x 104 each), three rows below
- *  - plain:  full-width body (7 rows): control list, warnings, waiting
+ *  - cockpit (QUS v1): drive, charge and status are one image, four 288 x 144
+ *    tiles drawn by src/cockpit and sent by the tile sender (only changed
+ *    tiles), plus one empty text container that owns the input;
+ *  - plain:  header, full-width body (7 rows), footer: control list, warnings, help, waiting.
  *
- * Every layout: header beside the car sign (top right, 64 x 30), footer, body
- * on the full width. At most four image containers. The first page on a bridge
- * is one ignored `rebuildPageContainer` and then exactly one
- * `createStartUpPageContainer`; every later layout change is a rebuild;
- * anything else is `textContainerUpgrade` / `updateImageRawData`, and only
+ * The first page on a bridge is one ignored `rebuildPageContainer` and then
+ * exactly one `createStartUpPageContainer`; every later layout change is a
+ * rebuild; anything else is `textContainerUpgrade` / tile writes, and only
  * when it changed.
  */
 
 const NL = String.fromCharCode(10);
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
-const TOP = 34;
 
 interface TextSpec {
   readonly id: number;
@@ -44,50 +43,22 @@ interface TextSpec {
   readonly height: number;
 }
 
-const HEADER: TextSpec = { id: 1, name: "header", x: 0, y: 0, width: SCREEN_WIDTH - ICON_WIDTH, height: 32 };
+const HEADER: TextSpec = { id: 1, name: "header", x: 0, y: 0, width: SCREEN_WIDTH, height: 32 };
 const FOOTER: TextSpec = { id: 3, name: "footer", x: 0, y: 252, width: SCREEN_WIDTH, height: 34 };
-const bodyAt = (y: number): TextSpec => ({ id: 2, name: "body", x: 0, y, width: SCREEN_WIDTH, height: 252 - y });
-const BODY: Readonly<Record<Layout, TextSpec>> = {
-  plain: bodyAt(36),
-  drive: bodyAt(TOP + BIG_HEIGHT + 2),
-  charge: bodyAt(TOP + CHARGE_TOP_HEIGHT + 4 + CHARGE_BAR_HEIGHT + 2),
-  status: bodyAt(TOP + STATUS_HEIGHT + 2),
-};
+const BODY: TextSpec = { id: 2, name: "body", x: 0, y: 36, width: SCREEN_WIDTH, height: 216 };
 
-export const ICON: ImageSlot = { id: 4, name: "car", x: SCREEN_WIDTH - ICON_WIDTH, y: 1, width: ICON_WIDTH, height: ICON_HEIGHT, z: 4 };
+/** The cockpit's four image containers; the input container sits under them. */
+export const COCKPIT_TILES = tileSlots(21, "byd");
+const COCKPIT_INPUT_ID = 20;
 
-type SlotKey = "a" | "b" | "c";
-const SLOTS: Readonly<Record<Layout, ReadonlyArray<readonly [SlotKey, ImageSlot]>>> = {
-  plain: [],
-  drive: [
-    ["a", { id: 5, name: "speed", x: 0, y: TOP, width: HALF, height: BIG_HEIGHT, z: 5 }],
-    ["b", { id: 6, name: "energy", x: HALF, y: TOP, width: HALF, height: BIG_HEIGHT, z: 6 }],
-  ],
-  charge: [
-    ["a", { id: 5, name: "soc", x: 0, y: TOP, width: HALF, height: CHARGE_TOP_HEIGHT, z: 5 }],
-    ["b", { id: 6, name: "kw", x: HALF, y: TOP, width: HALF, height: CHARGE_TOP_HEIGHT, z: 6 }],
-    ["c", { id: 7, name: "bar", x: (SCREEN_WIDTH - HALF) / 2, y: TOP + CHARGE_TOP_HEIGHT + 4, width: HALF, height: CHARGE_BAR_HEIGHT, z: 7 }],
-  ],
-  status: [
-    ["a", { id: 5, name: "tyres", x: 0, y: TOP, width: HALF, height: STATUS_HEIGHT, z: 5 }],
-    ["b", { id: 6, name: "lock", x: HALF, y: TOP, width: HALF, height: STATUS_HEIGHT, z: 6 }],
-  ],
-};
-
-export function slotsFor(layout: Layout): ImageSlot[] {
-  return [ICON, ...SLOTS[layout].map(([, slot]) => slot)];
-}
-
-export function bodySpec(layout: Layout): TextSpec {
-  return BODY[layout];
+export function bodySpec(): TextSpec {
+  return BODY;
 }
 
 export interface RenderResult {
   readonly ok: boolean;
   readonly reason?: string;
 }
-
-const link = new ImageLink();
 
 function text(spec: TextSpec, content: string, z: number, capture: boolean): TextContainerProperty {
   return new TextContainerProperty({
@@ -118,14 +89,27 @@ export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefi
 
 export function buildPage(view: PageView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
   const menuObject = buildMenu(menu);
+  const withMenu = menuObject === undefined ? {} : { menuObject };
+  if (view.layout === "cockpit") {
+    return new CreateStartUpPageContainer({
+      ...withMenu,
+      containerTotalNum: 1 + COCKPIT_TILES.length,
+      textObject: [new TextContainerProperty({
+        containerID: COCKPIT_INPUT_ID, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+        paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+      })],
+      imageObject: COCKPIT_TILES.map((tile, index) => new ImageContainerProperty({
+        containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+      })),
+    });
+  }
   const texts = [
     text(HEADER, view.header, 1, false),
     // Exactly one container captures input; the body owns it.
-    text(BODY[view.layout], view.body.join(NL), 2, true),
+    text(BODY, view.body.join(NL), 2, true),
     text(FOOTER, view.footer, 3, false),
   ];
-  const images = slotsFor(view.layout).map(imageContainer);
-  return new CreateStartUpPageContainer({ ...(menuObject === undefined ? {} : { menuObject }), containerTotalNum: texts.length + images.length, textObject: texts, imageObject: images });
+  return new CreateStartUpPageContainer({ ...withMenu, containerTotalNum: texts.length, textObject: texts });
 }
 
 const started = new WeakSet<EvenAppBridge>();
@@ -151,14 +135,13 @@ function guarded(id: number, content: string): { content: string; contentLength:
 }
 
 /** Counters for tests and diagnostics. */
-export const renderStats = { creates: 0, rebuilds: 0, upgrades: 0, images: () => link.sentCount };
+export const renderStats = { creates: 0, rebuilds: 0, upgrades: 0 };
 
 /** First page on this bridge: one ignored rebuild, then exactly one create. Afterwards: rebuild. */
-export async function installPage(bridge: EvenAppBridge, view: PageView, frames: Frames, menu: MenuSpec | null = null): Promise<RenderResult> {
+export async function installPage(bridge: EvenAppBridge, view: PageView, menu: MenuSpec | null = null): Promise<RenderResult> {
   // A rebuild without the menu would clear it, so every page carries it again.
   const page = buildPage(view, menu);
   sentLength.clear();
-  link.reset();
   try {
     if (!started.has(bridge)) {
       try {
@@ -175,17 +158,18 @@ export async function installPage(bridge: EvenAppBridge, view: PageView, frames:
       if (!ok) return { ok: false, reason: "rebuild refused" };
       renderStats.rebuilds += 1;
     }
-    return await pushImages(bridge, view.layout, frames);
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
-/** Only the texts that changed are written; pictures only when they changed. */
-export async function updatePage(bridge: EvenAppBridge, view: PageView, frames: Frames, previous: PageView | null): Promise<RenderResult> {
+/** Only the texts that changed are written (the cockpit has none: its tiles are the tile sender's business). */
+export async function updatePage(bridge: EvenAppBridge, view: PageView, previous: PageView | null): Promise<RenderResult> {
+  if (view.layout === "cockpit") return { ok: true };
   const updates: Array<[TextSpec, string, string | undefined]> = [
     [HEADER, view.header, previous?.header],
-    [BODY[view.layout], view.body.join(NL), previous?.body.join(NL)],
+    [BODY, view.body.join(NL), previous?.body.join(NL)],
     [FOOTER, view.footer, previous?.footer],
   ];
   try {
@@ -194,23 +178,25 @@ export async function updatePage(bridge: EvenAppBridge, view: PageView, frames: 
       renderStats.upgrades += 1;
       await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: spec.id, containerName: spec.name, ...guarded(spec.id, content) })), TEXT_CALL_MS, "text " + spec.name);
     }
-    return await pushImages(bridge, view.layout, frames);
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
-async function pushImages(bridge: EvenAppBridge, layout: Layout, frames: Frames): Promise<RenderResult> {
-  // Sequential: BLE takes one picture at a time. The big pictures first, the sign last.
-  for (const [key, slot] of SLOTS[layout]) {
-    const frame: Bitmap | undefined = frames[key];
-    if (!frame) continue;
-    const r = await link.push(bridge, slot, frame);
-    if (!r.ok) return { ok: false, reason: r.reason ?? slot.name + " failed" };
-  }
-  const sign = await link.push(bridge, ICON, frames.icon);
-  if (!sign.ok) return { ok: false, reason: sign.reason ?? "sign failed" };
-  return { ok: true };
+/** One cockpit tile to the glasses; resolves true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, imageData: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
+
+/**
+ * The tile sender's write function. It writes only while `allowed()` says so: not while the system exit dialog
+ * may be on screen (a page call could cover it) and not after the cockpit page has been left (its containers
+ * are gone). A refused tile counts as failed and is tried again with the next frame.
+ */
+export function guardedTileSend(bridge: EvenAppBridge, allowed: () => boolean): TileSend {
+  return (slot, png) => (allowed() ? sendTile(bridge, slot, png) : Promise.resolve(false));
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {
@@ -222,3 +208,5 @@ export function describeCreateResult(result: StartUpPageCreateResult): string {
     default: return `unknown result (${String(result)})`;
   }
 }
+
+export type { Layout };

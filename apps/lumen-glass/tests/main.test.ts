@@ -7,8 +7,6 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
-// Canvas is unavailable in node; the icon is not what these tests are about.
-vi.mock("../src/glasses/pixel", () => ({ ICON_WIDTH: 64, ICON_HEIGHT: 30, renderPixelIcon: async () => new Uint8Array([1]) }));
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
@@ -97,19 +95,22 @@ describe("lumen polling loop", () => {
     return fake;
   }
 
-  it("shares one status request between swipes instead of stacking them", async () => {
-    // Regression: every swipe started its own fetch against a slow LUMEN.
+  it("shares one status request between taps on the moth instead of stacking them", async () => {
+    // Regression: every tap started its own fetch against a slow LUMEN.
     const lumen = fakeLumen(3000);
     vi.stubGlobal("fetch", lumen.fetchMock);
     const fake = await boot();
+    fake.emit(2); // start page: down to "Motte", tap opens the cockpit
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(100);
     lumen.fetchMock.mockClear();
-    fake.emit(1);
-    fake.emit(2);
-    fake.emit(1);
+    fake.emit(0);
+    fake.emit(0);
+    fake.emit(0);
     await vi.advanceTimersByTimeAsync(1000);
     expect(lumen.fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(3000);
-    fake.emit(1);
+    fake.emit(0);
     expect(lumen.fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -329,7 +330,7 @@ describe("lumen gestures with an open quest", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  async function bootWith(fetchMock: unknown, stored?: string) {
+  async function bootWith(fetchMock: unknown, stored?: string, options: { start?: boolean } = {}) {
     vi.stubGlobal("fetch", fetchMock);
     const fake = fakeBridge();
     if (stored !== undefined) fake.config.stored = stored;
@@ -338,6 +339,8 @@ describe("lumen gestures with an open quest", () => {
     await import("../src/main");
     for (let i = 0; i < 20 && !fake.ready(); i++) await vi.advanceTimersByTimeAsync(10);
     await vi.advanceTimersByTimeAsync(100);
+    // QUS v1: the app opens on the start page; most tests work on the quest, one tap away (the first entry).
+    if (!options.start) { fake.emit(0); await vi.advanceTimersByTimeAsync(50); }
     return fake;
   }
 
@@ -360,7 +363,7 @@ describe("lumen gestures with an open quest", () => {
     fake.emit(9);
     await vi.advanceTimersByTimeAsync(500);
     expect(newQuests(lumen)).toBe(0);
-    expect(fake.writes.header).toBe("LUMEN · New quest?");
+    expect(fake.writes.header).toBe("Quest · New quest?");
     expect(fake.writes.footer).toBe("Tap again = new quest · Swipe/2× = cancel");
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
@@ -368,40 +371,15 @@ describe("lumen gestures with an open quest", () => {
     expect(fake.camera.calls).toBe(0);
   });
 
-  it("QIS v1.2: the menu item only arms the new quest and says so; one single tap after it replaces the quest", async () => {
+  it("a click in the side menu never runs anything (the menu is off while its clicks do not arrive on the glasses)", async () => {
     const lumen = questLumen({ tickOnUpload: true });
     const fake = await bootWith(lumen.fetchMock);
     fake.menu(2);
-    await vi.advanceTimersByTimeAsync(50);
+    fake.menu(1);
+    await vi.advanceTimersByTimeAsync(600);
     expect(newQuests(lumen)).toBe(0);
-    expect(fake.writes.header).toBe("LUMEN · New quest?");
-    expect(fake.writes.footer).toBe("Tap again = new quest · Swipe/2× = cancel");
-    await vi.advanceTimersByTimeAsync(500); // past the moment the hold itself ends
-    fake.emit(0);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(newQuests(lumen)).toBe(1);
+    expect(fake.writes.footer).not.toContain("Tap again");
     expect(fake.camera.calls).toBe(0);
-  });
-
-  it("QIS v1.2: a second click of the same menu item also replaces the quest", async () => {
-    const lumen = questLumen({ tickOnUpload: true });
-    const fake = await bootWith(lumen.fetchMock);
-    fake.menu(2);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(newQuests(lumen)).toBe(0);
-    fake.menu(2);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(newQuests(lumen)).toBe(1);
-  });
-
-  it("QIS v1: a tap right after the menu click does not confirm", async () => {
-    const lumen = questLumen({ tickOnUpload: true });
-    const fake = await bootWith(lumen.fetchMock);
-    fake.menu(2);
-    fake.emit(0); // within 0.4 s
-    await vi.advanceTimersByTimeAsync(50);
-    expect(newQuests(lumen)).toBe(0);
-    expect(fake.writes.footer).toBe("Tap again = new quest · Swipe/2× = cancel");
   });
 
   it("QIS v1: a swipe, 2× or a second hold cancels the question without replacing anything or leaving the app", async () => {
@@ -412,7 +390,7 @@ describe("lumen gestures with an open quest", () => {
       await vi.advanceTimersByTimeAsync(500);
       fake.emit(cancel);
       await vi.advanceTimersByTimeAsync(50);
-      expect(fake.writes.footer, "event " + cancel).toBe("Tap = photo · Swipe = help · Hold = quest · 2× = exit");
+      expect(fake.writes.footer, "event " + cancel).toBe("Tap = photo · Hold = quest · 2× = back");
       expect(newQuests(lumen), "event " + cancel).toBe(0);
       expect(fake.shutdown.modes, "event " + cancel).toEqual([]);
       fake.emit(0); // the next tap is a normal photo tap again, not a confirmation
@@ -424,7 +402,7 @@ describe("lumen gestures with an open quest", () => {
   it("QIS v1: an armed question runs out after 4 seconds; a late tap only takes a photo", async () => {
     const lumen = questLumen({ tickOnUpload: true });
     const fake = await bootWith(lumen.fetchMock);
-    fake.menu(2);
+    fake.emit(9);
     await vi.advanceTimersByTimeAsync(3000);
     expect(fake.writes.footer).toContain("Tap again");
     await vi.advanceTimersByTimeAsync(1500);
@@ -434,25 +412,23 @@ describe("lumen gestures with an open quest", () => {
     expect(newQuests(lumen)).toBe(0);
   });
 
-  it("QIS v1: a swipe opens the help, a swipe, tap, hold or 2× close it; 2× never exits there", async () => {
+  it("QUS v1: a swipe does nothing on the quest, 2× goes back to the start page, 2× there asks the exit dialog (no help page)", async () => {
     const lumen = questLumen({ tickOnUpload: true });
     const fake = await bootWith(lumen.fetchMock);
-    fake.emit(2);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.writes.header).toBe("LUMEN · Help");
-    expect(fake.writes.footer).toBe("Tap = back · 2× = back");
+    const header = fake.writes.header;
+    expect(header).toBe("Quest · ● live");
+    for (const swipe of [1, 2]) {
+      fake.emit(swipe);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fake.writes.header).toBe(header);
+    }
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.writes.footer).toBe("Tap = photo · Swipe = help · Hold = quest · 2× = exit");
+    expect(fake.writes.header).toBe("Lumen · ● live");
     expect(fake.shutdown.modes).toEqual([]);
-    for (const close of [0, 1, 9]) {
-      fake.emit(2);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(fake.writes.header).toBe("LUMEN · Help");
-      fake.emit(close);
-      await vi.advanceTimersByTimeAsync(50);
-      expect(fake.writes.header, "event " + close).not.toBe("LUMEN · Help");
-    }
+    fake.emit(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.shutdown.modes).toEqual([1]);
     expect(fake.camera.calls).toBe(0);
   });
 
@@ -464,7 +440,7 @@ describe("lumen gestures with an open quest", () => {
     fake.camera.next = { base64: "aGVsbG8=", mimeType: "image/jpeg", name: "p.jpg" };
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.writes.header).toBe("LUMEN · photo");
+    expect(fake.writes.header).toBe("Lumen · photo");
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.modes).toEqual([1]);
@@ -486,7 +462,7 @@ describe("lumen gestures with an open quest", () => {
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.modes).toEqual([1]);
-    expect(fake.writes.header).toBe("LUMEN · photo");
+    expect(fake.writes.header).toBe("Lumen · photo");
     fake.emit(1); // "No": the next input restores the page
     release();
     await vi.advanceTimersByTimeAsync(200);
@@ -508,7 +484,7 @@ describe("lumen gestures with an open quest", () => {
     // A new quest in the demo swaps the sample quest, again without a request.
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
-    fake.menu(2);
+    fake.emit(9);
     await vi.advanceTimersByTimeAsync(500);
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);

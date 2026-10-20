@@ -69,10 +69,19 @@ export interface DoseState {
   readonly peakDb: number | null;
   /** When accumulation began. */
   readonly startedAt: number | null;
+  /** Sum of level x seconds, for the average level. */
+  readonly levelSeconds: number;
+  /** Seconds spent at or above the criterion level. */
+  readonly overSeconds: number;
 }
 
 export function createDose(): DoseState {
-  return { fraction: 0, measuredSeconds: 0, peakDb: null, startedAt: null };
+  return { fraction: 0, measuredSeconds: 0, peakDb: null, startedAt: null, levelSeconds: 0, overSeconds: 0 };
+}
+
+/** Average level over everything measured today, or null before anything was measured. */
+export function averageDb(state: DoseState): number | null {
+  return state.measuredSeconds > 0 ? state.levelSeconds / state.measuredSeconds : null;
 }
 
 export function accumulate(
@@ -88,6 +97,8 @@ export function accumulate(
     measuredSeconds: state.measuredSeconds + seconds,
     peakDb: state.peakDb === null ? level : Math.max(state.peakDb, level),
     startedAt: state.startedAt ?? now,
+    levelSeconds: state.levelSeconds + level * seconds,
+    overSeconds: state.overSeconds + (level >= settings.criterionDb ? seconds : 0),
   };
 }
 

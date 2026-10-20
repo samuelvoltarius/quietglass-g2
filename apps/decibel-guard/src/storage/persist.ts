@@ -118,6 +118,8 @@ export async function saveDose(bridge: EvenAppBridge, dose: DoseState, now = Dat
     fraction: dose.fraction,
     measuredSeconds: Math.round(dose.measuredSeconds),
     peakDb: dose.peakDb,
+    levelSeconds: Math.round(dose.levelSeconds),
+    overSeconds: Math.round(dose.overSeconds),
   }));
 }
 
@@ -129,7 +131,7 @@ export async function loadDoseRaw(bridge: EvenAppBridge): Promise<string> {
 export function parseDose(raw: string, now = Date.now()): DoseState | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw) as { day?: unknown; fraction?: unknown; measuredSeconds?: unknown; peakDb?: unknown };
+    const v = JSON.parse(raw) as { day?: unknown; fraction?: unknown; measuredSeconds?: unknown; peakDb?: unknown; levelSeconds?: unknown; overSeconds?: unknown };
     if (v.day !== dayKey(now)) return null;
     const fraction = numberOr(v.fraction, -1);
     if (fraction < 0) return null;
@@ -138,6 +140,8 @@ export function parseDose(raw: string, now = Date.now()): DoseState | null {
       measuredSeconds: Math.max(0, numberOr(v.measuredSeconds, 0)),
       peakDb: typeof v.peakDb === "number" && Number.isFinite(v.peakDb) ? v.peakDb : null,
       startedAt: null,
+      levelSeconds: Math.max(0, numberOr(v.levelSeconds, 0)),
+      overSeconds: Math.max(0, numberOr(v.overSeconds, 0)),
     };
   } catch {
     return null;

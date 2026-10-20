@@ -52,12 +52,15 @@ the glucose alerts also label the value picture:
 | no current value | newest reading older than 15 min | value is struck through, no low/high judgement |
 | falling fast | `DoubleDown`/`TripleDown` or ≤ −15 mg/dL in 5 min | |
 
+Start page (QUS v1): two entries, glucose and pump; the glucose and the pump page are a
+cockpit image (curve with target band on the left, headline, trend and cells on the right).
+
 | Gesture | Does |
 |---|---|
-| Swipe | glucose ↔ pump |
-| Tap | refresh now |
-| Hold | opens the help (the glasses' side menu is off, `SIDE_MENU`); refresh is Tap, the swipe direction is set on the phone |
-| 2× | back (from help); on the values: asks to close the app |
+| Tap | start page: open the entry; cockpit: refresh now |
+| Swipe | start page: choose; cockpit: glucose ↔ pump |
+| Hold | no function (the glasses' side menu is off, `SIDE_MENU`); the swipe direction is set on the phone |
+| 2× | cockpit: back to the start page; start page: asks to close the app |
 
 The app asks once a minute (a sensor reports every 5 min); the pictures are only
 re-sent when a new value arrives.

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.0] — 2026-10-20
+
+Quietglass UI Standard QUS v1 („keine Textwand“). Aufbau und Funktionen bleiben, Wortfinder, Stimmtraining, Meine Wörter, Spracherkennung und Sprachmodell sind unverändert.
+
+### Brille
+
+- **Zusammenfassungs-Cockpit** nach einem beendeten Gespräch: statt der ersten Textseite ein gezeichnetes Bild (ganzes Display, vier Kacheln wie Rain Lens): groß die Dauer („12 MIN“), links der Sprecheranteil als Balken (bis zu vier Sprecher, „Ich“ für die eigene Stimme), rechts die Zellen SPRECHER, WÖRTER, FRAGEN, SPRACHE (z. B. „DE→EN“) und unten die Zeitspanne. Eine Fußzeile: „Tippen = weiter · Wischen = Text · 2× = Ende“.
+- Wischen führt vom Bild zu den Textseiten der Zusammenfassung und von deren erster Seite wieder zurück zum Bild. Tippen und 2× legen die Zusammenfassung wie bisher beiseite.
+- Das Bild gibt es nur, wenn die Zusammenfassung fertig ist und das Gespräch mindestens zwei Zeilen mit Wörtern hat; sonst bleibt der Text wie bisher.
+- Es werden nur geänderte Kacheln gesendet (die Uhr ändert nur die Kachel oben rechts). Während der Beenden-Dialog offen sein könnte, wird keine Kachel gesendet; alle Brillenaufrufe bleiben zeitbegrenzt. Seitenmenü bleibt aus (`SIDE_MENU = false`).
+- Laufansicht unverändert: Kopfzeile „Modus · ● live“, unten eine Hinweiszeile.
+
+### Handy
+
+- Neues Aussehen im Stil von Rain Lens: Kicker „QUIETGLASS / SPRACHE“, Titel, Status-Pille (Sprachpaar), dunkel mit türkisem Akzent.
+- **Jetzt**: Statusbanner, Hero-Karte mit dem Modus als einem großen Wert, 2×2-Kennzahlen (Zeilen, Wörter, Fragen, Gefunden), die drei Modus-Knöpfe, Kundenwahl unter „Gespräch“ und eine waagrechte Kartenleiste mit den zuletzt gefundenen Wörtern.
+- Einstellungen: gruppierte Karten wie bisher, Server-Karte eingeklappt, sobald eingerichtet; die 3-Schritt-Checkliste beim Erststart bleibt.
+
+### Technik
+
+- `src/screen/*` (Renderer) unverändert aus Rain Lens kopiert; neu `src/cockpit/model.ts` (reine Funktionen: Statistik, Zellen, Balken, Hinweiszeile) und `src/cockpit/compose.ts` (Zeichnen).
+- Tests: `tests/qus.test.ts` (Statistik, Zellen, Balken, Hinweiszeile, Kachel-Diff, Sender, Jetzt-Tab), `tests/preview.test.ts` (mit `QG_PREVIEW=1` entsteht `store/preview-cockpit.png`).
+- QUS v1 und QIS v1: Seitenmenü aus, Beenden-Dialog-Logik, `bounded()`-Zeitgrenzen und Aufbau der ersten Seite (rebuild + create) unverändert.
+
 ## [1.0.3] — 2026-10-17
 
 ### Behoben (Hardware-Test)

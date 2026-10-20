@@ -4,11 +4,12 @@
 
 > **Auf Deutsch, kurz:** Xaventra HUD zeigt auf der Brille, woran dein
 > Xaventra-Agent gerade arbeitet, und offene Rückfragen als Karten.
-> **Tippen** wählt in der Liste Ja / Nein, ein **zweites Tippen**
+> Die Brille öffnet auf einer **Startseite** (Fragen · Status); der **Status** ist ein
+> Cockpit-Bild. **Tippen** wählt in den Fragen Ja / Nein, ein **zweites Tippen**
 > innerhalb von 4 Sekunden sendet die Antwort. **Wischen** bewegt nur den Cursor
 > und sendet nie etwas; Wischen oder **2×** bricht ein Bestätigen ab,
-> sonst beendet 2× die App (mit Rückfrage; Bedienstandard QIS v1.2). Die **Hilfe**
-> ist die letzte Zeile der Liste (Ja / Nein / Hilfe). **Halten = sprechen** (höchstens 2 min, Text erscheint schon beim Sprechen).
+> sonst geht 2× zurück, auf der Startseite beendet es die App (mit Rückfrage). Eine
+> Hilfe-Seite gibt es nicht mehr (QUS v1). **Halten = sprechen** (höchstens 2 min, Text erscheint schon beim Sprechen).
 > Beim Loslassen steht das Erkannte zuerst auf der Brille: **Tippen sendet** es an
 > *deinen* Xaventra-Rechner, **2× verwirft** es (ohne Live-Spracherkennung geht die
 > Aufnahme beim Loslassen an Xaventra). Ein gesagtes „Ja“/„Nein“ beantwortet **nie**
@@ -34,14 +35,16 @@ Use `?demo=1` on the development URL to run against built-in sample data
 
 | Gesture | Meaning |
 |---|---|
-| **Tap** | Arms the entry the cursor is on in the list *Yes / No / Help* (the help page opens on the second tap; the glasses' side menu is off, `SIDE_MENU`). A **second tap within 4 s** sends the answer. On recognised text: sends it. |
+| **Tap** | Start page: opens the entry (Questions · Status). Questions: arms the entry the cursor is on in the list *Yes / No*; a **second tap within 4 s** sends the answer. Status: asks the server again. On recognised text: sends it. |
 | **Swipe** | Moves the cursor (Yes, No of each card). It never sends anything; while an answer is armed it cancels it. |
-| **2×** | Cancels an armed answer or a recording, discards recognised text; otherwise asks the system to quit the app (you can cancel). It never answers a card. |
+| **2×** | Cancels an armed answer or a recording, discards recognised text; otherwise goes back, and on the start page asks the system to quit the app (you can cancel). It never answers a card. |
 | **Hold** | Speak (at most 2 min, shown as **● MIC**; with live speech recognition the words appear while you speak). On release the recognised text is shown first (tap = send, 2× = discard); without live text the recording is sent on release. 2× cancels. |
 
-The screen: the header (`XAVENTRA · Frage 1/2`, or `XAVENTRA · offline`), what Xaventra is
-working on (`> …`), the current question with its position and effect, and a
-hint row. Seven rows of 46 characters at most, in German and English.
+The screens (QUS v1): the start page (`Xaventra · ● live`, two entries), the status as a
+cockpit image (a ring with one arc per open question on the left; the headline `2 FRAGEN` /
+`BEREIT` / `OFFLINE` and the cells Fragen, Server, Stand, Wirkung on the right), and the
+questions (header `Frage 1/2 · ● live`, what Xaventra is working on (`> …`), the current
+question with what it does outside, the answer list, a hint row). Seven rows of 46 characters at most, in German and English.
 
 ### Voice
 

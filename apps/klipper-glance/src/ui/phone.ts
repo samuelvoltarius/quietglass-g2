@@ -1,4 +1,5 @@
 import { isLoopback, isPlainHttp, validateBridgeUrl } from "../printer/client";
+import { findPrinter, isMoonrakerUrl, normalizeAddress } from "../printer/moonraker";
 import type { PrinterStatus } from "../printer/status";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { t } from "../messages";
@@ -107,7 +108,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
     });
 
     byId<HTMLButtonElement>("save")?.addEventListener("click", () => {
-      const url = byId<HTMLInputElement>("url")?.value.trim() ?? "";
+      const url = normalizeAddress(byId<HTMLInputElement>("url")?.value ?? "");
       // Empty is fine when the build carries its own address.
       const check = url === "" && BUILD_URL ? { valid: true, errors: [] } : validateBridgeUrl(url);
       if (!check.valid) { notify(check.errors.map((key) => t(locale, key)).join(" ")); return; }
@@ -116,12 +117,27 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
       // The token field is write-only: left empty, the stored token is kept.
       const token = (tokenField?.value ?? "") || current.token;
       if (tokenField) tokenField.value = "";
-      commit({ bridgeUrl: url.replace(/\/+$/, ""), invertScroll: current.invertScroll, ...(token ? { token } : {}) });
+      const direct = byId<HTMLInputElement>("direct-control")?.checked === true;
+      commit({ bridgeUrl: url.replace(/\/+$/, ""), invertScroll: current.invertScroll, ...(token ? { token } : {}), ...(direct ? { directControl: true } : {}) });
     });
 
     byId<HTMLButtonElement>("clear-token")?.addEventListener("click", () => {
       const current = ports.getSettings();
-      commit({ bridgeUrl: current.bridgeUrl, invertScroll: current.invertScroll });
+      commit({ bridgeUrl: current.bridgeUrl, invertScroll: current.invertScroll, ...(current.directControl ? { directControl: true } : {}) });
+    });
+
+    // 0.6.0: search the usual home networks for Moonraker and put the hit into the field.
+    byId<HTMLButtonElement>("find")?.addEventListener("click", () => {
+      const button = byId<HTMLButtonElement>("find");
+      if (button) button.disabled = true;
+      notify(t(locale, "p.finding", { net: "…" }));
+      void findPrinter(fetch, undefined, (net) => notify(t(locale, "p.finding", { net: net + ".x" }))).then((found) => {
+        if (button) button.disabled = false;
+        if (!found) { notify(t(locale, "p.notFound")); return; }
+        const field = byId<HTMLInputElement>("url");
+        if (field) field.value = found;
+        notify(t(locale, "p.found", { url: found }));
+      });
     });
 
     byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
@@ -145,7 +161,9 @@ function template(settings: Settings, connection: PhoneConnection, status: Print
     return L("p.status.online", { state: t(locale, "g.state." + status.state), progress: status.progress, file: status.file || "–" });
   })();
   const control = status ? `<p class="hint">${L(status.controllable ? "p.control.on" : "p.control.off")}</p>` : "";
-  const warnHttp = shown && isPlainHttp(shown) && !isLoopback(shown);
+  // Direct mode talks plain http to the printer in the home network on purpose; only a bridge should be https.
+  const direct = Boolean(shown) && isMoonrakerUrl(shown);
+  const warnHttp = shown && !direct && isPlainHttp(shown) && !isLoopback(shown);
 
   return `
   <header class="brand bar">
@@ -184,11 +202,14 @@ function template(settings: Settings, connection: PhoneConnection, status: Print
     ${shown ? "" : `<p class="hint">${L("p.firstRun")}</p>`}
     <label for="url">${L("p.url")}</label>
     <input id="url" type="text" inputmode="url" autocomplete="off" value="${escapeHtml(url)}" placeholder="${BUILD_URL ? escapeHtml(BUILD_URL) : L("p.urlPlaceholder")}" />
+    <button id="find" type="button" class="secondary">${L("p.find")}</button>
+    <p class="hint">${L("p.directHint")}</p>
     ${BUILD_URL ? `<p class="hint">${L("p.urlBuild")}</p>` : ""}
     ${warnHttp ? `<p class="hint"><small class="warn">${L("p.httpWarn")}</small></p>` : ""}
     <label for="token">${L("p.token")}</label>
     <input id="token" type="password" autocomplete="off" placeholder="${L("p.tokenPlaceholder")}" />
     <p class="hint">${L("p.tokenNow", { state: maskToken(settings.token, locale) })}</p>
+    ${direct ? `<label class="check"><input id="direct-control" type="checkbox" ${settings.directControl ? "checked" : ""} /> ${L("p.directControl")}</label>` : ""}
     <button id="save" type="button">${L("p.save")}</button>
     ${settings.token ? `<button id="clear-token" type="button" class="secondary">${L("p.tokenClear")}</button>` : ""}
   </section>

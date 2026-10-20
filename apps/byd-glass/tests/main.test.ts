@@ -22,8 +22,13 @@ function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage
   const screen = new Map<number, string>();
   const pages: Page[] = [];
   const exit = { calls: [] as unknown[], answer: true };
+  /** "cockpit" while the last page is the car image (four tiles), "text" for the text pages. */
+  let kind: "cockpit" | "text" = "text";
   const show = (page: Page): void => {
     pages.push(page);
+    kind = (page.imageObject?.length ?? 0) > 0 ? "cockpit" : "text";
+    // The cockpit has no text containers: whatever text page was before is gone.
+    if (kind === "cockpit") { screen.set(1, ""); screen.set(2, ""); screen.set(3, ""); }
     for (const text of page.textObject ?? []) screen.set(text.containerID ?? 0, text.content ?? "");
   };
   const bridge = {
@@ -40,6 +45,7 @@ function fakeGlasses(stored: Record<string, string> = {}, options: { hangStorage
   };
   return {
     bridge, exit, pages, storage,
+    kind: () => kind,
     header: () => screen.get(1) ?? "",
     body: () => screen.get(2) ?? "",
     footer: () => screen.get(3) ?? "",
@@ -122,14 +128,14 @@ describe("BYD Glass lifecycle", () => {
   it("first run without a bridge: demo on the glasses (German, account in Austria), hint on the phone, no network", async () => {
     const fake = fakeGlasses();
     const root = await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("DEMO"));
-    await vi.waitFor(() => expect(root.innerHTML).toContain("Demo-Modus"));
-    expect(root.innerHTML).toContain("Erster Start");
-    // Phone page in tabs: Auto · Laden · Steuern · Brille · Verbindung · Mehr; the bridge address lives under "Verbindung".
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
+    await vi.waitFor(() => expect(root.innerHTML).toContain("Erste Schritte"));
+    expect(root.innerHTML).toContain("Erste Schritte");
+    // Phone page in tabs: exactly three, Jetzt · Auto · Einstellungen; the bridge address and the glasses switch live under "Einstellungen".
     const tabs = [...root.innerHTML.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1]);
-    expect(tabs).toEqual(["car", "charge", "control", "glasses", "connection", "more"]);
-    expect(root.innerHTML.split('data-tab="connection"')[1]).toContain('id="url"');
-    expect(root.innerHTML.split('data-tab="glasses"')[1]).toContain('id="invert"');
+    expect(tabs).toEqual(["now", "car", "settings"]);
+    expect(root.innerHTML.split('data-tab="settings"')[1]).toContain('id="url"');
+    expect(root.innerHTML.split('data-tab="settings"')[1]).toContain('id="invert"');
     await vi.waitFor(() => expect(root.innerHTML).toContain("Reifen"));
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
@@ -219,15 +225,15 @@ describe("BYD Glass lifecycle", () => {
   it("parked car opens on the status page; one ignored rebuild, one create, then rebuilds", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("BYD · STATUS · Verriegelt · 64 %"));
-    expect(fake.body()).toContain("Verriegelt · Türen zu · 12 V 12,6 V");
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     expect(fake.bridge.rebuildPageContainer.mock.invocationCallOrder[0]).toBeLessThan(fake.bridge.createStartUpPageContainer.mock.invocationCallOrder[0]!);
-    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.some((c) => c[0].containerName === "tyres")).toBe(true));
+    // The four cockpit tiles go out once.
+    await vi.waitFor(() => expect(new Set(fake.bridge.updateImageRawData.mock.calls.map((c) => c[0].containerName)).size).toBe(4));
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.header()).toBe("BYD · STEUERUNG · Klima aus"));
     fake.emit(UP);
-    await vi.waitFor(() => expect(fake.header()).toBe("BYD · STATUS · Verriegelt · 64 %"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     for (const page of fake.pages) expect((page.imageObject ?? []).length).toBeLessThanOrEqual(4);
   });
@@ -248,17 +254,20 @@ describe("BYD Glass lifecycle", () => {
   it("a mode change switches the page by itself", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.length).toBeGreaterThanOrEqual(4));
+    const before = fake.bridge.updateImageRawData.mock.calls.length;
     server.state.scene = "drive";
     server.state.rev += 1;
-    await vi.waitFor(() => expect(fake.header()).toMatch(/^BYD · FAHRT · D · 58 % · 172 km/));
-    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.some((c) => c[0].containerName === "speed")).toBe(true));
+    // The drive page is another picture on the same cockpit page: tiles are sent again, no rebuild.
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.length).toBeGreaterThan(before));
+    expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
   });
 
   it("control: temperature, two confirmations with a pause, one text/plain POST; double tap cancels", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(DOWN);
     // Lock and unlock come first; climate on is two swipes further down.
     await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
@@ -296,7 +305,7 @@ describe("BYD Glass lifecycle", () => {
     server.state.carOn = true;
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.body()).toContain("Auto ist an – Steuerung nur bei ausgeschaltetem Auto"));
     for (let i = 0; i < 4; i += 1) {
@@ -316,13 +325,13 @@ describe("BYD Glass lifecycle", () => {
     expect(fake.body()).toContain("Reifen hinten rechts: Druckverlust");
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.header()).not.toMatch(/ACHTUNG/));
-    expect(fake.body()).toContain("Nicht versperrt");
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
   });
 
   it("QIS v1: a swipe or a hold backs out of a car question and nothing is ever sent", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
     // Question 1, then a swipe: back to the list.
@@ -350,17 +359,16 @@ describe("BYD Glass lifecycle", () => {
   it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     expect(fake.pages.length).toBeGreaterThan(0);
     for (const page of fake.pages) expect((page as { menuObject?: unknown }).menuObject).toBeUndefined();
     expect(fake.menuLabels()).toEqual([]);
-    expect(fake.footer()).toContain("Halten = Hilfe");
   });
 
   it("a hold opens the help page, only 2x leaves it, and 2x there never exits the app", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(HOLD);
     await vi.waitFor(() => expect(fake.header()).toBe("BYD · Hilfe"));
     expect(fake.footer()).toBe("2× = zurück");
@@ -369,7 +377,7 @@ describe("BYD Glass lifecycle", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(fake.header()).toBe("BYD · Hilfe");
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     expect(fake.exit.calls).toEqual([]);
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
@@ -378,7 +386,7 @@ describe("BYD Glass lifecycle", () => {
   it("the menu click handler is kept: Hilfe closes an open car question, so nothing stays armed behind it", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("STATUS"));
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
     fake.emit(CLICK);

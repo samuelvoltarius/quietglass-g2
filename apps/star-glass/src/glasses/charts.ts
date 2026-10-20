@@ -1,4 +1,4 @@
-import { DIM, FULL, MID, createBitmap, drawPattern, drawText, fillRect, line, setPixel, strokeRect, textWidth, type Bitmap } from "./gfx";
+import { DIM, FULL, MID, createBitmap, drawText, fillRect, line, setPixel, strokeRect, textWidth, type Bitmap } from "./gfx";
 
 /**
  * Every picture on the glasses as a pure function of its inputs: the same
@@ -13,9 +13,6 @@ export const PANEL_HEIGHT = 106;
 /** Preview of the newest frame. */
 export const PREVIEW_WIDTH = 288;
 export const PREVIEW_HEIGHT = 144;
-/** The telescope sign in the top-right corner of the header. */
-export const ICON_WIDTH = 64;
-export const ICON_HEIGHT = 30;
 
 const RING_OUTER = 69;
 const RING_INNER = 56;
@@ -119,71 +116,6 @@ export function panelFrame(spec: PanelSpec, width = PANEL_WIDTH, height = PANEL_
   for (let i = 1; i < pts.length; i += 1) line(b, pts[i - 1]!.x, pts[i - 1]!.y, pts[i]!.x, pts[i]!.y, FULL, 2);
   const tip = pts[pts.length - 1]!;
   fillRect(b, tip.x - 2, tip.y - 2, 5, 5, FULL);
-  return b;
-}
-
-// ---- the telescope sign --------------------------------------------------
-
-/** What the telescope shows: exposing (twinkling star, light falling in), idle, a problem, no connection. */
-export type Mood = "working" | "idle" | "error" | "offline";
-
-/** One animation step every 600 ms. */
-export const ICON_STEP_MS = 600;
-
-const SCOPE = [
-  "..................",
-  "..................",
-  "...........##.....",
-  ".........####.....",
-  ".......#####......",
-  ".....#####........",
-  "...###.#..........",
-  "......#.#.........",
-  ".....#...#........",
-];
-
-/**
- * The 64 x 30 sign: an 18 x 9 telescope pattern scaled by three. Working: the
- * star top right twinkles and three dots at the bottom right fill up like a
- * small progress bar.
- * Idle: a calm dim star. Error: a pulsing "!" in place of the star. Offline: a
- * small "z". Depends only on (mood, now) — testable.
- */
-export function telescopeFrame(mood: Mood, now: number): Bitmap {
-  const rows = SCOPE.map((row) => row.split(""));
-  const put = (x: number, y: number, c: string): void => {
-    const row = rows[y];
-    if (row && x >= 0 && x < row.length) row[x] = c;
-  };
-  const phase = Math.floor(now / ICON_STEP_MS) % 4;
-  switch (mood) {
-    case "working": {
-      const bright = phase % 2 === 0;
-      // Star at (15, 1): a cross when bright, a dot with dim arms otherwise.
-      put(15, 1, "#");
-      put(14, 1, bright ? "#" : "-"); put(16, 1, bright ? "#" : "-");
-      put(15, 0, bright ? "#" : "-"); put(15, 2, bright ? "#" : "-");
-      // Three dots filling up: 0, 1, 2, 3 lit.
-      [12, 14, 16].forEach((x, i) => put(x, 7, i < phase ? "#" : "-"));
-      break;
-    }
-    case "idle":
-      put(15, 1, "+");
-      break;
-    case "error": {
-      const on = phase % 2 === 0;
-      for (let y = 0; y <= 3; y += 1) put(15, y, on ? "#" : "+");
-      put(15, 5, on ? "#" : "+");
-      break;
-    }
-    case "offline":
-      for (const [x, y] of [[13, 0], [14, 0], [15, 0], [14, 1], [13, 2], [14, 2], [15, 2]] as Array<[number, number]>) put(x, y, "-");
-      break;
-  }
-  const b = createBitmap(ICON_WIDTH, ICON_HEIGHT);
-  const pattern = rows.map((row) => row.join(""));
-  const scale = 3;
-  drawPattern(b, pattern, Math.floor((ICON_WIDTH - 18 * scale) / 2), Math.floor((ICON_HEIGHT - 9 * scale) / 2), scale);
   return b;
 }
 

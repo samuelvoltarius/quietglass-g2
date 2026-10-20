@@ -55,8 +55,15 @@ describe("phone page", () => {
   it("warns about plain http on the phone and says whether control is allowed", () => {
     const status = parseStatus({ online: true, state: "printing", progress: 3, controllable: false });
     const { root } = mount({ bridgeUrl: "http://192.0.2.4:8898", invertScroll: false }, { kind: "ok" }, status);
-    expect(root.innerHTML).toContain("mixed content");
+    expect(root.innerHTML).toContain("through a bridge");
     expect(root.innerHTML).toContain("Display only");
+  });
+
+  it("0.6.0: a printer IP (direct mode) gets no http warning but the control switch", () => {
+    const { root } = mount({ bridgeUrl: "http://192.0.2.7:7125", invertScroll: false }, { kind: "ok" });
+    expect(root.innerHTML).not.toContain("Unencrypted");
+    expect(root.innerHTML).toContain('id="direct-control"');
+    expect(root.innerHTML).toContain('id="find"');
   });
 
   it("escapes the stored address and an error reason", () => {

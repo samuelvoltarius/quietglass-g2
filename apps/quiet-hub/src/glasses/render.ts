@@ -16,6 +16,7 @@ import {
 import type { ScreenView } from "./screen";
 import { ICON_HEIGHT, ICON_WIDTH, renderPixelIcon, type PixelIcon } from "./pixel";
 import type { MenuSpec } from "../hub/model";
+import { tileSlots, type TileSend, type TileSlot } from "../screen/sender";
 
 /**
  * Renders a view onto the G2.
@@ -263,6 +264,72 @@ async function updatePixel(bridge: EvenAppBridge, icon: PixelIcon): Promise<Rend
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+}
+
+// ---- the cockpit page (QUS v1) -----------------------------------------------------------------
+
+/** The cockpit's four image containers; one empty text container above them owns the input. */
+export const COCKPIT_TILES = tileSlots(21, "hub");
+const COCKPIT_INPUT_ID = 20;
+
+function cockpitParts(menu: MenuSpec | null) {
+  const menuObject = buildMenu(menu);
+  return {
+    containerTotalNum: 1 + COCKPIT_TILES.length,
+    textObject: [new TextContainerProperty({
+      containerID: COCKPIT_INPUT_ID, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+      paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+    })],
+    imageObject: COCKPIT_TILES.map((tile, index) => new ImageContainerProperty({
+      containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+    })),
+    ...(menuObject === undefined ? {} : { menuObject }),
+  };
+}
+
+/** What the text page remembers about the glasses is void once another page stands there. */
+function forgetTextPage(): void {
+  sentLength.clear();
+  sentBrightness.clear();
+  lastIconKey = "";
+  pageSplit = false;
+}
+
+/** First page of a bridge (or the first one again after the exit dialog): one rebuild, then one create - as for the text page. */
+export async function createCockpitPage(bridge: EvenAppBridge, menu: MenuSpec | null = null): Promise<RenderResult> {
+  const page = new CreateStartUpPageContainer(cockpitParts(menu));
+  try {
+    const rebuilt = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer(cockpitParts(menu))), PAGE_CALL_MS, "rebuild").catch(() => false);
+    const result = await bounded(bridge.createStartUpPageContainer(page), PAGE_CALL_MS, "create page");
+    if (result === StartUpPageCreateResult.success || rebuilt === true) { renderStats.creates += 1; forgetTextPage(); return { ok: true }; }
+    return { ok: false, reason: describeCreateResult(result) };
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/** Another kind of page replaces the text page: one rebuild. */
+export async function rebuildCockpitPage(bridge: EvenAppBridge, menu: MenuSpec | null = null): Promise<RenderResult> {
+  try {
+    renderStats.rebuilds += 1;
+    const ok = await bounded(bridge.rebuildPageContainer(new RebuildPageContainer(cockpitParts(menu))), PAGE_CALL_MS, "rebuild");
+    if (!ok) return { ok: false, reason: "rebuild refused" };
+    forgetTextPage();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: errorMessage(error) };
+  }
+}
+
+/** One image tile to the glasses; resolves true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, imageData: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
+
+/** The tile sender's write function: it writes only while `allowed()` says so (not while the exit dialog may be up). */
+export function guardedTileSend(bridge: EvenAppBridge, allowed: () => boolean): TileSend {
+  return (slot, png) => (allowed() ? sendTile(bridge, slot, png) : Promise.resolve(false));
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

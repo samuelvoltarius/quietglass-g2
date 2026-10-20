@@ -244,7 +244,7 @@ describe("phone page", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  it("renders in German, in tabs, with the language picker under \"Mehr\"", () => {
+  it("renders in German, in three tabs, with the language picker under \"Einstellungen\"", () => {
     let html = "";
     const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root, documentElement: { lang: "" } });
@@ -267,17 +267,16 @@ describe("phone page", () => {
     };
     mountPhoneUi(ports);
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf('data-tab="more"')).toBeLessThan(html.indexOf('id="language"'));
-    expect(html.indexOf('data-tab="connect"')).toBeLessThan(html.indexOf('id="provider"'));
+    expect(html.indexOf('data-tab="settings"')).toBeLessThan(html.indexOf('id="language"'));
+    expect(html.indexOf('data-tab="settings"')).toBeLessThan(html.indexOf('id="provider"'));
     expect(html).toContain('<nav class="tabbar"');
-    for (const id of ["agent", "speech", "glasses", "connect", "more"]) expect(html).toContain(`data-tab-go="${id}"`);
+    // QUS v1: exactly three tabs in one row.
+    expect([...html.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1])).toEqual(["now", "sessions", "settings"]);
     expect(html).toContain('id="hdr-chip"');
     for (const id of ["apply", "refresh", "send-prompt", "speech-enable", "speech-rate", "address", "token", "conn", "transcript", "session-list"]) expect(html).toContain(`id="${id}"`);
     expect(html).toContain("Speichern und verbinden");
     expect(html).toContain("Vorlese-Sprache");
     expect(html).toContain("Wischrichtung umkehren");
-    expect(html.indexOf('data-tab-go="glasses"')).toBeLessThan(html.indexOf('data-tab-go="connect"'));
-    expect(html.indexOf('data-tab-go="connect"')).toBeLessThan(html.indexOf('data-tab-go="more"'));
     expect(html).not.toContain("Save and connect");
   });
 });
@@ -330,19 +329,23 @@ describe("switching language on the phone", () => {
     });
 
     const drawn: string[] = [];
+    let images = 0;
+    let cockpitPages = 0;
     let ready = false;
     harness.bridge = {
       getLocalStorage: async () => "",
       setLocalStorage: async () => true,
       // The language switch rebuilds the page once (the menu labels change).
-      rebuildPageContainer: async (page: { textObject?: { content?: string }[] }) => {
+      rebuildPageContainer: async (page: { textObject?: { content?: string }[]; imageObject?: unknown[] }) => {
+        if ((page.imageObject?.length ?? 0) > 0) cockpitPages += 1;
         drawn.push((page.textObject ?? []).map((item) => item.content ?? "").join("\n")); return true;
       },
-      createStartUpPageContainer: async (page: { textObject?: { content?: string }[] }) => {
+      createStartUpPageContainer: async (page: { textObject?: { content?: string }[]; imageObject?: unknown[] }) => {
+        if ((page.imageObject?.length ?? 0) > 0) cockpitPages += 1;
         drawn.push((page.textObject ?? []).map((item) => item.content ?? "").join("\n")); return 0;
       },
       textContainerUpgrade: async (update: { content?: string }) => { drawn.push(update.content ?? ""); return true; },
-      updateImageRawData: async () => "success",
+      updateImageRawData: async () => { images += 1; return "success"; },
       shutDownPageContainer: async () => false,
       onEvenHubEvent: () => { ready = true; return () => undefined; },
       onDeviceStatusChanged: () => () => undefined,
@@ -351,18 +354,20 @@ describe("switching language on the phone", () => {
     vi.resetModules();
     await import("../src/main");
     await vi.waitFor(() => expect(ready && html.length > 0).toBe(true));
-    // No token: demo on first start, with the one-line hint (QIS v1.2 #7).
-    expect(drawn.join("\n")).toContain("Demo · set up the connection on the phone · 2× = exit");
+    // No token: demo on first start, the status cockpit (an image of four tiles, the hint line is part of it).
+    await vi.advanceTimersByTimeAsync(5);
+    expect(cockpitPages).toBe(2); // the ignored first rebuild and the one create
+    expect(images).toBeGreaterThan(0);
     expect(html).toContain("Save and connect");
 
-    const before = drawn.length;
+    const before = images;
     listeners.get("#language:change")?.({ target: { value: "de" } });
     // Far less than the 1 s ticker: the redraw must come from the switch itself.
     await vi.advanceTimersByTimeAsync(5);
 
-    const after = drawn.slice(before).join("\n");
-    expect(after).toContain("Demo · Verbindung am Handy einrichten · 2× = Ende");
-    expect(after).toContain("arbeitet");
+    // The glasses follow at once: the cockpit is rebuilt and its tiles are sent again in German.
+    expect(images).toBeGreaterThan(before);
+    expect(cockpitPages).toBe(3);
     expect(html).toContain("Speichern und verbinden");
     expect(stored.get("quietglass.locale")).toBe("de");
   });

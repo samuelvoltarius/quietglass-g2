@@ -1,18 +1,19 @@
 /**
  * The pages of the glasses and where everything sits on the 576 x 288 display.
  *
- * Four page kinds exist. None has more than four image containers (each at
+ * Five page kinds exist. None has more than four image containers (each at
  * most 288 x 144) and every one has exactly one container that captures input:
  * the body text.
  *
  *  - "text": header, body, footer. Everything that is just words.
- *  - "walk": a big arrow (144 x 144) and the distance with its approach bar
- *    (288 x 144) side by side, the street name as two image halves across the
- *    full width, one line of small text, the footer.
  *  - "ride": "noch 2 Stationen" as three images in one row (the word before, the
  *    big pixel digits, the word after), small text below, the footer.
  *  - "wait": the big countdown (288 x 120) next to a bus-stop scene (288 x 120)
  *    that a bus drives into in the last minute; text below, the footer.
+ *  - "cockpit" (QUS v1): the whole display as one picture, four 288 x 144 tiles
+ *    (ids 4-7), plus one empty full-screen text container that owns the input.
+ *    The departures board, following a bus and (0.9.0) the walking guidance
+ *    with its map; nothing but the tiles is ever updated.
  *  - "board": one thing big - minutes in pixel digits (288 x 104) beside a
  *    picture (the line as a badge, the bus stop, "next stop") - then one bold
  *    line across the full width (two 288 x 50 halves), three short text
@@ -29,7 +30,7 @@
 export const SCREEN_WIDTH = 576;
 export const SCREEN_HEIGHT = 288;
 
-export type PageKind = "text" | "walk" | "ride" | "wait" | "board";
+export type PageKind = "text" | "ride" | "wait" | "board" | "cockpit";
 
 export interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 export interface ImageSpec extends Box { readonly id: number; readonly name: string }
@@ -45,7 +46,7 @@ export const FOOTER_BOX: Box = { x: 0, y: 252, width: SCREEN_WIDTH, height: 34 }
 /** Body of the plain text page. */
 export const TEXT_BODY: Box = { x: 0, y: 36, width: SCREEN_WIDTH, height: 214 };
 
-// ---- walk ---------------------------------------------------------------------
+// ---- shared sizes (the turn card of src/glasses/turncard.ts, the street strips of the board) ----
 
 export const ARROW_SIZE = 144;
 export const CARD_WIDTH = 288;
@@ -54,13 +55,6 @@ export const STREET_WIDTH = 576;
 export const STREET_HEIGHT = 56;
 export const STREET_HALF = STREET_WIDTH / 2;
 
-export const WALK_IMAGES: readonly ImageSpec[] = [
-  { id: 4, name: "arrow", x: 64, y: 4, width: ARROW_SIZE, height: ARROW_SIZE },
-  { id: 5, name: "distance", x: 224, y: 4, width: CARD_WIDTH, height: CARD_HEIGHT },
-  { id: 6, name: "street-left", x: 0, y: 152, width: STREET_HALF, height: STREET_HEIGHT },
-  { id: 7, name: "street-right", x: STREET_HALF, y: 152, width: STREET_HALF, height: STREET_HEIGHT },
-];
-export const WALK_BODY: Box = { x: 0, y: 212, width: SCREEN_WIDTH, height: 38 };
 
 // ---- ride ---------------------------------------------------------------------
 
@@ -99,12 +93,23 @@ export const BOARD_IMAGES: readonly ImageSpec[] = [
 export const BOARD_BODY: Box = { x: 0, y: 160, width: SCREEN_WIDTH, height: 90 };
 export const BOARD_ROWS = 3;
 
+// ---- cockpit ------------------------------------------------------------------
+
+export const COCKPIT_IMAGES: readonly ImageSpec[] = [
+  { id: 4, name: "cockpit-nw", x: 0, y: 0, width: 288, height: 144 },
+  { id: 5, name: "cockpit-ne", x: 288, y: 0, width: 288, height: 144 },
+  { id: 6, name: "cockpit-sw", x: 0, y: 144, width: 288, height: 144 },
+  { id: 7, name: "cockpit-se", x: 288, y: 144, width: 288, height: 144 },
+];
+/** The input container of the cockpit: empty, over the whole display. */
+export const COCKPIT_BODY: Box = { x: 0, y: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+
 export const IMAGES: Readonly<Record<PageKind, readonly ImageSpec[]>> = {
-  text: [], walk: WALK_IMAGES, ride: RIDE_IMAGES, wait: WAIT_IMAGES, board: BOARD_IMAGES,
+  text: [], ride: RIDE_IMAGES, wait: WAIT_IMAGES, board: BOARD_IMAGES, cockpit: COCKPIT_IMAGES,
 };
 
 export const BODY_BOX: Readonly<Record<PageKind, Box>> = {
-  text: TEXT_BODY, walk: WALK_BODY, ride: RIDE_BODY, wait: WAIT_BODY, board: BOARD_BODY,
+  text: TEXT_BODY, ride: RIDE_BODY, wait: WAIT_BODY, board: BOARD_BODY, cockpit: COCKPIT_BODY,
 };
 
 export function imageSpec(kind: PageKind, id: number): ImageSpec | undefined {

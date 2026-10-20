@@ -132,7 +132,7 @@ function fakeServer() {
 const inner: Card = { id: "c1", titel: "Neues Modell testen?", text: "Modell Z war schneller.", wirkung: "intern", antworten: ["ja", "nein"] };
 const outer: Card = { id: "c2", titel: "Drucker starten?", text: "Testdruck bereit.", wirkung: "physisch", antworten: ["ja", "nein"] };
 
-async function boot(fake: Fake, language = "de-AT"): Promise<FakeRoot> {
+async function boot(fake: Fake, language = "de-AT", options: { start?: boolean } = {}): Promise<FakeRoot> {
   const root = fakeRoot();
   vi.stubGlobal("document", { getElementById: () => root });
   vi.stubGlobal("navigator", { language });
@@ -143,6 +143,12 @@ async function boot(fake: Fake, language = "de-AT"): Promise<FakeRoot> {
   await import("../src/main");
   await vi.waitFor(() => expect(fake.ready()).toBe(true));
   await vi.waitFor(() => expect(root.renders).toBeGreaterThan(0));
+  // QUS v1: the app opens on the start page; most tests work on the open questions, one tap away (the first entry).
+  if (!options.start) {
+    await vi.waitFor(() => expect(fake.header()).toContain("Xaventra"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/2× = (zurück|back)/));
+  }
   return root;
 }
 
@@ -168,11 +174,15 @@ describe("Xaventra HUD lifecycle", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); FakeSocket.last = null; FakeSocket.all = []; });
 
-  it("first run without an address: says what to do and fetches nothing", async () => {
+  it("first run without an address: starts in demo on the start page with the hint line, explains the setup on the phone and fetches nothing", async () => {
     const fake = fakeBridge();
-    const root = await boot(fake);
-    await vi.waitFor(() => expect(fake.body()).toContain("Adresse und Token am Handy eintragen."));
-    expect(root.innerHTML).toContain("Erster Start");
+    const root = await boot(fake, "de-AT", { start: true });
+    await vi.waitFor(() => expect(fake.body()).toContain("Demo · Verbindung am Handy einrichten"));
+    expect(fake.header()).toBe("Xaventra · Demo");
+    expect(fake.body()).toContain("● Fragen ·");
+    await vi.waitFor(() => expect(root.innerHTML).toContain("In drei Schritten"));
+    // The phone has exactly three tabs in one bar.
+    expect((root.innerHTML.match(/data-tab-go=/g) ?? []).length).toBe(3);
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
 
@@ -202,11 +212,14 @@ describe("Xaventra HUD lifecycle", () => {
     await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
   });
 
-  it("regression: a double tap on a card leaves (asks the system) and never answers no", async () => {
+  it("regression: a double tap on a card goes back to the start page, 2× there asks the system - and nothing is answered no", async () => {
     server.change([inner], "v2");
     const fake = fakeBridge(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.header()).toBe("Xaventra · ● live"));
+    expect(fake.exit.calls).toEqual([]);
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
@@ -217,14 +230,10 @@ describe("Xaventra HUD lifecycle", () => {
     const fake = fakeBridge(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
-    fake.emit(DOWN);
+    fake.emit(DOWN); // one card: Ja, Nein, then Ja again
     await vi.waitFor(() => expect(fake.body()).toContain("● Nein"));
-    fake.emit(DOWN); // one card: Ja, Nein, then the Hilfe row (side menu off), then Ja again
-    await vi.waitFor(() => expect(fake.body()).toContain("● Hilfe"));
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.body()).toContain("● Ja"));
-    fake.emit(UP);
-    await vi.waitFor(() => expect(fake.body()).toContain("● Hilfe"));
     fake.emit(UP);
     await vi.waitFor(() => expect(fake.body()).toContain("● Nein"));
     fake.emit(UP);
@@ -260,24 +269,6 @@ describe("Xaventra HUD lifecycle", () => {
     expect(fake.menus.every((menu) => menu.length === 0)).toBe(true);
   });
 
-  it("Hilfe is the last row of the list: a swipe goes there, a tap opens a page with the gestures, a tap closes it", async () => {
-    server.change([inner], "v2");
-    const fake = fakeBridge(configured());
-    await boot(fake);
-    await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
-    fake.emit(DOWN);
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("● Hilfe"));
-    await vi.waitFor(() => expect(fake.footer()).toContain("Tippen = Hilfe"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("XAVENTRA · Hilfe"));
-    await vi.waitFor(() => expect(fake.body()).toContain("Tippen = Antwort wählen"));
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = schließen · 2× = zurück"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
-    expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
-  });
-
   it("swipe to Nein, tap, tap answers no", async () => {
     server.change([inner], "v2");
     const fake = fakeBridge(configured());
@@ -298,7 +289,7 @@ describe("Xaventra HUD lifecycle", () => {
     server.change([outer], "v2");
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toContain("physisch"));
+    await vi.waitFor(() => expect(fake.body()).toContain("physisch: Drucker starten?"));
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen = Ja senden"));
     expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
@@ -324,7 +315,7 @@ describe("Xaventra HUD lifecycle", () => {
     const fake = fakeBridge(configured());
     const root = await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Token abgelehnt"));
-    expect(fake.header()).toBe("XAVENTRA · offline");
+    expect(fake.header()).toBe("Xaventra · offline");
     // QIS v1.2 #8: no HTTP code on the glasses; the phone shows it.
     expect(fake.body() + fake.footer()).not.toMatch(/\b401\b/);
     await vi.waitFor(() => expect(root.innerHTML).toContain("Fehler: Token abgelehnt (HTTP 401)"));
@@ -339,7 +330,7 @@ describe("Xaventra HUD lifecycle", () => {
     const fake = fakeBridge(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Xaventra nicht erreichbar"));
-    expect(fake.header()).toBe("XAVENTRA · offline");
+    expect(fake.header()).toBe("Xaventra · offline");
   });
 
   describe("voice", () => {
@@ -377,7 +368,7 @@ describe("Xaventra HUD lifecycle", () => {
       await vi.waitFor(() => expect(fake.footer()).toBe("Nochmal tippen = Nein senden · Wischen/2× = abbrechen"));
       expect(fake.body()).toContain("● Nein");
       fake.emit(DOWN);
-      await vi.waitFor(() => expect(fake.footer()).toContain("Tippen = Hilfe"));
+      await vi.waitFor(() => expect(fake.footer()).toContain("Tippen = wählen"));
       await new Promise((done) => setTimeout(done, 30));
       expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
     });
@@ -407,7 +398,7 @@ describe("Xaventra HUD lifecycle", () => {
       server.state.voice = { transcript: "ja", action: "needs_confirm", cardId: "c2", reply: "" };
       const fake = fakeBridge(configured());
       await boot(fake);
-      await vi.waitFor(() => expect(fake.header()).toContain("physisch"));
+      await vi.waitFor(() => expect(fake.body()).toContain("physisch:"));
       await speak(fake);
       await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen = Ja senden"));
       expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(false);
@@ -524,7 +515,7 @@ describe("Xaventra HUD lifecycle", () => {
         await vi.waitFor(() => expect(socket.json().at(-1)).toEqual({ type: "stop" }));
         socket.say("Wie ist der Stand?", true);
         await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = senden · 2× = verwerfen"));
-        expect(fake.header()).toBe("XAVENTRA · senden?");
+        expect(fake.header()).toBe("Xaventra · senden?");
         expect(fake.body()).toContain("Du: Wie ist der Stand?");
         expect(fake.mic.at(-1)).toBe(false);
         await new Promise((done) => setTimeout(done, 30));
@@ -631,12 +622,14 @@ describe("Xaventra HUD lifecycle", () => {
       });
     });
 
-    it("without a configured address, holding does not open the microphone", async () => {
+    it("in the first-start demo holding works on the sample data; nothing leaves the device", async () => {
       const fake = fakeBridge();
-      await boot(fake);
+      await boot(fake, "de-AT", { start: true });
       fake.emit(HOLD);
+      await vi.waitFor(() => expect(fake.mic).toContain(true));
+      fake.emit(RELEASE);
       await new Promise((done) => setTimeout(done, 20));
-      expect(fake.mic).toEqual([]);
+      expect(server.fetchMock).not.toHaveBeenCalled();
     });
   });
 
@@ -644,8 +637,8 @@ describe("Xaventra HUD lifecycle", () => {
     it("double tap with no open question asks the system to exit (mode 1)", async () => {
       server.change([], "v2");
       const fake = fakeBridge(configured());
-      await boot(fake);
-      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await boot(fake, "de-AT", { start: true });
+      await vi.waitFor(() => expect(fake.body()).toContain("Fragen · 0"));
       fake.emit(DOUBLE);
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     });
@@ -654,8 +647,8 @@ describe("Xaventra HUD lifecycle", () => {
       server.change([], "v2");
       const fake = fakeBridge(configured());
       fake.exit.answer = false;
-      await boot(fake);
-      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await boot(fake, "de-AT", { start: true });
+      await vi.waitFor(() => expect(fake.body()).toContain("Fragen · 0"));
       fake.emit(DOUBLE);
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
       // Still alive: a new card arrives and can be answered.
@@ -663,8 +656,9 @@ describe("Xaventra HUD lifecycle", () => {
       await new Promise((done) => setTimeout(done, 100));
       // The card is polled but not drawn while the dialog may be on screen.
       expect(fake.body()).not.toContain("Neues Modell testen?");
-      fake.emit(CLICK); // the next input restores the page (and arms the answer)
+      fake.emit(CLICK); // the next input restores the page (and opens the questions)
       await vi.waitFor(() => expect(fake.body()).toContain("Neues Modell testen?"));
+      fake.emit(CLICK); // arms the answer
       await vi.waitFor(() => expect(fake.footer()).toContain("Nochmal tippen"));
       fake.emit(CLICK);
       await vi.waitFor(() => expect(server.state.calls.some((c) => c.key === "POST /hud/answer")).toBe(true));
@@ -672,8 +666,8 @@ describe("Xaventra HUD lifecycle", () => {
 
     it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
       const fake = fakeBridge(configured());
-      await boot(fake);
-      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await boot(fake, "de-AT", { start: true });
+      await vi.waitFor(() => expect(fake.body()).toContain("Fragen · 0"));
       await new Promise((done) => setTimeout(done, 20));
       const creates = fake.bridge.createStartUpPageContainer.mock.calls.length;
       // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
@@ -706,8 +700,8 @@ describe("Xaventra HUD lifecycle", () => {
 
     it("5 right after the exit call (no 4): the app counts as paused, and the first 2x after that is not swallowed - it restores and asks again", async () => {
       const fake = fakeBridge(configured());
-      await boot(fake);
-      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await boot(fake, "de-AT", { start: true });
+      await vi.waitFor(() => expect(fake.body()).toContain("Fragen · 0"));
       fake.exit.answer = true;
       fake.emit(DOUBLE);
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
@@ -723,7 +717,7 @@ describe("Xaventra HUD lifecycle", () => {
     it("hardware order (step log 0.5.11): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again, feed on, next 2x asks", async () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
       const fake = fakeBridge(configured());
-      await boot(fake);
+      await boot(fake, "de-AT", { start: true });
       await vi.advanceTimersByTimeAsync(100);
       const host = fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>;
       const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + (host[name]?.mock?.calls.length ?? 0), 0);
@@ -740,7 +734,7 @@ describe("Xaventra HUD lifecycle", () => {
       fake.emit(5);                                            // "No": the dialog is gone
       await vi.advanceTimersByTimeAsync(1_000);
       expect(fake.bridge.createStartUpPageContainer.mock.calls.length).toBeGreaterThan(pagesBefore);  // page up again at once, no gesture needed
-      expect(fake.body()).toContain("Neues Modell testen?");   // with the card that arrived meanwhile
+      expect(fake.body()).toContain("● Fragen · 1");           // with the card that arrived meanwhile
       const calls = server.state.calls.length;
       server.change([], "v4");
       await vi.advanceTimersByTimeAsync(2_000);
@@ -754,8 +748,8 @@ describe("Xaventra HUD lifecycle", () => {
       server.change([], "v2");
       const fake = fakeBridge(configured());
       fake.exit.answer = "reject";
-      await boot(fake);
-      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await boot(fake, "de-AT", { start: true });
+      await vi.waitFor(() => expect(fake.body()).toContain("Fragen · 0"));
       fake.emit(DOUBLE);
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     });
@@ -763,8 +757,8 @@ describe("Xaventra HUD lifecycle", () => {
     it("after the system ends the app (sysEvent 7) following the exit dialog, the feed is no longer polled", async () => {
       server.change([], "v2");
       const fake = fakeBridge(configured());
-      await boot(fake);
-      await vi.waitFor(() => expect(fake.body()).toContain("Keine offenen Fragen."));
+      await boot(fake, "de-AT", { start: true });
+      await vi.waitFor(() => expect(fake.body()).toContain("Fragen · 0"));
       fake.emit(DOUBLE);
       await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
       fake.emit(7);

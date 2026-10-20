@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLiveStt, liveSttUrl, LiveTranscript, parseTranscript, redrawDelay } from "../src/stt/live";
 import { batchRange, MAX_UPLOAD_BYTES, sliceChunks, transcribeTimeoutMs } from "../src/stt/provider";
-import { buildView, clockLabel, tailRows } from "../src/glasses/view";
-import { startInspection } from "../src/log/entries";
+import { reviewView } from "../src/glasses/view";
+import { clockLabel } from "../src/cockpit/model";
 import { FakeSocket } from "./fake-socket";
 
 const WS = FakeSocket as unknown as typeof WebSocket;
@@ -142,34 +142,12 @@ describe("live client", () => {
 });
 
 describe("recording view", () => {
-  const inspection = startInspection("i1", "Flat 3", 0);
-  const base = { phase: "recording" as const, severity: "note" as const, pending: null, status: "idle" as const, mock: false, locale: "de" as const };
-
-  it("shows the newest words of a long live text, with a clock in the footer", () => {
-    const text = Array.from({ length: 80 }, (_, i) => "Wort" + i).join(" ");
-    const view = buildView(inspection, { ...base, live: "live", liveText: text, elapsedMs: 75_000 }, 0);
-    expect(view.body.length).toBeLessThanOrEqual(7);
-    expect(view.body.at(-2)).toContain("Wort79");
-    expect(view.body[0]!.startsWith("…")).toBe(true);
-    expect(view.header).toContain("1:15");
-    expect(view.footer).toBe("Tippen = fertig");
-  });
-
-  it("says when the live text is lost and recording goes on", () => {
-    const view = buildView(inspection, { ...base, live: "lost", liveText: "alt", elapsedMs: 0 }, 0);
-    expect(view.body.join("\n")).toContain("Live-Text weg");
-    expect(view.body.join("\n")).not.toContain("alt");
-    expect(view.header).toContain("ohne Live-Text");
-  });
-
   it("names a cut upload in the review header", () => {
-    const view = buildView(inspection, { ...base, phase: "review", pending: "Rest", truncated: true }, 0);
-    expect(view.header).toBe("FIELDLOG · Behalten? · nur die letzten 30 s");
+    const view = reviewView({ locale: "de", severity: "note", pending: "Rest", reviewChoice: 0, confirmDiscard: false, truncated: true });
+    expect(view.header).toBe("Behalten? · nur die letzten 30 s");
   });
 
-  it("helpers: tail rows and m:ss", () => {
-    expect(tailRows(["a", "b", "c"], 2, 56)).toEqual(["… b", "c"]);
-    expect(tailRows(["a"], 2, 56)).toEqual(["a"]);
+  it("helper: m:ss", () => {
     expect(clockLabel(600_000)).toBe("10:00");
     expect(clockLabel(9_500)).toBe("0:09");
   });

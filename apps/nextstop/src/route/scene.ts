@@ -5,18 +5,16 @@ import { fit, rideStopName, stopNamer, type StopView } from "../glasses/view";
 import { minutesUntil } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import type { PageKind } from "../glasses/layout";
-import { ARROW_SIZE, CARD_HEIGHT, CARD_WIDTH, RIDE_BAND, RIDE_IMAGES, WAIT_BAND, WAIT_IMAGES } from "../glasses/layout";
-import { pixelArrowFor } from "../glasses/icons";
-import { renderPixelIcon } from "../glasses/pixel";
-import {
-  approachSteps, bigDistance, cardKey, numberKey, renderNumberPng, renderTurnCardPng, type BigNumber,
-} from "../glasses/turncard";
-import { renderStreetPngs } from "../glasses/street";
+import { RIDE_BAND, RIDE_IMAGES, WAIT_BAND, WAIT_IMAGES } from "../glasses/layout";
+import { numberKey, renderNumberPng, type BigNumber } from "../glasses/turncard";
 import { renderWordsPng, type WordLine } from "../glasses/words";
 import { busFrame, busKey, renderBusPng } from "../glasses/bus";
-import { arrivalOf, clock, departureOf, distanceText, waitText, whenPhrase } from "./journey";
+import { arrivalOf, clock, departureOf, waitText } from "./journey";
 import type { GuideState } from "./guide";
-import { ROUTE_WIDTH, TURN_KEYS, guideView, type GuideDisplay } from "./view";
+import type { WalkNav } from "./walk";
+import type { WalkMapInput } from "../map/draw";
+import { walkCockpitScene, walkModel } from "../cockpit/walk";
+import { ROUTE_WIDTH, guideView, type GuideDisplay } from "./view";
 
 /**
  * What the glasses show for the guide, as a whole: the words (`view`), which
@@ -25,8 +23,8 @@ import { ROUTE_WIDTH, TURN_KEYS, guideView, type GuideDisplay } from "./view";
  * The three stages of a journey get a picture each, because the glasses'
  * text cannot be made larger and these are read at a glance, on the move:
  *
- *  - walking with a route: the arrow, the distance in big digits with the
- *    approach bar, the street as a bold strip;
+ *  - walking with a route: the cockpit (QUS v1) - a small map of the walk on
+ *    the left, the next instruction in big letters on the right;
  *  - waiting at a stop: the countdown in big digits, and a bus that drives
  *    into the stop picture in the last minute;
  *  - riding: "noch 2 Stationen" in big digits, and in the last stretch a pulsing
@@ -73,6 +71,8 @@ function alightRow(stop: string, arrives: Date, prefix: string, locale: Locale):
 export interface SceneDisplay extends GuideDisplay {
   /** The animation beat (see {@link beatOf}); 0 keeps everything still. */
   readonly beat?: number;
+  /** The map of the walking page (settled view, route, streets); without it the walk stays text. */
+  readonly map?: WalkMapInput | null;
 }
 
 export function guideScene(
@@ -82,7 +82,9 @@ export function guideScene(
   const beat = display.beat ?? 0;
   const step = state.step;
 
-  if (step.kind === "walk" && display.walk) return walkScene(view, step, display, now, locale);
+  if (step.kind === "walk" && display.walk && display.map) {
+    return walkScene(view, step, { ...display, walk: display.walk, map: display.map }, now, locale);
+  }
   if (step.kind === "transit" && state.phase === "board") return waitScene(view, step, now, locale, beat);
   if (step.kind === "transit" && state.phase === "ride") return rideScene(view, step, state, now, locale, beat, display);
   return plainScene(view);
@@ -90,50 +92,15 @@ export function guideScene(
 
 // ---- walking --------------------------------------------------------------------
 
+/** The walking page: the cockpit with the map (src/cockpit/walk.ts). */
 function walkScene(
   view: StopView, step: Extract<GuideState["step"], { kind: "walk" }>,
-  display: SceneDisplay, now: Date, locale: Locale,
+  display: SceneDisplay & { readonly walk: WalkNav; readonly map: WalkMapInput }, now: Date, locale: Locale,
 ): Scene {
-  const nav = display.walk!;
-  const turn = nav.next;
-  const arriving = turn.type === "arrive";
-  const leg = step.leg;
-
-  const card = { label: bigDistance(nav.toNext, locale), steps: approachSteps(nav.toNext, nav.stretch) };
-  const road = arriving
-    ? (leg.toDestination ? leg.toName : rideStopName(leg.toName))
-    : turn.street ?? t(locale, TURN_KEYS[turn.type]);
-
-  const next = step.next;
-  const line = !leg.toDestination && next
-    ? withTail(
-      t(locale, "r.then", { line: next.line, to: next.headsign }),
-      ` · ${whenPhrase(departureOf(next), now, locale)}`,
-    )
-    : row(t(locale, "r.walkLeft", {
-      distance: distanceText(nav.remaining, locale), minutes: Math.max(1, Math.round(nav.remaining / 80)),
-    }));
-
-  const arrowKey = turn.type;
-  return {
-    view: { header: "", body: [line], footer: view.footer },
-    kind: "walk",
-    animated: false,
-    images: [
-      { id: 4, key: `arrow:${arrowKey}`, render: () => renderPixelIcon(pixelArrowFor(turn.type), ARROW_SIZE, ARROW_SIZE) },
-      { id: 5, key: `card:${cardKey(card)}`, render: () => renderTurnCardPng(card, CARD_WIDTH, CARD_HEIGHT) },
-      ...streetImages(road),
-    ],
-  };
-}
-
-function streetImages(road: string): SceneImage[] {
-  let halves: Promise<[Uint8Array, Uint8Array]> | null = null;
-  const both = (): Promise<[Uint8Array, Uint8Array]> => (halves ??= renderStreetPngs(road));
-  return [
-    { id: 6, key: `street:${road}`, render: async () => (await both())[0] },
-    { id: 7, key: `street:${road}`, render: async () => (await both())[1] },
-  ];
+  const model = walkModel({
+    nav: display.walk, leg: step.leg, next: step.next, arrival: display.arrival, now, locale, hint: view.footer,
+  });
+  return walkCockpitScene(model, display.map);
 }
 
 // ---- waiting --------------------------------------------------------------------

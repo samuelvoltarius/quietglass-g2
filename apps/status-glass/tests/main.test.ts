@@ -323,6 +323,9 @@ describe("status-glass lifecycle", () => {
   });
 
   it("sends only the tiles that changed: same state sends nothing, one changed figure sends one tile", async () => {
+    // Only the date is frozen (at the start of a minute): a minute turning over mid-test would redraw the clock tile.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-20T14:05:00"));
     const fake = fakeBridge(TWO);
     await boot(fake);
     await vi.waitFor(() => expect(replies).toHaveLength(2));

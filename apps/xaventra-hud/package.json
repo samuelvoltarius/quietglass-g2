@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/xaventra-hud",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "description": "Quietglass Xaventra HUD — see what your Xaventra agent is doing, answer its questions yes/no and talk to it by voice",
   "author": "Quietglass",
   "license": "MIT",

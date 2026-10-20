@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { deriveRaw } from "../src/car/derive";
 import { demoTelemetry, type DemoScene } from "../src/car/demo";
 import { parseState, type CarState } from "../src/car/model";
-import { IMAGE_LIMITS } from "../src/glasses/images";
-import { buildFrames, buildView, HEADER_WIDTH, ROW_WIDTH, ROWS, type Connection, type ViewState } from "../src/glasses/views";
-import { slotsFor, bodySpec } from "../src/glasses/render";
+import { buildView, HEADER_WIDTH, ROW_WIDTH, ROWS, type Connection, type ViewState } from "../src/glasses/views";
+import { COCKPIT_TILES } from "../src/glasses/render";
 import { MAX_BODY_ROWS } from "../src/glasses/screen";
 import { ARM_MS, CONTROL_ITEMS, INITIAL_CONTROL, PAGES, tapControl, type ControlState, type Page } from "../src/pages";
 import type { Locale } from "../src/i18n";
@@ -59,20 +58,11 @@ describe("views fit the display", () => {
             for (const row of view.body) expect(row.length).toBeLessThanOrEqual(ROW_WIDTH);
             // Long texts are never cut on the waiting page.
             if (!c) expect(view.body.join(" ")).not.toContain("…");
-            const frames = buildFrames(s, view.layout);
-            const slots = slotsFor(view.layout);
-            expect(slots.length).toBeLessThanOrEqual(IMAGE_LIMITS.maxContainers);
-            for (const slot of slots) {
-              expect(slot.width).toBeGreaterThanOrEqual(IMAGE_LIMITS.minWidth);
-              expect(slot.width).toBeLessThanOrEqual(IMAGE_LIMITS.maxWidth);
-              expect(slot.height).toBeGreaterThanOrEqual(IMAGE_LIMITS.minHeight);
-              expect(slot.height).toBeLessThanOrEqual(IMAGE_LIMITS.maxHeight);
-              expect(slot.x + slot.width).toBeLessThanOrEqual(576);
-              expect(slot.y + slot.height).toBeLessThanOrEqual(bodySpec(view.layout).y);
+            if (view.layout === "cockpit") {
+              // The cockpit page: four tiles of 288 x 144 over the whole display.
+              expect(COCKPIT_TILES).toHaveLength(4);
+              for (const tile of COCKPIT_TILES) { expect(tile.width).toBe(288); expect(tile.height).toBe(144); expect(tile.x + tile.width).toBeLessThanOrEqual(576); expect(tile.y + tile.height).toBeLessThanOrEqual(288); }
             }
-            const pictures = [frames.a, frames.b, frames.c].filter(Boolean);
-            expect(pictures.length).toBe(slots.length - 1);
-            expect(frames.icon.width).toBe(64);
           }
         });
       }
@@ -81,22 +71,14 @@ describe("views fit the display", () => {
 });
 
 describe("page content", () => {
-  it("drive: summary header and consumption row", () => {
-    const view = buildView(state("de", "drive", car("drive")));
-    expect(view.layout).toBe("drive");
-    expect(view.header).toMatch(/^BYD · FAHRT · D · 58 % · 172 km · DEMO$/);
-    expect(view.body[0]).toContain("Verbrauch 15,8 kWh/100 km");
-  });
-
-  it("charge: eta, energy and DC", () => {
-    const view = buildView(state("de", "charge", car("charge")));
-    expect(view.layout).toBe("charge");
-    expect(view.body[0]).toMatch(/^Fertig in \d+ min · geladen [\d,]+ kWh · DC-Schnelllader$/);
-  });
-
-  it("status: lock, doors, 12 V", () => {
-    const view = buildView(state("en", "status", car("parked")));
-    expect(view.body[0]).toBe("Locked · doors closed · 12 V 12.6 V");
+  it("drive, charge and status are the cockpit layout with the gesture footer; the header keeps the summary", () => {
+    for (const [page, scene] of [["drive", "drive"], ["charge", "charge"], ["status", "parked"]] as const) {
+      const view = buildView(state("de", page, car(scene)));
+      expect(view.layout).toBe("cockpit");
+      expect(view.body).toEqual([]);
+      expect(view.footer.endsWith("2× = Ende")).toBe(true);
+    }
+    expect(buildView(state("de", "drive", car("drive"))).header).toMatch(/^BYD · FAHRT · D · 58 % · 172 km · DEMO$/);
   });
 
   it("a critical warning pulses in the header", () => {
@@ -180,29 +162,6 @@ describe("page content", () => {
     const c = car("parked", { command: { id: "c1", action: "climate_off", status: "busy", text: "⏳ BYD beschäftigt", at: 900 } });
     const view = buildView(state("de", "control", c));
     expect(view.body[5]).toBe("Klima aus: BYD beschäftigt – in 2 min nochmal");
-  });
-
-  it("the icon blinks with the turn signal", () => {
-    const c = car("drive");
-    const blinking = { ...c, drive: { ...c.drive, turnLeft: true } };
-    const on = buildFrames(state("de", "drive", blinking, { now: 0 }), "drive").icon;
-    const off = buildFrames(state("de", "drive", blinking, { now: 500 }), "drive").icon;
-    // Column 0..8 holds the left arrow.
-    const lit = (b: typeof on) => Array.from({ length: 30 }, (_, y) => b.pixels[y * 64 + 3]).some((v) => (v ?? 0) > 0);
-    expect(lit(on)).toBe(true);
-    expect(lit(off)).toBe(false);
-  });
-
-  it("the power bar shows regen to the left of zero", () => {
-    const c = car("drive");
-    const regen = { ...c, drive: { ...c.drive, powerKw: -30 } };
-    const energy = buildFrames(state("de", "drive", regen), "drive").b!;
-    const zero = 4 + Math.round(280 * 0.3);
-    const row = 92;
-    const leftLit = Array.from({ length: 20 }, (_, i) => energy.pixels[row * 288 + zero - 5 - i]).some((v) => (v ?? 0) > 0);
-    const rightLit = Array.from({ length: 20 }, (_, i) => energy.pixels[row * 288 + zero + 5 + i]).some((v) => (v ?? 0) > 0);
-    expect(leftLit).toBe(true);
-    expect(rightLit).toBe(false);
   });
 
   it("body rows never exceed the plain page", () => {

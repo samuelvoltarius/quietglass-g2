@@ -3,7 +3,7 @@ import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { fitView } from "./fit";
 import { footer as footerLine, leadFooter } from "./footer";
-import type { PostureView } from "./view";
+import type { TextView } from "./page";
 
 export interface SensorViewOptions {
   readonly locale: Locale;
@@ -18,12 +18,12 @@ export interface SensorViewOptions {
  * magnitude and rate in the header, the axis that moved most marked with ●.
  * Updated only through text upgrades (the caller throttles to ~5 per second).
  */
-export function buildSensorView(stats: SensorStats, options: SensorViewOptions, now = Date.now()): PostureView {
+export function buildSensorView(stats: SensorStats, options: SensorViewOptions, now = Date.now()): TextView {
   return fitView(composeSensorView(stats, options, now));
 }
 
 /** Before the safety cut; the budget test checks it never needs one. */
-export function composeSensorView(stats: SensorStats, options: SensorViewOptions, now = Date.now()): PostureView {
+export function composeSensorView(stats: SensorStats, options: SensorViewOptions, now = Date.now()): TextView {
   const { locale } = options;
   const rate = sampleRate(stats.recent, now);
   const header = t(locale, "s.header", {

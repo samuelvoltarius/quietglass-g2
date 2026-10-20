@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, setLocale, tr, type Messages } from "../src/i18n";
 import { autoTitle, messages, quickNotes, t } from "../src/messages";
-import { buildView, FOOTER_WIDTH, HEADER_WIDTH, MAX_BODY_ROWS, type Phase, type ViewOptions } from "../src/glasses/view";
+import {
+  FOOTER_WIDTH, HEADER_WIDTH, MAX_BODY_ROWS, notesView, pickView, readView, reviewView, startView, type LogView,
+} from "../src/glasses/view";
 import { addEntry, attachToLatest, setSection, startInspection, toCsv, toMarkdown, type Inspection } from "../src/log/entries";
 import { maskSecret, parseData, validateSttUrl } from "../src/storage/persist";
 import { safeName } from "../src/ui/phone";
@@ -9,7 +11,7 @@ import { safeName } from "../src/ui/phone";
 const GLASSES_WIDTH = 56;
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 /** Worst-case values for every placeholder that reaches the glasses. */
-const WORST: Record<string, string | number> = { major: 999, minor: 999, note: 999, time: "99h 59m", severity: "WICHTIG", seconds: 30 };
+const WORST: Record<string, string | number> = { major: 999, minor: 999, note: 999, time: "99h 59m", severity: "WICHTIG", seconds: 30, n: 999, i: 999 };
 
 describe("message catalogue", () => {
   it("has every key in German and English, none empty", () => {
@@ -83,66 +85,61 @@ const inspectionWith = (entries: number): Inspection => {
 };
 
 describe("glasses copy fits the display", () => {
-  const phases: Phase[] = ["idle", "pick", "recording", "transcribing", "review"];
   for (const locale of locales) {
-    it(`${locale}: every phase stays within 7 rows × 56 characters, with long content`, () => {
+    it(`${locale}: every text page stays within 7 rows × 56 characters, with long content`, () => {
       const long = "Riss im Putz über der Tür, ungefähr dreißig Zentimeter lang und bis zur Decke ".repeat(3);
-      for (const entries of [0, 5]) {
-        for (const phase of phases) {
-          for (const voice of [false, true]) {
-            for (const status of ["idle", "error", "connecting"] as const) {
-              for (const pickIndex of [0, 3, 7]) {
-                for (const extra of [{}, { helpSelected: true }, { sideMenu: true }, { help: true }, { reviewChoice: 1 as const }, { reviewChoice: 2 as const, confirmDiscard: true }]) {
-                const options: ViewOptions = {
-                  phase, severity: "major", pending: long, status, mock: true, locale, voice,
-                  quickNotes: quickNotes(locale, []), pickIndex, ...extra,
-                };
-                const view = buildView(inspectionWith(entries), options, 360_000_000);
-                expect(view.body.length, phase).toBeLessThanOrEqual(MAX_BODY_ROWS);
-                for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(GLASSES_WIDTH);
-                expect(view.header.length).toBeLessThanOrEqual(HEADER_WIDTH);
-                expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
-                expect(view.footer, `${phase} footer`).not.toBe("");
-                }
+      for (const entries of [0, 1, 5, 12]) {
+        const inspection = inspectionWith(entries);
+        const views: LogView[] = [];
+        for (const voice of [false, true]) {
+          for (const severity of ["note", "minor", "major"] as const) {
+            views.push(startView(9, { locale, voice, demo: false, severity, entryCount: entries }));
+            views.push(startView(0, { locale, voice, demo: true, severity, entryCount: entries }));
+            for (const pickIndex of [0, 3, 7, 40]) views.push(pickView({ locale, severity, quickNotes: quickNotes(locale, []), pickIndex }));
+            for (const reviewChoice of [0, 1, 2] as const) {
+              for (const confirmDiscard of [false, true]) {
+                for (const truncated of [false, true]) views.push(reviewView({ locale, severity, pending: long, reviewChoice, confirmDiscard, truncated }));
               }
             }
           }
+          if (entries > 0) {
+            for (const cursor of [0, 2, 6, 99]) {
+              views.push(notesView(inspection, cursor, locale, voice, false));
+              for (const page of [0, 1, 9]) views.push(readView(inspection, cursor, page, locale));
+            }
+          }
+        }
+        for (const view of views) {
+          expect(view.body.length, view.header).toBeLessThanOrEqual(MAX_BODY_ROWS);
+          for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(GLASSES_WIDTH);
+          expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_WIDTH);
+          expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
+          expect(view.footer, `${view.header} footer`).not.toBe("");
         }
       }
     });
 
-    it(`${locale}: with nothing open, the glasses say a tap starts an inspection`, () => {
-      const view = buildView(null, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false, locale });
-      expect(view.body).toEqual([t(locale, "g.none.1"), t(locale, "g.none.2")]);
-      expect(view.footer).toBe(locale === "de" ? "Tippen = starten · Halten = Hilfe · 2× = Ende" : "Tap = start · Hold = help · 2× = exit");
-      // With the side menu switched on (SIDE_MENU in main.ts) the hold names the menu.
-      const withMenu = buildView(null, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false, locale, sideMenu: true });
-      expect(withMenu.footer).toBe(locale === "de" ? "Tippen = starten · Halten = Menü · 2× = Ende" : "Tap = start · Hold = menu · 2× = exit");
-    });
-
     it(`${locale}: every default quick note fits a row with its marker`, () => {
-      for (const note of quickNotes(locale, [])) expect(("> " + note).length).toBeLessThanOrEqual(GLASSES_WIDTH);
+      for (const note of quickNotes(locale, [])) expect(("● " + note).length).toBeLessThanOrEqual(GLASSES_WIDTH);
     });
   }
 
   it("shows German labels in plain words", () => {
-    const base = { severity: "major" as const, pending: "Fliese gesprungen", status: "idle" as const, mock: false, locale: "de" as const };
-    const empty = buildView(startInspection("i", "Rundgang", 0), { ...base, phase: "idle" }, 60_000);
-    expect(empty.body).toContain("Noch keine Einträge.");
-    expect(empty.body).toContain("Nächster Eintrag: WICHTIG · Wischen = ändern");
-    expect(empty.header).toBe("FIELDLOG · Rundgang · seit 1m");
-    expect(empty.footer).toBe("Tippen = Notiz · Halten = Foto · 2× = Ende");
-    const review = buildView(startInspection("i", "R", 0), { ...base, phase: "review" });
-    expect(review.header).toBe("FIELDLOG · Behalten?");
-    expect(review.body.slice(-3)).toEqual(["> Behalten", "  Behalten + Foto", "  Verwerfen"]);
+    const start = startView(0, { locale: "de", voice: true, demo: false, severity: "major", entryCount: 3 });
+    expect(start.header).toBe("FIELDLOG · ● live");
+    expect(start.body).toEqual(["● Aufnehmen", "  Notizen · 3", "  Art · WICHTIG"]);
+    expect(start.footer).toBe("Tippen = sprechen · Wischen = wählen · 2× = Ende");
+    const review = reviewView({ locale: "de", severity: "major", pending: "Fliese gesprungen", reviewChoice: 0, confirmDiscard: false, truncated: false });
+    expect(review.header).toBe("Behalten? · WICHTIG");
+    expect(review.body).toEqual(["Fliese gesprungen", "● Behalten", "  Behalten + Foto", "  Verwerfen"]);
     expect(review.footer).toBe("Tippen = behalten · Wischen = Auswahl");
-    const armed = buildView(startInspection("i", "R", 0), { ...base, phase: "review", reviewChoice: 2, confirmDiscard: true });
-    expect(armed.body.slice(-1)).toEqual(["> SICHER? Verwerfen"]);
+    const armed = reviewView({ locale: "de", severity: "major", pending: "x", reviewChoice: 2, confirmDiscard: true, truncated: false });
+    expect(armed.body.slice(-1)).toEqual(["● SICHER? Verwerfen"]);
     expect(armed.footer).toBe("Nochmal tippen = Text verwerfen · Wischen/2× = abbrechen");
-    const pick = buildView(startInspection("i", "R", 0), { ...base, phase: "pick", quickNotes: ["Passt", "Fehlt"], pickIndex: 2 });
-    expect(pick.header).toBe("FIELDLOG · Schnellnotiz");
+    const pick = pickView({ locale: "de", severity: "major", quickNotes: ["Passt", "Fehlt"], pickIndex: 2 });
+    expect(pick.header).toBe("Schnellnotiz · WICHTIG");
     expect(pick.footer).toBe("Tippen = speichern · Wischen = wählen · 2× = zurück");
-    expect(pick.body).toEqual(["  Passt", "  Fehlt", "> Abbrechen", "Speichern als: WICHTIG"]);
+    expect(pick.body).toEqual(["  Passt", "  Fehlt", "● Abbrechen"]);
   });
 });
 

@@ -2,13 +2,17 @@ import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Boots the real app against a fake bridge to check the polling loop without hardware.
-const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+const harness = vi.hoisted(() => ({ bridge: null as unknown, models: [] as import("../src/cockpit/model").CockpitModel[] }));
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
-// Canvas is unavailable in node; the icon is not what these tests are about.
-vi.mock("../src/glasses/pixel", () => ({ renderPixelIcon: async () => new Uint8Array([1]) }));
+// The cockpit is an image: the tests read the model that was drawn last.
+vi.mock("../src/cockpit/compose", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/cockpit/compose")>();
+  return { ...real, composeCockpit: (model: import("../src/cockpit/model").CockpitModel, backend: import("../src/screen/text").TextBackend) => { harness.models.push(model); return real.composeCockpit(model, backend); } };
+});
+const last = (): import("../src/cockpit/model").CockpitModel => harness.models[harness.models.length - 1]!;
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
@@ -23,7 +27,7 @@ function fakeBridge() {
     rebuildPageContainer: vi.fn(async () => true),
     createStartUpPageContainer: vi.fn(async (page: { textObject?: { content?: string }[]; menuObject?: { menuItems?: { itemName?: string }[] } }) => { menus.push((page.menuObject?.menuItems ?? []).map((item) => item.itemName ?? "")); pages.push((page.textObject ?? []).map((part) => part.content ?? "")); return 0; }),
     textContainerUpgrade: vi.fn(async (update: { containerID?: number; content?: string }) => { if (update.containerID === 1) pages.push([]); pages.at(-1)?.push(update.content ?? ""); return true; }),
-    updateImageRawData: vi.fn(async () => 0),
+    updateImageRawData: vi.fn(async () => "success"),
     shutDownPageContainer: (mode?: number): Promise<boolean> => { shutdown.calls += 1; shutdown.modes.push(mode); return shutdown.fail ? Promise.reject(new Error("ble gone")) : Promise.resolve(shutdown.confirm); },
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
@@ -35,6 +39,7 @@ describe("endurance polling loop", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
   resetGestureDedupe();
+    harness.models.length = 0;
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     vi.stubGlobal("navigator", { language: "en-US" });
@@ -176,8 +181,9 @@ describe("endurance gestures, staleness and phone page", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 0, 1, 12));
+    harness.models.length = 0;
     store = new Map();
-    app = { innerHTML: "" };
+    app = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] } as unknown as { innerHTML: string };
     vi.stubGlobal("localStorage", { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); }, removeItem: (key: string) => { store.delete(key); } });
     vi.stubGlobal("navigator", { language: "en-US" });
     vi.stubGlobal("document", { activeElement: null, querySelector: (selector: string) => selector === "#app" ? app : null });
@@ -201,16 +207,18 @@ describe("endurance gestures, staleness and phone page", () => {
     const fake = await boot();
     expect(fake.menus.length).toBeGreaterThan(0);
     expect(fake.menus.every((items) => items.length === 0)).toBe(true);
-    expect(fake.pages.at(-1)?.[2]).toBe("Tap = refresh · Swipe = sport · Hold = help · 2× = exit");
+    expect(last().hint).toBe("Tap = refresh · Swipe = sport · 2× = exit");
   });
 
   it("a swipe on the live screen cycles the sport and saves it again (no side menu)", async () => {
     const fake = await boot();
-    expect(fake.pages.at(-1)?.[1]).toMatch(/^BIKE/);
+    expect(last().cells[0]!.value).toBe("BIKE");
+    expect(last().headline).toEqual(["30.0 KM/H"]);
     fake.emit(2); // scroll down
     await vi.advanceTimersByTimeAsync(10);
     expect(store.get("endurance.sport")).toBe("run");
-    expect(fake.pages.at(-1)?.[1]).toMatch(/^RUN /);
+    expect(last().cells[0]!.value).toBe("RUN");
+    expect(last().headline).toEqual(["2:00 /KM"]);
     fake.emit(1); // scroll up
     await vi.advanceTimersByTimeAsync(10);
     expect(store.get("endurance.sport")).toBe("bike");
@@ -227,8 +235,8 @@ describe("endurance gestures, staleness and phone page", () => {
 
   it("restores the saved sport on start", async () => {
     store.set("endurance.sport", "run");
-    const fake = await boot();
-    expect(fake.pages.at(-1)?.[1]).toMatch(/^RUN/);
+    await boot();
+    expect(last().cells[0]!.value).toBe("RUN");
   });
 
   it("tap refreshes", async () => {
@@ -242,18 +250,18 @@ describe("endurance gestures, staleness and phone page", () => {
   it("regression: values stop being LIVE when the watch stops sending", async () => {
     const sentAt = new Date().toISOString();
     reply = async () => new Response(JSON.stringify({ sport: "bike", speedKph: 30, source: "garmin", updatedAt: sentAt }), { status: 200 });
-    const fake = await boot();
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · LIVE WORKOUT");
+    await boot();
+    expect(last().caption).toBe("BIKE · LIVE");
     await vi.advanceTimersByTimeAsync(12000);
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · STALE 12s");
+    expect(last().caption).toBe("BIKE · STALE 12s");
   });
 
-  it("regression: a dead bridge shows STALE and the error on the phone", async () => {
-    const fake = await boot();
+  it("regression: a dead bridge shows STALE on the glasses", async () => {
+    await boot();
     reply = async () => { throw new TypeError("Failed to fetch"); };
     await vi.advanceTimersByTimeAsync(2000);
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · STALE 2s");
-    expect(app.innerHTML).toContain("Last error: Failed to fetch");
+    expect(last().caption).toBe("BIKE · STALE 2s");
+    expect(last().tone).toBe("offline");
   });
 
   it("regression: the saved endpoint is escaped in the phone page", async () => {
@@ -264,24 +272,14 @@ describe("endurance gestures, staleness and phone page", () => {
     expect(app.innerHTML).toContain('value="http://x/&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"');
   });
 
-  it("hold opens the help by gesture, tap and 2× close it, 2× in the help never exits, a swipe there changes nothing", async () => {
+  it("a hold does nothing (the help lives on the phone); 2× asks the exit dialog", async () => {
     const fake = await boot();
+    const shown = last().hint;
     fake.emit(9); // hold
     await vi.advanceTimersByTimeAsync(10);
-    expect(fake.pages.at(-1)?.[0]).toBe("ENDURANCE HUD · Help");
-    expect(fake.pages.at(-1)?.[2]).toBe("Tap = back · 2× = back");
-    fake.emit(2); // a swipe in the help changes nothing
-    await vi.advanceTimersByTimeAsync(10);
+    expect(last().hint).toBe(shown);
     expect(store.get("endurance.sport")).toBeUndefined();
-    fake.emit(3);
-    await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([]);
-    expect(fake.pages.at(-1)?.[0]).toMatch(/^ENDURANCE HUD · (DEMO|LIVE|STALE)/);
-    fake.emit(9);
-    await vi.advanceTimersByTimeAsync(10);
-    fake.emit(0);
-    await vi.advanceTimersByTimeAsync(10);
-    expect(fake.pages.at(-1)?.[0]).not.toContain("Help");
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.shutdown.modes).toEqual([1]);
@@ -296,11 +294,13 @@ describe("endurance gestures, staleness and phone page", () => {
     expect(store.get("endurance.sport")).toBe("bike");
   });
 
-  it("QIS v1: the phone page has the tabs Live, Glasses, Connection, More in that order, with the invert switch on Glasses", async () => {
-    store.set("endurance.tab", "glasses");
+  it("QUS v1: the phone page has exactly the tabs Now, History, Settings in that order, with the invert switch under Settings", async () => {
+    store.set("endurance.endpoint", "http://bridge.local:8792/live");
+    store.set("endurance.tab", "settings");
     await boot();
-    const labels = [...app.innerHTML.matchAll(/id="tab-\w+"[^>]*>([^<]+)</g)].map((m) => m[1]);
-    expect(labels).toEqual(["Live", "Glasses", "Connection", "More"]);
+    const labels = [...app.innerHTML.matchAll(/id="tab-\w+"[^>]*>(?:<span[^>]*>[^<]*<\/span>)?([^<]+)</g)].map((m) => m[1]);
+    expect(labels).toEqual(["Now", "History", "Settings"]);
     expect(app.innerHTML).toContain('id="invert"');
+    expect(app.innerHTML.indexOf('id="invert"')).toBeGreaterThan(app.innerHTML.indexOf('data-tab="settings"'));
   });
 });

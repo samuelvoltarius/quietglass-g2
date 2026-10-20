@@ -10,6 +10,8 @@ export interface Settings {
   readonly bridgeUrl: string;
   readonly token?: string;
   readonly invertScroll: boolean;
+  /** Direct mode only: pause / resume / cancel straight to Moonraker (off by default). */
+  readonly directControl?: boolean;
 }
 
 export const SETTINGS_KEY = "quietglass.klipperglance.v1";
@@ -58,6 +60,7 @@ export function parseSettings(raw: string, build: string = BUILD_URL): Settings 
       bridgeUrl: url && validateBridgeUrl(url).valid ? url : "",
       ...(typeof value.token === "string" && value.token ? { token: value.token } : {}),
       invertScroll: value.invertScroll === true,
+      ...(value.directControl === true ? { directControl: true } : {}),
     };
   } catch {
     return EMPTY_SETTINGS;

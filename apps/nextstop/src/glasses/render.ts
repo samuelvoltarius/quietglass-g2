@@ -74,6 +74,20 @@ function pageParts(scene: Scene, menu: MenuSpec | null) {
   const menuObject = buildMenu(menu);
   const { view, kind } = scene;
   const images = IMAGES[kind];
+  if (kind === "cockpit") {
+    // The cockpit is only pictures: one empty container over the whole display owns the input (as in Status Glass).
+    return {
+      containerTotalNum: 1 + images.length,
+      textObject: [new TextContainerProperty({
+        containerID: BODY_ID, containerName: "body", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+        paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+      })],
+      imageObject: images.map((spec, index) => new ImageContainerProperty({
+        containerID: spec.id, containerName: spec.name, xPosition: spec.x, yPosition: spec.y, width: spec.width, height: spec.height, zOrderIndex: index + 2,
+      })),
+      ...(menuObject === undefined ? {} : { menuObject }),
+    };
+  }
   // Images sit below the text (lower z), so the text may overlay them; every z is used once.
   let z = images.length;
   const textObject = [
@@ -199,6 +213,8 @@ export async function rebuildPage(bridge: EvenAppBridge, scene: Scene, menu: Men
 /** Fast path: text in place, and only the pictures that changed - each one crosses Bluetooth. */
 export async function updatePage(bridge: EvenAppBridge, scene: Scene): Promise<RenderResult> {
   const { view, kind } = scene;
+  // The cockpit has no text to write: only the tiles that changed.
+  if (kind === "cockpit") return updateImages(bridge, scene);
   const updates: Array<[number, string, string]> = [
     ...(kind === "text" ? [[HEADER_ID, "header", view.header] as [number, string, string]] : []),
     [BODY_ID, "body", view.body.join("\n")],

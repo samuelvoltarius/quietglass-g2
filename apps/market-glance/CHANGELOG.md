@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0] — 2026-10-20
+
+### Neu: Quietglass-UI-Standard QUS v1 („keine Textwand“)
+
+- **Brille: Startseite mit zwei großen Einträgen** (Übersicht, Positionen). Kopfzeile `Modus · ● live`, unten genau eine Hinweiszeile. Die Hilfe-Seite entfällt (Gesten stehen in der Hinweiszeile, Einrichtung am Handy).
+- **Übersicht als Cockpit-Bild** (576×288, vier Kacheln wie Rain Lens/Status Glass): links der Verlauf des Portfolio-Werts über die Sitzung, rechts „MARKET GLANCE 14:05“, groß der Gesamtwert und der Gewinn, darunter Zellen (Positionen, Gewinn, Realisiert, Bester, Letzter, Quelle). Jede Position ist eine eigene Cockpit-Seite (Messring mit dem Kurs, Wert/Menge/Realisiert/Anbieter). Es werden nur geänderte Kacheln gesendet; die Uhr ändert nur die Kachel oben rechts.
+- **Positionsliste** mit höchstens fünf Zeilen, Auswahl mit ●, Kurs und Gewinn nie abgeschnitten.
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Positionen / Einstellungen) im Rain-Lens-Look: Kicker `QUIETGLASS / FINANZEN`, Status-Pille, Statusbanner, Hero-Karte mit dem Portfolio-Wert, 2×2-Kennzahlen, ein Hauptknopf, Karten-Leiste der Positionen. Einstellungen als gruppierte Karten, Bridge-Karte eingeklappt sobald eingerichtet, Erststart-Checkliste in drei Schritten; ohne Bridge läuft die Demo.
+- Alle Texte jetzt in einer Tabelle (`src/text.ts`) für de/en/fr/es/it.
+
+### Unverändert (Hardware-getestet)
+
+- Kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (2× auf der Startseite; während er offen sein kann, wird nichts gezeichnet und keine Kachel gesendet), zeitbegrenzte Aufrufe an die Brille, Wiederaufbau der ersten Seite nach „Nein“.
+
+### Tests
+
+- Reine Modelltests (Zellen, Überschrift, Startzeilen, Fußzeile), Kachel-Diff (unverändert = nichts gesendet), Beenden-Dialog-Tests, Vorschau-PNGs (`QG_PREVIEW=1 npx vitest run tests/preview.test.ts` → `store/preview-cockpit*.png`).
+
+### QIS-Konformität
+
+- Fußzeilen über den gemeinsamen `footer()`, `2× = zurück|Ende`; Wischen bewegt nur; Hold ohne Funktion (nur Anzeige).
+
 ## [0.4.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

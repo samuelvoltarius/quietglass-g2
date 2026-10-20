@@ -9,9 +9,18 @@ import { createLiveStt, liveSttUrl, LiveTranscript, redrawDelay, type LiveStt } 
 import { buildWav } from "./audio/wav";
 import { addEntry, attachToLatest, startInspection, type Inspection, type Severity } from "./log/entries";
 import { gestureFromCode, gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { buildView, type FieldNotice, type LiveView, type LogView, type Phase, type ReviewChoice } from "./glasses/view";
+import {
+  notesView, pickView, readPageCount, readView, reviewView, startRows, startView,
+  type FieldNotice, type LiveView, type LogView, type Phase, type ReviewChoice,
+} from "./glasses/view";
 import { sameView } from "./glasses/diff";
-import { createPage, forgetPage, updatePage, type MenuSpec } from "./glasses/render";
+import {
+  COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage, type MenuSpec,
+} from "./glasses/render";
+import { cockpitModel, pcmLevel, pushLevel, type CockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import {
   activeInspection, hasSpeechServer, load, nextInspectionId, save, speechServer, upsertInspection, usesMockStt,
   type FieldLogData,
@@ -26,12 +35,11 @@ import { activeConfirm, CONFIRM_WINDOW_MS, confirmStep, type PendingConfirm } fr
 /**
  * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses, and while a page
  * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it the swipe
- * picks the type of the next entry (and the Help stop), the hold takes a photo (no inspection: opens the help).
+ * works from lists (QUS v1): the type of the next entry is a row of the start list, the photo is a choice under review.
  */
 const SIDE_MENU = false;
 const SEVERITIES: readonly Severity[] = ["note", "minor", "major"];
 /** Side menu (QIS v1.2): item ids. Hold opens the menu; a menu click is an explicit choice. */
-const MENU_HELP = 1;
 const MENU_NOTE = 2;
 const MENU_MINOR = 3;
 const MENU_MAJOR = 4;
@@ -103,10 +111,17 @@ async function boot(): Promise<void> {
   let truncated = false;
   /** Review: 0 = keep, 1 = keep and photo, 2 = discard. A swipe only moves between them. */
   let reviewChoice: ReviewChoice = 0;
-  /** The help page is open (from the glasses' side menu). */
-  let helpOpen = false;
-  /** Without a side menu: the type selector on the resting screen stands on its last stop, "Help". */
-  let helpSelected = false;
+  /** Where the glasses are while no dictation, quick-note list or review is running (QUS v1). */
+  type Screen = "start" | "recorder" | "notes" | "read";
+  let screen: Screen = "start";
+  let startCursor = 0;
+  /** Index into the notes, newest first. */
+  let notesCursor = 0;
+  let readPage = 0;
+  /** Microphone level history for the recording screen, and the loudest block since the last second. */
+  let levels: number[] = [];
+  let levelPeak = 0;
+  let lastLengthMs: number | null = null;
   /** Tapping "Discard" under review waits here for its second tap (QIS v1). */
   let pendingDiscard: PendingConfirm<"discard"> | null = null;
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
@@ -122,7 +137,6 @@ async function boot(): Promise<void> {
   /** The side menu: help, type of the next entry, photo. Supplied again on every page (re)build. */
   const menu = (): MenuSpec => ({
     items: !SIDE_MENU ? [] : [
-      { id: MENU_HELP, label: t(locale, "m.help") },
       { id: MENU_NOTE, label: t(locale, "m.note") },
       { id: MENU_MINOR, label: t(locale, "m.minor") },
       { id: MENU_MAJOR, label: t(locale, "m.major") },
@@ -130,28 +144,42 @@ async function boot(): Promise<void> {
     ],
   });
 
-  const currentView = (): LogView =>
-    buildView(inspection(), {
-      phase,
-      severity: data.severity,
-      pending,
-      status,
-      mock: usesMockStt(data),
-      locale,
-      voice: voice(),
-      quickNotes: notes(),
-      pickIndex,
-      notice,
-      reviewChoice,
-      confirmDiscard: activeConfirm(pendingDiscard, Date.now()) !== null,
-      help: helpOpen,
-      sideMenu: SIDE_MENU,
-      helpSelected,
-      live: liveView,
-      liveText: heard.text(),
-      ...(phase === "recording" ? { elapsedMs: Date.now() - recordStartedAt } : {}),
-      truncated,
-    });
+  type Scene =
+    | { readonly kind: "text"; readonly view: LogView }
+    | { readonly kind: "cockpit"; readonly model: CockpitModel };
+
+  /** Everything on the glasses for one moment. */
+  const currentScene = (now: number): Scene => {
+    const current = inspection();
+    const count = current?.entries.length ?? 0;
+    // The phone may have removed what the glasses were looking at.
+    if ((screen === "notes" || screen === "read") && count === 0) screen = "start";
+    if (screen === "read" && notesCursor >= count) screen = "notes";
+    notesCursor = Math.min(notesCursor, Math.max(0, count - 1));
+    if (phase === "pick") return { kind: "text", view: pickView({ locale, severity: data.severity, quickNotes: notes(), pickIndex }) };
+    if (phase === "review") {
+      return { kind: "text", view: reviewView({
+        locale, severity: data.severity, pending, reviewChoice, truncated,
+        confirmDiscard: activeConfirm(pendingDiscard, Date.now()) !== null,
+      }) };
+    }
+    if (phase === "recording" || phase === "transcribing" || (screen === "recorder" && current)) {
+      return { kind: "cockpit", model: cockpitModel({
+        phase, inspections: data.inspections, active: current, now, locale, severity: data.severity,
+        voice: voice(), demo: DEMO, status, live: liveView, notice,
+        elapsedMs: phase === "recording" ? now - recordStartedAt : 0, lastLengthMs, levels,
+      }) };
+    }
+    if (current && screen === "notes") return { kind: "text", view: notesView(current, notesCursor, locale, voice(), DEMO) };
+    if (current && screen === "read") {
+      readPage = Math.min(readPage, readPageCount(current, notesCursor, locale) - 1);
+      return { kind: "text", view: readView(current, notesCursor, readPage, locale) };
+    }
+    screen = "start";
+    const rows = startRows(count);
+    startCursor = Math.min(startCursor, rows.length - 1);
+    return { kind: "text", view: startView(startCursor, { locale, voice: voice(), demo: DEMO, severity: data.severity, entryCount: count }) };
+  };
 
   /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
   let refreshPhone: () => void = () => undefined;
@@ -173,18 +201,48 @@ async function boot(): Promise<void> {
       return gestureFromCode(typeof raw === "number" ? raw : raw === undefined ? 0 : NaN) !== null;
     });
   };
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
+  let textBackend: TextBackend | null = null;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tileSender = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused && installed === "cockpit"));
+
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
     if (paused) return;
     // A page lost with the link (or in the background) is rebuilt even when
     // nothing changed; read here, so a draw already running cannot undo it.
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; }
-    const view = currentView();
+    const scene = currentScene(Date.now());
+
+    if (scene.kind === "cockpit") {
+      if (installed !== "cockpit") pageReady = false;
+      if (!pageReady) {
+        const result = await createCockpitPage(bridge, menu());
+        if (closed) return;
+        if (!result.ok) { pageReady = false; installed = null; lastView = null; console.warn("[fieldlog] draw failed:", result.reason); return; }
+        pageReady = true;
+        installed = "cockpit";
+        lastView = null;
+        // A new page starts with blank images.
+        tileSender.reset();
+      }
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tileSender.push(composeCockpit(scene.model, textBackend));
+      return;
+    }
+
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
+    const view = scene.view;
     if (pageReady && sameView(lastView, view)) return;
 
-    const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, menu());
-    if (result.ok) { pageReady = true; lastView = view; return; }
+    const result = pageReady ? await updateTextPage(bridge, view, lastView) : await createTextPage(bridge, view, menu());
+    if (closed) return;
+    if (result.ok) { pageReady = true; installed = "text"; lastView = view; return; }
     pageReady = false;
+    installed = null;
     lastView = null;
     console.warn("[fieldlog] draw failed:", result.reason);
   };
@@ -223,14 +281,26 @@ async function boot(): Promise<void> {
     await save(bridge, data);
   };
 
-  /** A tap with no inspection open starts one, named after the date and time. */
+  /** Recording with no inspection open starts one, named after the date and time. */
   const startNew = async (): Promise<void> => {
     const id = nextInspectionId(data);
     const now = Date.now();
     data = { ...upsertInspection(data, startInspection(id, autoTitle(locale, now), now)), activeId: id };
     refreshPhone();
-    await draw();
     await save(bridge, data);
+  };
+
+  /** The "Record" row of the start list: with a speech server the recorder opens and the microphone starts; without one the quick notes. */
+  const openRecord = async (): Promise<void> => {
+    if (!inspection()) await startNew();
+    if (voice()) {
+      screen = "recorder";
+      await startMic();
+      return;
+    }
+    phase = "pick";
+    pickIndex = 0;
+    await draw();
   };
 
   /** Files the highlighted quick note, or leaves the list on "Cancel". */
@@ -238,6 +308,7 @@ async function boot(): Promise<void> {
     const current = inspection();
     const note = notes()[pickIndex];
     phase = "idle";
+    screen = "start";
     pickIndex = 0;
     if (current && note) await persist(addEntry(current, note, data.severity, Date.now()));
     await draw();
@@ -268,6 +339,8 @@ async function boot(): Promise<void> {
     liveView = "off";
     heard = new LiveTranscript();
     lastFinalAt = 0;
+    levels = [];
+    levelPeak = 0;
   };
 
   /** Live text redraws at most every 300 ms, and only when the text changed. */
@@ -342,7 +415,14 @@ async function boot(): Promise<void> {
       recordTimer = setTimeout(() => {
         if (phase === "recording" && dictation === mine) background(endRecording(), "stopping the microphone");
       }, MAX_DICTATION_MS);
-      ticker = setInterval(() => { if (phase === "recording" && dictation === mine) void draw(); }, 1_000);
+      levels = [];
+      levelPeak = 0;
+      ticker = setInterval(() => {
+        if (phase !== "recording" || dictation !== mine) return;
+        levels = pushLevel(levels, levelPeak);
+        levelPeak = 0;
+        void draw();
+      }, 1_000);
     } finally {
       starting = false;
       await draw();
@@ -360,6 +440,7 @@ async function boot(): Promise<void> {
   const endRecording = async (): Promise<void> => {
     if (phase !== "recording") return;
     stopRecordingTimers();
+    lastLengthMs = Date.now() - recordStartedAt;
     phase = "transcribing";
     status = "connecting";
     const mine = dictation;
@@ -479,6 +560,7 @@ async function boot(): Promise<void> {
   /** Everything off for good: after the exit dialog, a system exit or a crash. */
   const shutDown = (micMayBeOn = true): void => {
     closed = true;
+    tileSender.close();
     micPausedForExit = false;
     clearInterval(clock);
     clearTimeout(confirmTimer);
@@ -535,11 +617,10 @@ async function boot(): Promise<void> {
    * whose shutter is the confirmation.
    */
   const onMenu = (id: number): void => {
-    if (closed || paused || helpOpen) return;
+    if (closed || paused) return;
     if (phase === "recording" || phase === "transcribing") return;
     if (pendingDiscard !== null) { pendingDiscard = null; clearTimeout(confirmTimer); }
     notice = null;
-    if (id === MENU_HELP) { helpOpen = true; void draw(); return; }
     const severity = MENU_SEVERITY[id];
     if (severity) {
       data = { ...data, severity };
@@ -605,6 +686,7 @@ async function boot(): Promise<void> {
       // Kept on the phone in every case: the fallback if the live text drops.
       chunks.push(bytes);
       recordedBytes += bytes.length;
+      levelPeak = Math.max(levelPeak, pcmLevel(bytes));
       live?.send(bytes);
       return;
     }
@@ -619,22 +701,10 @@ async function boot(): Promise<void> {
       if (wasArmed) void draw();
     }
 
-    // The help page is a subpage: 2× goes back, nothing else does anything.
-    if (helpOpen) {
-      if (gesture.gesture !== "doubleClick") return;
-      helpOpen = false;
-      void draw();
-      return;
-    }
-
     switch (gesture.gesture) {
       case "click":
         notice = null;
-        if (!inspection()) { background(startNew(), "starting an inspection"); return; }
         if (phase === "pick") { background(pickNote(), "saving the note"); return; }
-        if (!SIDE_MENU && phase === "idle" && helpSelected) { helpOpen = true; break; }
-        if (phase === "idle" && !voice()) { phase = "pick"; pickIndex = 0; break; }
-        if (phase === "idle") { background(startMic(), "starting dictation"); return; }
         if (phase === "recording") { background(endRecording(), "stopping the microphone"); return; }
         if (phase === "review") {
           if (reviewChoice === 0) { background(keepPending(), "saving the entry"); return; }
@@ -652,54 +722,73 @@ async function boot(): Promise<void> {
           } else {
             confirmTimer = setTimeout(() => { pendingDiscard = null; void draw(); }, CONFIRM_WINDOW_MS + 50);
           }
-        }
-        break;
-
-      case "scrollUp":
-      case "scrollDown":
-        if (phase === "pick") {
-          const count = notes().length + 1;
-          pickIndex = (pickIndex + (gesture.gesture === "scrollDown" ? 1 : -1) + count) % count;
           break;
         }
-        if (phase === "review") {
-          // A swipe only moves between "Keep", "Keep + photo" and "Discard"; it never saves or discards anything.
-          reviewChoice = ((reviewChoice + (gesture.gesture === "scrollDown" ? 1 : 2)) % 3) as ReviewChoice;
+        if (phase !== "idle") return;
+        if (screen === "recorder") { background(startMic(), "starting dictation"); return; }
+        if (screen === "notes") { readPage = 0; screen = "read"; break; }
+        if (screen === "read") {
+          const count = inspection()?.entries.length ?? 0;
+          if (count > 0) notesCursor = (notesCursor + 1) % count;
+          readPage = 0;
           break;
         }
-        // With a side menu (QIS v1.2) a swipe on the resting screen only moves; the entry type is a click
-        // in the menu. Without one the swipe moves through the type of the next entry (shown on screen);
-        // with an inspection open "Help" is the last stop.
-        if (SIDE_MENU || phase !== "idle") break;
         {
-          const stops = SEVERITIES.length + (inspection() ? 1 : 0);
-          const index = helpSelected ? SEVERITIES.length : SEVERITIES.indexOf(data.severity);
-          const delta = gesture.gesture === "scrollDown" ? 1 : -1;
-          const nextIndex = (index + delta + stops) % stops;
-          helpSelected = nextIndex === SEVERITIES.length;
-          const next = SEVERITIES[nextIndex];
-          if (next) {
-            data = { ...data, severity: next };
-            background(save(bridge, data), "saving the severity");
+          // The start list: record / notes / type of the next entry (a tap sets the next type).
+          const rows = startRows(inspection()?.entries.length ?? 0);
+          const row = rows[Math.min(startCursor, rows.length - 1)];
+          if (row?.kind === "record") { background(openRecord(), "starting dictation"); return; }
+          if (row?.kind === "notes") { notesCursor = 0; screen = "notes"; break; }
+          if (row?.kind === "type") {
+            const next = SEVERITIES[(SEVERITIES.indexOf(data.severity) + 1) % SEVERITIES.length];
+            if (next) {
+              data = { ...data, severity: next };
+              background(save(bridge, data), "saving the severity");
+            }
           }
         }
         break;
 
-      case "longPress":
-        // With a side menu the hold belongs to it; nothing happens in the app.
-        if (SIDE_MENU) break;
-        // With no inspection open there is nothing to photograph: hold opens the help.
-        if (phase === "idle" && !inspection()) { helpOpen = true; break; }
-        if (phase === "idle") { background(attachPhoto(), "attaching a photo"); return; }
-        // Under review the hold only moves the cursor to "Keep + photo"; a tap there keeps and takes the photo.
-        if (phase === "review") { reviewChoice = 1; break; }
+      case "scrollUp":
+      case "scrollDown": {
+        const delta = gesture.gesture === "scrollDown" ? 1 : -1;
+        if (phase === "pick") {
+          const count = notes().length + 1;
+          pickIndex = (pickIndex + delta + count) % count;
+          break;
+        }
+        if (phase === "review") {
+          // A swipe only moves between "Keep", "Keep + photo" and "Discard"; it never saves or discards anything.
+          reviewChoice = ((reviewChoice + (delta === 1 ? 1 : 2)) % 3) as ReviewChoice;
+          break;
+        }
+        if (phase !== "idle") break;
+        const current = inspection();
+        const count = current?.entries.length ?? 0;
+        if (screen === "start") {
+          const rows = startRows(count).length;
+          startCursor = (Math.min(startCursor, rows - 1) + delta + rows) % rows;
+        } else if (screen === "notes" && count > 0) {
+          notesCursor = (notesCursor + delta + count) % count;
+        } else if (screen === "read" && current) {
+          // Pages of a long note; a swipe never leaves the note.
+          const pages = readPageCount(current, notesCursor, locale);
+          readPage = Math.min(Math.max(0, readPage + delta), pages - 1);
+        }
         break;
+      }
+
+      // The hold never reaches the app on the real glasses (QUS v1); nothing depends on it.
+      case "longPress":
+        return;
 
       case "doubleClick":
-        // 2x is "back one level": out of the quick-note list. It never stops a recording or
-        // throws away a transcript, so those phases ignore it; only the resting screen leaves.
-        if (phase === "pick") { phase = "idle"; pickIndex = 0; break; }
+        // 2x is "back one level". It never stops a recording or throws away a transcript, so those
+        // phases ignore it; the quick-note list, the notes and the recorder go back, only the start leaves.
+        if (phase === "pick") { phase = "idle"; screen = "start"; pickIndex = 0; break; }
         if (phase === "recording" || phase === "transcribing" || phase === "review") return;
+        if (screen === "read") { screen = "notes"; break; }
+        if (screen === "notes" || screen === "recorder") { screen = "start"; break; }
         void close();
         return;
 

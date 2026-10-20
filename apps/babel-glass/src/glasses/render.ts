@@ -12,6 +12,7 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { CaptionView } from "./view";
+import { tileSlots, type TileSend, type TileSlot } from "../screen/sender";
 import { ICON_HEIGHT, ICON_WIDTH, iconKey, iconPng, type PixelIcon } from "./icon";
 
 /**
@@ -145,7 +146,46 @@ export function forgetPage(bridge: EvenAppBridge): void {
  *   (OpenGlance Nav 0.5.1) left the app deaf too. Later calls rebuild.
  */
 export async function createPage(bridge: EvenAppBridge, view: CaptionView, menu: MenuSpec | null = null): Promise<RenderResult> {
-  const page = buildPage(view, menu);
+  return installPage(bridge, buildPage(view, menu));
+}
+
+/** The summary cockpit's page (QUS v1): four image tiles over the display and one empty text container that owns the input. */
+export const COCKPIT_TILES = tileSlots(21, "babel");
+const COCKPIT_INPUT_ID = 20;
+
+export function buildCockpitPage(menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
+  return new CreateStartUpPageContainer({
+    ...(menuObject === undefined ? {} : { menuObject }),
+    containerTotalNum: 1 + COCKPIT_TILES.length,
+    textObject: [new TextContainerProperty({
+      containerID: COCKPIT_INPUT_ID, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+      paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+    })],
+    imageObject: COCKPIT_TILES.map((tile, index) => new ImageContainerProperty({
+      containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+    })),
+  });
+}
+
+export const createCockpitPage = (bridge: EvenAppBridge, menu: MenuSpec | null = null): Promise<RenderResult> =>
+  installPage(bridge, buildCockpitPage(menu));
+
+/** One image tile to the glasses; resolves true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, imageData: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
+
+/**
+ * The tile sender's write function. It writes only while `allowed()` says so: not while the system exit dialog
+ * may be on screen and not after the cockpit page has been left (its containers are gone).
+ */
+export function guardedTileSend(bridge: EvenAppBridge, allowed: () => boolean): TileSend {
+  return (slot, png) => (allowed() ? sendTile(bridge, slot, png) : Promise.resolve(false));
+}
+
+async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   // A new page has an empty image container: the sign must be sent again.
   lastIcon.delete(bridge);
   if (started.has(bridge)) {

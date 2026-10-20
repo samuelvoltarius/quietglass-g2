@@ -172,9 +172,10 @@ describe("QIS footers, headers and glossary", () => {
       }
     });
 
-    it(`${locale}: every header names the app first and fits the row; every row fits`, () => {
+    it(`${locale}: every header ends with the state and fits the row; every row fits`, () => {
       for (const { name, view } of views(locale)) {
-        expect(view.header.startsWith("SHOOT DAY · "), `${name}: ${view.header}`).toBe(true);
+        // QUS v1 1.1: every run view is `Modus · ● live` (or the state as a word); the help page is built without the state.
+        if (name !== "help") expect(/ · (● live|Demo|offline|Demo mode)$/.test(view.header) || view.header.endsWith(" · ● live"), `${name}: ${view.header}`).toBe(true);
         for (const row of [view.header, view.footer, ...view.body]) expect(row.length, `${name}: ${row}`).toBeLessThanOrEqual(ROW_WIDTH);
         expect(view.header.length, name).toBeLessThanOrEqual(46);
       }
@@ -222,7 +223,7 @@ describe("QIS help page", () => {
   it("lists the four gestures in footer order, then what the app needs, in both languages", () => {
     for (const locale of locales) {
       const view = helpView(locale);
-      expect(view.header).toBe(`SHOOT DAY · ${locale === "de" ? "Hilfe" : "Help"}`);
+      expect(view.header).toBe(locale === "de" ? "Hilfe" : "Help");
       expect(view.body.length).toBeLessThanOrEqual(7);
       for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(ROW_WIDTH);
       const idx = ORDER[locale].map((w) => view.body.findIndex((row) => row.startsWith(w)));
@@ -232,15 +233,13 @@ describe("QIS help page", () => {
     }
   });
 
-  it("with the side menu off Hilfe is the last row of the menu and of the customer list again", () => {
+  it("QUS v1: no Hilfe row on the glasses - neither on the start page nor in the customer list", () => {
     expect(SIDE_MENU).toBe(false);
-    expect(ROOT_MENU).toEqual([...MENU, "help"]);
-    expect(buildView(state("de", { project: "", menuCursor: 5 })).body.slice(0, 6)).toEqual(["  Takes", "  Teleprompter", "  Tagesplan", "  Packliste", "  Licht & Sonne", "> Hilfe"]);
+    expect(ROOT_MENU).toEqual(MENU);
+    expect(ROOT_MENU).not.toContain("help" as never);
+    expect(buildView(state("de", { project: "", menuCursor: 3 })).body.slice(0, 4)).toEqual(["  Takes", "  Teleprompter", "  Drehtag", "●   Packliste"]);
     const customers = buildView(state("de", { mode: "customers", customerMode: true, customers: { ...state("de").customers, cursor: 30 } }));
-    expect(customers.body.join("\n")).toContain("Hilfe");
-    // The help page says how to delete a take.
-    expect(helpView("de").body.join("\n")).toContain("Take löschen: im Take-Menü");
-    expect(helpView("en").body.join("\n")).toContain("Delete take: in the take menu");
+    expect(customers.body.join("\n")).not.toContain("Hilfe");
   });
 
   it("QIS v1.2: first start shows a one-line demo hint, in both languages", () => {
@@ -325,13 +324,13 @@ describe("QIS on the glasses", () => {
     await import("../src/main");
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
     // The demo server knows customers: the app opens on the customer list.
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 3 · DEMO"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 3 · Demo"));
   }
 
   /** Customer list → customer → active project: the project menu, Storyboard first. */
   async function toProject(fake: ReturnType<typeof fakeBridge>): Promise<void> {
     fake.gesture(CLICK); // the cursor stands on the customer of the active project
-    await vi.waitFor(() => expect(fake.header()).toMatch(/^SHOOT DAY · KUNDE · /));
+    await vi.waitFor(() => expect(fake.header()).toMatch(/^KUNDE · /));
     fake.gesture(CLICK); // the cursor stands on the active project
     await vi.waitFor(() => expect(fake.header()).toMatch(/^SHOOT DAY · Beispiel-Dreh/));
   }
@@ -339,9 +338,8 @@ describe("QIS on the glasses", () => {
   /** Project menu → Takes → the actions list on "Take starten". */
   async function toTakeActions(fake: ReturnType<typeof fakeBridge>): Promise<void> {
     await toProject(fake);
-    fake.gesture(DOWN); // Takes (Storyboard is first)
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toMatch(/^SHOOT DAY · TAKES · 1 von 5/));
+    await vi.waitFor(() => expect(fake.header()).toMatch(/^TAKES · 1 von 5/));
     fake.gesture(CLICK);
     await vi.waitFor(() => expect(fake.body()).toContain("> Take OK"));
     fake.gesture(UP); // Take starten
@@ -356,42 +354,25 @@ describe("QIS on the glasses", () => {
     expect(fake.menus().every((menu) => menu.length === 0)).toBe(true);
   });
 
-  it("Hilfe is the last row of the customer list: a swipe gets there, a tap opens it, 2× or a tap goes back (not out)", async () => {
+  it("the customer list ends with the last customer: a swipe past it wraps to the new-customer row", async () => {
     const fake = fakeBridge();
     await boot(fake);
-    fake.gesture(DOWN); // the cursor stands on the customer of the active project ...
-    fake.gesture(DOWN); // ... and then goes on to Hilfe
-    await vi.waitFor(() => expect(fake.body()).toContain("> Hilfe"));
-    expect(fake.footer()).toBe("Tippen = öffnen · Halten = neuer Kunde · 2× = Ende");
-    fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Hilfe"));
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = schließen · 2× = zurück"));
-    fake.gesture(DOWN);
-    fake.gesture(HOLD);
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(fake.header()).toBe("SHOOT DAY · Hilfe");
-    expect(fake.state.mics).toBe(0);
-    fake.gesture(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 3 · DEMO"));
-    await vi.waitFor(() => expect(fake.body()).toContain("> Hilfe"));
+    for (let i = 0; i < 2; i += 1) fake.gesture(DOWN); // Studio Nordlicht, then past the end
+    await vi.waitFor(() => expect(fake.body()).toContain("> + Neuer Kunde"));
+    expect(fake.body()).not.toContain("Hilfe");
     expect(fake.state.shutdowns).toBe(0);
-    fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Hilfe"));
-    fake.gesture(CLICK); // a tap closes it as well
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 3 · DEMO"));
   });
 
   it("the help opens over a module and goes back to exactly that module", async () => {
     const fake = fakeBridge();
     await boot(fake);
     await toProject(fake);
-    fake.gesture(DOWN); // Takes
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toMatch(/^SHOOT DAY · TAKES · 1 von 5/));
+    await vi.waitFor(() => expect(fake.header()).toMatch(/^TAKES · 1 von 5/));
     fake.menu(1);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Hilfe"));
+    await vi.waitFor(() => expect(fake.header()).toBe("Hilfe · Demo"));
     fake.gesture(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toMatch(/^SHOOT DAY · TAKES · 1 von 5/));
+    await vi.waitFor(() => expect(fake.header()).toMatch(/^TAKES · 1 von 5/));
     expect(fake.state.shutdowns).toBe(0);
   });
 
@@ -399,25 +380,25 @@ describe("QIS on the glasses", () => {
     const fake = fakeBridge();
     await boot(fake);
     fake.gesture(HOLD);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · Demo"));
     await vi.waitFor(() => expect(fake.footer()).toBe("Loslassen = fertig · 2× = zurück"));
     await new Promise((resolve) => setTimeout(resolve, 20));
     for (let i = 0; i < 10; i += 1) fake.audio(3200);
     fake.gesture(RELEASE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · NEUER KUNDE"));
+    await vi.waitFor(() => expect(fake.header()).toBe("NEUER KUNDE · Demo"));
     expect(fake.footer()).toBe("Tippen = anlegen · Halten = neu sprechen");
     fake.gesture(DOWN); // a swipe does nothing
     await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(fake.header()).toBe("SHOOT DAY · NEUER KUNDE");
+    expect(fake.header()).toBe("NEUER KUNDE · Demo");
     fake.gesture(DOUBLE); // 2× only asks
     await vi.waitFor(() => expect(fake.footer()).toBe("Nochmal tippen = Name verwerfen · Wischen/2× = abbrechen"));
-    expect(fake.header()).toBe("SHOOT DAY · NEUER KUNDE");
+    expect(fake.header()).toBe("NEUER KUNDE · Demo");
     fake.gesture(DOUBLE); // 2× again cancels the question and keeps the name
     await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = anlegen · Halten = neu sprechen"));
     fake.gesture(DOUBLE);
     await vi.waitFor(() => expect(fake.footer()).toMatch(/^Nochmal tippen/));
     fake.gesture(CLICK); // the confirming tap discards
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 3 · DEMO"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 3 · Demo"));
     expect(fake.state.shutdowns).toBe(0);
   });
 
@@ -554,16 +535,13 @@ describe("QIS on the glasses", () => {
     inverted.gesture(UP); // "down" when inverted: back, then Studio Nordlicht
     await vi.waitFor(() => expect(inverted.body()).toContain("> Studio Nordlicht"));
     inverted.gesture(UP);
-    await vi.waitFor(() => expect(inverted.body()).toContain("> Hilfe"));
-    inverted.gesture(UP);
     await vi.waitFor(() => expect(inverted.body()).toContain("> + Neuer Kunde (sprechen)"));
-    inverted.gesture(DOWN);
     inverted.gesture(DOWN);
     inverted.gesture(DOWN); // back up to the active customer
     await vi.waitFor(() => expect(inverted.body()).toContain("> Bäckerei Sonnenschein"));
     await toProject(inverted);
-    inverted.gesture(UP); // "down" when inverted: Storyboard -> Takes
-    await vi.waitFor(() => expect(inverted.body()).toContain("> Takes"));
+    inverted.gesture(UP); // "down" when inverted: Takes -> Storyboard
+    await vi.waitFor(() => expect(inverted.body()).toContain("●   Storyboard"));
   });
 
   it("without the setting the directions are as before", async () => {
@@ -575,7 +553,7 @@ describe("QIS on the glasses", () => {
     await vi.waitFor(() => expect(fake.body()).toContain("> Bäckerei Sonnenschein"));
     await toProject(fake);
     fake.gesture(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Takes"));
+    await vi.waitFor(() => expect(fake.body()).toContain("●   Storyboard"));
   });
 });
 
@@ -598,30 +576,24 @@ describe("QIS phone tabs and the swipe-direction switch", () => {
     return root;
   }
 
-  it("tabs run Drehtag, Licht, Brille, Verbindung, Mehr (content first, then Brille, Verbindung, Mehr last)", () => {
+  it("QUS v1: exactly three tabs in one row - Jetzt, Projekte, Einstellungen", () => {
     const html = mount("de").innerHTML;
     const order = [...html.matchAll(/data-tab-go="(\w+)"/g)].map((match) => match[1]);
-    expect(order).toEqual(["day", "light", "glasses", "connection", "more"]);
+    expect(order).toEqual(["now", "projects", "settings"]);
     const labels = [...html.matchAll(/<\/span>([^<]+)<\/button>/g)].map((match) => match[1]);
-    expect(labels).toEqual(["Drehtag", "Licht", "Brille", "Verbindung", "Mehr"]);
-    // The swipe switch lives under Brille, the address under Verbindung, language and version under Mehr.
-    const glasses = html.slice(html.indexOf('data-tab="glasses"'), html.indexOf('data-tab="connection"'));
-    expect(glasses).toContain('id="invert"');
-    const connection = html.slice(html.indexOf('data-tab="connection"'), html.indexOf('data-tab="more"'));
-    expect(connection).toContain('id="url"');
-    expect(connection).not.toContain('id="language"');
-    const more = html.slice(html.indexOf('data-tab="more"'));
-    expect(more).toContain('id="language"');
-    expect(more).toContain(`Version ${VERSION}`);
+    expect(labels).toEqual(["Jetzt", "Projekte", "Einstellungen"]);
+    // The address, the swipe switch, language and version all live under Einstellungen.
+    const settings = html.slice(html.indexOf('data-tab="settings"'));
+    for (const id of ['id="url"', 'id="invert"', 'id="language"', "Version " + VERSION]) expect(settings).toContain(id);
   });
 
   it("the English tabs read the same way", () => {
     const labels = [...mount("en").innerHTML.matchAll(/<\/span>([^<]+)<\/button>/g)].map((match) => match[1]);
-    expect(labels).toEqual(["Shoot day", "Light", "Glasses", "Connection", "More"]);
+    expect(labels).toEqual(["Now", "Projects", "Settings"]);
   });
 
   it("the version is the one of this release", () => {
-    expect(VERSION).toBe("0.7.6");
+    expect(VERSION).toBe("0.8.0");
   });
 });
 

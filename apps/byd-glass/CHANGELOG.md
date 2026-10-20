@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0] — 2026-10-20
+
+### Geändert (QUS v1 „keine Textwand“)
+
+- **Brille: Fahrt, Laden und Status sind jetzt ein Cockpit-Bild** statt Bildern plus Textzeilen. Links der Akku-Ring (Ladestand groß in der Mitte, darunter die eine Zeile, die gerade zählt: Warnung, Verbindungsproblem oder „Stand 14:05“); rechts klein „BYD  14:05“, **eine große Aussage** (Fahrt: Tempo; Laden: Ladeleistung oder FERTIG; Status: Reichweite) und sechs Kennzahlen in drei Spalten (Fahrt: Leistung, Verbrauch, Reichweite, Klima, Außen, Trip; Laden: Reichweite, geladen, Rest, Typ, Zellen, Stand; Status: km, Klima, Schloss, Türen, Reifen, Stand). Eine offene Tür, ein unversperrtes Auto oder ein Reifenproblem rahmen ihre Kachel. Unten eine Hinweiszeile. Es werden nur geänderte Kacheln gesendet (die Uhr allein ändert nur oben rechts); während der Beenden-Dialog offen sein kann, wird keine Kachel gesendet.
+- Steuerung, Warnungs-Überlagerung, Hilfe und Wartebild bleiben Textseiten (die doppelte Bestätigung ist unverändert).
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Auto / Einstellungen) im Look von Rain Lens: Statusbanner, Hero-Karte mit dem Ladestand, 2×2-Kennzahlen, Karten-Leiste der Reifen; „Auto“ mit Laden, Details und Steuerung (eingeklappt); „Einstellungen“ mit Bridge-Karte (eingeklappt, sobald eingerichtet), Brille, Sprache und Mehr. Erststart: Drei-Schritt-Checkliste, die Demo läuft ohne Bridge.
+- Das animierte Auto-Zeichen mit Blinkern entfällt (das Cockpit ersetzt es). Die Kopfzeile der Warnungen pulsiert weiter auf den Textseiten.
+- Vorschau-Bilder: `store/preview-cockpit.png` (+ `-warn`), erzeugt mit `QG_PREVIEW=1 npx vitest run tests/cockpit.test.ts`.
+- Unverändert: kein Seitenmenü, Beenden-Dialog (4/5-Ablauf), begrenzte Aufrufe, Neuaufbau der ersten Seite, doppelte Bestätigung jedes Befehls.
+
 ## [0.4.7] — 2026-10-17
 
 ### Behoben (Hardware-Schrittprotokoll)

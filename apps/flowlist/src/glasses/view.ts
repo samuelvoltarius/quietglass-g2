@@ -39,6 +39,11 @@ export interface ViewOptions {
   readonly sideMenu?: boolean;
   /** The help page is open. */
   readonly help?: boolean;
+  /**
+   * How the last footer part reads: "exit" when the run is the root of the app (the default), "back" when it
+   * hangs under the start page (QUS v1: 2× goes one level up, only the start page asks the exit dialog).
+   */
+  readonly end?: "back" | "exit";
 }
 
 /** Name in the header: `FLOWLIST · state`. */
@@ -73,6 +78,7 @@ export function buildView(
 ): FlowView {
   const width = options.lineWidth ?? DEFAULT_WIDTH;
   const locale = options.locale ?? "en";
+  const end = options.end ?? "exit";
 
   if (options.help) return helpView(locale, width);
 
@@ -82,15 +88,15 @@ export function buildView(
       header: headerOf(t(locale, "g.s.empty")),
       headline: t(locale, "g.empty.1"),
       body: clampRows(wrap(t(locale, "g.empty.2"), width), MAX_BODY_ROWS, width),
-      footer: footer(locale, { hold: t(locale, options.sideMenu === true ? "g.v.menu" : "g.v.help") }, "exit"),
+      footer: footer(locale, { hold: t(locale, options.sideMenu === true ? "g.v.menu" : "g.v.help") }, end),
     };
   }
 
   const sideMenu = options.sideMenu === true;
-  if (isFinished(state)) return finishedView(list, state, now, width, locale, options.armed ?? null, sideMenu);
+  if (isFinished(state)) return finishedView(list, state, now, width, locale, options.armed ?? null, sideMenu, end);
 
   const step = currentStep(list, state);
-  if (!step) return finishedView(list, state, now, width, locale, options.armed ?? null, sideMenu);
+  if (!step) return finishedView(list, state, now, width, locale, options.armed ?? null, sideMenu, end);
 
   // A critical step states plainly that it wants a second tap. Never rely on
   // the user noticing a subtle marker for something that matters.
@@ -128,7 +134,7 @@ export function buildView(
     header: headerOf(stateLabel),
     headline: step.text,
     body,
-    footer: footerText(list, state, now, locale, options.armed ?? null, sideMenu),
+    footer: footerText(list, state, now, locale, options.armed ?? null, sideMenu, end),
   };
 }
 
@@ -147,7 +153,7 @@ function helpView(locale: Locale, width: number): FlowView {
   };
 }
 
-function finishedView(list: Checklist, state: RunState, now: number, width: number, locale: Locale, armed: Armed | null, sideMenu: boolean): FlowView {
+function finishedView(list: Checklist, state: RunState, now: number, width: number, locale: Locale, armed: Armed | null, sideMenu: boolean, end: "back" | "exit"): FlowView {
   const restartArmed = armed === "restart";
   const backArmed = armed === "back";
   const p = progress(list, state);
@@ -164,8 +170,8 @@ function finishedView(list: Checklist, state: RunState, now: number, width: numb
       : backArmed
         ? armedFooter(locale, t(locale, "g.v.undo"))
         : sideMenu
-          ? footer(locale, { tap: t(locale, "g.v.restart"), hold: t(locale, "g.v.menu") }, "exit")
-          : footer(locale, { tap: t(locale, "g.v.restart"), swipe: t(locale, "g.v.back"), hold: t(locale, "g.v.help") }, "exit"),
+          ? footer(locale, { tap: t(locale, "g.v.restart"), hold: t(locale, "g.v.menu") }, end)
+          : footer(locale, { tap: t(locale, "g.v.restart"), swipe: t(locale, "g.v.back"), hold: t(locale, "g.v.help") }, end),
   };
 }
 
@@ -187,7 +193,7 @@ export function progressBarFor(list: Checklist, state: RunState): ProgressBarSta
  * The gestures win the one footer line (QIS v1: Tippen, Wischen, Halten, 2×); the elapsed time stands
  * in front when it fits. A pending confirmation or skip shows the armed row instead.
  */
-function footerText(list: Checklist, state: RunState, now: number, locale: Locale, armed: Armed | null, sideMenu: boolean): string {
+function footerText(list: Checklist, state: RunState, now: number, locale: Locale, armed: Armed | null, sideMenu: boolean, end: "back" | "exit"): string {
   const step = currentStep(list, state);
   if (state.awaitingConfirm) return armedFooter(locale, t(locale, "g.v.confirm"));
   if (armed === "skip") return armedFooter(locale, t(locale, "g.v.skip"));
@@ -197,10 +203,10 @@ function footerText(list: Checklist, state: RunState, now: number, locale: Local
   // QIS v1.2 with a side menu: a swipe only moves the highlight on a question; help, info, back and skip are in the menu.
   // Without one: swipe asks back/skip, hold shows the step info (or opens the help).
   const hold = t(locale, sideMenu ? "g.v.menu" : step?.detail ? "g.v.info" : "g.v.help");
-  if (step?.kind === "choice") return footer(locale, { tap: t(locale, "g.v.go"), swipe: t(locale, "g.v.choose"), hold }, "exit", time);
-  if (sideMenu) return footer(locale, { tap: t(locale, "g.v.done"), hold }, "exit", time);
+  if (step?.kind === "choice") return footer(locale, { tap: t(locale, "g.v.go"), swipe: t(locale, "g.v.choose"), hold }, end, time);
+  if (sideMenu) return footer(locale, { tap: t(locale, "g.v.done"), hold }, end, time);
   const swipe = t(locale, step?.kind === "optional" ? "g.v.backSkip" : "g.v.back");
-  return footer(locale, { tap: t(locale, "g.v.done"), swipe, hold }, "exit", time);
+  return footer(locale, { tap: t(locale, "g.v.done"), swipe, hold }, end, time);
 }
 
 function nextStepText(list: Checklist, state: RunState): string | null {

@@ -26,8 +26,8 @@ describe("decide", () => {
     const root = createModel(demoReport());
     const selectedHome = decide(root, "scrollDown", T0).model;
     expect(selectedHome.rootSelected).toBe(1);
-    expect(decide(selectedHome, "click", T0).model.screen).toBe("home");
-    expect(decide(root, "scrollUp", T0).model.rootSelected).toBe(5); // wraps to the last row (Hilfe; the side menu is off, so help is a row again)
+    expect(decide(selectedHome, "click", T0).model.screen).toBe("inbox");
+    expect(decide(root, "scrollUp", T0).model.rootSelected).toBe(5); // wraps to the last row (Tagesstart; QUS v1: no help row)
   });
 
   it("uses the native Even exit dialog action on the root-page double tap", () => {

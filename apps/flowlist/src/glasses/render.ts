@@ -15,6 +15,7 @@ import type { FlowView } from "./view";
 import { encodeBitmap } from "./pixel";
 import { BAR_IMAGE_HEIGHT, BAR_IMAGE_WIDTH, type Bitmap } from "./progressbar";
 import { drawStepHalves, STEP_LEFT, STEP_RIGHT, type StepLayout } from "./stepimage";
+import { tileSlots, type TileSend, type TileSlot } from "../screen/sender";
 
 /**
  * Renders the checklist onto the G2.
@@ -90,6 +91,36 @@ export function buildPage(view: FlowView, menu: MenuSpec | null = null): CreateS
   });
 }
 
+/** A text page without images (start page, task list): header, body, footer across the full width. */
+export function buildTextPage(view: FlowView): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer({
+    containerTotalNum: 3,
+    textObject: [
+      text(CONTAINER.header, view.header, 1, false),
+      // Exactly one container may capture input; the body owns it.
+      text({ ...CONTAINER.body, y: 36, height: 214 }, view.body.join("\n"), 2, true),
+      text(CONTAINER.footer, view.footer, 3, false),
+    ],
+  });
+}
+
+/** The cockpit's four image containers; one empty text container under them owns the input. */
+export const COCKPIT_TILES = tileSlots(21, "flowlist");
+const COCKPIT_INPUT_ID = 20;
+
+export function buildCockpitPage(): CreateStartUpPageContainer {
+  return new CreateStartUpPageContainer({
+    containerTotalNum: 1 + COCKPIT_TILES.length,
+    textObject: [new TextContainerProperty({
+      containerID: COCKPIT_INPUT_ID, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+      paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+    })],
+    imageObject: COCKPIT_TILES.map((tile, index) => new ImageContainerProperty({
+      containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+    })),
+  });
+}
+
 function text(
   spec: ContainerSpec,
   content: string,
@@ -144,9 +175,7 @@ export function forgetPage(bridge: EvenAppBridge): void {
   started.delete(bridge);
 }
 
-export async function createPage(bridge: EvenAppBridge, view: FlowView, menu: MenuSpec | null = null): Promise<RenderResult> {
-  // A rebuild without the menu would clear it, so every rebuild supplies it again.
-  const page = buildPage(view, menu);
+async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
   // One creation per bridge, then only rebuilds: a rebuild before the first
   // creation or a second creation leaves the page without its input route.
@@ -173,6 +202,14 @@ export async function createPage(bridge: EvenAppBridge, view: FlowView, menu: Me
     return { ok: false, reason: errorMessage(error) };
   }
 }
+
+/** The run page: the step picture, the progress bar and three text containers. A rebuild without the menu would clear it, so every rebuild supplies it again. */
+export const createPage = (bridge: EvenAppBridge, view: FlowView, menu: MenuSpec | null = null): Promise<RenderResult> =>
+  installPage(bridge, buildPage(view, menu));
+export const createTextPage = (bridge: EvenAppBridge, view: FlowView): Promise<RenderResult> =>
+  installPage(bridge, buildTextPage(view));
+export const createCockpitPage = (bridge: EvenAppBridge): Promise<RenderResult> =>
+  installPage(bridge, buildCockpitPage());
 
 /** Fast path: change the text of the three containers in place. */
 
@@ -240,6 +277,21 @@ export async function sendStepImage(bridge: EvenAppBridge, layout: StepLayout | 
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+}
+
+/** One image tile to the glasses; resolves true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, imageData: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
+
+/**
+ * The tile sender's write function. It writes only while `allowed()` says so: not while the system exit
+ * dialog may be on screen (a page call could cover it) and not after the cockpit page has been left.
+ * A refused tile counts as failed and is tried again with the next frame.
+ */
+export function guardedTileSend(bridge: EvenAppBridge, allowed: () => boolean): TileSend {
+  return (slot, png) => (allowed() ? sendTile(bridge, slot, png) : Promise.resolve(false));
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

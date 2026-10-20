@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr } from "../src/i18n";
 import { messages } from "../src/messages";
-import { buildView, composeView } from "../src/glasses/view";
-import { BODY_COLS, BODY_ROWS, LINE_COLS } from "../src/glasses/fit";
+import { cockpitModel, type CockpitInput } from "../src/cockpit/model";
+import { LINE_COLS } from "../src/glasses/fit";
 import { addSample, calibrate, createMonitor, DEFAULT_SETTINGS, type PostureSettings } from "../src/posture/monitor";
 import { mountPhoneUi } from "../src/ui/phone";
 import { EMPTY_DATA } from "../src/storage/persist";
@@ -68,34 +68,42 @@ describe("language choice", () => {
   });
 });
 
-describe("glasses text budget", () => {
+describe("glasses cockpit text", () => {
   const UPRIGHT = { x: 0, y: 0, z: 1 };
   const TILTED = { x: 0, y: 1, z: 1 };
   const fast: PostureSettings = { ...DEFAULT_SETTINGS, smoothing: 1, sustainSeconds: 3599, snoozeSeconds: 60 };
 
-  function everyView(locale: "de" | "en") {
+  function everyModel(locale: "de" | "en") {
     const calibrated = calibrate(createMonitor(), UPRIGHT, 0);
     const leaning = addSample(calibrated, TILTED, fast, 1000);
     const warned = addSample(addSample(calibrated, TILTED, { ...fast, sustainSeconds: 10 }, 1000), TILTED, { ...fast, sustainSeconds: 10 }, 3_600_000);
     const tracked = addSample(calibrated, UPRIGHT, fast, 10_000);
-    return [
-      composeView(createMonitor(), fast, { locale }),
-      composeView(createMonitor(), fast, { locale, sensorOff: true }),
-      composeView(calibrated, fast, { locale, justCalibrated: true }, 0),
-      composeView(tracked, fast, { locale, showAngleWhenGood: true }, 10_000),
-      composeView(calibrated, fast, { locale }, 0),
-      composeView(leaning, fast, { locale }, 1000),
-      composeView(warned, { ...fast, sustainSeconds: 10 }, { locale }, 3_600_000 + 3_599_000),
+    const base = { settings: fast, locale, now: 0 } as const;
+    const inputs: CockpitInput[] = [
+      { ...base, monitor: createMonitor() },
+      { ...base, monitor: createMonitor(), sensorOff: true },
+      { ...base, monitor: calibrated, justCalibrated: true },
+      { ...base, monitor: tracked, showAngleWhenGood: true, now: 10_000 },
+      { ...base, monitor: calibrated },
+      { ...base, monitor: calibrated, confirm: "calibrate" },
+      { ...base, monitor: leaning, now: 1000 },
+      { ...base, monitor: warned, settings: { ...fast, sustainSeconds: 10 }, now: 3_600_000 + 3_599_000 },
     ];
+    return inputs.map((input) => cockpitModel(input));
   }
 
   for (const locale of ["de", "en"] as const) {
-    it(`fits every ${locale} screen into 7 rows before any safety cut`, () => {
-      for (const view of everyView(locale)) {
-        expect(view.header.length).toBeLessThanOrEqual(LINE_COLS);
-        expect(view.footer.length).toBeLessThanOrEqual(LINE_COLS);
-        expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
-        for (const line of view.body) expect(line.length, line).toBeLessThanOrEqual(BODY_COLS);
+    it(`keeps every ${locale} cockpit line short (headline, cells, hint, caption) before any cut`, () => {
+      for (const model of everyModel(locale)) {
+        expect(model.hint.length, model.hint).toBeLessThanOrEqual(LINE_COLS);
+        expect(model.headline.length).toBeLessThanOrEqual(2);
+        for (const line of model.headline) expect(line.length, line).toBeLessThanOrEqual(14);
+        expect(model.cells).toHaveLength(6);
+        for (const cell of model.cells) {
+          expect(cell.label.length, cell.label).toBeLessThanOrEqual(11);
+          expect(cell.value.length, cell.value).toBeLessThanOrEqual(10);
+        }
+        expect(model.caption.length).toBeLessThanOrEqual(24);
       }
     });
   }
@@ -105,30 +113,32 @@ describe("first run", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it("tells the user on the glasses exactly what to do", () => {
-    const view = buildView(createMonitor(), DEFAULT_SETTINGS, { locale: "de" });
-    expect(view.body.join(" ")).toBe("Setz dich gerade hin und tippe einmal zum Speichern.");
-    expect(view.header).toBe("POSTURE · neu");
-    expect(view.footer).toBe("Tippen = Haltung speichern · 2× = Ende");
+    const model = cockpitModel({ monitor: createMonitor(), settings: DEFAULT_SETTINGS, locale: "de", now: 0 });
+    expect(model.headline).toEqual(["HALTUNG", "SPEICHERN"]);
+    expect(model.hint).toBe("Tippen = Haltung speichern · Halten = Menü · 2× = Ende");
+    expect(model.caption).toBe("Nicht gespeichert");
   });
 
   it("confirms a calibration so the quiet display is not mistaken for a fault", () => {
-    const view = buildView(calibrate(createMonitor(), { x: 0, y: 0, z: 1 }, 0), DEFAULT_SETTINGS, { locale: "de", justCalibrated: true }, 0);
-    expect(view.body[0]).toContain("Gespeichert");
+    const model = cockpitModel({ monitor: calibrate(createMonitor(), { x: 0, y: 0, z: 1 }, 0), settings: DEFAULT_SETTINGS, locale: "de", now: 0, justCalibrated: true });
+    expect(model.headline).toEqual(["GESPEICHERT"]);
   });
 
   it("says what to do when the motion sensor is unavailable", () => {
-    const view = buildView(createMonitor(), DEFAULT_SETTINGS, { locale: "de", sensorOff: true });
-    expect(view.body.join(" ")).toContain("öffne die App neu");
-    expect(view.footer).toContain("2× = Ende");
+    const model = cockpitModel({ monitor: createMonitor(), settings: DEFAULT_SETTINGS, locale: "de", now: 0, sensorOff: true });
+    expect(model.headline).toEqual(["KEIN", "SENSOR"]);
+    expect(model.hint).toBe("2× = Ende");
   });
 
-  it("leads the phone page with the next step, in German", () => {
+  it("opens the phone on Einstellungen with the three-step checklist, in German", () => {
     let html = "";
     const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de" });
-    expect(html).toContain("tippe einmal auf den Bügel");
+    expect(html).toContain("Erste Schritte");
+    expect(html.match(/class="num"/g)).toHaveLength(3);
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf("card next")).toBeLessThan(html.indexOf("Wann erinnern"));
+    expect(html.indexOf("Erste Schritte")).toBeLessThan(html.indexOf("Wann erinnern"));
   });
 });

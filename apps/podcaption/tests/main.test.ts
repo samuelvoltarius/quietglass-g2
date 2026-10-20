@@ -44,7 +44,11 @@ describe("podcaption exit dialog", () => {
     vi.resetModules();
     await import("../src/main");
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    fake.emit(0); // start page: tap opens the captions
+    await vi.advanceTimersByTimeAsync(10);
     fake.emit(0); // tap: play
+    await vi.advanceTimersByTimeAsync(10);
+    fake.emit(3); // 2x: back to the start page (playback goes on); a further 2x asks the exit dialog
     await vi.advanceTimersByTimeAsync(10);
     return fake;
   }

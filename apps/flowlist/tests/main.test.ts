@@ -19,11 +19,17 @@ function deferred<T>(): Deferred<T> {
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
 const KEY = "quietglass.flowlist.v1";
+const UI_KEY = "quietglass.flowlist.ui.v1";
 
-function fakeBridge(stored: Record<string, unknown> | null = null, storage = new Map<string, string>()) {
+/**
+ * `screen` is where the glasses were left: most tests start inside the run ("run"); the exit tests start on the
+ * start page, where 2× asks the exit dialog (QUS v1: in the run 2× goes one level up).
+ */
+function fakeBridge(stored: Record<string, unknown> | null = null, storage = new Map<string, string>(), screen: "run" | "start" = "run") {
   let handler: ((event: unknown) => void) | undefined;
   let statusHandler: ((status: unknown) => void) | undefined;
   if (stored) storage.set(KEY, JSON.stringify(stored));
+  if (screen === "run" && !storage.has(UI_KEY)) storage.set(UI_KEY, JSON.stringify({ screen: "run" }));
   const bridge = {
     getLocalStorage: vi.fn(async (key: string) => storage.get(key) ?? ""),
     setLocalStorage: vi.fn(async (key: string, value: string) => { storage.set(key, value); return true; }),
@@ -75,7 +81,7 @@ function fakeCanvas() {
     width: 0,
     height: 0,
     getContext: () => ({
-      imageSmoothingEnabled: false, fillStyle: "", font: "", textBaseline: "", fillRect: () => undefined, fillText: () => undefined,
+      imageSmoothingEnabled: false, fillStyle: "", font: "", textBaseline: "", fillRect: () => undefined, fillText: () => undefined, clearRect: () => undefined,
       measureText: (text: string) => ({ width: text.length * 20 }),
       getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
     }),
@@ -110,10 +116,10 @@ describe("flowlist lifecycle", () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   const drawCount = (fake: ReturnType<typeof fakeBridge>): number =>
-    fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.textContainerUpgrade.mock.calls.length;
+    fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length + fake.bridge.textContainerUpgrade.mock.calls.length;
 
   it("regression: a failed exit call on double tap is not an unhandled rejection, and the run continues", async () => {
-    const fake = fakeBridge(data());
+    const fake = fakeBridge(data(), undefined, "start");
     fake.bridge.shutDownPageContainer.mockRejectedValue(new Error("already closed"));
     await boot(fake);
     fake.emit(3);
@@ -127,7 +133,7 @@ describe("flowlist lifecycle", () => {
   });
 
   it("regression: stops redrawing once the system ends the app (sysEvent 7) after the exit dialog", async () => {
-    const fake = fakeBridge(data());
+    const fake = fakeBridge(data(), undefined, "start");
     await boot(fake);
     fake.emit(3);
     await sleep(20);
@@ -141,7 +147,7 @@ describe("flowlist lifecycle", () => {
   });
 
   it("keeps the run going when the exit call resolves true (dialog shown, not confirmed)", async () => {
-    const fake = fakeBridge(data());
+    const fake = fakeBridge(data(), undefined, "start");
     fake.bridge.shutDownPageContainer.mockResolvedValue(true);
     await boot(fake);
     fake.emit(3);
@@ -153,7 +159,7 @@ describe("flowlist lifecycle", () => {
   });
 
   it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
-    const fake = fakeBridge(data());
+    const fake = fakeBridge(data(), undefined, "start");
     // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
     fake.bridge.shutDownPageContainer.mockResolvedValue(true);
     await boot(fake);
@@ -185,7 +191,7 @@ describe("flowlist lifecycle", () => {
   });
 
   it("hardware order (step log): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again without a gesture, clock on, next 2x asks", async () => {
-    const fake = fakeBridge(data());
+    const fake = fakeBridge(data(), undefined, "start");
     fake.bridge.shutDownPageContainer.mockResolvedValue(true);
     await boot(fake);
     await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
@@ -199,15 +205,12 @@ describe("flowlist lifecycle", () => {
     fake.emit(5); // "No": the dialog is gone
     await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2)); // page created again, no gesture needed
     await sleep(200);
-    const afterRestore = pageCalls();
-    await sleep(1600);
-    expect(pageCalls()).toBeGreaterThan(afterRestore); // the clock was never stopped
     fake.emit(3);
     await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledTimes(2)); // the very first 2x opens the dialog again
   });
 
   it("a 2x while the app is in the background (real 5, no dialog) comes back, rebuilds the page and asks the dialog, never swallowed", async () => {
-    const fake = fakeBridge(data());
+    const fake = fakeBridge(data(), undefined, "start");
     fake.bridge.shutDownPageContainer.mockResolvedValue(true);
     await boot(fake);
     await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
@@ -364,19 +367,23 @@ describe("flowlist lifecycle", () => {
   });
 });
 
-/** Newest text sent to one container (page creation or upgrade). */
+/** Newest text sent to one container (page creation, rebuild or upgrade), in the order the calls were made. */
 function lastText(fake: Fake, containerID: number): string {
-  const sent: string[] = [];
-  for (const call of fake.bridge.createStartUpPageContainer.mock.calls) {
-    const page = (call as unknown as [{ textObject?: Array<{ containerID?: number; content?: string }> }])[0];
-    const text = page.textObject?.find((t) => t.containerID === containerID)?.content;
-    if (text !== undefined) sent.push(text);
+  const sent: Array<{ order: number; text: string }> = [];
+  const pages = [fake.bridge.createStartUpPageContainer, fake.bridge.rebuildPageContainer];
+  for (const mock of pages) {
+    mock.mock.calls.forEach((call, index) => {
+      const page = (call as unknown as [{ textObject?: Array<{ containerID?: number; content?: string }> }])[0];
+      const text = page?.textObject?.find((t) => t.containerID === containerID)?.content;
+      if (text !== undefined) sent.push({ order: mock.mock.invocationCallOrder[index]!, text });
+    });
   }
-  for (const call of fake.bridge.textContainerUpgrade.mock.calls) {
+  fake.bridge.textContainerUpgrade.mock.calls.forEach((call, index) => {
     const upgrade = (call as unknown as [{ containerID?: number; content?: string }])[0];
-    if (upgrade.containerID === containerID) sent.push(upgrade.content ?? "");
-  }
-  return sent[sent.length - 1] ?? "";
+    if (upgrade.containerID === containerID) sent.push({ order: fake.bridge.textContainerUpgrade.mock.invocationCallOrder[index]!, text: upgrade.content ?? "" });
+  });
+  sent.sort((x, y) => x.order - y.order);
+  return sent[sent.length - 1]?.text ?? "";
 }
 
 describe("flowlist QIS v1", () => {
@@ -549,5 +556,124 @@ describe("flowlist QIS v1", () => {
     await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · Neustart?"));
     fake.emit(0);
     await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/1"));
+  });
+});
+
+interface SentPage { textObject?: Array<{ containerID?: number; content?: string }>; imageObject?: Array<{ containerName?: string; width?: number; height?: number }> }
+const pagesOf = (fake: Fake): SentPage[] => [
+  ...(fake.bridge.createStartUpPageContainer.mock.calls as unknown as unknown[][]),
+  ...(fake.bridge.rebuildPageContainer.mock.calls as unknown as unknown[][]),
+].map((call) => call[0] as SentPage);
+const tileNames = (fake: Fake): string[] => fake.bridge.updateImageRawData.mock.calls.map((call) => (call as unknown as [{ containerName?: string }])[0].containerName ?? "");
+
+describe("flowlist QUS v1 on the glasses", () => {
+  beforeEach(() => { resetGestureDedupe(); vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("starts on the start page: three big entries, header with ● live, one footer line, no images", async () => {
+    const fake = fakeBridge(data(), undefined, "start");
+    await boot(fake);
+    await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1));
+    expect(lastText(fake, 1)).toBe("FLOWLIST · ● live");
+    expect(lastText(fake, 2).split("\n")).toEqual(["● Ablauf · 1/12", "  Übersicht · 12 offen", "  Aufgaben · 12"]);
+    expect(lastText(fake, 3)).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
+    const page = pagesOf(fake).find((p) => p.textObject?.some((t) => t.containerID === 2));
+    expect(page?.imageObject).toBeUndefined();
+  });
+
+  it("tap opens the run; 2× there goes back to the start page and never asks the exit dialog; 2× on the start page does", async () => {
+    const fake = fakeBridge(data(), undefined, "start");
+    fake.bridge.shutDownPageContainer.mockResolvedValue(true);
+    await boot(fake);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/12"));
+    expect(lastText(fake, 3)).toContain("2× = zurück");
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+    await sleep(40);
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+    fake.emit(3);
+    await vi.waitFor(() => expect(fake.bridge.shutDownPageContainer).toHaveBeenCalledWith(1));
+  });
+
+  it("the overview is a cockpit image of four tiles; the clock tick sends nothing; tap goes to the run, 2× to the start page", async () => {
+    const fake = fakeBridge(data(), undefined, "start");
+    await boot(fake);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+    fake.emit(2); // down to the overview
+    await vi.waitFor(() => expect(lastText(fake, 2)).toContain("● Übersicht"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(tileNames(fake)).toEqual(["flowlist-nw", "flowlist-ne", "flowlist-sw", "flowlist-se"]));
+    const cockpit = pagesOf(fake).find((p) => (p.imageObject?.length ?? 0) === 4);
+    expect(cockpit?.imageObject?.every((tile) => tile.width === 288 && tile.height === 144)).toBe(true);
+    await sleep(1400); // the 1 s clock redraws, but an unchanged cockpit crosses Bluetooth never again
+    expect(tileNames(fake)).toHaveLength(4);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · 1/12"));
+    expect(tileNames(fake)).toHaveLength(4);
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+  });
+
+  it("2× on the overview goes back to the start page", async () => {
+    const fake = fakeBridge(data(), undefined, "start");
+    await boot(fake);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+    fake.emit(2);
+    fake.emit(0);
+    await vi.waitFor(() => expect(tileNames(fake).length).toBe(4));
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastText(fake, 2)).toContain("● Übersicht"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+  });
+
+  it("the task list shows five rows with ●; a swipe moves the dot and changes nothing in the run", async () => {
+    const fake = fakeBridge(data(), undefined, "start");
+    await boot(fake);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+    fake.emit(2);
+    fake.emit(2);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("Aufgaben · ● live"));
+    expect(lastText(fake, 2).split("\n")).toEqual(["● → Step number 1", "    Step number 2", "    Step number 3", "    Step number 4", "    Step number 5"]);
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastText(fake, 2).split("\n")[1]).toBe("●   Step number 2"));
+    expect(lastText(fake, 3)).toBe("Tippen = Ablauf · Wischen = blättern · 2× = zurück");
+    expect(fake.storage.get("quietglass.flowlist.run.v1") ?? "").not.toContain('"currentId":"s2"');
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastText(fake, 1)).toBe("FLOWLIST · ● live"));
+  });
+
+  it("comes back where it was left: the overview after a restart", async () => {
+    const first = fakeBridge(data(), undefined, "start");
+    await boot(first);
+    await vi.waitFor(() => expect(lastText(first, 1)).toBe("FLOWLIST · ● live"));
+    first.emit(2);
+    first.emit(0);
+    await vi.waitFor(() => expect(first.storage.get("quietglass.flowlist.ui.v1")).toContain('"screen":"cockpit"'));
+    const second = fakeBridge(null, new Map(first.storage), "start");
+    await boot(second);
+    await vi.waitFor(() => expect(tileNames(second).length).toBe(4));
+    expect(pagesOf(second).some((p) => (p.imageObject?.length ?? 0) === 4)).toBe(true);
+  });
+
+  it("the elapsed time in the run keeps ticking", async () => {
+    const fake = fakeBridge(data());
+    await boot(fake);
+    await vi.waitFor(() => expect(lastText(fake, 3)).toMatch(/^0:0\d · /));
+    const first = lastText(fake, 3);
+    await sleep(1300);
+    await vi.waitFor(() => expect(lastText(fake, 3)).not.toBe(first));
+  });
+
+  it("an empty list leaves the start page with its hint and no entries", async () => {
+    const fake = fakeBridge({ lists: [], activeId: null, settings: { showNext: true, lineWidth: 56, invertScroll: false } }, undefined, "start");
+    await boot(fake);
+    await vi.waitFor(() => expect(lastText(fake, 2)).toBe("Noch keine Checkliste.\nLeg am Handy in FlowList eine an."));
+    fake.emit(0); // nothing to open
+    await sleep(40);
+    expect(lastText(fake, 1)).toBe("FLOWLIST · ● live");
   });
 });

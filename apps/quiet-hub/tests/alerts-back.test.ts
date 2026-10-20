@@ -30,7 +30,7 @@ describe("getting out of an alert (0.6.5)", () => {
     expect(back.effect).toBeUndefined();
     expect(back.model.screen).toBe("root");
     expect(back.model.origin).toBeNull();
-    expect(back.model.rootSelected).toBe(3);
+    expect(back.model.rootSelected).toBe(1);
     // A tap on the overview opens the inbox with the next unread alert: no loop back into the old session.
     const inbox = decide(back.model, "click", T0);
     expect(inbox.model.screen).toBe("inbox");

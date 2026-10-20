@@ -12,16 +12,22 @@ import {
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import type { ClockView } from "./view";
-import { encodeBitmap } from "./pixel";
-import { DAY_BAR_HEIGHT, DAY_BAR_WIDTH, type Bitmap } from "./daybar";
+import { tileSlots, type TileSend, type TileSlot } from "../screen/sender";
 
 /**
- * Renders the time tracker onto the G2.
+ * Renders ShiftClock onto the G2. Two kinds of page on the 576 x 288 display:
  *
- * Layout is fixed at three stacked text containers on the 576 x 288 display,
- * plus the day bar image beside the body. After the page exists, updates go through `textContainerUpgrade`, which
- * changes text without rebuilding the page — on real hardware a rebuild falls
- * back to a full page creation and costs seconds, discarding input meanwhile.
+ *  - the text page (start): header, body, footer, in the three text
+ *    containers every Quietglass app uses;
+ *  - the cockpit page (QUS v1): the whole display is four 288 x 144 image
+ *    tiles (drawn by src/cockpit), plus one empty text container that owns
+ *    the input.
+ *
+ * `createStartUpPageContainer` runs exactly once (preceded by one rebuild that
+ * registers input on real glasses). Every later page - also the other kind -
+ * is a `rebuildPageContainer`; everything else goes through
+ * `textContainerUpgrade` and `updateImageRawData`, and only when something
+ * changed: on real hardware a rebuild costs seconds and discards input.
  */
 
 export const SCREEN_WIDTH = 576;
@@ -40,16 +46,17 @@ const CONTAINER: Readonly<Record<"header" | "body" | "footer", ContainerSpec>> =
   footer: { id: 3, name: "footer", y: 252, height: 34 },
 };
 
+/** The cockpit's four image containers; the input container sits under them. */
+export const COCKPIT_TILES = tileSlots(21, "shift");
+const COCKPIT_INPUT_ID = 20;
+
 export interface RenderResult {
   readonly ok: boolean;
   /** Present when page creation failed, for the caller to surface or log. */
   readonly reason?: string;
 }
 
-/** The day bar sits where the pixel icon was: left of the body, below the header. */
-export const DAY_BAR = { id: 4, name: "day-bar", x: 0, y: 36 } as const;
-
-/** One item of the glasses' side menu (id > 0, label at most 32 bytes). QIS v1.2. */
+/** One item of the glasses' side menu (id > 0, label at most 32 bytes). QIS v1.2; off while the app's SIDE_MENU is false. */
 export interface MenuItemSpec { readonly id: number; readonly label: string }
 export interface MenuSpec {
   /** Changes exactly when the glasses need a different menu (=> one rebuild). */
@@ -65,43 +72,47 @@ export function buildMenu(menu: MenuSpec | null): MenuContainerProperty | undefi
   });
 }
 
-export function buildPage(view: ClockView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
-  const menuObject = buildMenu(menu);
-  return new CreateStartUpPageContainer({
-    ...(menuObject === undefined ? {} : { menuObject }),
-    containerTotalNum: 4,
-    textObject: [
-      text(CONTAINER.header, view.header, 1, false),
-      // Exactly one container may capture input; the body owns it.
-      text(CONTAINER.body, view.body.join("\n"), 2, true, true),
-      text(CONTAINER.footer, view.footer, 3, false),
-    ],
-    // Image containers take 20-288 x 20-144 px; the bar uses 96 x 144.
-    imageObject: [new ImageContainerProperty({
-      containerID: DAY_BAR.id, containerName: DAY_BAR.name, xPosition: DAY_BAR.x, yPosition: DAY_BAR.y,
-      width: DAY_BAR_WIDTH, height: DAY_BAR_HEIGHT, zOrderIndex: 4,
-    })],
-  });
-}
-
-function text(
-  spec: ContainerSpec,
-  content: string,
-  zOrderIndex: number,
-  captureEvents: boolean,
-  compact = false,
-): TextContainerProperty {
+function text(spec: ContainerSpec, content: string, zOrderIndex: number, captureEvents: boolean): TextContainerProperty {
   return new TextContainerProperty({
     containerID: spec.id,
     containerName: spec.name,
-    xPosition: compact ? 104 : 0,
+    xPosition: 0,
     yPosition: spec.y,
-    width: compact ? SCREEN_WIDTH - 104 : SCREEN_WIDTH,
+    width: SCREEN_WIDTH,
     height: spec.height,
     paddingLength: 4,
     zOrderIndex,
     isEventCapture: captureEvents ? 1 : 0,
     content: content || " ",
+  });
+}
+
+export function buildTextPage(view: ClockView, menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
+  return new CreateStartUpPageContainer({
+    ...(menuObject === undefined ? {} : { menuObject }),
+    containerTotalNum: 3,
+    textObject: [
+      text(CONTAINER.header, view.header, 1, false),
+      // Exactly one container may capture input; the body owns it.
+      text(CONTAINER.body, view.body.join("\n"), 2, true),
+      text(CONTAINER.footer, view.footer, 3, false),
+    ],
+  });
+}
+
+export function buildCockpitPage(menu: MenuSpec | null = null): CreateStartUpPageContainer {
+  const menuObject = buildMenu(menu);
+  return new CreateStartUpPageContainer({
+    ...(menuObject === undefined ? {} : { menuObject }),
+    containerTotalNum: 1 + COCKPIT_TILES.length,
+    textObject: [new TextContainerProperty({
+      containerID: COCKPIT_INPUT_ID, containerName: "cockpit-input", xPosition: 0, yPosition: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+      paddingLength: 0, zOrderIndex: 1, isEventCapture: 1, content: " ",
+    })],
+    imageObject: COCKPIT_TILES.map((tile, index) => new ImageContainerProperty({
+      containerID: tile.id, containerName: tile.name, xPosition: tile.x, yPosition: tile.y, width: tile.width, height: tile.height, zOrderIndex: index + 2,
+    })),
   });
 }
 
@@ -128,21 +139,21 @@ export const PAGE_CALL_MS = 8_000;
 export const TEXT_CALL_MS = 5_000;
 export const IMAGE_CALL_MS = 10_000;
 
-function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+export function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer from the glasses within ${ms} ms`)), ms); });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
- * Puts the page on the glasses: created once per bridge, every later call
- * (after a failure, a reconnect or a return to the foreground) rebuilds it.
- * A second `createStartUpPageContainer` leaves the glasses deaf to input
- * (measured on real glasses with OpenGlance 0.5.1). The caller resends the
- * day bar afterwards.
+ * Puts a page on the glasses: created once per bridge, every later call
+ * (after a failure, a reconnect, a return to the foreground or the switch
+ * between text page and cockpit) rebuilds it. A second
+ * `createStartUpPageContainer` leaves the glasses deaf to input (measured on
+ * real glasses with OpenGlance 0.5.1). The caller resets the tile sender
+ * afterwards: a new page starts with blank image containers.
  */
-export async function createPage(bridge: EvenAppBridge, view: ClockView, menu: MenuSpec | null = null): Promise<RenderResult> {
-  const page = buildPage(view, menu);
+async function installPage(bridge: EvenAppBridge, page: CreateStartUpPageContainer): Promise<RenderResult> {
   sentLength.clear();
   if (started.has(bridge)) {
     try {
@@ -169,7 +180,10 @@ export async function createPage(bridge: EvenAppBridge, view: ClockView, menu: M
   }
 }
 
-/** Fast path: change the text of the three containers in place. */
+export const createPage = (bridge: EvenAppBridge, view: ClockView, menu: MenuSpec | null = null): Promise<RenderResult> =>
+  installPage(bridge, buildTextPage(view, menu));
+export const createCockpitPage = (bridge: EvenAppBridge, menu: MenuSpec | null = null): Promise<RenderResult> =>
+  installPage(bridge, buildCockpitPage(menu));
 
 /**
  * Ghost-text guard for `textContainerUpgrade`: the lens blanks exactly
@@ -187,15 +201,17 @@ function guarded(specId: number, content: string): { content: string; contentLen
   return { content: text, contentLength: length };
 }
 
-export async function updatePage(bridge: EvenAppBridge, view: ClockView): Promise<RenderResult> {
-  const updates: Array<[ContainerSpec, string]> = [
-    [CONTAINER.header, view.header],
-    [CONTAINER.body, view.body.join("\n")],
-    [CONTAINER.footer, view.footer],
+/** Fast path: change the text of the three containers in place, only those that changed. */
+export async function updatePage(bridge: EvenAppBridge, view: ClockView, previous: ClockView | null = null): Promise<RenderResult> {
+  const updates: Array<[ContainerSpec, string, string | undefined]> = [
+    [CONTAINER.header, view.header, previous?.header],
+    [CONTAINER.body, view.body.join("\n"), previous?.body.join("\n")],
+    [CONTAINER.footer, view.footer, previous?.footer],
   ];
 
   try {
-    for (const [spec, content] of updates) {
+    for (const [spec, content, before] of updates) {
+      if (before !== undefined && before === content) continue;
       await bounded(bridge.textContainerUpgrade(new TextContainerUpgrade({
         containerID: spec.id,
         containerName: spec.name,
@@ -210,16 +226,20 @@ export async function updatePage(bridge: EvenAppBridge, view: ClockView): Promis
   }
 }
 
+/** One image tile to the glasses; resolves true on success. */
+export async function sendTile(bridge: EvenAppBridge, slot: TileSlot, imageData: Uint8Array): Promise<boolean> {
+  const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: slot.id, containerName: slot.name, imageData })), IMAGE_CALL_MS, "image " + slot.name);
+  return result === ImageRawDataUpdateResult.success;
+}
+
 /**
- * Sends the day bar. Separate from the text on purpose: an image is a slow
- * BLE transfer, and the caller runs it on its own lane (see image-sync.ts).
+ * The tile sender's write function. It writes only while `allowed()` says so:
+ * not while the system exit dialog may be on screen (a page call could cover
+ * it) and not after the cockpit page has been left (its containers are gone).
+ * A refused tile counts as failed and is tried again with the next frame.
  */
-export async function sendDayBar(bridge: EvenAppBridge, bitmap: Bitmap): Promise<RenderResult> {
-  try {
-    const imageData = await encodeBitmap(bitmap);
-    const result = await bounded(bridge.updateImageRawData(new ImageRawDataUpdate({ containerID: DAY_BAR.id, containerName: DAY_BAR.name, imageData })), IMAGE_CALL_MS, "image " + DAY_BAR.name);
-    return result === ImageRawDataUpdateResult.success ? { ok: true } : { ok: false, reason: `image:${String(result)}` };
-  } catch (error) { return { ok: false, reason: errorMessage(error) }; }
+export function guardedTileSend(bridge: EvenAppBridge, allowed: () => boolean): TileSend {
+  return (slot, png) => (allowed() ? sendTile(bridge, slot, png) : Promise.resolve(false));
 }
 
 export function describeCreateResult(result: StartUpPageCreateResult): string {

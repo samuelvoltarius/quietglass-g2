@@ -21,29 +21,36 @@
 >    Build mit `VITE_STAR_URL` bringt sie schon mit).
 
 Use `?demo=1` on the development URL for a simulated imaging night (labelled
-`DEMO`, no bridge needed). `&scene=flip|lost|warm|done` shows the alert lines,
-`&page=1..5` opens a page (2 = weather).
+`Demo`, no bridge needed). `&scene=flip|lost|warm|done` shows the alerts,
+`&page=1..5` opens a cockpit page directly (1 overview, 2 guiding, 3 equipment,
+4 weather, 5 last frame).
 
 ---
 
-## On the glasses
+## On the glasses (QUS v1, no wall of text)
 
-Swipe moves between five pages; the telescope sign in the top-right corner
-animates while a frame is exposed (twinkling star, filling dots), sits still
-when idle and shows a pulsing `!` on a problem.
+**Start page**: at most three big entries, `Star Glass · ● live` on top:
+`Aufnahme`, `Wetter`, `Letztes Bild`. Swipe chooses, tap opens, 2× leaves the app.
+Below the entries one line says what needs attention (an alert, a weather warning,
+or on the first start `Demo · Verbindung am Handy einrichten`).
 
-| Page | Left | Right |
-|---|---|---|
-| 1 Overview | exposure ring: seconds left in large digits, frame length below | target, filter · exposure · frame n/m, time left · step, camera temp · guiding RMS, flip · altitude |
-| 2 Weather | cloud cover for the next 12 h (limit dotted, chance of rain as a strip, labels every 3 h) | clear until ~02:30 / cloudy · clear from ~03:00, clouds now with low/mid/high layers, rain · dew spread, wind · gusts, SQM · safety monitor, up to two warnings |
-| 3 Guiding & focus | RMS (") large with its history, HFR large with its history | guiding state, RA/Dec RMS, HFR · stars, focuser position and temperature |
-| 4 Equipment | full width: camera (temp → set point · cooler %), mount (tracking, alt/az), meridian flip and pier side, focuser, filter, guider, API version | |
-| 5 Last frame | 288 × 144 grayscale preview, stretched for the glasses | target, type · filter, exposure, HFR · stars, frames in this session, age |
+Every page behind an entry is a **cockpit picture**: the whole display as one image
+(four 288 × 144 tiles; only tiles whose pixels changed are sent). Right: `STAR` and
+the clock, **one big headline** (the one thing that matters on that page) and six
+label/value cells; left: a graphic; the footer line is the hint for the gestures.
 
-An alert replaces the header on every page (worst first, `(+n)` for more):
-`! Guiding verloren`, `! Kühlung aus`, `Meridian-Flip in 6 min`, `Sequenz fertig`,
-`! Kamera getrennt`, `! Fehler: PLATESOLVE`. When the last reading is older than
-20 s the header says `veraltet 30 s`.
+| Entry / page | Left | Headline | Cells |
+|---|---|---|---|
+| Aufnahme 1/3 | exposure ring: seconds left in large digits, frame length below | an alert (`GUIDING VERLOREN`, `FLIP IN 6 MIN`, …) or a weather warning, else `BILD 23/60` | filter, exposure, camera °C, guiding RMS, flip in, altitude |
+| Aufnahme 2/3 (guiding) | RMS and HFR panels with their history | `RMS 0,52"` or `GUIDING VERLOREN` | RA, Dec, HFR, stars, focus position and temperature |
+| Aufnahme 3/3 (equipment) | a ring with one arc per device (camera, mount, focuser, guider) | `ALLES BEREIT` or `2 GERÄTE FEHLEN` | camera °C, cooler %, mount, focuser, guider, filter |
+| Wetter | cloud cover for the next 12 h (limit dotted, chance of rain as a strip) | the first warning, else `KLAR BIS ~02:30` | clouds, rain, dew spread, wind, gusts, SQM or safety monitor |
+| Letztes Bild | the newest frame, 288 × 144, stretched for the glasses | `HFR 2,31` | filter, exposure, stars, frames in this session, type, age |
+
+A page that is not about an alert carries a `!` after `STAR` while one is active.
+Within *Aufnahme* a swipe walks the three pages. When N.I.N.A. or the bridge does not
+answer, the headline says so (`KEINE VERBINDUNG`, `N.I.N.A. AUS`) and the cells show
+dashes - never old numbers.
 
 ### Weather warnings
 
@@ -61,8 +68,8 @@ precipitation, humidity, dew point, temperature, wind and gusts.
 | Dew | temperature − dew point ≤ 2 °C | `Taugefahr: 1,4 °C` |
 | Wind | wind or gusts ≥ 30 km/h | `Wind 42 km/h in ~50 min` |
 
-A new warning pops up in the header of every page for 15 s; the same warning
-pops up at most once in 30 minutes. Hysteresis keeps a warning on until the
+A warning is the headline of the *Wetter* page and of the imaging overview, and shows
+under the entries on the start page. Hysteresis keeps a warning on until the
 value is clearly back (10 % clouds / rain chance, 1 °C dew spread, 5 km/h wind).
 Limits are set on the phone page.
 
@@ -73,11 +80,19 @@ to Open-Meteo.
 
 | Gesture | Does |
 |---|---|
-| Swipe | next / previous page |
-| Tap | open *control* if the bridge allows it, otherwise refresh |
+| Swipe | start page: choose; cockpit: next / previous page of the entry |
+| Tap | start page: open; imaging pages: open *control* if the bridge allows it, otherwise refresh; weather / last frame: refresh |
 | Tap, then tap again on a command | stop / resume the sequence (the first tap only arms it; a second single tap within 4 s runs it; swipe, 2× or 4 s cancel) |
-| Hold | opens the help (the glasses' side menu is off, `SIDE_MENU`); refresh is Tap, the swipe direction is set on the phone |
-| 2× | back (from control or help); on a page: closes the app |
+| Hold | nothing (the glasses' side menu is off, `SIDE_MENU`); the swipe direction is set on the phone |
+| 2× | back one level (control -> cockpit -> start page); on the start page: the exit dialog |
+
+## On the phone
+
+Exactly three tabs: **Jetzt** (status banner, the frame as one big value, four key
+figures, one button, the next forecast hours as a card strip), **Verlauf** (HFR and
+guiding readings of the night as card strips, the events) and **Einstellungen**
+(bridge folded once set up, weather warnings, glasses, language). The first start
+opens *Einstellungen* with a three-step checklist; without a bridge the demo runs.
 
 ## The bridge (`examples/star-bridge.mjs`)
 

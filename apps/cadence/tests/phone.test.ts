@@ -74,13 +74,13 @@ describe("phone page", () => {
     vi.stubGlobal("document", { getElementById: () => dom.root });
     mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined });
     const html = dom.root.innerHTML;
-    for (const tab of ["main", "practice", "more"]) {
+    for (const tab of ["now", "log", "settings"]) {
       expect(html).toContain('data-tab="' + tab + '"');
       expect(html).toContain('data-tab-go="' + tab + '"');
     }
     expect(html).toContain('class="tabbar"');
     // The language switch and the privacy note live in the last tab.
-    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
+    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="settings"'));
   });
 
   it("escapes the user's practice items", () => {
@@ -125,7 +125,7 @@ describe("phone page", () => {
       expect(html).toContain("Für Excel (DE/AT)");
       expect(html).toContain("Standard-CSV");
       expect(html).toMatch(/value="excel-de" selected/);
-      expect(html.indexOf('id="csv-format"')).toBeLessThan(html.indexOf('id="export"'));
+      expect(html).toContain('id="export"');
     });
 
     it("preselects the standard CSV in English", () => {

@@ -5,12 +5,14 @@ import { createDemo, DEMO_SCENES, type DemoScene } from "./car/demo";
 import { sortWarnings, warningKey, type Action, type CarState, type CarWarning } from "./car/model";
 import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
-import { forgetPage, installPage, updatePage, type MenuSpec } from "./glasses/render";
-import { bitmapKey } from "./glasses/gfx";
-import { ICON_STEP_MS } from "./glasses/pics";
+import { COCKPIT_TILES, forgetPage, guardedTileSend, installPage, updatePage, type MenuSpec } from "./glasses/render";
 import { t } from "./messages";
 import { SIDE_MENU } from "./side-menu";
-import { buildFrames, buildView, errorReason, type Connection, type Frames, type Layout, type LocalResult, type PageView, type ViewState } from "./glasses/views";
+import { ICON_STEP_MS, buildView, errorReason, type Connection, type Layout, type LocalResult, type PageView, type ViewState } from "./glasses/views";
+import { cockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import {
   INITIAL_CONTROL, PAGES, actionFor, cancelConfirm, controlBusy, expireConfirm, followMode, moveCursor, openConfirm, stepPage, tapControl,
   CONTROL_ITEMS, type ControlState, type Page,
@@ -19,7 +21,7 @@ import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.4.7";
+export const BUILD = "0.5.0";
 
 /** Side menu id (QIS v1.2): Hilfe. The app has no settings of its own on the glasses. */
 export const MENU_HELP = 1;
@@ -70,12 +72,9 @@ async function boot(): Promise<void> {
 
   let lastView: PageView | null = null;
   let lastLayout: Layout | null = null;
-  let lastKey = "";
   let pageReady = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
-
-  const frameKey = (f: Frames): string => [f.icon, f.a, f.b, f.c].map((b) => (b ? bitmapKey(b) : "-")).join("|");
 
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
@@ -84,19 +83,47 @@ async function boot(): Promise<void> {
   // send FOREGROUND_ENTER (4) when the dialog comes up and FOREGROUND_EXIT (5) when it goes away after "No".
   let dialogPending = false;
   let dialogShown = false;
+  /** True while the car cockpit is the page on the glasses: only then may a tile be written. */
+  let cockpitPage = false;
+  let textBackend: TextBackend | null = null;
+  /**
+   * The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. The write is refused
+   * while the exit dialog may be on screen (asked, pending or shown), after the app closed and whenever the page
+   * is not the cockpit - a tile write could cover the dialog or land on containers that are gone.
+   */
+  const tileSender = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitDialogAsked && !dialogPending && !dialogShown && !closed && cockpitPage && pageReady));
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
     const state = viewState();
     const view = buildView(state);
-    const frames = buildFrames(state, view.layout);
-    const key = frameKey(frames);
+    if (view.layout === "cockpit") {
+      if (!pageReady || lastLayout !== "cockpit") {
+        cockpitPage = false;
+        const installed = await installPage(bridge, view, sideMenu(locale));
+        if (!installed.ok) {
+          pageReady = false;
+          lastView = null;
+          console.warn("[bydglass] draw failed:", installed.reason);
+          return;
+        }
+        pageReady = true; lastView = view; lastLayout = "cockpit";
+        cockpitPage = true;
+        // A new page starts with blank images.
+        tileSender.reset();
+      }
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tileSender.push(composeCockpit(cockpitModel(state), textBackend));
+      return;
+    }
+    cockpitPage = false;
     const same = lastView && view.layout === lastView.layout && view.header === lastView.header && view.footer === lastView.footer
       && view.body.join("\n") === lastView.body.join("\n");
-    if (pageReady && same && key === lastKey) return;
+    if (pageReady && same) return;
     const result = !pageReady || view.layout !== lastLayout
-      ? await installPage(bridge, view, frames, sideMenu(locale))
-      : await updatePage(bridge, view, frames, lastView);
-    if (result.ok) { pageReady = true; lastView = view; lastLayout = view.layout; lastKey = key; return; }
+      ? await installPage(bridge, view, sideMenu(locale))
+      : await updatePage(bridge, view, lastView);
+    if (result.ok) { pageReady = true; lastView = view; lastLayout = view.layout; return; }
     pageReady = false;
     lastView = null;
     console.warn("[bydglass] draw failed:", result.reason);
@@ -252,6 +279,7 @@ async function boot(): Promise<void> {
   const shutDown = (): void => {
     if (closed) return;
     closed = true;
+    tileSender.close();
     generation += 1;
     clearInterval(tickTimer);
   };

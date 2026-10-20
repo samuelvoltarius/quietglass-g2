@@ -1,5 +1,6 @@
 import { tr, type Locale, type Messages } from "./i18n";
 import { routeStrings } from "./route/strings";
+import { qusStrings } from "./qus-strings";
 
 /**
  * Every string NextStop shows. Keys starting with `g.` go to the glasses and
@@ -119,7 +120,7 @@ export const messages: Messages = {
     "p.sourceLabel": "Woher kommen die Abfahrten?",
     "p.sourceMotis": "Überall – Fahrplan (funktioniert sofort)",
     "p.sourceOebb": "ÖBB – Echtzeit in Österreich (Zusatzprogramm nötig)",
-    "p.sourceHintOebb": "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe Tab „Mehr“.",
+    "p.sourceHintOebb": "Zeigt Verspätungen in ganz Österreich, bis zum Stadtbus. Braucht ein kleines Zusatzprogramm auf einem Computer im selben WLAN – Adresse unten unter „Erweitert“.",
     "p.sourceHintMotis": "Funktioniert sofort, in vielen Ländern. Meist reine Fahrplanzeiten (~); Verspätungen nur dort, wo der Verkehrsbetrieb sie meldet.",
     "p.status": "Status",
     "p.refreshNow": "Haltestellen neu suchen",
@@ -143,13 +144,8 @@ export const messages: Messages = {
     "p.legend": "<strong>●</strong> = Echtzeit, <strong>~</strong> = nur Fahrplan, <strong>+3</strong> = 3 Minuten später",
     // Phone: advanced
     "p.advanced": "Erweitert",
-    "p.tabStops": "Haltestellen",
-    "p.tabGoals": "Ziele",
-    "p.tabGlasses": "Brille",
-    "p.tabConnection": "Verbindung",
     "p.invert": "Wischrichtung umkehren",
     "p.invertHint": "Nur nötig, wenn Wischen nach oben die Auswahl nach unten bewegt.",
-    "p.tabMore": "Mehr",
     "p.chipMotis": "Transitous",
     "p.chipOebb": "ÖBB",
     "p.oebbUrl": "Adresse des ÖBB-Zusatzprogramms",
@@ -166,6 +162,7 @@ export const messages: Messages = {
     "p.urlInvalid": "Das ist keine gültige Adresse.",
     "p.invalid": "Ungültig",
     ...routeStrings.de,
+    ...qusStrings.de,
   },
   en: {
     // Glasses: waiting and loading
@@ -273,7 +270,7 @@ export const messages: Messages = {
     "p.sourceLabel": "Where do the departures come from?",
     "p.sourceMotis": "Anywhere – timetable (works right away)",
     "p.sourceOebb": "ÖBB – live times in Austria (add-on needed)",
-    "p.sourceHintOebb": "Shows delays all over Austria, down to the city bus. Needs a small add-on on a computer on the same Wi-Fi – see the \"More\" tab.",
+    "p.sourceHintOebb": "Shows delays all over Austria, down to the city bus. Needs a small add-on on a computer on the same Wi-Fi – the address goes under \"Advanced\" below.",
     "p.sourceHintMotis": "Works right away, in many countries. Mostly timetable times (~); delays only where the operator reports them.",
     "p.status": "Status",
     "p.refreshNow": "Search for stops again",
@@ -297,13 +294,8 @@ export const messages: Messages = {
     "p.legend": "<strong>●</strong> = live, <strong>~</strong> = timetable only, <strong>+3</strong> = 3 minutes late",
     // Phone: advanced
     "p.advanced": "Advanced",
-    "p.tabStops": "Stops",
-    "p.tabGoals": "Goals",
-    "p.tabGlasses": "Glasses",
-    "p.tabConnection": "Connection",
     "p.invert": "Invert swipe direction",
     "p.invertHint": "Only needed if swiping up moves the selection down.",
-    "p.tabMore": "More",
     "p.chipMotis": "Transitous",
     "p.chipOebb": "ÖBB",
     "p.oebbUrl": "Address of the ÖBB add-on",
@@ -320,6 +312,7 @@ export const messages: Messages = {
     "p.urlInvalid": "That is not a valid address.",
     "p.invalid": "Invalid",
     ...routeStrings.en,
+    ...qusStrings.en,
   },
 };
 

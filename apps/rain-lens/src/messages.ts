@@ -8,7 +8,7 @@ import type { Messages } from "./i18n";
 export const messages: Messages = {
   de: {
     help2x: "2× = Ende (in der Hilfe: zurück)",
-    tabWeather: "Wetter", tabPlace: "Ort", tabMore: "Mehr",
+    tabNow: "Jetzt", tabForecast: "Prognose", tabSettings: "Einstellungen", setupTitle: "Erste Schritte", setup1: "Standort erlauben oder einen Ort eingeben", setup2: "Das Wetter lädt – „Jetzt aktualisieren“ tippen", setup3: "Brille: Wischen wechselt die Ansicht", stLive: "● live", stDemo: "Beispiel", placeFold: "Ort & Standort",
     lede: "Das Wetter von jetzt, den nächsten Stunden und drei Tagen – direkt auf deiner G2.",
     live: "Aktuelle Vorhersage", demo: "Beispieldaten", sampleTag: "BEISPIEL", updating: "Aktualisiere …",
     fRefresh: "neu", fView: "Ansicht", fHelp: "Hilfe", fRetry: "nochmal", helpTitle: "Hilfe", help1: "Tippen = Wetter neu laden", help2: "Wischen = nächste Ansicht", help3: "Halten = diese Hilfe", help4: "Braucht: Internet und Standort am Handy", tabGlasses: "Brille", invert: "Wischrichtung umkehren", controlsTitle: "Bedienung an der Brille", stLoading: "lädt …", stNoLocation: "kein Standort", stOffline: "offline",
@@ -36,7 +36,7 @@ export const messages: Messages = {
   },
   en: {
     help2x: "2× = exit (in help: back)",
-    tabWeather: "Weather", tabPlace: "Place", tabMore: "More",
+    tabNow: "Now", tabForecast: "Forecast", tabSettings: "Settings", setupTitle: "First steps", setup1: "Allow location or type a place", setup2: "The forecast loads – tap Refresh now", setup3: "Glasses: swipe changes the view", stLive: "● live", stDemo: "sample", placeFold: "Place & location",
     lede: "Weather for now, the next hours and three days – right on your G2.",
     live: "Current forecast", demo: "Sample data", sampleTag: "SAMPLE", updating: "Updating …",
     fRefresh: "refresh", fView: "view", fHelp: "help", fRetry: "retry", helpTitle: "Help", help1: "Tap = reload the weather", help2: "Swipe = next view", help3: "Hold = this help", help4: "Needs: internet and location on the phone", tabGlasses: "Glasses", invert: "Invert swipe direction", controlsTitle: "Controls on the glasses", stLoading: "loading …", stNoLocation: "no location", stOffline: "offline",
@@ -64,7 +64,7 @@ export const messages: Messages = {
   },
   fr: {
     help2x: "2× = fermer (dans l'aide : retour)",
-    tabWeather: "Météo", tabPlace: "Lieu", tabMore: "Plus",
+    tabNow: "Maintenant", tabForecast: "Prévisions", tabSettings: "Réglages", setupTitle: "Premiers pas", setup1: "Autoriser la position ou saisir un lieu", setup2: "La météo se charge – touche Actualiser", setup3: "Lunettes : swipe change de vue", stLive: "● live", stDemo: "exemple", placeFold: "Lieu et position",
     lede: "La météo actuelle, des prochaines heures et de trois jours – directement sur ta G2.",
     live: "Prévision actuelle", demo: "Données d'exemple", sampleTag: "EXEMPLE", updating: "Actualisation …",
     fRefresh: "actualiser", fView: "vue", fHelp: "aide", fRetry: "réessayer", helpTitle: "Aide", help1: "Tap = recharger la météo", help2: "Swipe = vue suivante", help3: "Maintenir = cette aide", help4: "Requis : internet et position du téléphone", tabGlasses: "Lunettes", invert: "Inverser le sens du swipe", controlsTitle: "Commandes sur les lunettes", stLoading: "chargement …", stNoLocation: "pas de position", stOffline: "hors ligne",
@@ -92,7 +92,7 @@ export const messages: Messages = {
   },
   es: {
     help2x: "2× = cerrar (en la ayuda: atrás)",
-    tabWeather: "Tiempo", tabPlace: "Lugar", tabMore: "Más",
+    tabNow: "Ahora", tabForecast: "Previsión", tabSettings: "Ajustes", setupTitle: "Primeros pasos", setup1: "Permitir la ubicación o escribir un lugar", setup2: "El tiempo se carga – toca Actualizar", setup3: "Gafas: deslizar cambia la vista", stLive: "● live", stDemo: "ejemplo", placeFold: "Lugar y ubicación",
     lede: "El tiempo de ahora, de las próximas horas y de tres días, directamente en tu G2.",
     live: "Pronóstico actual", demo: "Datos de ejemplo", sampleTag: "EJEMPLO", updating: "Actualizando …",
     fRefresh: "actualizar", fView: "vista", fHelp: "ayuda", fRetry: "reintentar", helpTitle: "Ayuda", help1: "Tap = recargar el tiempo", help2: "Deslizar = vista siguiente", help3: "Mantener = esta ayuda", help4: "Necesita: internet y ubicación del móvil", tabGlasses: "Gafas", invert: "Invertir el sentido de deslizar", controlsTitle: "Controles en las gafas", stLoading: "cargando …", stNoLocation: "sin ubicación", stOffline: "sin conexión",
@@ -120,7 +120,7 @@ export const messages: Messages = {
   },
   it: {
     help2x: "2× = chiudi (nell'aiuto: indietro)",
-    tabWeather: "Meteo", tabPlace: "Luogo", tabMore: "Altro",
+    tabNow: "Ora", tabForecast: "Previsioni", tabSettings: "Impostazioni", setupTitle: "Primi passi", setup1: "Consenti la posizione o scrivi un luogo", setup2: "Il meteo si carica – tocca Aggiorna", setup3: "Occhiali: scorri cambia vista", stLive: "● live", stDemo: "esempio", placeFold: "Luogo e posizione",
     lede: "Il meteo di adesso, delle prossime ore e di tre giorni, direttamente sui tuoi G2.",
     live: "Previsione attuale", demo: "Dati di esempio", sampleTag: "ESEMPIO", updating: "Aggiornamento …",
     fRefresh: "aggiorna", fView: "vista", fHelp: "aiuto", fRetry: "riprova", helpTitle: "Aiuto", help1: "Tap = ricarica il meteo", help2: "Scorri = vista successiva", help3: "Tieni = questo aiuto", help4: "Serve: internet e posizione del telefono", tabGlasses: "Occhiali", invert: "Inverti la direzione dello scorrimento", controlsTitle: "Comandi sugli occhiali", stLoading: "caricamento …", stNoLocation: "nessuna posizione", stOffline: "offline",

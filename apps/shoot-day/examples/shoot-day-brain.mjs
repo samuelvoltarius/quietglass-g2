@@ -9,6 +9,9 @@
  *   unterlagen      which paperwork (from the template catalogue) is needed, why,
  *                   from which sources, with facts to fill in
  *   offen           open points
+ *   termine         appointment proposals, only when the material explicitly asks for dates
+ *                   ("Terminvorschläge Drehtage binnen 48 h"); checked in code (shoot-day-events.mjs):
+ *                   max 3, never in the past, weekdays and the customer's closing days enforced
  *
  * Any amount of material: sources longer than DIGEST_OVER are first boiled down
  * to a digest each (cached by content hash, so only new material is read again),
@@ -24,6 +27,7 @@ import { createHash } from "node:crypto";
 import { chatUrl } from "./shoot-day-pdf.mjs";
 import { TEMPLATE_IDS, matchTemplates, templateLabel } from "./shoot-day-docs.mjs";
 import { chunkSources } from "./shoot-day-vectors.mjs";
+import { cleanEventProposals, dateRequest, isoToday, weekdayName } from "./shoot-day-events.mjs";
 
 export const DIGEST_OVER = 6000;           // longer sources get a digest first
 export const BUDGET = 120_000;             // characters of material in one analysis (~35k tokens)
@@ -190,7 +194,9 @@ export async function digestSource(source, options) {
 
 const catalogue = () => TEMPLATE_IDS.map((id) => `- ${id}: ${templateLabel(id)}`).join("\n");
 
-export function analysisMessages(sources, { today = new Date() } = {}) {
+export function analysisMessages(sources, { today = new Date(), tz } = {}) {
+  const day = isoToday(today, tz);
+  const asksForDates = Boolean(dateRequest(sources.filter((s) => s.id !== HINT_ID).map((s) => s.text).join("\n")));
   const system = "Du bist die Projektassistenz einer Filmproduktion in Österreich. Du bekommst ALLES Material eines Projekts als Quellen "
     + "mit Kennung in eckigen Klammern. Verstehe das Projekt als Ganzes und erkenne Zusammenhänge zwischen den Quellen "
     + "(z. B. Drohne über Gastgarten → Gäste im Bild → Hinweisschild und Einverständnis nötig).\n"
@@ -198,13 +204,19 @@ export function analysisMessages(sources, { today = new Date() } = {}) {
     + "{\"lage\":\"3–6 Sätze Überblick\",\"zusammenhaenge\":[\"…\"],"
     + "\"unterlagen\":[{\"vorlage\":\"<id aus dem Katalog>\",\"warum\":\"ein Satz\",\"quellen\":[\"<Kennung>\"],"
     + "\"angaben\":{\"zweck\":\"2–4 Sätze, was gedreht wird, wofür, wo, wann\",\"personen\":\"\",\"praktikant\":\"\",\"schule\":\"\",\"zeitraum\":\"\",\"betreuer\":\"\",\"eigentuemer\":\"\",\"ansprechperson\":\"\",\"termin\":\"\",\"ort\":\"\",\"team\":\"\"}}],"
-    + "\"offen\":[\"…\"]}\n"
+    + "\"offen\":[\"…\"],"
+    + "\"termine\":[{\"titel\":\"…\",\"datum\":\"YYYY-MM-DD\",\"von\":\"HH:MM\",\"bis\":\"HH:MM\",\"ort\":\"\",\"grund\":\"ein Satz\",\"quellen\":[\"<Kennung>\"]}]}\n"
     + "Unterlagen-Katalog (nur diese ids, jede höchstens einmal, nur wenn das Material sie wirklich nahelegt):\n" + catalogue() + "\n"
     + "quellen = die Kennungen, aus denen du die Unterlage ableitest – auch To-dos, zu denen sie gehört. "
     + "Was mit (INTERN) markiert ist, ist eine interne Unterlage und geht NIE an den Kunden; will der Kunde etwas über das Team "
     + "oder Praktikanten wissen, nimm dafür teambestaetigung. "
     + "zweck: ohne Daten/Uhrzeiten und ohne den internen Projektnamen. "
-    + "angaben: nur wörtlich aus dem Material übernehmen, sonst leer lassen; nichts erfinden. Heute ist " + today.toISOString().slice(0, 10) + "."
+    + "angaben: nur wörtlich aus dem Material übernehmen, sonst leer lassen; nichts erfinden. Heute ist " + weekdayName(day) + ", " + day + "."
+    + (asksForDates
+      ? "\ntermine: NUR weil das Material ausdrücklich nach Terminen fragt (z. B. Terminvorschläge für Drehtage): höchstens 3 Vorschläge, "
+        + "nie in der Vergangenheit, der Wochentag muss stimmen, Ruhetage und Wünsche aus den Kundennotizen beachten; "
+        + "von/bis leer lassen, wenn keine Uhrzeit gefragt ist; grund = warum dieser Termin passt."
+      : "\ntermine: [] – das Material fragt nicht nach Terminen.")
     + (sources.some((s) => s.id.startsWith("dash:"))
       ? "\nQuellen [dash:…] sind Aufgaben aus dem Work Dashboard des Teams: Status „done“ heißt erledigt – so etwas nicht mehr als offen oder benötigt führen."
       : "")
@@ -246,7 +258,7 @@ export function resolveSource(raw, sources) {
   return hit?.id ?? "";
 }
 
-export function cleanAnalysis(raw, sources) {
+export function cleanAnalysis(raw, sources, { today = new Date(), tz } = {}) {
   if (!raw || typeof raw !== "object") return null;
   // only the project's own material counts – never the hint from other projects
   const own = sources.filter((s) => s.id !== HINT_ID);
@@ -279,12 +291,19 @@ export function cleanAnalysis(raw, sources) {
       quellen: [...internship.quellen], angaben: Object.fromEntries(Object.entries(internship.angaben).filter(([k]) => ["schule", "betreuer", "zweck"].includes(k))) });
   }
   const lage = line(raw.lage, 1500);
-  if (!lage && !byTemplate.size) return null;
+  const termine = cleanEventProposals(raw.termine, {
+    material: own.map((s) => s.text).join("\n"),
+    notes: own.find((s) => s.id === "kunde")?.text ?? "",
+    today: isoToday(today, tz),
+    resolve: (q) => resolveSource(q, own),
+  });
+  if (!lage && !byTemplate.size && !termine.length) return null;
   return {
     lage,
     zusammenhaenge: list(raw.zusammenhaenge, 300, 15),
     unterlagen: [...byTemplate.values()],
     offen: list(raw.offen, 300, 20),
+    termine,
   };
 }
 
@@ -306,7 +325,7 @@ export function fallbackAnalysis(project) {
   for (const talk of project?.talks ?? []) {
     for (const point of talk.points?.needed ?? []) for (const t of matchTemplates(point.text)) note(t, "talk:" + talk.id);
   }
-  return { lage: "", zusammenhaenge: [], unterlagen: [...byTemplate.values()], offen: [], fallback: true };
+  return { lage: "", zusammenhaenge: [], unterlagen: [...byTemplate.values()], offen: [], termine: [], fallback: true };
 }
 
 /**
@@ -330,7 +349,7 @@ export async function analyseProject(sources, { digests = {}, hints = [], rank =
     const fitted = fitSources(sources, next, BUDGET, scores instanceof Map ? (c) => scores.get(c.hash) : null);
     const extra = (Array.isArray(hints) ? hints : []).filter((h) => h?.id === HINT_ID && String(h.text ?? "").trim());
     const content = await chat(analysisMessages([...fitted, ...extra], options), options);
-    const analysis = cleanAnalysis(parseJson(content), sources);
+    const analysis = cleanAnalysis(parseJson(content), sources, options);
     if (!analysis) return { ok: false, error: "unreadable", digests: next };
     return { ok: true, analysis, digests: next };
   } catch (error) {

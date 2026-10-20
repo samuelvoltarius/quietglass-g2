@@ -148,7 +148,7 @@ describe("Tagesstart page", () => {
     expect(viaMenu.model.screen).toBe("brief");
     expect(viaMenu.effect).toEqual({ kind: "brief", refresh: false });
     expect(pickerEntries(root, "de").map((entry) => entry.screen)).toContain("brief");
-    expect(buildView(root, "de", NOW).body[4]).toMatch(/^> Tagesstart — /);
+    expect(buildView(root, "de", NOW).body[4]).toMatch(/^>   Tagesstart$/);
   });
 
   it("swipe pages (clamped), tap and hold refresh, double tap back", () => {

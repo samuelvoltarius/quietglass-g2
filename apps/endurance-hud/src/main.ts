@@ -1,75 +1,80 @@
 import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { appStore } from "./storage/kv";
 import { createExitRequest, isBackSignal, isSystemExitEvent } from "./exit";
-import { createTextPage, updateTextPage, type MenuSpec, type TextView } from "./glasses/text";
-import { helpView, liveView, qis, SPORT_CHOICES, sportListView } from "./glasses/views";
-import { languageSelect, rememberLocale, resolveLocale, setLocale, type Locale } from "./i18n";
+import { COCKPIT_TILES, createCockpitPage, forgetPage, guardedTileSend } from "./glasses/page";
+import { cockpitModel, type CockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
+import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { demoTelemetry, effectiveSport, fetchTelemetry, nextSport, pace, paceOf, parseTimestamp, speedOf, staleAge, type Sport } from "./telemetry/model";
-import { escapeHtml } from "./ui/html";
-import { VERSION } from "./version";
-import { words } from "./words";
-const DEFAULT_ENDPOINT = "http://127.0.0.1:8792/live";
-const RUN_ICON = ["....##....", "...####...", "....##....", "...####...", "..######..", "....##....", "...###....", "..##.##...", ".##...##..", "##.....##."] as const;
-const BIKE_ICON = [".....##.....", "....####....", ".....##.....", "...######...", "..##..###...", ".##..##.###.", "##..##....##", "##...######.", ".##.......##", "..###...###.", "....#####..."] as const;
+import {
+  addSample, DEFAULT_MAX_HR, demoSession, demoTelemetry, effectiveSport, fetchTelemetry, modeOf, nextSport, type Session, type Sport,
+} from "./telemetry/model";
+import { DEFAULT_ENDPOINT, mountPhoneUi, type PhoneState, type PhoneUi } from "./ui/phone";
 
-/** Phone tabs in the QIS v1 order: content, Brille, Verbindung, Mehr. */
-const TABS = ["live", "glasses", "bridge", "more"] as const;
-/** Side menu entries of the glasses (QIS v1.2): ids are never 0. */
-const MENU = { sport: 1, help: 2 } as const;
 /**
  * The glasses' side menu (QIS v1.2). Off: measured with the step log on the real glasses (15.10.2026), the menu is
  * shown but its clicks never reach the app, and while a page carries a menu a hold opens it instead of reaching the app.
- * Off, the pages carry no menu and swipe / hold do what the menu entries did.
+ * Off, the pages carry no menu and swipe does what the menu entry "Sportart" did.
  */
-const SIDE_MENU = false;
-type Tab = (typeof TABS)[number];
+export const SIDE_MENU = false;
+const KEYS = ["quietglass.locale", "endurance.sport", "endurance.endpoint", "endurance.invert", "endurance.tab", "endurance.maxhr"] as const;
+/** The bridge is asked this often; the cockpit follows every answer (an unchanged picture sends nothing). */
+const POLL_MS = 2000;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
   // SDK KV is the durable store; hydrate before anything reads a value.
-  await appStore.init(bridge, ["quietglass.locale", "endurance.sport", "endurance.endpoint", "endurance.invert", "endurance.tab"]);
-  let locale = await resolveLocale(bridge);
+  await appStore.init(bridge, KEYS);
+  let locale: Locale = await resolveLocale(bridge);
   setLocale(locale);
   let data = demoTelemetry();
   let receivedAt = Date.now();
   let failed = false;
   let lastError = "";
+  let session: Session = demoSession(Date.now());
   let choice = appStore.get("endurance.sport");
   let pageReady = false;
-  let last = "";
   let timer: ReturnType<typeof setInterval> | undefined;
   let polling = false;
   let closed = false;
-  let screen: "live" | "help" | "sport" = "live";
-  let sportCursor = 0;
-  let tab: Tab = TABS.find((id) => id === appStore.get("endurance.tab")) ?? "live";
-  const t = () => words[locale];
+  let phone: PhoneUi | null = null;
+  let textBackend: TextBackend | null = null;
+
   const invertScroll = (): boolean => appStore.get("endurance.invert") === "1";
+  const maxHr = (): number => { const saved = Number(appStore.get("endurance.maxhr")); return Number.isFinite(saved) && saved >= 120 && saved <= 220 ? saved : DEFAULT_MAX_HR; };
   const sport = (): Sport => effectiveSport(choice, data.sport);
-  // Demo data stays DEMO; live data turns "STALE 12s" once the watch stops posting (old updatedAt) or the bridge stops answering.
-  const mode = (): string => {
-    if (data.source === "demo") return t().demo;
-    const age = staleAge(parseTimestamp(data.updatedAt) ?? receivedAt, Date.now(), failed);
-    return age ? `${t().stale} ${age}` : t().live;
-  };
-  const menu = (): MenuSpec => ({ items: !SIDE_MENU ? [] : [{ id: MENU.sport, label: qis[locale].menuSport }, { id: MENU.help, label: qis[locale].menuHelp }] });
-  const view = (): TextView => (screen === "help" ? helpView(locale) : screen === "sport" ? sportListView(locale, sportCursor, choice === "run" || choice === "bike" ? choice : null) : liveView(locale, mode(), sport(), data));
+  const mode = () => modeOf(data, receivedAt, Date.now(), failed);
+  const model = (): CockpitModel => cockpitModel({ locale, sport: sport(), data, mode: mode(), maxHr: maxHr(), now: Date.now(), hrMax: session.hrMax });
+
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed));
+
   const draw = async (): Promise<void> => {
     if (closed || exitAsked()) return;
-    const next = view();
-    const sig = JSON.stringify(next) + sport();
-    if (sig === last) return;
-    const icon = sport() === "run" ? RUN_ICON : BIKE_ICON;
-    pageReady = pageReady ? await updateTextPage(bridge, next, icon) : await createTextPage(bridge, next, icon, menu());
-    // A failed write leaves the glasses in an unknown state: forget what was last shown so the next draw rewrites it.
-    last = pageReady ? sig : "";
+    if (!pageReady) {
+      const result = await createCockpitPage(bridge);
+      if (closed) return;
+      if (!result.ok) { console.warn("[endurance-hud] draw failed:", result.reason); return; }
+      pageReady = true;
+      // A new page starts with blank images.
+      tiles.reset();
+    }
+    textBackend ??= autoBackend();
+    // Never awaited: a slow transfer must not hold up the next poll.
+    void tiles.push(composeCockpit(model(), textBackend));
   };
-  // The phone page is rebuilt on every poll; skip that while the rider is typing so the endpoint field is not wiped every 2 s.
-  const phoneIdle = (): boolean => !document.activeElement?.matches("#app input, #app select");
+
+  const phoneState = (): PhoneState => ({
+    data, mode: mode(), sport: sport(), choice: choice === "run" || choice === "bike" ? choice : null, lastError, session,
+    endpoint: appStore.get("endurance.endpoint") ?? "", maxHr: maxHr(), invert: invertScroll(),
+  });
+
   const refresh = async (): Promise<void> => {
     if (polling || closed) return;
     polling = true;
@@ -78,6 +83,7 @@ async function boot(): Promise<void> {
       receivedAt = Date.now();
       failed = false;
       lastError = "";
+      if (data.source !== "demo") session = addSample(session, data, receivedAt);
     } catch (error) {
       console.warn("[endurance-hud] bridge unavailable", error);
       failed = true;
@@ -86,111 +92,64 @@ async function boot(): Promise<void> {
       polling = false;
     }
     await draw();
-    if (phoneIdle()) renderPhone();
+    phone?.refreshLive();
   };
+
   const setSport = (value: string | null): void => {
     choice = value === "run" || value === "bike" ? value : null;
     if (choice) appStore.set("endurance.sport", choice);
     else appStore.remove("endurance.sport");
     void draw();
-    if (phoneIdle()) renderPhone();
+    phone?.refreshLive();
   };
-  const tabContent = (): string => {
-    const q = qis[locale];
-    if (tab === "glasses") {
-      const options = [["", t().auto], ["bike", t().bike], ["run", t().run]]
-        .map(([value, name]) => `<option value="${value}"${(choice ?? "") === value ? " selected" : ""}>${name}</option>`)
-        .join("");
-      return `<section class="card">${languageSelect(locale)}<label>${t().sport}<select id="sport">${options}</select></label><label class="check"><input id="invert" type="checkbox"${invertScroll() ? " checked" : ""}> ${q.invert}</label><p class="hint">${q.invertHint}</p></section>`;
-    }
-    if (tab === "bridge") {
-      return `<section class="card"><label>${t().endpoint}<input id="endpoint" type="text" value="${escapeHtml(appStore.get("endurance.endpoint") || DEFAULT_ENDPOINT)}"></label><button id="save">${t().save}</button><p class="hint">${t().help}</p></section>`;
-    }
-    if (tab === "more") {
-      return `<section class="card"><p><strong>Endurance HUD</strong> · ${q.moreVersion} ${VERSION}</p><p class="hint">${q.morePrivacy}</p></section>`;
-    }
-    const run = sport() === "run";
-    const warn = mode() !== t().live;
-    return `<section class="card"><div class="status-row"><span class="status-dot ${warn ? "warn" : ""}"></span><strong>${escapeHtml(mode())}</strong></div>${lastError ? `<p class="error">${t().error}: ${escapeHtml(lastError)}</p>` : ""}<div class="metrics"><div><b>${run ? pace(paceOf(data)) : speedOf(data).toFixed(1)}</b><span>${run ? `${t().pace} /km` : `${t().speed} km/h`}</span></div><div><b>${Math.round(data.powerWatts)}</b><span>${t().power} W</span></div><div><b>${Math.round(data.heartRate)}</b><span>${t().heart} bpm</span></div><div><b>${Math.round(data.cadence)}</b><span>${t().cadence} rpm</span></div></div></section>`;
-  };
-  const renderPhone = (): void => {
-    const app = document.querySelector<HTMLDivElement>("#app");
-    if (!app) return;
-    const q = qis[locale];
-    const names: Record<Tab, string> = { live: q.tabLive, glasses: q.tabGlasses, bridge: q.tabBridge, more: q.tabMore };
-    const bar = TABS.map((id) => `<button type="button" role="tab" id="tab-${id}"${id === tab ? ' class="on" aria-selected="true"' : ""}>${names[id]}</button>`).join("");
-    app.innerHTML = `<header class="brand"><div class="brand-mark">QUIETGLASS / SPORT</div><h1>Endurance HUD</h1><p class="lede">${t().lede}</p></header>${tabContent()}<nav class="tabbar" role="tablist">${bar}</nav>`;
-    for (const id of TABS) {
-      document.querySelector(`#tab-${id}`)?.addEventListener("click", () => { tab = id; appStore.set("endurance.tab", id); renderPhone(); });
-    }
-    document.querySelector("#language")?.addEventListener("change", (event) => {
-      locale = (event.target as HTMLSelectElement).value as Locale;
-      rememberLocale(bridge, locale);
-      pageReady = false; // the side menu is part of the page: rebuilt in the new language (if it has one)
-      last = "";
-      void draw();
-      renderPhone();
-    });
-    document.querySelector("#sport")?.addEventListener("change", (event) => setSport((event.target as HTMLSelectElement).value));
-    document.querySelector("#invert")?.addEventListener("change", (event) => { appStore.set("endurance.invert", (event.target as HTMLInputElement).checked ? "1" : "0"); });
-    document.querySelector("#save")?.addEventListener("click", () => {
-      const input = document.querySelector<HTMLInputElement>("#endpoint");
-      if (input) appStore.set("endurance.endpoint", input.value.trim());
-      void refresh();
-    });
-  };
-  // QIS v1.2: tap reloads; with SIDE_MENU on, the glasses' side menu (hold) holds Hilfe and Sportart. The sport is chosen in a list:
-  // swipe moves, tap sets (a swipe never saves anything). Double tap goes back (help, list) or opens the system exit
-  // dialog (root); polling stops only once the user confirms.
-  // "No" in the exit dialog: the dialog took the page away. createTextPage always puts a first page up
-  // (rebuild + create), so marking the page as not ready is enough (store review 16.10.2026).
+
   // shutDownPageContainer(1) resolves when the dialog is SHOWN, not when the user answered: the result never
-  // tears the app down (the system ends it: sysEvent 6/7). On the next input the page comes back as a first page.
+  // tears the app down (the system ends it: sysEvent 6/7). "No" in the dialog: the dialog took the page away;
+  // on the next input (or the system's 5) the page comes back as a first page (store review 16.10.2026).
   const requestExit = createExitRequest(bridge, {
-    onBack: () => { if (closed) return; pageReady = false; last = ""; return draw(); },
+    onBack: () => { if (closed) return; pageReady = false; forgetPage(bridge); return draw(); },
   }, "endurance-hud");
   exitAsked = requestExit.asked;
-  const show = (next: typeof screen): void => { screen = next; void draw(); };
-  const openSportList = (): void => { sportCursor = Math.max(0, SPORT_CHOICES.indexOf(choice === "run" || choice === "bike" ? choice : null)); show("sport"); };
+
   await draw();
-  renderPhone();
   void refresh();
-  timer = setInterval(() => void refresh(), 2000);
+  timer = setInterval(() => void refresh(), POLL_MS);
+
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
     if (requestExit.onLifecycle(event) !== null) return;
-    if (isSystemExitEvent(event)) { closed = true; clearInterval(timer); return; }
+    if (isSystemExitEvent(event)) { closed = true; clearInterval(timer); tiles.close(); return; }
     if (isBackSignal(event)) requestExit.back();
-    const menuId = menuItemIdFromEvent(event);
-    if (menuId !== null) {
-      if (menuId === MENU.help) show("help");
-      else if (menuId === MENU.sport) openSportList();
-      return;
-    }
+    // The glasses' side menu (off while SIDE_MENU is false): a click carries no action here.
+    if (menuItemIdFromEvent(event) !== null) return;
     const gesture = gestureFromEvent(event, { invertScroll: invertScroll() });
     if (!gesture) return;
-    if (gesture.gesture === "doubleClick") {
-      if (screen !== "live") show("live");
-      else void requestExit();
-      return;
+    switch (gesture.gesture) {
+      // Back one level; on the main screen it leaves: the system exit dialog, polling goes on until the user confirms.
+      case "doubleClick": void requestExit(); return;
+      // Harmless: ask the bridge again.
+      case "click": void refresh(); return;
+      // Swipe cycles the sport (bike <-> run), as before the standard.
+      case "scrollDown": setSport(nextSport(sport(), 1)); return;
+      case "scrollUp": setSport(nextSport(sport(), -1)); return;
+      // Hold does nothing (the help lives on the phone).
+      default: return;
     }
-    if (screen === "help") {
-      if (gesture.gesture === "click") show("live");
-      return;
-    }
-    if (screen === "sport") {
-      if (gesture.gesture === "scrollDown") { sportCursor = Math.min(SPORT_CHOICES.length - 1, sportCursor + 1); void draw(); }
-      else if (gesture.gesture === "scrollUp") { sportCursor = Math.max(0, sportCursor - 1); void draw(); }
-      else if (gesture.gesture === "click") { setSport(SPORT_CHOICES[sportCursor] ?? null); show("live"); }
-      return;
-    }
-    if (gesture.gesture === "click") { void refresh(); return; }
-    // Without a working side menu (see SIDE_MENU): hold opens the help, swipe cycles the sport (as before QIS v1.2).
-    if (SIDE_MENU) return;
-    if (gesture.gesture === "longPress") { show("help"); return; }
-    if (gesture.gesture === "scrollDown" || gesture.gesture === "scrollUp") setSport(nextSport(sport(), gesture.gesture === "scrollDown" ? 1 : -1));
   });
-  bridge.onDeviceStatusChanged((device) => { if (device?.connectType === "connected" && !closed) { pageReady = false; last = ""; void draw(); } });
+  bridge.onDeviceStatusChanged((device) => { if (device?.connectType === "connected" && !closed) { pageReady = false; void draw(); } });
+
+  phone = mountPhoneUi({
+    state: phoneState,
+    locale: () => locale,
+    setLocale: (next) => { locale = next; rememberLocale(bridge, next); void draw(); },
+    refresh: () => void refresh(),
+    saveEndpoint: (endpoint) => { appStore.set("endurance.endpoint", endpoint); void refresh(); },
+    setSport,
+    setMaxHr: (value) => { appStore.set("endurance.maxhr", String(value)); void draw(); phone?.refreshLive(); },
+    setInvert: (on) => { appStore.set("endurance.invert", on ? "1" : "0"); },
+    getTab: () => appStore.get("endurance.tab"),
+    setTab: (tab) => { appStore.set("endurance.tab", tab); },
+  });
 }
 void boot().catch((error: unknown) => console.error("[endurance-hud]", error));

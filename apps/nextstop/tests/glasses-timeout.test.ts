@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPage, IMAGE_CALL_MS, PAGE_CALL_MS, rebuildPage, TEXT_CALL_MS, updatePage } from "../src/glasses/render";
-import { WALK_IMAGES } from "../src/glasses/layout";
+import { RIDE_IMAGES } from "../src/glasses/layout";
 import { plainScene, type Scene } from "../src/route/scene";
 import type { StopView } from "../src/glasses/view";
 
@@ -13,8 +13,8 @@ const nextView: StopView = { header: "Abfahrten", body: ["Bus 3 · 3 min"], foot
 const scene = plainScene(view);
 const nextScene = plainScene(nextView);
 const walkScene: Scene = {
-  view, kind: "walk", animated: false,
-  images: [{ id: WALK_IMAGES[0]!.id, key: "a", render: async () => new Uint8Array(4) }],
+  view, kind: "ride", animated: false,
+  images: [{ id: RIDE_IMAGES[0]!.id, key: "a", render: async () => new Uint8Array(4) }],
 };
 
 function bridge(overrides: Record<string, unknown> = {}) {

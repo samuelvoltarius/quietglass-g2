@@ -81,8 +81,8 @@ describe("rainlens images", () => {
     vi.stubGlobal("document", { querySelector: (selector: string) => (selector === "#app" ? app : null), querySelectorAll: () => [] });
     await boot();
     expect(app.innerHTML).toContain('<nav class="tabbar"');
-    for (const tab of ["weather", "place", "glasses", "more"]) expect(app.innerHTML).toContain(`data-tab="${tab}"`);
-    expect(app.innerHTML).toContain("</span>Weather</button>");
+    for (const tab of ["now", "forecast", "settings"]) expect(app.innerHTML).toContain(`data-tab="${tab}"`);
+    expect(app.innerHTML).toContain("</span>Now</button>");
     for (const id of ["refresh", "automatic", "place", "search", "lat", "lon", "coords", "language"]) expect(app.innerHTML, id).toContain(`id="${id}"`);
   });
 

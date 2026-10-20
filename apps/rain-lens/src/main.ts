@@ -24,12 +24,11 @@ import { CHART, chartData, chartKey, chartSummary, drawChart } from "./weather/c
 import { ICONS, drawWeatherIcons, iconKey } from "./weather/icons";
 
 const round = (value: number): string => `${Math.round(value)}°`;
-/** The phone page is split into tabs instead of one long column. */
+/** The phone page has exactly three tabs in one row (QUS v1): Jetzt, Prognose, Einstellungen. */
 const TABS = [
-  { id: "weather", icon: "🌦️", key: "tabWeather" },
-  { id: "place", icon: "📍", key: "tabPlace" },
-  { id: "glasses", icon: "👓", key: "tabGlasses" },
-  { id: "more", icon: "⚙️", key: "tabMore" },
+  { id: "now", icon: "🌦️", key: "tabNow" },
+  { id: "forecast", icon: "📅", key: "tabForecast" },
+  { id: "settings", icon: "⚙️", key: "tabSettings" },
 ] as const;
 const TAB_KEY = "quietglass.rainlens.tab";
 const readTab = (): string | null => { try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v : null; } catch { return null; } };
@@ -163,7 +162,7 @@ async function boot(): Promise<void> {
   /** The state word beside the app name while there is no forecast to show. */
   const stateWord = (): string => { const key = noticeKey(status, forecast.source); return t(key === "glassNoLocation" ? "stNoLocation" : key === "glassOffline" ? "stOffline" : "stLoading"); };
   const view = (): TextView => {
-    const text = notice(); const tag = loading ? t("updating") : forecast.source === "live" ? (where?.label ?? "LIVE").toUpperCase() : t("sampleTag");
+    const text = notice(); const tag = loading ? t("updating") : forecast.source === "live" ? t("stLive") : t("stDemo");
     return { header: fit(text ? `RAINLENS · ${stateWord()}` : `RAINLENS · ${[t("now"), t("hourly"), t("days")][page]} · ${tag}`, FULL_WIDTH), body: text ? glassesBody(text.split("\n"), "", CHART_ROWS) : glassesBody(page === 0 ? currentLines() : page === 1 ? hourlyLines() : dailyLines(), glassesErrorText(), CHART_ROWS), side: sideLines(), footer: footerLine() };
   };
   /** The help page: the gestures, what the app needs, 2x = back. Same layout as the weather views. */
@@ -319,20 +318,26 @@ async function boot(): Promise<void> {
     return `<section class="card compact"><h2>${escapeHtml(t("cockpit"))}</h2><label>${escapeHtml(t("gustAlert"))}<select id="gust">${options.join("")}</select></label><p class="hint">${escapeHtml(t("gustAlertHint"))}</p></section>`;
   };
   /** Phone tab "Brille": what the gestures do and the scroll direction. */
-  const glassesCard = (): string => `<section class="card compact"><h2>${escapeHtml(t("controlsTitle"))}</h2><p class="hint">${[t("help1"), t("help2"), t("help3"), t("help2x")].map(escapeHtml).join("<br>")}</p><label class="check"><input id="invert" type="checkbox"${invertScroll() ? " checked" : ""}>${escapeHtml(t("invert"))}</label></section>`;
+  const glassesCard = (): string => `<section class="card compact"><h2>${escapeHtml(t("tabGlasses"))}</h2><label class="check"><input id="invert" type="checkbox"${invertScroll() ? " checked" : ""}>${escapeHtml(t("invert"))}</label><details class="advanced"><summary>${escapeHtml(t("controlsTitle"))}</summary><p class="hint">${[t("help1"), t("help2"), t("help3"), t("help2x")].map(escapeHtml).join("<br>")}</p></details></section>`;
   const renderPhone = (): void => {
     const app = document.querySelector<HTMLDivElement>("#app"); if (!app) return; const mode = storedMode(store); const current = forecast.current; const today = forecast.daily[0];
     const weather = `<section class="card weather-card"><div class="status-row"><span class="status-dot ${forecast.source === "demo" ? "warn" : ""}"></span><strong>${t(forecast.source === "live" ? "live" : "demo")}</strong><time>${clock(current.time, locale)}</time></div><div class="weather-hero"><div><span>${condition(current.weatherCode)}</span><strong>${round(current.temperature)}</strong></div><p>${t("feels")} ${round(current.feelsLike)}</p></div><div class="weather-grid"><div><span>${t("humidity")}</span><b>${Math.round(current.humidity)}%</b></div><div><span>${t("wind")}</span><b>${windCompass(current.windDirection)} ${Math.round(current.windSpeed)}</b><small>km/h</small></div><div><span>${t("precipitation")}</span><b>${current.precipitation.toFixed(1)}</b><small>mm</small></div><div><span>${t("clouds")}</span><b>${Math.round(current.cloudCover)}%</b></div></div>${failure ? `<p class="error">${escapeHtml(errorText())}</p>` : ""}<button id="refresh">${t("refresh")}</button></section>`;
-    const location = `<section class="card"><h2>${t("settings")}</h2><p class="hint">${escapeHtml(currentSetting())}</p><label class="check"><input id="automatic" type="checkbox"${mode === "phone" ? " checked" : ""}>${t("automatic")}</label><label>${t("place")}<input id="place" type="text" autocomplete="off" placeholder="${escapeHtml(t("placeHint"))}" value="${escapeHtml(query)}"></label><button id="search">${t("search")}</button>${searchNote ? `<p class="hint">${escapeHtml(searchNote)}</p>` : ""}${results.length ? `<div class="place-list">${results.map((place, index) => `<button class="place" data-index="${index}">${escapeHtml(place.label)}</button>`).join("")}</div>` : ""}</section>`;
-    const advanced = `<section class="card advanced"><h2>${t("advanced")}</h2><label>${t("latitude")}<input id="lat" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lat) ?? "")}"></label><label>${t("longitude")}<input id="lon" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lon) ?? "")}"></label><button id="coords">${t("useCoords")}</button>${coordNote ? `<p class="error">${escapeHtml(coordNote)}</p>` : ""}<p class="hint">${t("help")}</p></section>`;
-    const active = tab ?? (status === "noLocation" ? "place" : "weather");
+    const firstRun = forecast.source === "demo" && status !== "offline";
+    const answered = status === "live";
+    const step = (n: number, done: boolean, key: string): string => `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${escapeHtml(t(key))}</span></li>`;
+    const setup = firstRun ? `<section class="card setup"><h2>${t("setupTitle")}</h2><ol class="steps">${step(1, where !== null, "setup1")}${step(2, answered, "setup2")}${step(3, answered, "setup3")}</ol></section>` : "";
+    const advanced = `<details class="advanced"><summary>${t("advanced")}</summary><label>${t("latitude")}<input id="lat" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lat) ?? "")}"></label><label>${t("longitude")}<input id="lon" type="text" inputmode="decimal" value="${escapeHtml(appStore.get(KEYS.lon) ?? "")}"></label><button id="coords">${t("useCoords")}</button>${coordNote ? `<p class="error">${escapeHtml(coordNote)}</p>` : ""}<p class="hint">${t("help")}</p></details>`;
+    // The place card is folded once a place works; it opens by itself while nothing is set up.
+    const location = `<details class="fold card"${firstRun || status === "noLocation" || results.length > 0 || searchNote !== "" || coordNote !== "" ? " open" : ""}><summary>${escapeHtml(status === "live" ? t("using", { place: placeName() }) : t("placeFold"))}</summary><p class="hint">${escapeHtml(currentSetting())}</p><label class="check"><input id="automatic" type="checkbox"${mode === "phone" ? " checked" : ""}>${t("automatic")}</label><label>${t("place")}<input id="place" type="text" autocomplete="off" placeholder="${escapeHtml(t("placeHint"))}" value="${escapeHtml(query)}"></label><button id="search">${t("search")}</button>${searchNote ? `<p class="hint">${escapeHtml(searchNote)}</p>` : ""}${results.length ? `<div class="place-list">${results.map((place, index) => `<button class="place" data-index="${index}">${escapeHtml(place.label)}</button>`).join("")}</div>` : ""}${advanced}</details>`;
+    const active = tab ?? (firstRun && status === "noLocation" ? "settings" : "now");
     const chip = status === "noLocation" ? t("usingNone") : forecast.source === "demo" ? t("demo") : placeName();
     const hourly = `<section class="card"><div class="section-title"><h2>${t("hourly")}</h2><span>${t("chance")}</span></div><div class="hourly-strip">${forecast.hourly.slice(0, 8).map((hour) => `<div><time>${clock(hour.time, locale)}</time><b>${round(hour.temperature)}</b><span>${condition(hour.weatherCode)}</span><em>${Math.round(hour.precipitationProbability)}%</em></div>`).join("")}</div></section>`;
     const days = `<section class="card"><h2>${t("days")}</h2><div class="forecast-list">${forecast.daily.map((day) => `<div><b>${dayName(day.date, locale)}</b><span>${condition(day.weatherCode)}</span><em>${round(day.maximum)} / ${round(day.minimum)}</em><small>${Math.round(day.precipitationProbability)}%</small></div>`).join("")}</div>${today ? `<div class="sun-row"><span>${t("sun")}</span><b>${clock(today.sunrise, locale)} → ${clock(today.sunset, locale)}</b></div>` : ""}</section>`;
-    app.innerHTML = `<header class="brand bar"><div><div class="brand-mark">QUIETGLASS / WEATHER</div><h1>RainLens</h1></div><span class="chip${status === "live" ? " on" : ""}">${escapeHtml(chip)}</span></header><p class="next">${escapeHtml(nextStep())}</p><div class="tab" data-tab="weather">${weather}${hourly}${days}</div><div class="tab" data-tab="place">${location}</div><div class="tab" data-tab="glasses">${glassesCard()}${cockpitCard()}</div><div class="tab" data-tab="more"><p class="hint lede">${t("lede")}</p><section class="card compact">${languageSelect(locale)}</section>${advanced}<p class="credits">${t("credits")} · ${t("creditsWarnings")}${RADAR ? ` · ${t("creditsRadar")}` : ""}</p></div><nav class="tabbar" role="tablist">${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${escapeHtml(t(key))}</button>`).join("")}</nav>`;
+    const more = `<details class="fold card"><summary>RainLens</summary><p class="hint">${t("lede")}</p><p class="credits">${t("credits")} · ${t("creditsWarnings")}${RADAR ? ` · ${t("creditsRadar")}` : ""}</p></details>`;
+    app.innerHTML = `<header class="brand bar"><div><div class="brand-mark">QUIETGLASS / WEATHER</div><h1>RainLens</h1></div><span class="chip${status === "live" ? " on" : ""}">${escapeHtml(chip)}</span></header><p class="next">${escapeHtml(nextStep())}</p><div class="tab" data-tab="now">${weather}${hourly}</div><div class="tab" data-tab="forecast">${days}</div><div class="tab" data-tab="settings">${setup}${location}${glassesCard()}${cockpitCard()}<section class="card compact">${languageSelect(locale)}</section>${more}</div><nav class="tabbar" role="tablist">${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${escapeHtml(t(key))}</button>`).join("")}</nav>`;
     applyTab(app, active);
     app.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => button.addEventListener("click", () => {
-      tab = button.dataset.tabGo ?? "weather";
+      tab = button.dataset.tabGo ?? "now";
       try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
       applyTab(app, tab); window.scrollTo({ top: 0 });
     }));

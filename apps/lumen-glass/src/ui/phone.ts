@@ -1,16 +1,16 @@
 import { isLocal, maskToken, validateUrl, type LumenData } from "../storage/persist";
-import { drawMoth, lightBar, mothLine } from "../lumen/moth";
 import { signIn, signOut, type LumenStatus } from "../lumen/client";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
+import { questMeta, windowLabel } from "../glasses/view";
+import { mothTone, windowTime } from "../cockpit/model";
 import { VERSION } from "../version";
 
 /**
- * The phone companion.
- *
- * Besides the address, it carries a **Take a photo** button — the same action
- * as tapping the temple pad. Sometimes the phone is already in your hand, and
- * having to reach for your face then would be silly.
+ * The phone companion (QUS v1, the look of Rain Lens): exactly three tabs -
+ * Jetzt (the moth at a glance, with the one button that takes the photo),
+ * Quest (the open quest in full) and Einstellungen (connection, glasses,
+ * language). The view models are pure so the tests can read them.
  */
 
 export interface PhoneUiPorts {
@@ -29,17 +29,34 @@ export interface PhoneUiPorts {
   readonly setLocale?: (locale: Locale) => void;
 }
 
-/** The page is split into tabs instead of one long column. */
-const TABS: readonly { id: string; icon: string; key: string }[] = [
-  { id: "moth", icon: "🦋", key: "p.tabMoth" },
-  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
-  { id: "lumen", icon: "🔌", key: "p.tabLumen" },
-  { id: "more", icon: "⚙️", key: "p.tabMore" },
+export interface PhoneUi {
+  /** Redraws the live parts (pill, "Jetzt", "Quest") after a poll, leaving every input untouched. */
+  readonly refreshLive: () => void;
+}
+
+/** What the phone shows of the live state. */
+export interface PhoneView {
+  readonly status: LumenStatus | null;
+  readonly demo: boolean;
+  readonly lastError: string | null;
+}
+
+/** The three tabs. */
+export const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "now", icon: "🦋", key: "p.tabNow" },
+  { id: "quest", icon: "📷", key: "p.tabQuest" },
+  { id: "settings", icon: "⚙️", key: "p.tabSettings" },
 ];
 const TAB_KEY = "quietglass.lumen-glass.tab";
 
-function readTab(): string {
-  try { const v = localStorage.getItem(TAB_KEY); return TABS.some((tab) => tab.id === v) ? v! : "moth"; } catch { return "moth"; }
+/** Nothing set up yet: Einstellungen opens first, with the three-step checklist. */
+export function isFirstRun(demo: boolean): boolean {
+  return demo;
+}
+
+function readTab(firstRun: boolean): string {
+  try { const v = localStorage.getItem(TAB_KEY); if (TABS.some((tab) => tab.id === v)) return v!; } catch { /* no storage */ }
+  return firstRun ? "settings" : "now";
 }
 
 /** Shows only the active tab; the choice survives redraws and restarts. */
@@ -52,21 +69,103 @@ function applyTab(root: HTMLElement, active: string): void {
   });
 }
 
-export function mountPhoneUi(ports: PhoneUiPorts): void {
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+}
+const esc = (text: string): string => escapeHtml(text);
+
+// ---- pure view models (tests read these) ----------------------------------------------
+
+export interface Banner { readonly tone: "ok" | "warn" | "critical" | "offline" | "none"; readonly text: string }
+
+/** The one message that counts right now. */
+export function bannerFor(view: PhoneView, locale: Locale): Banner {
+  const x = (key: string): string => t(locale, key);
+  if (view.demo) return { tone: "none", text: x("p.banner.demo") };
+  if (!view.status) return { tone: view.lastError ? "offline" : "none", text: x(view.lastError ? "p.banner.offline" : "p.banner.loading") };
+  if (view.status.quest) return { tone: "ok", text: x("p.banner.quest") };
+  return { tone: "none", text: x("p.banner.noQuest") };
+}
+
+/** The status pill: connected, offline or demo. */
+export function pillOf(view: PhoneView, locale: Locale): { text: string; on: boolean } {
+  if (view.demo) return { text: t(locale, "p.pill.demo"), on: false };
+  return view.status ? { text: t(locale, "p.pill.live"), on: true } : { text: t(locale, "p.pill.offline"), on: false };
+}
+
+/** "Jetzt": banner, hero card (the moth's light), 2 x 2 key figures, the one button, the current quest as a card. */
+export function nowInner(view: PhoneView, locale: Locale): string {
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const { status } = view;
+  const banner = bannerFor(view, locale);
+  const stat = (label: string, value: string, unit: string, alert = false): string =>
+    `<div${alert ? ' class="alert"' : ""}><span>${esc(label)}</span><b>${esc(value)}</b><small>${esc(unit)}</small></div>`;
+  const tone = mothTone({ status, error: view.lastError });
+  const windowText = status?.window ? windowLabel(status.window.kind, status.window.minutesAway, locale) : "–";
+  const card = status?.quest
+    ? `<div class="host tone-ok"><b>${esc(status.quest.title)}</b><em>${esc(questMeta(status.quest, locale))}</em><span>${esc(status.quest.task ?? "")}</span></div>`
+    : "";
+  return `
+    <p class="banner tone-${banner.tone}">${esc(banner.text)}</p>
+    <section class="card hero-card">
+      <div class="hero">
+        <div><span>${esc(x("p.hero.label"))}</span><strong>${esc(status ? `${Math.round(status.moth.light)}` : "–")}</strong></div>
+        <p>${esc(status ? status.moth.state : "")}</p>
+      </div>
+      <div class="stats">
+        ${stat(x("p.stat.state"), status ? status.moth.state : "–", "", tone === "warn")}
+        ${stat(x("p.stat.streak"), status && status.moth.streak > 0 ? String(status.moth.streak) : "–", x("p.unit.days"))}
+        ${stat(x("p.stat.window"), status?.window ? windowTime(status.window.minutesAway, locale) : "–", status?.window ? windowText.split(" ")[0] ?? "" : "")}
+        ${stat(x("p.stat.open"), status ? String(status.openQuests) : "–", x("p.unit.quests"))}
+      </div>
+      ${status?.quest ? `<button id="shoot" type="button" class="big">${esc(x("p.shoot"))}</button>` : ""}
+    </section>
+    ${card ? `<h2 class="strip-title">${esc(x("p.strip.quest"))}</h2><div class="strip">${card}</div>` : ""}`;
+}
+
+/** "Quest": the open quest in full. */
+export function questInner(view: PhoneView, locale: Locale): string {
+  const x = (key: string): string => t(locale, key);
+  const quest = view.status?.quest;
+  if (!quest) return `<section class="card"><p class="hint">${esc(x("p.quest.none"))}</p></section>`;
+  return `
+    <section class="card server tone-ok">
+      <div class="server-head"><h2>${esc(quest.title)}</h2><span class="tag tone-ok">${esc(questMeta(quest, locale))}</span></div>
+      <p>${esc(quest.task ?? "")}</p>
+      ${quest.checkable ? `<p class="hint">${esc(x("p.quest.check"))}: ${esc(quest.checkable)}</p>` : ""}
+      <p class="hint">${esc(x("p.shootHint"))}</p>
+    </section>`;
+}
+
+/** First-run checklist: pure, so tests can read it. */
+export function setupInner(demo: boolean, answered: boolean, locale: Locale): string {
+  const added = !demo;
+  const step = (n: number, done: boolean, key: string): string =>
+    `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${esc(t(locale, key))}</span></li>`;
+  return `<ol class="steps">${step(1, added, "p.setup.1")}${step(2, added, "p.setup.2")}${step(3, added && answered, "p.setup.3")}</ol>`
+    + (added ? "" : `<p class="hint">${esc(t(locale, "p.setup.demo"))}</p>`);
+}
+
+// ---- mounting ---------------------------------------------------------------------------
+
+export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   const root = document.getElementById("app");
-  if (!root) return;
+  if (!root) return { refreshLive: () => undefined };
 
   let notice = "";
-  let tab = readTab();
+  let tab = readTab(isFirstRun(ports.isDemo?.() ?? false));
+  const view = (): PhoneView => ({ status: ports.getStatus(), demo: ports.isDemo?.() ?? false, lastError: ports.getLastError?.() ?? null });
+
   const render = (): void => {
     const locale = ports.getLocale?.() ?? "en";
     if (document.documentElement) document.documentElement.lang = locale;
-    root.innerHTML = template(ports.getData(), ports.getStatus(), notice, locale, ports.isDemo?.() ?? false, ports.getLastError?.() ?? null);
+    root.innerHTML = template(ports.getData(), view(), notice, locale);
     notice = "";
     applyTab(root, tab);
     root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
       button.addEventListener("click", () => {
-        tab = button.dataset["tabGo"] ?? "moth";
+        tab = button.dataset["tabGo"] ?? "now";
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
         applyTab(root, tab);
         window.scrollTo({ top: 0 });
@@ -76,107 +175,98 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   };
 
   render();
-  // Keep the moth on the phone in step with the glasses.
-  setInterval(() => {
-    const holder = root.querySelector("#moth");
-    const status = ports.getStatus();
-    if (holder && status) holder.textContent = drawMoth(status.moth.state).join("\n");
-  }, 5000);
+
+  const refreshLive = (): void => {
+    const locale = ports.getLocale?.() ?? "en";
+    const current = view();
+    const set = (selector: string, html: string): void => {
+      const el = root.querySelector<HTMLElement>(selector);
+      // Unchanged parts are not touched, so a poll never makes the page jump.
+      if (el && typeof el.innerHTML === "string" && el.innerHTML !== html) el.innerHTML = html;
+    };
+    const pill = root.querySelector<HTMLElement>("#pill");
+    if (pill && typeof pill.textContent === "string") {
+      const state = pillOf(current, locale);
+      if (pill.textContent !== state.text) pill.textContent = state.text;
+      pill.classList?.toggle("on", state.on);
+    }
+    set("#now-live", nowInner(current, locale));
+    set("#quest-live", questInner(current, locale));
+  };
+  // The poll of the glasses keeps the moth on the phone in step.
+  setInterval(refreshLive, 5000);
+  return { refreshLive };
 }
 
-function template(data: LumenData, status: LumenStatus | null, notice: string, locale: Locale, demo = false, lastError: string | null = null): string {
+function template(data: LumenData, view: PhoneView, notice: string, locale: Locale): string {
   const x = (key: string, vars: Record<string, string | number> = {}): string => escapeHtml(t(locale, key, vars));
+  const firstRun = isFirstRun(view.demo);
+  const pill = pillOf(view, locale);
   return `
   <header class="brand bar">
     <div>
-      <span class="brand-mark">Quietglass</span>
+      <div class="brand-mark">${x("p.kicker")}</div>
       <h1>Lumen Glass</h1>
     </div>
-    <span class="chip${status && !demo ? " on" : ""}">${x(demo ? "p.chipDemo" : status ? "p.chipOn" : "p.chipOff")}</span>
+    <span id="pill" class="chip${pill.on ? " on" : ""}">${esc(pill.text)}</span>
   </header>
 
   ${notice ? '<p class="notice">' + escapeHtml(notice) + "</p>" : ""}
 
-  <div class="tab" data-tab="moth">
-  ${demo ? '<p class="notice">' + x("p.demoHint") + "</p>" : ""}
-  ${status ? `
-  <section class="card">
-    <h2>${x("p.mothTitle")}</h2>
-    <pre id="moth" class="moth">${escapeHtml(drawMoth(status.moth.state).join("\n"))}</pre>
-    <p class="hint">
-      <strong>${escapeHtml(mothLine(status.moth.state, status.moth.gesture))}</strong><br />
-      <code>${escapeHtml(lightBar(status.moth.light, 16))}</code> ${Math.round(status.moth.light)}
-    </p>
-    ${status.quest ? `
-      <h2>${x("p.questTitle")}</h2>
-      <p class="hint">${escapeHtml(status.quest.title)}</p>
-      ${status.quest.checkable ? '<p class="hint"><small>' + escapeHtml(status.quest.checkable) + "</small></p>" : ""}
-      <button id="shoot" type="button">${x("p.shoot")}</button>
-      <p class="hint">${x("p.shootHint")}</p>
-    ` : '<p class="hint">' + x("p.noQuest") + "</p>"}
-  </section>` : `
-  <section class="card">
-    <h2>${x("p.notConnected")}</h2>
-    <p class="hint">${x("p.notConnectedHint")}</p>
-  </section>`}
-  </div>
+  <div class="tab" data-tab="now"><div id="now-live">${nowInner(view, locale)}</div></div>
+  <div class="tab" data-tab="quest"><div id="quest-live">${questInner(view, locale)}</div></div>
 
-  <div class="tab" data-tab="glasses">
-  <section class="card">
-    <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
-  </section>
+  <div class="tab" data-tab="settings">
+    ${firstRun ? `<section class="card setup"><h2>${x("p.setup.title")}</h2>${setupInner(view.demo, view.status !== null, locale)}</section>` : ""}
+    <details class="fold card"${firstRun ? " open" : ""}>
+      <summary>${x(firstRun ? "p.connection" : "p.connection.set")}</summary>
+      <label for="url">${x("p.address")}</label>
+      <input id="url" type="text" value="${escapeHtml(data.baseUrl)}" placeholder="http://127.0.0.1:8077" />
+      <p class="hint">
+        ${x("p.addressHint")}
+        ${data.baseUrl && !isLocal(data.baseUrl)
+          ? '<br /><small class="warn">' + x("p.notLocal") + "</small>"
+          : ""}
+      </p>
+      <button id="save" type="button" class="big">${x("p.save")}</button>
 
-  <section class="card compact">${languageSelect(locale)}</section>
-  </div>
+      <h3>${x("p.signInTitle")}</h3>
+      <p class="hint">${x("p.token")} — <em>${escapeHtml(maskToken(data.token, locale))}</em></p>
+      ${data.token ? `
+        <button id="signout" type="button" class="remove">${x("p.signOut")}</button>
+      ` : `
+        <label for="name">${x("p.name")}</label>
+        <input id="name" type="text" autocomplete="username" autocapitalize="none" />
+        <label for="password">${x("p.password")}</label>
+        <input id="password" type="password" autocomplete="current-password" />
+        <button id="signin" type="button">${x("p.signIn")}</button>
+      `}
+      <p class="hint">${x("p.tokenHint")}</p>
+    </details>
 
-  <div class="tab" data-tab="lumen">
-  <section class="card">
-    <h2>${x("p.lumenTitle")}</h2>
-    <label for="url">${x("p.address")}</label>
-    <input id="url" type="text" value="${escapeHtml(data.baseUrl)}" placeholder="http://127.0.0.1:8077" />
-    <p class="hint">
-      ${x("p.addressHint")}
-      ${data.baseUrl && !isLocal(data.baseUrl)
-        ? '<br /><small class="warn">' + x("p.notLocal") + "</small>"
-        : ""}
-    </p>
+    <section class="card">
+      <h2>${x("p.glasses")}</h2>
+      <label class="check"><input id="invert" type="checkbox" ${data.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
+      <details class="fold">
+        <summary>${x("p.controlsTitle")}</summary>
+        <table class="keys">
+          <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
+          <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
+          <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
+          <tr><td>${x("p.doubleTap")}</td><td>${x("p.doubleTapDo")}</td></tr>
+        </table>
+        <p class="hint">${x("p.controlsHint")}</p>
+      </details>
+    </section>
 
-    <button id="save" type="button">${x("p.save")}</button>
-  </section>
+    <section class="card compact">${languageSelect(locale)}</section>
 
-  <section class="card">
-    <h2>${x("p.signInTitle")}</h2>
-    <p class="hint">${x("p.token")} — <em>${escapeHtml(maskToken(data.token, locale))}</em></p>
-    ${data.token ? `
-      <button id="signout" type="button">${x("p.signOut")}</button>
-    ` : `
-      <label for="name">${x("p.name")}</label>
-      <input id="name" type="text" autocomplete="username" autocapitalize="none" />
-      <label for="password">${x("p.password")}</label>
-      <input id="password" type="password" autocomplete="current-password" />
-      <button id="signin" type="button">${x("p.signIn")}</button>
-    `}
-    <p class="hint">${x("p.tokenHint")}</p>
-  </section>
-  </div>
-
-  <div class="tab" data-tab="more">
-  <section class="card">
-    <h2>${x("p.controlsTitle")}</h2>
-    <table class="keys">
-      <tr><td>${x("p.tap")}</td><td>${x("p.tapDo")}</td></tr>
-      <tr><td>${x("p.hold")}</td><td>${x("p.holdDo")}</td></tr>
-      <tr><td>${x("p.swipe")}</td><td>${x("p.swipeDo")}</td></tr>
-      <tr><td>${x("p.doubleTap")}</td><td>${x("p.doubleTapDo")}</td></tr>
-    </table>
-    <p class="hint">${x("p.controlsHint")}</p>
-  </section>
-
-  <section class="card">
-    <p><strong>Lumen Glass</strong> · ${x("p.moreVersion")} ${VERSION}</p>
-    ${lastError ? '<p class="hint"><small>' + x("p.lastError", { error: lastError }) + "</small></p>" : ""}
-    <p class="hint">${x("p.privacy")}</p>
-  </section>
+    <details class="fold card">
+      <summary>${x("p.more")}</summary>
+      <p><strong>Lumen Glass</strong> · ${x("p.version")} ${VERSION}</p>
+      ${view.lastError ? '<p class="hint"><small>' + x("p.lastError", { error: view.lastError }) + "</small></p>" : ""}
+      <p class="hint">${x("p.privacy")}</p>
+    </details>
   </div>
 
   <nav class="tabbar" role="tablist">
@@ -199,7 +289,7 @@ function wire(
     rerender();
   });
 
-  // The switch lives on the "Brille" tab, away from the address and its Save button: it applies at once.
+  // The switch lives on the "Einstellungen" tab, away from the address and its Save button: it applies at once.
   byId<HTMLInputElement>("invert")?.addEventListener("change", (event) => {
     void ports.setData({ ...ports.getData(), invertScroll: (event.target as HTMLInputElement).checked });
   });
@@ -252,9 +342,4 @@ function wire(
       notify(t(locale, "p.signedOut"));
     })();
   });
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }

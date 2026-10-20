@@ -37,14 +37,14 @@ import type { AgentEvent, AgentInfo, Approval, ApprovalOption, HomeSnapshot, Hub
 import { normalizeReport } from "../api/normalize";
 import {
   applyHomeAction, areaEntries, canDetail, clampZuhause, detailChoices, entityLabel, moveDetail, homeViewOf, initialZuhause, listEntries, listRows,
-  selectedEntity, sideRows, stateText, tapAction, viewSummary, type ZuhauseState, type ZuhauseView,
+  selectedEntity, sideRows, stateText, tapAction, type ZuhauseState, type ZuhauseView,
 } from "./zuhause";
 import type { Brief, HomeAction, HomeEntity } from "../api/types";
-import { briefBlocks, briefFooter, briefHeader, briefPages, briefSummary, type BriefLoad } from "./brief";
+import { briefBlocks, briefFooter, briefHeader, briefPages, type BriefLoad } from "./brief";
 import { armedFooter, footer, type FooterEnd, type FooterParts } from "../glasses/footer";
 
-export type Screen = "root" | "agent" | "home" | "printer" | "inbox" | "brief";
-export const SCREENS: readonly Screen[] = ["root", "agent", "home", "printer", "inbox", "brief"];
+export type Screen = "root" | "agent" | "home" | "printer" | "inbox" | "brief" | "cockpit";
+export const SCREENS: readonly Screen[] = ["root", "agent", "home", "printer", "inbox", "brief", "cockpit"];
 /**
  * The glasses' side menu (menuObject, QIS v1.2). Off: its clicks never reach the app and, while a page carries it,
  * a hold opens it instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages
@@ -56,7 +56,9 @@ export const SIDE_MENU = false;
 /** A row of the overview menu: a page, or the help overlay (last row while there is no side menu). */
 export type RootItem = Exclude<Screen, "root"> | "help";
 /** Rows of the overview menu, in row order (new rows go last: older saved selections stay valid). */
-export const ROOT_ITEMS: readonly RootItem[] = SIDE_MENU ? ["agent", "home", "printer", "inbox", "brief"] : ["agent", "home", "printer", "inbox", "brief", "help"];
+export const ROOT_ITEMS: readonly RootItem[] = ["agent", "inbox", "cockpit", "home", "printer", "brief"];
+/** The first rows of the start page are the three big entries; the rest hang under them, indented (QUS v1). */
+export const BIG_ROOT_ITEMS = 3;
 
 /** How long a confirming double tap stays armed. */
 export const CONFIRM_MS = 4000;
@@ -581,6 +583,7 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
       if (agent === undefined) return { model };
       return { model: { ...scrollChat(model, agent, step, locale), confirm: null } };
     }
+    if (model.screen === "cockpit") return { model: { ...model, confirm: null } };
     if (model.screen === "home") {
       const devices = report.home.devices;
       return { model: withReport({ ...model, confirm: null }, { ...report, home: { ...report.home, selected: cycle(devices.length, report.home.selected, step) } }) };
@@ -619,6 +622,9 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
         effect: { kind: "ask", agentId: agent.id, question },
       };
     }
+
+    // The cockpit is a picture: a tap opens the agents (harmless navigation).
+    if (model.screen === "cockpit") return openScreen(model, "agent", now, locale, false);
 
     if (model.screen === "inbox") {
       const event = unreadEvents(report.inbox)[report.inbox.selected];
@@ -928,7 +934,7 @@ export function menuFor(model: HubModel, locale: Locale, enabled: boolean = SIDE
   if (model.voice !== null && voiceOwns(model)) {
     return { key: `${locale}:voice`, items: [item(MENU.discardVoice, "menu.discardVoice"), item(MENU.help, "menu.help")] };
   }
-  if (model.screen === "root") {
+  if (model.screen === "root" || model.screen === "cockpit") {
     items = [item(MENU.agent, "menu.agent"), item(MENU.home, "menu.home"), item(MENU.printer, "menu.printer"), item(MENU.inbox, "menu.inbox"), item(MENU.brief, "menu.brief"), item(MENU.help, "menu.help")];
   } else if (model.screen === "agent") {
     items = card
@@ -1182,43 +1188,32 @@ export function homeSummary(home: HomeSnapshot, locale: Locale): string {
   return on === 0 ? tr(messages, locale, "home.on0") : tr(messages, locale, "home.onN", { n: on });
 }
 
-function printerSummary(printer: PrinterSnapshot, locale: Locale): string {
-  if (printer.offline === true) return tr(messages, locale, "printer.offline");
-  if (printer.state === "printing" || printer.state === "paused") {
-    return tr(messages, locale, `printer.state.${printer.state}`, { pct: printerPercent(printer) }) + (printer.etaMin !== null ? ` · ${printer.etaMin} min` : "");
-  }
-  return tr(messages, locale, `printer.state.${printer.state}`);
-}
-
-function rootRows(report: HubReport, selected: number, locale: Locale, now: number, brief: Brief | null | undefined = report.brief, setupHint = false): string[] {
+/**
+ * The start page (QUS v1): three big entries - Agenten, Meldungen, Übersicht (the cockpit) - and under them,
+ * indented, the other pages (Zuhause, Drucker, Tagesstart). At most five rows are visible, the cursor is a dot.
+ */
+export function startRows(report: HubReport, locale: Locale): string[] {
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const waiting = waitingAgents(report);
   const online = report.agents.filter((agent) => agent.online).length;
   const busy = report.agents.filter((agent) => agent.busy && !waiting.has(agent.id)).length;
-  const extra = (busy > 0 ? t("root.busyN", { n: busy }) : "") + (report.approvals.length > 0 ? t("root.waitN", { n: report.approvals.length }) : "");
-  const dots = report.agents.slice(0, 8).map((agent) => agentDot(agent, waiting)).join("");
-  const agentRow = report.agents.length === 0 ? t("root.agentNone") : t("root.agent", { dots, online, total: report.agents.length, extra });
-  const homeView = report.homeView !== undefined && report.home.demo !== true ? report.homeView : null;
-  const homeRow = report.home.demo === true ? t("root.homeNotConfigured")
-    : homeView !== null && Object.keys(homeView.entities).length > 0 ? t("root.homeLights", viewSummary(homeView, locale))
-      : report.home.devices.length === 0 ? t("root.homeNone")
-        : t("root.homeLights", { lights: homeSummary(report.home, locale), count: report.home.devices.length });
-  const printerRow = report.printer.demo === true ? t("root.printerNotConfigured") : t("root.printer", { state: printerSummary(report.printer, locale) });
-  const briefRow = t("root.brief", { summary: briefSummary(brief, locale, now) });
-  // The rows follow ROOT_ITEMS; help is the last row while there is no side menu.
-  const menu = [agentRow, homeRow, printerRow, t("root.inbox", { count: unreadCount(report.inbox) }), briefRow, ...(SIDE_MENU ? [] : [t("root.help")])].map((row, index) => marked(row, index === selected));
+  const extra = report.approvals.length > 0 ? t("start.waitN", { n: report.approvals.length }) : busy > 0 ? t("start.busyN", { n: busy }) : "";
+  const labels: Record<RootItem, string> = {
+    agent: report.agents.length === 0 ? t("start.agentNone") : t("start.agent", { online, total: report.agents.length, extra }),
+    inbox: t("start.inbox", { count: unreadCount(report.inbox) }),
+    cockpit: t("start.cockpit"),
+    home: t("start.home"),
+    printer: t("start.printer"),
+    brief: t("start.brief"),
+    help: t("root.help"),
+  };
+  return ROOT_ITEMS.map((item, index) => (index < BIG_ROOT_ITEMS ? "" : "  ") + labels[item]);
+}
 
-  // What needs attention right now (two lines below the five rows; the agent row counts the busy ones).
-  const notes: string[] = [];
-  if (setupHint) notes.push("  " + t("root.demoHint"));
-  for (const card of report.approvals.slice(0, 2)) notes.push(fit("  " + t("root.waits", { agent: card.agentId, what: card.title })));
-  const alert = report.inbox.events.find((event) => !event.read && (event.status === "error" || (event.status === "waiting" && report.approvals.length === 0)));
-  if (alert !== undefined) notes.push(fit("  " + t("root.alert", { provider: alert.provider, title: alert.title })));
-  for (const agent of report.agents.filter((entry) => entry.busy && !waiting.has(entry.id))) {
-    notes.push(fit("  " + t("root.working", { agent: agent.label, what: busyShort(agent, locale, now) })));
-  }
-  if (notes.length === 0) notes.push("  " + (report.agents.length === 0 ? t("root.hintNoAgents") : t("root.hintQuiet")));
-  return [...menu, ...notes.slice(0, 7 - menu.length).map((note) => fit(note))];
+function rootRows(report: HubReport, selected: number, locale: Locale, _now: number, _brief: Brief | null | undefined = report.brief, setupHint = false): string[] {
+  const rows = startRows(report, locale).map((row, index) => marked(row, index === selected));
+  const list = windowed(rows, selected, 5);
+  return setupHint ? [...list, "  " + tr(messages, locale, "root.demoHint")] : list;
 }
 
 function eventMark(event: AgentEvent, locale: Locale): string {
@@ -1242,19 +1237,23 @@ function inboxRows(inbox: InboxSnapshot, locale: Locale): string[] {
   return rows;
 }
 
-/** Header = the fixed status line: page · connection · unread · busy agents · waiting. */
+/** The one word after the mode: "● live", "Demo", "offline" ... */
+export function liveWord(model: HubModel, locale: Locale): string {
+  const t = (key: string): string => tr(messages, locale, key);
+  if (model.link !== null) return t(`link.short.${model.link.problem}`);
+  const connection = model.report.connection;
+  return connection === "connected" ? t("live.on") : t(`link.short.${connection}`);
+}
+
+/** Header (QUS v1): `Modus · ● live`, plus how many wait for you. */
 export function statusLine(model: HubModel, locale: Locale): string {
   const report = model.report;
   const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
   const zh = model.screen === "home" ? zhOf(model) : null;
   const area = zh !== null && zh.level !== "list" ? homeViewOf(report)?.areas.find((entry) => entry.id === zh.areaId)?.name : undefined;
-  const parts = [
-    "QUIET HUB",
-    ...(model.screen === "root" ? [] : [area !== undefined ? `${t("screen.home")} · ${fit(area, 14)}` : t(`screen.${model.screen}`)]),
-    model.link !== null ? t(`link.short.${model.link.problem}`) : t(`link.short.${report.connection}`),
-    t("status.new", { n: unreadCount(report.inbox) }),
-    t("status.busy", { n: report.agents.filter((agent) => agent.busy).length }),
-  ];
+  const mode = model.screen === "root" ? t("app.title")
+    : area !== undefined ? `${t("screen.home")} · ${fit(area, 14)}` : t(`screen.${model.screen}`);
+  const parts = [mode, liveWord(model, locale)];
   if (report.approvals.length > 0) parts.push(t("status.waiting", { n: report.approvals.length }));
   return fit(parts.join(" · "));
 }
@@ -1337,9 +1336,9 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
     footer = model.link.problem === "missing" || model.link.problem === "insecure"
       ? footer_(locale, end, tr(messages, locale, "f.scanQr"))
       : ft(locale, { tap: "f.again" }, end);
-  } else if (model.screen === "root") {
+  } else if (model.screen === "root" || model.screen === "cockpit") {
     body = rootRows(report, model.rootSelected, locale, now, model.brief ?? report.brief, model.setupHint === true);
-    footer = ft(locale, { tap: "f.open", swipe: "f.select" }, "exit");
+    footer = model.screen === "cockpit" ? ft(locale, { tap: "f.agents" }) : ft(locale, { tap: "f.open", swipe: "f.select" }, "exit");
   } else if (model.screen === "agent") {
     const card = pendingApproval(report);
     const agent = selectedAgent(model);

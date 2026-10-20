@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.0] — 2026-10-20
+
+### Neu: Quietglass-UI-Standard QUS v1 („keine Textwand“)
+
+- **Brille: Startseite mit zwei großen Einträgen** (Fragen, Status). Kopfzeile `Xaventra · ● live`, unten genau eine Hinweiszeile. Die Fragen öffnen mit Tippen, die Karten-Ansicht trägt `Frage 1/2 · ● live` und zeigt, was die Karte nach außen bewirkt, direkt vor dem Titel. 2× geht eine Ebene zurück; auf der Startseite fragt 2× den Beenden-Dialog.
+- **Status als Cockpit-Bild** (576×288, vier Kacheln wie Rain Lens/Status Glass): links ein Ring mit einem Bogen je offener Frage (Mitte = Anzahl), rechts „XAVENTRA 14:05“, groß `2 FRAGEN` / `ARBEITET` / `BEREIT` / `OFFLINE` / `FEHLER`, darunter Zellen Fragen, Server, Stand, Wirkung; links unten die Statuszeile von Xaventra. Es werden nur geänderte Kacheln gesendet; die Uhr ändert nur die Kachel oben rechts.
+- **Keine Hilfe-Seite mehr** (die Gesten stehen in der Hinweiszeile, die Einrichtung am Handy); das Maskottchen in der Kopfzeile entfällt. Antworten bleiben wie bisher: Tippen wählt, nochmal tippen innerhalb von 4 s sendet, Wischen sendet nie, gesprochenes Ja/Nein sendet nie von selbst, erkannter Text erscheint zuerst (Tippen sendet, 2× verwirft).
+- **Erststart ohne Server = Demo:** Beispieldaten laufen, die Startseite sagt in einer Zeile „Demo · Verbindung am Handy einrichten“.
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Fragen / Einstellungen) im Rain-Lens-Look: Kicker `QUIETGLASS / ASSISTENT`, Status-Pille, Statusbanner, Hero-Karte mit den offenen Fragen, 2×2-Kennzahlen (Fragen, Server, Stand, nächste Wirkung), ein Hauptknopf, Karten-Leiste der offenen Fragen. Einstellungen als gruppierte Karten (Verbindung eingeklappt sobald eingerichtet), Erststart-Checkliste in drei Schritten.
+
+### Unverändert (Hardware-getestet)
+
+- Kein Seitenmenü (`SIDE_MENU = false`), Beenden-Dialog (während er offen sein kann, wird nichts gezeichnet und keine Kachel gesendet), zeitbegrenzte Aufrufe an die Brille, Wiederaufbau der ersten Seite nach „Nein“, Mikrofon/Live-Text/Antwort-Ablauf.
+
+### Tests
+
+- Reine Modelltests (Zellen, Überschrift, Startzeilen, Fußzeile), Kachel-Diff (unverändert = nichts gesendet), Beenden-Dialog-Tests, Vorschau-PNGs (`QG_PREVIEW=1 npx vitest run tests/preview.test.ts` → `store/preview-cockpit*.png`).
+
+### QIS-Konformität
+
+- Fußzeilen über den gemeinsamen `footer()` (zu breit: erst Wischen, dann Halten weg, 2× nie); Antworten nie per Wischen; keine Fehlercodes auf der Brille.
+
 ## [0.6.6] — 2026-10-17
 
 ### Behoben (Hardware-Protokoll)

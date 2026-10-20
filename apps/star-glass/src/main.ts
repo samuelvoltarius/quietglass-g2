@@ -7,12 +7,16 @@ import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
 import { lifecycleFromEvent } from "./lifecycle";
 import { t } from "./messages";
-import { forgetPage, installPage, setPageMenu, updatePage, type MenuSpec, type Preview } from "./glasses/render";
-import { bitmapKey } from "./glasses/gfx";
-import { ICON_STEP_MS } from "./glasses/charts";
+import { COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage, type MenuSpec } from "./glasses/render";
+import { sceneFor } from "./glasses/scene";
+import { decodePreview } from "./glasses/preview";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
+import type { Frame } from "./screen/frame";
 import {
-  PAGES, SIDE_MENU, buildFrames, buildView, controlRows, errorReason, type Connection, type Frames, type Layout, type Page, type PageView, type ViewState,
-  type WeatherLocation, type WeatherView,
+  MODES, MODE_PAGES, PAGES, SIDE_MENU, controlRows, errorReason, modeOf,
+  type Connection, type Page, type PageView, type Screen, type ViewState, type WeatherLocation, type WeatherView,
 } from "./glasses/views";
 import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings } from "./storage/persist";
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
@@ -21,32 +25,34 @@ import { demoForecast } from "./weather/demo";
 import { EMPTY_TRACKER, evaluateWeather, trackWarnings, type WeatherWarning } from "./weather/warnings";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.4.6";
+export const BUILD = "0.5.0";
+
+const NL = String.fromCharCode(10);
 
 /** QIS v1.2: ids of the glasses' side menu (Hold opens it). */
-export const MENU = { help: 1, refresh: 2, swipe: 3 } as const;
+export const MENU = { refresh: 1, swipe: 2 } as const;
 
 const params = new URLSearchParams(globalThis.location?.search ?? "");
 const DEMO = params.get("demo") === "1";
 const SCENES: readonly DemoScene[] = ["run", "flip", "lost", "warm", "done"];
 const SCENE: DemoScene = SCENES.includes(params.get("scene") as DemoScene) ? (params.get("scene") as DemoScene) : "run";
-/** `?page=3` opens on that page (simulator screenshots). */
-const START_PAGE = Math.max(0, Math.min(PAGES.length - 1, Number(params.get("page") ?? 1) - 1)) || 0;
+/** `?page=3` opens the cockpit on that page (simulator screenshots); without it the start page. */
+const START_PAGE: number | null = params.get("page") === null ? null : Math.max(0, Math.min(PAGES.length - 1, Number(params.get("page")) - 1)) || 0;
 
 /** How often the bridge is asked; the exposure is counted down locally in between. */
 const POLL_MS = 4_000;
 /** QIS v1: a second single tap within this long carries out the armed command. */
 const ARM_MS = 4_000;
 const MESSAGE_MS = 5_000;
-/** The page on the glasses survives a restart of the app (phone locked, app unloaded). */
-const PAGE_KEY = "quietglass.starglass.page.v1";
+/** Where the user was on the glasses survives a restart of the app (phone locked, app unloaded). */
+const UI_KEY = "quietglass.starglass.ui.v2";
+/** The cockpit is redrawn this often: the clock and the countdown stay current; an unchanged frame sends nothing. */
+const TICK_MS = 1_000;
 /** The forecast is renewed this often; a failed fetch is retried after RETRY. */
 const WEATHER_REFRESH_MS = 15 * 60_000;
 const WEATHER_RETRY_MS = 2 * 60_000;
 /** Warnings are re-checked this often even without a bridge. */
 const WEATHER_TICK_MS = 60_000;
-/** A new weather warning stays in the header this long. */
-const POPUP_MS = 15_000;
 /** The phone's position is asked once per app start, never longer than this. */
 const LOCATION_TIMEOUT_MS = 10_000;
 
@@ -69,8 +75,9 @@ async function boot(): Promise<void> {
   let connection: Connection = { kind: "loading" };
   let status: StarStatus | null = null;
   let receivedAt = 0;
-  let page: Page = PAGES[START_PAGE] ?? "overview";
-  let screen: "pages" | "control" | "help" = "pages";
+  let page: Page = PAGES[START_PAGE ?? 0] ?? "overview";
+  let screen: Screen = START_PAGE === null ? "start" : "run";
+  let startCursor = 0;
   let cursor = 0;
   let armed: Command | null = null;
   let armTimer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +88,8 @@ async function boot(): Promise<void> {
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let polling = false;
   let generation = 0;
-  let preview: Preview | null = null;
+  /** The newest camera frame as grey levels, with the bridge's key for it. */
+  let preview: { readonly key: string; readonly frame: Frame | null } | null = null;
   let fetchingPreview = "";
   let ready = false;
   /** First start without a bridge address: the night is a demo and the glasses say how to set up the real one. */
@@ -98,8 +106,6 @@ async function boot(): Promise<void> {
   let lastWeatherTry = 0;
   let tracker = EMPTY_TRACKER;
   let warnings: WeatherWarning[] = [];
-  let popup: WeatherWarning | null = null;
-  let popupTimer: ReturnType<typeof setTimeout> | undefined;
   let weatherTimer: ReturnType<typeof setInterval> | undefined;
 
   const say = (text: string): void => {
@@ -112,8 +118,8 @@ async function boot(): Promise<void> {
   const viewState = (): ViewState => ({
     locale, demo: DEMO, connection, status,
     ageSeconds: receivedAt ? (Date.now() - receivedAt) / 1000 : 0,
-    page, screen, cursor, armed, sending, message,
-    hasPreview: preview !== null,
+    screen, page, startCursor, cursor, armed, sending, message,
+    hasPreview: preview?.frame != null,
     now: Date.now(),
     weather: weatherView(),
     ...(demoStart ? { demoHint: true } : {}),
@@ -123,30 +129,19 @@ async function boot(): Promise<void> {
     enabled: settings.weather.enabled,
     forecast,
     warnings,
-    popup,
     location: weatherLocation,
     error: weatherError,
     thresholds: settings.weather.thresholds,
   });
 
-  /** Warnings from the forecast and N.I.N.A.'s station; a new one pops up in the header. */
+  /** Warnings from the forecast and N.I.N.A.'s station; the headline and the start page show the first. */
   const evaluateNow = (): void => {
     const now = Date.now();
     const station = status?.online && !demoStart ? status.weather : null;
     warnings = settings.weather.enabled
       ? evaluateWeather({ now, forecast, station, thresholds: settings.weather.thresholds }, tracker.active)
       : [];
-    const step = trackWarnings(tracker, warnings, now);
-    tracker = step.tracker;
-    const next = step.popups[0];
-    if (next) {
-      popup = next;
-      clearTimeout(popupTimer);
-      popupTimer = setTimeout(() => { popup = null; void draw(); }, POPUP_MS);
-    } else if (popup && !warnings.some((w) => w.kind === popup?.kind)) {
-      popup = null;
-      clearTimeout(popupTimer);
-    }
+    tracker = trackWarnings(tracker, warnings, now).tracker;
   };
 
   /** The phone's position, asked once, never blocking anything. */
@@ -218,26 +213,23 @@ async function boot(): Promise<void> {
   };
 
   let lastView: PageView | null = null;
-  let lastLayout: Layout | null = null;
-  let lastKey = "";
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
   /** Key of the side menu the page on the glasses carries; a different one needs a rebuild. */
   let pageMenuKey = "";
   let pageReady = false;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
+  let textBackend: TextBackend | null = null;
 
-  /** Off while its clicks do not arrive on the real glasses (SIDE_MENU, step log 15.10.2026): the pages carry no menu. QIS v1.2: Hold opens the side menu: Hilfe, Neu laden and the swipe direction (its label names the state, so a change rebuilds the page once). */
+  /** Off while its clicks do not arrive on the real glasses (SIDE_MENU, step log 15.10.2026): the pages carry no menu. Hold would open the side menu: Neu laden and the swipe direction (its label names the state, so a change rebuilds the page once). */
   const menuSpec = (): MenuSpec => SIDE_MENU ? ({
     key: `${locale}:${settings.invertScroll ? 1 : 0}`,
     items: [
-      { id: MENU.help, label: t(locale, "m.help") },
       { id: MENU.refresh, label: t(locale, "m.refresh") },
       { id: MENU.swipe, label: t(locale, settings.invertScroll ? "m.swipeInverted" : "m.swipeNormal") },
     ],
   }) : { key: "none", items: [] };
-
-  const frameKey = (f: Frames): string =>
-    [f.icon, f.ring, f.panelA, f.panelB, f.chart].map((b) => (b ? bitmapKey(b) : "-")).join("|") + "|" + (preview?.key ?? "");
 
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
@@ -249,22 +241,46 @@ async function boot(): Promise<void> {
    */
   let dialogPending = false;
   let dialogShown = false;
+
+  /**
+   * The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the
+   * dialog may be up (asked, or the call is out and the dialog not yet announced), never after the cockpit page
+   * was left (its containers are gone), never in the background.
+   */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitDialogAsked && !dialogPending && !closed && !backgrounded && installed === "cockpit"));
+
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
-    const state = viewState();
-    const view = buildView(state);
-    const frames = buildFrames(state, view.layout);
-    const key = frameKey(frames);
-    const same = lastView && view.layout === lastView.layout && view.header === lastView.header && view.footer === lastView.footer
-      && view.body.join("\n") === lastView.body.join("\n");
+    const scene = sceneFor(viewState());
     const menu = menuSpec();
-    if (pageReady && same && key === lastKey && menu.key === pageMenuKey) return;
-    setPageMenu(menu);
-    const shownPreview = view.layout === "image" ? preview : null;
-    const result = !pageReady || view.layout !== lastLayout || menu.key !== pageMenuKey
-      ? await installPage(bridge, view, frames, shownPreview)
-      : await updatePage(bridge, view, frames, shownPreview, lastView);
-    if (result.ok) { pageReady = true; lastView = view; lastLayout = view.layout; lastKey = key; pageMenuKey = menu.key; return; }
+    if (scene.kind === "cockpit") {
+      if (installed !== "cockpit" || (pageReady && menu.key !== pageMenuKey)) pageReady = false;
+      if (!pageReady) {
+        const result = await createCockpitPage(bridge, menu);
+        if (closed) return;
+        if (!result.ok) { pageReady = false; lastView = null; console.warn("[starglass] draw failed:", result.reason); return; }
+        pageReady = true;
+        installed = "cockpit";
+        pageMenuKey = menu.key;
+        lastView = null;
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      textBackend ??= autoBackend();
+      const shown = scene.model.graphic.kind === "preview" && preview?.frame ? preview.frame : null;
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tiles.push(composeCockpit(scene.model, textBackend, { preview: shown }));
+      return;
+    }
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
+    if (pageReady && menu.key !== pageMenuKey) pageReady = false;
+    const view = scene.view;
+    const same = lastView !== null && view.header === lastView.header && view.footer === lastView.footer && view.body.join(NL) === lastView.body.join(NL);
+    if (pageReady && same) return;
+    const result = pageReady ? await updateTextPage(bridge, view, lastView) : await createTextPage(bridge, view, menu);
+    if (closed) return;
+    if (result.ok) { pageReady = true; installed = "text"; pageMenuKey = menu.key; lastView = view; return; }
     pageReady = false;
     lastView = null;
     console.warn("[starglass] draw failed:", result.reason);
@@ -288,9 +304,12 @@ async function boot(): Promise<void> {
   };
 
   let refreshPhone: () => void = () => undefined;
+  let refreshPhoneLive: () => void = () => undefined;
   let phoneSignature = "";
+  /** The phone: the live parts (status, hero, strips) follow every answer; the whole page only redraws when settings-relevant state changed. */
   const updatePhone = (): void => {
-    const signature = JSON.stringify([phoneConnection(), status?.online ? [status.sequence, status.controllable] : status, locale, settings.invertScroll, weatherLocation, forecast?.fetchedAt ?? 0, weatherError]);
+    refreshPhoneLive();
+    const signature = JSON.stringify([phoneConnection(), status?.online ? status.controllable : status, locale, settings.invertScroll, weatherLocation, forecast?.fetchedAt ?? 0, weatherError]);
     if (signature === phoneSignature) return;
     const active = (globalThis.document as Document | undefined)?.activeElement as HTMLElement | null | undefined;
     if (active?.matches?.("#app input, #app select")) return;
@@ -317,13 +336,15 @@ async function boot(): Promise<void> {
   const loadPreview = async (): Promise<void> => {
     const client = api;
     const key = status?.online ? status.preview : null;
-    if (!client || !key || page !== "image" || screen !== "pages" || preview?.key === key || fetchingPreview === key) return;
+    if (!client || !key || page !== "image" || screen !== "run" || preview?.key === key || fetchingPreview === key) return;
     fetchingPreview = key;
     const startedIn = generation;
     try {
       const bytes = await client.preview(key);
       if (closed || generation !== startedIn) return;
-      preview = { key, bytes };
+      const frame = await decodePreview(bytes);
+      if (closed || generation !== startedIn) return;
+      preview = { key, frame };
     } catch (error) {
       console.warn("[starglass] preview failed:", toApiError(error).code);
     } finally {
@@ -379,7 +400,7 @@ async function boot(): Promise<void> {
     } finally {
       sending = false;
     }
-    screen = "pages";
+    screen = "run";
     await draw();
     await poll();
   };
@@ -412,6 +433,7 @@ async function boot(): Promise<void> {
     if (closed) return;
     pageReady = false;
     lastView = null;
+    installed = null;
     forgetPage(bridge);
     const run = draw().catch(() => undefined);
     restoring = run;
@@ -444,43 +466,66 @@ async function boot(): Promise<void> {
     clearInterval(weatherTimer);
     clearTimeout(armTimer);
     clearTimeout(messageTimer);
-    clearTimeout(popupTimer);
+    tiles.close();
   };
 
+  /** Where the user is on the glasses is remembered; a restart after a locked phone comes back there. */
+  let savedUi = "";
+  const saveUi = (): void => {
+    if (DEMO) return;
+    const json = JSON.stringify({ screen: screen === "start" ? "start" : "run", page, startCursor });
+    if (json === savedUi) return;
+    savedUi = json;
+    void bridge.setLocalStorage(UI_KEY, json).catch(() => false);
+  };
+
+  /** A swipe walks through the pages of the open mode. */
   const turn = (delta: number): void => {
-    const index = (PAGES.indexOf(page) + delta + PAGES.length) % PAGES.length;
-    page = PAGES[index] ?? "overview";
-    if (!DEMO) void bridge.setLocalStorage(PAGE_KEY, page).catch(() => false);
+    const pages = MODE_PAGES[modeOf(page)];
+    page = pages[Math.max(0, Math.min(pages.length - 1, pages.indexOf(page) + delta))] ?? page;
     void loadPreview();
   };
 
-  const onPages = (gesture: Gesture): void => {
+  /** The start page: at most three entries; tap opens, 2× leaves the app. */
+  const onStart = (gesture: Gesture): void => {
     switch (gesture) {
-      case "scrollDown": turn(1); break;
-      case "scrollUp": turn(-1); break;
-      case "click":
-        if (controlRows(status).length > 1 && connection.kind === "ok") { screen = "control"; cursor = 0; disarm(); break; }
-        void poll();
-        return;
-      // Without a working side menu (SIDE_MENU): a hold opens the help.
-      case "longPress":
-        if (SIDE_MENU) return;
-        disarm();
-        screen = "help";
+      case "scrollDown": startCursor = Math.min(MODES.length - 1, startCursor + 1); break;
+      case "scrollUp": startCursor = Math.max(0, startCursor - 1); break;
+      case "click": {
+        const mode = MODES[Math.min(startCursor, MODES.length - 1)] ?? "capture";
+        page = MODE_PAGES[mode][0] ?? "overview";
+        screen = "run";
+        void loadPreview();
         break;
+      }
       case "doubleClick":
         requestExit();
         return;
       default:
         return;
     }
+    saveUi();
     void draw();
   };
 
-  /** The help page is read-only: 2× is the only gesture, and it goes back. */
-  const onHelp = (gesture: Gesture): void => {
-    if (gesture !== "doubleClick") return;
-    screen = "pages";
+  /** A cockpit page: swipe = page, tap = control (imaging, if allowed) or refresh, 2× = back to the start page. */
+  const onRun = (gesture: Gesture): void => {
+    switch (gesture) {
+      case "scrollDown": turn(1); break;
+      case "scrollUp": turn(-1); break;
+      case "click":
+        if (modeOf(page) === "capture" && connection.kind === "ok" && controlRows(status).length > 1) { screen = "control"; cursor = 0; disarm(); break; }
+        void poll();
+        if (page === "weather") void weatherTick();
+        return;
+      case "doubleClick":
+        disarm();
+        screen = "start";
+        break;
+      default:
+        return;
+    }
+    saveUi();
     void draw();
   };
 
@@ -496,7 +541,7 @@ async function boot(): Promise<void> {
         if (sending) return;
         const row = rows[cursor];
         if (!row) return;
-        if (row === "back") { disarm(); screen = "pages"; break; }
+        if (row === "back") { disarm(); screen = "run"; break; }
         if (armed === row) { void send(row); return; }
         armed = row;
         clearTimeout(armTimer);
@@ -506,7 +551,7 @@ async function boot(): Promise<void> {
       case "doubleClick":
         // Armed: 2× only cancels (the armed footer says so); otherwise it goes back.
         if (armed) { disarm(); break; }
-        screen = "pages";
+        screen = "run";
         break;
       default:
         return;
@@ -516,8 +561,8 @@ async function boot(): Promise<void> {
 
   const startTick = (): void => {
     clearInterval(tickTimer);
-    // The sign animates and the exposure counts down; drawOnce writes only what changed.
-    tickTimer = setInterval(() => { void draw(); }, ICON_STEP_MS);
+    // The clock and the countdown move; drawOnce sends only the tiles whose pixels changed.
+    tickTimer = setInterval(() => { void draw(); }, TICK_MS);
   };
   const goBackground = (): void => {
     backgrounded = true;
@@ -528,23 +573,24 @@ async function boot(): Promise<void> {
     tickTimer = undefined;
     weatherTimer = undefined;
     disarm();
-    screen = "pages";
+    if (screen === "control") screen = "run";
+    saveUi();
   };
   const comeBack = (): void => {
     backgrounded = false;
     if (!ready) return;
     pageReady = false;
     lastView = null;
+    installed = null;
     startTick();
     void draw();
     startPolling();
     startWeather();
   };
 
-  /** An item of the glasses' side menu: help, refresh and the swipe direction never ride on a gesture. */
+  /** An item of the glasses' side menu (off while SIDE_MENU is false): refresh and the swipe direction. */
   const onMenu = (itemId: number): void => {
     switch (itemId) {
-      case MENU.help: disarm(); screen = "help"; void draw(); break;
       case MENU.refresh: void poll(); void weatherTick(); break;
       case MENU.swipe: {
         const next = { ...settings, invertScroll: !settings.invertScroll };
@@ -591,18 +637,19 @@ async function boot(): Promise<void> {
     if (!parsed) return;
     // A gesture means the app is on the glasses again, even if no "foreground" came first.
     // A 2x on the root page still asks to leave: swallowing it after "No" left the dialog closed (store review).
-    if (backgrounded) { comeBack(); if (!(parsed.gesture === "doubleClick" && screen === "pages")) return; }
+    if (backgrounded) { comeBack(); if (!(parsed.gesture === "doubleClick" && screen === "start")) return; }
     // Before the first page exists only "leave" means anything.
     if (!ready) { if (parsed.gesture === "doubleClick") requestExit(); return; }
     if (screen === "control") onControl(parsed.gesture);
-    else if (screen === "help") onHelp(parsed.gesture);
-    else onPages(parsed.gesture);
+    else if (screen === "run") onRun(parsed.gesture);
+    else onStart(parsed.gesture);
   });
 
   bridge.onDeviceStatusChanged((device) => {
     if (device?.connectType === "connected" && !closed) {
       pageReady = false;
       lastView = null;
+      installed = null;
       void draw();
     }
   });
@@ -610,8 +657,12 @@ async function boot(): Promise<void> {
   settings = await loadSettings(bridge);
   locale = await resolveLocale(bridge);
   if (!DEMO && params.get("page") === null) {
-    const saved = await bridge.getLocalStorage(PAGE_KEY).catch(() => "");
-    if (PAGES.includes(saved as Page)) page = saved as Page;
+    // Back where the user was before a restart: the start page, or the cockpit page they were on. The control list is never restored.
+    try {
+      const saved = JSON.parse(await bridge.getLocalStorage(UI_KEY).catch(() => "") || "{}") as Record<string, unknown>;
+      if (typeof saved["startCursor"] === "number" && saved["startCursor"] >= 0 && saved["startCursor"] < MODES.length) startCursor = Math.floor(saved["startCursor"]);
+      if (saved["screen"] === "run" && PAGES.includes(saved["page"] as Page)) { page = saved["page"] as Page; screen = "run"; }
+    } catch { /* a damaged value: the start page */ }
   }
   api = makeApi();
   connection = api ? { kind: "loading" } : { kind: "setup" };
@@ -630,7 +681,7 @@ async function boot(): Promise<void> {
       if (weatherChanged) {
         weatherError = null;
         lastWeatherTry = 0;
-        if (!next.weather.enabled) { forecast = null; popup = null; }
+        if (!next.weather.enabled) forecast = null;
         void weatherTick();
       }
       if (changed) {
@@ -639,7 +690,7 @@ async function boot(): Promise<void> {
         status = null;
         receivedAt = 0;
         preview = null;
-        screen = "pages";
+        if (screen === "control") screen = "run";
         disarm();
         connection = api ? { kind: "loading" } : { kind: "setup" };
         startPolling();
@@ -649,7 +700,9 @@ async function boot(): Promise<void> {
     connection: phoneConnection,
     status: () => status,
     locale: () => locale,
-    weather: () => ({ location: weatherLocation, fetchedAt: forecast?.fetchedAt ?? null, error: weatherError }),
+    weather: () => ({ location: weatherLocation, fetchedAt: forecast?.fetchedAt ?? null, error: weatherError, forecast, warnings }),
+    refresh: () => { void poll(); void weatherTick(); },
+    version: BUILD,
     onLocaleChange: (next) => {
       locale = next;
       rememberLocale(bridge, next);
@@ -657,6 +710,7 @@ async function boot(): Promise<void> {
     },
   });
   refreshPhone = phone.refresh;
+  refreshPhoneLive = phone.refreshLive;
   console.info("[starglass] " + BUILD + (DEMO ? " demo " + SCENE : ""));
 }
 

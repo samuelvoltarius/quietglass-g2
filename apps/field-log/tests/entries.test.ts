@@ -4,7 +4,7 @@ import {
   removeEntry, setSection, setSeverity, startInspection, toCsv, toMarkdown,
   type Attachment,
 } from "../src/log/entries";
-import { buildView, severityLabel, truncate, wrap } from "../src/glasses/view";
+import { reviewView, severityLabel, truncate, wrap } from "../src/glasses/view";
 
 const photo: Attachment = { dataUri: "data:image/jpeg;base64,AAAA", mimeType: "image/jpeg", size: 2048 };
 
@@ -148,59 +148,26 @@ describe("CSV export", () => {
 });
 
 describe("display", () => {
-  const options = {
-    phase: "idle" as const,
-    severity: "note" as const,
-    pending: null,
-    status: "idle" as const,
-    mock: false,
-  };
-
-  it("asks for an inspection when none is running", () => {
-    expect(buildView(null, options).body.join(" ")).toContain("phone app");
-  });
-
-  it("shows the tally and the last entry while idle", () => {
-    const inspection = addEntry(started(), "Cracked tile", "major", 1);
-    const view = buildView(inspection, options, 1_060_000);
-    expect(view.body[0]).toContain("Cracked tile");
-    expect(view.body[1]).toContain("1 major");
-  });
-
-  it("says so plainly when nothing has been logged", () => {
-    expect(buildView(started(), options).body[0]).toBe("No entries yet.");
-  });
-
-  it("shows the microphone indicator while recording", () => {
-    const view = buildView(started(), { ...options, phase: "recording" });
-    expect(view.header).toContain("MIC");
-    // 2x does nothing while recording, so the footer lists only the tap.
-    expect(view.footer).toBe("Tap = done");
-  });
-
-  it("marks a mock recogniser", () => {
-    const view = buildView(started(), { ...options, phase: "recording", mock: true });
-    expect(view.header).toContain("MOCK");
-  });
+  const review = (extra: Partial<Parameters<typeof reviewView>[0]> = {}) =>
+    reviewView({ locale: "en", severity: "note", pending: "Cracked tile", reviewChoice: 0, confirmDiscard: false, truncated: false, ...extra });
 
   it("asks before keeping a transcript, since reports get acted on", () => {
-    const view = buildView(started(), { ...options, phase: "review", pending: "Cracked tile" });
-    expect(view.header).toBe("FIELDLOG · Keep this?");
+    const view = review();
+    expect(view.header).toBe("Keep this? · note");
     expect(view.body.join(" ")).toContain("Cracked tile");
     // A swipe only moves between the three choices; it never discards.
-    expect(view.body.slice(-3)).toEqual(["> Keep", "  Keep + photo", "  Discard"]);
+    expect(view.body.slice(-3)).toEqual(["● Keep", "  Keep + photo", "  Discard"]);
     expect(view.footer).toBe("Tap = keep · Swipe = choice");
   });
 
   it("offers a photo at the moment the entry is made, as an explicit choice (QIS v1.2)", () => {
-    const view = buildView(started(), { ...options, phase: "review", pending: "x", reviewChoice: 1 });
-    expect(view.body.at(-2)).toBe("> Keep + photo");
+    const view = review({ pending: "x", reviewChoice: 1 });
+    expect(view.body.at(-2)).toBe("● Keep + photo");
     expect(view.footer).toBe("Tap = keep + photo · Swipe = choice");
   });
 
-  it("uses the section as the header once one is set", () => {
-    const inspection = setSection(started(), "Kitchen");
-    expect(buildView(inspection, options).header).toMatch(/^FIELDLOG · Kitchen · for /);
+  it("names the type of the entry in the review header", () => {
+    expect(review({ severity: "major" }).header).toBe("Keep this? · MAJOR");
   });
 });
 
@@ -254,11 +221,10 @@ describe("display budget", () => {
   const long = "word ".repeat(120).trim();
 
   it("regression: a long transcript under review fits the seven body rows", () => {
-    const view = buildView(started(), { phase: "review", severity: "major", pending: long, status: "ready", mock: false }, 0);
+    const view = reviewView({ locale: "en", severity: "major", pending: long, reviewChoice: 0, confirmDiscard: false, truncated: false });
     expect(view.body.length).toBeLessThanOrEqual(7);
-    // The type row and the three choices always stay visible.
-    expect(view.body.slice(-4)[0]).toBe("saved as: MAJOR");
-    expect(view.body.slice(-3)).toEqual(["> Keep", "  Keep + photo", "  Discard"]);
+    // The three choices always stay visible.
+    expect(view.body.slice(-3)).toEqual(["● Keep", "  Keep + photo", "  Discard"]);
     expect(view.body.some((row) => row.endsWith("…"))).toBe(true);
   });
 
@@ -266,10 +232,5 @@ describe("display budget", () => {
     for (const row of wrap("https://example.com/" + "x".repeat(90), 56)) {
       expect(row.length).toBeLessThanOrEqual(56);
     }
-  });
-
-  it("regression: a long section name is cut to one header line", () => {
-    const view = buildView({ ...started(), section: long }, { phase: "idle", severity: "note", pending: null, status: "idle", mock: false }, 0);
-    expect(view.header.length).toBeLessThanOrEqual(56);
   });
 });

@@ -1,15 +1,14 @@
-import { lightBar, mothLine } from "../lumen/moth";
 import type { LumenStatus } from "../lumen/client";
 import type { Locale } from "../i18n";
 import { messages, t } from "../messages";
 import { armedFooter, footer } from "./footer";
 
 /**
- * What the glasses show.
+ * What the text pages of the glasses show (QUS v1): the start page, the quest
+ * as a reading view (title, then the instruction, then medium and duration)
+ * and the photo flow. The moth is the cockpit image (src/cockpit), not text.
  *
- * The moth is a pixel sprite in the header corner (src/glasses/sprite.ts); the
- * body is all text: one line of what the moth does, then the task, then the
- * medium and duration. The light window sits in the footer.
+ * Every page is a header `Mode · ● live`, a few rows and ONE footer line.
  */
 export interface LumenView {
   readonly header: string;
@@ -19,6 +18,9 @@ export interface LumenView {
 
 export type Phase = "idle" | "shooting" | "submitting" | "result";
 
+/** What is on the glasses: the start page, the quest, or the moth (a cockpit image, see src/cockpit). */
+export type Screen = "start" | "quest" | "moth";
+
 export interface ViewOptions {
   readonly phase: Phase;
   /** Outcome of the last submission. */
@@ -26,33 +28,41 @@ export interface ViewOptions {
   readonly error: string | null;
   /** A hold armed "new quest" and waits for its confirming tap: the footer says what that tap does. */
   readonly confirmQuest?: boolean;
-  /** The help page is open. */
-  readonly help?: boolean;
   /** Language of everything the app itself writes; LUMEN's own words pass through. */
   readonly locale: Locale;
   readonly lineWidth?: number;
   /** First start: the data is made up; a one-line hint says how to connect (QIS v1.2 no. 7). */
   readonly demo?: boolean;
-  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default: swipe opens the help, hold asks for a new quest. */
-  readonly sideMenu?: boolean;
+  /** The text page to build: the start page or the quest (default). */
+  readonly screen?: Screen;
+  /** The cursor of the start page. */
+  readonly startCursor?: number;
 }
 
-/**
- * Body and footer span the full 576 px display: about 56 characters.
- * The header leaves its top-right 64 px to the pixel moth, which leaves
- * room for about 48.
- */
+/** Body and footer span the full 576 px display: about 56 characters. */
 export const LINE_COLS = 56;
-export const HEADER_COLS = 48;
+export const HEADER_COLS = 56;
 export const BODY_COLS = 56;
 const DEFAULT_WIDTH = BODY_COLS;
 
 /** Lines the body container shows before the text runs into the footer. */
 export const MAX_BODY_ROWS = 7;
 
-/** `LUMEN · state` (QIS v1), within the width the pixel moth leaves. */
-function headerOf(label: string): string {
-  return truncate(`LUMEN · ${label}`, HEADER_COLS);
+/** `Mode · state` within the header row (QUS 1.1). */
+function headerOf(title: string, label: string): string {
+  return truncate(`${title} · ${label}`, HEADER_COLS);
+}
+
+/** The state in the header: `● live`, `Demo` or `offline`. */
+export function liveLabel(locale: Locale, state: "live" | "demo" | "offline"): string {
+  return state === "live" ? "● " + t(locale, "g.live") : t(locale, state === "demo" ? "g.demoWord" : "g.s.offline");
+}
+
+export type StartRow = { readonly kind: "quest" } | { readonly kind: "moth" };
+
+/** The selectable rows: at most three entries, here the quest and the moth. */
+export function startRows(): StartRow[] {
+  return [{ kind: "quest" }, { kind: "moth" }];
 }
 
 export function buildView(
@@ -62,28 +72,39 @@ export function buildView(
   const { locale } = options;
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const width = options.lineWidth ?? DEFAULT_WIDTH;
+  const live = options.demo ? liveLabel(locale, "demo") : options.error || !status ? liveLabel(locale, "offline") : liveLabel(locale, "live");
 
-  if (options.help) return helpView(locale, width);
+  if (options.screen === "start") {
+    const rows = startRows();
+    const at = Math.min(Math.max(0, options.startCursor ?? 0), rows.length - 1);
+    const labels = rows.map((row) => row.kind === "quest"
+      ? `${x("g.start.quest")} · ${status?.quest ? truncate(status.quest.title, 28) : x("g.start.noQuest")}`
+      : `${x("g.start.moth")} · ${status ? `${Math.round(status.moth.light)} %` : "–"}`);
+    const body = labels.map((label, index) => truncate((index === at ? "● " : "  ") + label, width));
+    if (options.error) body.push(truncate(errorText(options.error, locale), width));
+    if (options.demo) body.push(truncate(x("g.demo"), width));
+    return { header: headerOf(x("g.title"), live), body, footer: footer(locale, { tap: x("g.v.open"), swipe: x("g.v.pick") }, "exit") };
+  }
 
   if (options.error) {
     return {
-      header: headerOf(x("g.s.error")),
-      body: fitBody(wrap(errorText(options.error, locale), width), [], [x("g.checkAddress")], width),
-      footer: footer(locale, { tap: x("g.v.retry") }, "exit"),
+      header: headerOf(x("g.title"), x("g.s.error")),
+      body: fitBody([], wrap(errorText(options.error, locale), width), [x("g.checkAddress")], width),
+      footer: footer(locale, { tap: x("g.v.retry") }, "back"),
     };
   }
 
   if (!status) {
-    return { header: headerOf(x("g.s.connecting")), body: [x("g.connecting")], footer: footer(locale, {}, "exit") };
+    return { header: headerOf(x("g.title"), x("g.s.connecting")), body: [x("g.connecting")], footer: footer(locale, {}, "back") };
   }
 
   if (options.phase === "shooting") {
-    return { header: headerOf(x("g.s.photo")), body: [x("g.shooting")], footer: footer(locale, {}, "exit") };
+    return { header: headerOf(x("g.title"), x("g.s.photo")), body: [x("g.shooting")], footer: footer(locale, {}, "back") };
   }
 
   // Nothing can be done while the photo is on its way: no gesture is offered.
   if (options.phase === "submitting") {
-    return { header: headerOf(x("g.s.sending")), body: [x("g.sending")], footer: "" };
+    return { header: headerOf(x("g.title"), x("g.s.sending")), body: [x("g.sending")], footer: "" };
   }
 
   if (options.phase === "result" && options.result) {
@@ -91,43 +112,26 @@ export function buildView(
       ? x(options.result.text === "done" ? "g.done" : "g.sent")
       : errorText(options.result.text, locale);
     return {
-      header: headerOf(x(options.result.ok ? "g.accepted" : "g.rejected")),
+      header: headerOf(x("g.title"), x(options.result.ok ? "g.accepted" : "g.rejected")),
       body: fitBody([], wrap(text, width), [], width),
       footer: footer(locale, { tap: x("g.v.on") }, "back"),
     };
   }
 
-  // LUMEN's own wording, which can be any length: one line, never a wrap.
-  const head = [truncate(mothLine(status.moth.state, status.moth.gesture), width)];
-  const light = lightLine(status, locale);
+  // The quest: its short name is the heading, the instruction is what you act on, then medium and duration.
   const armed = Boolean(options.confirmQuest);
   const demo = options.demo ? [truncate(x("g.demo"), width)] : [];
-
-  const body = status.quest
-    // The instruction is what you act on; the short name is the heading.
-    ? fitBody(head, wrap(status.quest.task ?? status.quest.title, width), [truncate(questMeta(status.quest, locale), width), light, ...demo].filter(Boolean), width)
-    : fitBody(head, wrap(x("g.noQuest"), width), [light, ...demo].filter(Boolean), width);
+  const quest = status.quest;
+  const body = quest
+    ? fitBody([truncate(quest.title, width)], wrap(quest.task ?? quest.title, width), [truncate(questMeta(quest, locale), width), ...demo].filter(Boolean), width)
+    : fitBody([], wrap(x("g.noQuest"), width), demo, width);
 
   return {
-    // LUMEN's own word for the moth's state (it can be any length) stands in the header.
-    header: headerOf(armed ? x("g.s.newQuest") : status.moth.state),
+    header: headerOf(x("g.start.quest"), armed ? x("g.s.newQuest") : live),
     body,
     footer: armed
       ? armedFooter(locale, x("g.v.newQuest"))
-      // QIS v1.2 with a side menu: help and "new quest" live there and a swipe does nothing here.
-      : options.sideMenu === true
-        ? footer(locale, { ...(status.quest ? { tap: x("g.v.photo") } : {}), hold: x("g.v.menu") }, "exit")
-        : footer(locale, { ...(status.quest ? { tap: x("g.v.photo") } : {}), swipe: x("g.v.help"), hold: x("g.v.quest") }, "exit"),
-  };
-}
-
-/** The help page (QIS v1): the gestures in footer order, then what the app needs. */
-export function helpView(locale: Locale, width = DEFAULT_WIDTH): LumenView {
-  const x = (key: string): string => t(locale, key);
-  return {
-    header: headerOf(x("g.s.help")),
-    body: ["g.h.tap", "g.h.swipe", "g.h.hold", "g.h.end", "g.h.needs"].map((key) => truncate(x(key), width)),
-    footer: footer(locale, { tap: x("g.v.back") }, "back"),
+      : footer(locale, { ...(quest ? { tap: x("g.v.photo") } : {}), hold: x("g.v.quest") }, "back"),
   };
 }
 
@@ -160,24 +164,6 @@ export function questMeta(quest: { medium: string | null; minutes: number | null
   return parts.join(" · ");
 }
 
-/**
- * Light, streak and light window on one full-width line (the footer carries the gestures now, QIS v1).
- * When that is too long (a long streak, a window hours away, German), the streak goes first. The light
- * window is the reason this line exists: it is the reason to stand up now rather than later.
- */
-function lightLine(status: LumenStatus, locale: Locale): string {
-  const bar = lightBar(status.moth.light, 8);
-  const streak = status.moth.streak > 0 ? t(locale, "g.streak", { days: status.moth.streak }) : "";
-  const light = status.window ? windowLabel(status.window.kind, status.window.minutesAway, locale) : "";
-
-  const join = (parts: string[]): string => parts.filter(Boolean).join(" · ");
-  for (const parts of [[bar, streak, light], [bar, light]]) {
-    const line = join(parts);
-    if (line.length <= LINE_COLS) return line;
-  }
-  return truncate(join([bar, light]), LINE_COLS);
-}
-
 export function windowLabel(kind: string, minutes: number, locale: Locale): string {
   const name = kind.startsWith("golden") ? t(locale, "g.golden") : kind.startsWith("blau") ? t(locale, "g.blue") : kind;
   // Round once, up front: rounding the remainder alone turned 119.7 into "1h 60m".
@@ -201,7 +187,8 @@ export function fitBody(
   width = DEFAULT_WIDTH,
 ): string[] {
   const room = Math.max(1, MAX_BODY_ROWS - head.length - tail.length);
-  const spacer = text.length + 1 <= room ? [""] : [];
+  // A blank row separates a heading from the text; without a heading there is nothing to separate.
+  const spacer = head.length > 0 && text.length + 1 <= room ? [""] : [];
   const rows = room - spacer.length;
   const shown = text.length <= rows
     ? [...text]

@@ -11,7 +11,11 @@ import { arrivalOf, departureOf, type Journey, type TransitLeg } from "../src/ro
 import { guideScene } from "../src/route/scene";
 import { guideView, helpView, placesView, plansView, voiceView, ROUTE_ROWS, ROUTE_WIDTH, type VoiceState } from "../src/route/view";
 import { planScene } from "../src/route/plan-scene";
-import { boardScene, followLoadingScene, followScene, messageScene } from "../src/glasses/board";
+import { messageScene } from "../src/glasses/board";
+import { boardScene } from "../src/cockpit/scene";
+import { followLoadingScene, followScene } from "../src/cockpit/follow";
+import { HINT_WIDTH } from "../src/cockpit/model";
+import { startView } from "../src/start";
 import { departureBoard, errorView, loadingView, type StopView } from "../src/glasses/view";
 import { followRide } from "../src/ride/follow";
 import { armedFooter, footer, ft, ROW_WIDTH } from "../src/footer";
@@ -38,7 +42,7 @@ const RETIRED: Record<Locale, RegExp> = {
   en: /\b2x\b|Doppeltipp|double-tap/i,
 };
 
-interface Named { readonly name: string; readonly footer: string; readonly header?: string; readonly end: "back" | "exit" | "armed" }
+interface Named { readonly name: string; readonly footer: string; readonly header?: string; readonly end: "back" | "exit" | "armed"; readonly limit: number }
 
 const MIRABELL: Stop = { id: "m", name: "Salzburg Mirabellplatz", lat: 47.8057, lon: 13.0431 };
 const dep = (n: number, over: Partial<Departure> = {}): Departure => ({
@@ -55,29 +59,31 @@ const AT_STOP = { lat: 47.8057, lon: 13.0431, accuracy: 10 };
 
 function views(locale: Locale): Named[] {
   const out: Named[] = [];
-  const text = (name: string, view: StopView, end: Named["end"]): void => { out.push({ name, footer: view.footer, header: view.header, end }); };
-  const big = (name: string, scene: { view: StopView }, end: Named["end"]): void => { out.push({ name, footer: scene.view.footer, end }); };
+  const text = (name: string, view: StopView, end: Named["end"]): void => { out.push({ name, footer: view.footer, header: view.header, end, limit: ROW_WIDTH }); };
+  // The cockpit draws its hint into the picture, which holds more than a text container's row.
+  const big = (name: string, scene: { view: StopView; kind?: string }, end: Named["end"]): void => {
+    out.push({ name, footer: scene.view.footer, end, limit: scene.kind === "cockpit" ? HINT_WIDTH : ROW_WIDTH });
+  };
 
-  // Departure board (root): list, empty, messages. Help lives in the side menu (QIS v1.2).
-  big("board", boardScene(MIRABELL, departures, 99, locale, 0, T0), "exit");
-  big("board last departure", boardScene(MIRABELL, departures, 99, locale, 2, T0), "exit");
-  // Without a side menu (the real glasses, step log 15.10.) the list ends with the Hilfe entry.
-  big("board Hilfe entry", boardScene(MIRABELL, departures, 99, locale, 3, T0, true), "exit");
-  big("board last departure, Hilfe row follows", boardScene(MIRABELL, departures, 99, locale, 2, T0, true), "exit");
-  big("board single departure", boardScene(MIRABELL, [dep(2)], null, locale, 0, T0), "exit");
-  big("board empty", boardScene(MIRABELL, [], 99, locale, 0, T0), "exit");
-  big("message: searching", messageScene("…", "", ft(locale, "exit"), "..."), "exit");
-  big("message: error", messageScene("!", "", ft(locale, "exit", { tap: "again" }), "!"), "exit");
-  // Following a bus.
-  big("follow loading", followLoadingScene(dep(2), T0, locale), "exit");
+  // The start page (root) and the departure board (one level below it): cockpit picture, empty, messages.
+  text("start", startView(0, { locale, word: "live", stopName: "Salzburg Mirabellplatz" }), "exit");
+  text("start, demo", startView(1, { locale, word: "demo", stopName: null }), "exit");
+  big("board", boardScene(MIRABELL, departures, 99, locale, 0, T0), "back");
+  big("board last departure", boardScene(MIRABELL, departures, 99, locale, 2, T0), "back");
+  big("board single departure", boardScene(MIRABELL, [dep(2)], null, locale, 0, T0), "back");
+  big("board empty", boardScene(MIRABELL, [], 99, locale, 0, T0), "back");
+  big("message: searching", messageScene("…", "", ft(locale, "back"), "..."), "back");
+  big("message: error", messageScene("!", "", ft(locale, "back", { tap: "again" }), "!"), "back");
+  // Following a bus (a running job: 2× opens the exit dialog).
+  big("follow loading", followLoadingScene(dep(2), T0, locale, MIRABELL.name), "exit");
   const coming = followRide(ride(1), 2, at(5), T0, AT_STOP)!;
-  big("follow coming", followScene(dep(5), coming, T0, locale, 0), "exit");
-  big("follow coming, armed", followScene(dep(5), coming, T0, locale, 0, true), "armed");
+  big("follow coming", followScene(dep(5), coming, T0, locale), "exit");
+  big("follow coming, armed", followScene(dep(5), coming, T0, locale, true), "armed");
   const riding = followRide(ride(-6), 2, at(-2), T0, { lat: 47.8068, lon: 13.047 })!;
-  big("follow riding", followScene(dep(5), riding, T0, locale, 0), "exit");
-  big("follow riding, armed", followScene(dep(5), riding, T0, locale, 0, true), "armed");
+  big("follow riding", followScene(dep(5), riding, T0, locale), "exit");
+  big("follow riding, armed", followScene(dep(5), riding, T0, locale, true), "armed");
   const done = followRide(ride(-20), 2, at(-12), T0, null)!;
-  big("follow finished", followScene(dep(5), done, T0, locale, 0), "exit");
+  big("follow finished", followScene(dep(5), done, T0, locale), "exit");
   // Goals, voice, connections.
   const places = addFavorite(EMPTY_PLACES, { name: "Heim", lat: 1, lon: 1 }, "h");
   text("goals", placesView(targetsOf(places), 0, T0, locale), "back");
@@ -138,7 +144,7 @@ describe("QIS footers, headers and glossary", () => {
       expect(all.length).toBeGreaterThan(40);
       for (const view of all) {
         const label = `${view.name}: ${view.footer}`;
-        expect(view.footer.length, label).toBeLessThanOrEqual(ROW_WIDTH);
+        expect(view.footer.length, label).toBeLessThanOrEqual(view.limit);
         const parts = view.footer.split(" · ");
         const last = parts.at(-1) ?? "";
         if (view.end === "armed") {
@@ -217,6 +223,16 @@ describe("QIS help page", () => {
 // ---- the glasses against the real app, demo data ---------------------------------------------
 
 const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+const cockpit = vi.hoisted(() => ({ hints: [] as string[], titles: [] as string[] }));
+vi.mock("../src/cockpit/compose", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/cockpit/compose")>();
+  return {
+    ...real,
+    composeTiles: (model: { hint: string; title: string }, backend: never) => { cockpit.hints.push(model.hint); cockpit.titles.push(model.title); return real.composeTiles(model as never, backend); },
+  };
+});
+/** The hint line of the cockpit picture on the glasses right now. */
+const hint = (): string => cockpit.hints.at(-1) ?? "";
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
@@ -237,7 +253,7 @@ function fakeBridge(options: { stored?: Record<string, string>; confirmExit?: bo
   const adopt = (page: Page): void => {
     state.header = "";
     const names = (page.imageObject ?? []).map((image) => image.containerName);
-    state.kind = names.includes("big") ? "board" : "text";
+    state.kind = names.includes("cockpit-nw") ? "cockpit" : names.includes("big") ? "board" : "text";
     for (const text of page.textObject ?? []) record(text.containerID, text.content);
   };
   const bridge = {
@@ -268,7 +284,8 @@ describe("QIS on the glasses", () => {
     vi.stubGlobal("document", { getElementById: () => null });
     vi.stubGlobal("navigator", { language: "de-AT" });
     vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
-    vi.stubGlobal("location", { search: "?demo=1&lang=de" });
+    vi.stubGlobal("location", { search: "?demo=1&lang=de&scene=board" });
+    cockpit.hints.length = 0; cockpit.titles.length = 0;
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("the demo must not touch the network"))));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
@@ -283,7 +300,7 @@ describe("QIS on the glasses", () => {
     vi.resetModules();
     await import("../src/main");
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = folgen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/^1\/4 · Tippen = folgen/));
   }
 
   it("every page menu carries Hilfe, and the help closes back to where it was opened from", async () => {
@@ -314,76 +331,84 @@ describe("QIS on the glasses", () => {
     await vi.waitFor(() => expect(fake.state.footer).not.toMatch(/^Nochmal/));
   });
 
-  it("Hilfe is the last entry of the departure list (no side menu): swipe to it, tap opens, 2× goes back to the board", async () => {
+  it("the departure list has no Hilfe row: swiping past the last departure stays on it, the menu still reaches the help", async () => {
     const fake = fakeBridge();
     await boot(fake);
     for (let i = 0; i < 6; i += 1) fake.gesture(DOWN);
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende"));
-    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(hint()).toMatch(/^4\/4 · Tippen = folgen/));
+    fake.menu(MENU.help); // a menu click (if a menu is ever switched on again) reaches it from the board
     await vi.waitFor(() => expect(fake.state.header).toBe("NEXTSTOP · Hilfe"));
     expect(fake.state.kind).toBe("text");
     expect(fake.state.footer).toBe("Tippen = schließen · 2× = zurück");
-    fake.gesture(DOWN); // a swipe on the help changes nothing
     fake.gesture(DOUBLE); // 2× is back, it does not exit
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^\d\/4 · Tippen = folgen|^Tippen = öffnen/));
+    await vi.waitFor(() => expect(fake.state.kind).toBe("cockpit"));
     expect(fake.state.shutdowns).toBe(0);
-    fake.menu(MENU.help); // and a menu click (if a menu is ever switched on again) reaches it from anywhere on the board
-    await vi.waitFor(() => expect(fake.state.header).toBe("NEXTSTOP · Hilfe"));
-    fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.kind).toBe("board"));
+  });
+
+  it("2× on the board goes back to the start page, 2× there asks the system exit dialog", async () => {
+    const fake = fakeBridge();
+    await boot(fake);
+    fake.gesture(DOUBLE);
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · /));
+    expect(fake.state.body).toContain("Abfahrten");
+    expect(fake.state.body).toContain("Ziele und Route");
+    expect(fake.state.body.split("\n").filter((row) => row.trim() !== "").length).toBeLessThanOrEqual(4);
+    expect(fake.state.shutdowns).toBe(0);
+    fake.gesture(DOUBLE);
+    await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
   });
 
   it("following a running ride: a tap arms, swipe / 2× / the timeout cancel, the second tap ends it", async () => {
     const fake = fakeBridge();
     await boot(fake);
     fake.gesture(CLICK); // follow the first departure (the demo ride is instant)
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
 
     fake.gesture(CLICK); // arms - the ride runs on
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
+    await vi.waitFor(() => expect(hint()).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
     fake.gesture(DOWN); // a swipe cancels
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
 
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/^Nochmal tippen/));
     fake.gesture(DOUBLE); // 2× only cancels; it is not the exit dialog either
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
     expect(fake.state.shutdowns).toBe(0);
 
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/^Nochmal tippen/));
     fake.gesture(HOLD); // a hold cancels as well
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/));
     expect(fake.state.mics).toBe(0); // and did not start a recording
 
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen/));
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/), { timeout: 6000 }); // 4 s without input
+    await vi.waitFor(() => expect(hint()).toMatch(/^Nochmal tippen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen · 2× = Ende$/), { timeout: 6000 }); // 4 s without input
     fake.gesture(CLICK); // the stale arm is gone: this only arms again
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/^Nochmal tippen/));
 
     fake.gesture(CLICK); // the confirming tap
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = folgen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/^1\/4 · Tippen = folgen/));
   });
 
   it("a menu reload never drops a followed ride", async () => {
     const fake = fakeBridge();
     await boot(fake);
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen/));
     fake.menu(MENU.refresh);
     await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen/);
+    expect(hint()).toMatch(/Tippen = Fahrt abbrechen/);
   });
 
   it("2× on the board is the system exit dialog, also while a ride is followed (declining keeps it)", async () => {
     const fake = fakeBridge({ confirmExit: false });
     await boot(fake);
     fake.gesture(CLICK);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen/));
+    await vi.waitFor(() => expect(hint()).toMatch(/Tippen = Fahrt abbrechen/));
     fake.gesture(DOUBLE);
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
-    expect(fake.state.footer).toMatch(/Tippen = Fahrt abbrechen/);
+    expect(hint()).toMatch(/Tippen = Fahrt abbrechen/);
   });
 
   it("invertScroll from the phone setting swaps the swipe direction on the departure list", async () => {
@@ -391,16 +416,16 @@ describe("QIS on the glasses", () => {
     await boot(fake);
     fake.gesture(DOWN); // SCROLL_BOTTOM is "up" when inverted: nothing above the first departure
     await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(fake.state.footer).toMatch(/^1\/4 · /);
+    expect(hint()).toMatch(/^1\/4 · /);
     fake.gesture(UP); // SCROLL_TOP is "down" when inverted
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/4 · /));
+    await vi.waitFor(() => expect(hint()).toMatch(/^2\/4 · /));
   });
 
   it("without the setting the directions are as before", async () => {
     const fake = fakeBridge();
     await boot(fake);
     fake.gesture(DOWN);
-    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/4 · /));
+    await vi.waitFor(() => expect(hint()).toMatch(/^2\/4 · /));
   });
 });
 
@@ -430,21 +455,20 @@ describe("QIS phone tabs and the swipe-direction switch", () => {
   beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("document", { getElementById: () => root }); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  it("tabs run stops, goals, glasses, connection, more (content first, Brille, Verbindung, Mehr last)", () => {
+  it("exactly three tabs in one row: Jetzt, Fahrten, Einstellungen", () => {
     mountPhoneUi({
       getSettings: () => DEFAULT_SETTINGS, setSettings: async () => undefined, getPosition: () => null, isSeeded: () => false,
       getStops: () => [], refresh: () => undefined, getLocale: () => "de", getPlaces: () => EMPTY_PLACES, setPlaces: async () => undefined,
     });
     const order = [...html.matchAll(/data-tab-go="(\w+)"/g)].map((match) => match[1]);
-    expect(order).toEqual(["stops", "goals", "glasses", "connection", "more"]);
+    expect(order).toEqual(["now", "trips", "settings"]);
     const labels = [...html.matchAll(/<\/span>([^<]+)<\/button>/g)].map((match) => match[1]);
-    expect(labels).toEqual(["Haltestellen", "Ziele", "Brille", "Verbindung", "Mehr"]);
-    // The swipe switch lives under Brille, the addresses under Verbindung.
-    const glasses = html.slice(html.indexOf('data-tab="glasses"'), html.indexOf('data-tab="connection"'));
-    expect(glasses).toContain('id="invert"');
-    const connection = html.slice(html.indexOf('data-tab="connection"'), html.indexOf('data-tab="more"'));
-    expect(connection).toContain('id="backend"');
-    expect(connection).toContain('id="oebb-url"');
+    expect(labels).toEqual(["Jetzt", "Fahrten", "Einstellungen"]);
+    // The swipe switch and the addresses live under Einstellungen.
+    const settings = html.slice(html.indexOf('data-tab="settings"'));
+    expect(settings).toContain('id="invert"');
+    expect(settings).toContain('id="backend"');
+    expect(settings).toContain('id="oebb-url"');
   });
 
   it("the switch saves invertScroll without touching the other settings", () => {
@@ -464,7 +488,7 @@ describe("QIS phone tabs and the swipe-direction switch", () => {
 
 describe("locales", () => {
   it("the new strings exist in every language of the app", () => {
-    for (const locale of locales) for (const key of ["q.follow", "h.tap", "h.needs", "g.helpTitle", "r.menuHelp", "p.invert", "p.tabConnection"]) {
+    for (const locale of locales) for (const key of ["q.follow", "h.tap", "h.needs", "g.helpTitle", "r.menuHelp", "p.invert", "p.tabSettings"]) {
       expect(messages[locale]?.[key], `${locale}:${key}`).toBeTruthy();
     }
   });

@@ -43,7 +43,7 @@ describe("Zuhause list: favourites first, then areas", () => {
     const v = buildView(opened, "de", T0);
     expect(v.body[0]).toBe("> ● Alle Lichter");
     expect(v.body[1]).toBe("  ● Alle Rollos");
-    expect(statusLine(opened, "de")).toMatch(/^QUIET HUB · Zuhause · Wohnzimmer/);
+    expect(statusLine(opened, "de")).toMatch(/^Zuhause · Wohnzimmer/);
     expect(v.side?.[1]).toBe("1/3 an");
     const back = decide(opened, "doubleClick", T0).model;
     expect(back.screen).toBe("home");

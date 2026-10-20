@@ -202,8 +202,8 @@ describe("Shoot Day lifecycle", () => {
     const fake = fakeBridge();
     const root = await boot(fake);
     await vi.waitFor(() => expect(fake.body()).toContain("Demo · Verbindung am Handy einrichten"));
-    expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 3 · DEMO");
-    expect(root.innerHTML).toContain("Demo: Beispieldaten");
+    expect(fake.header()).toBe("KUNDEN · 3 · Demo");
+    expect(root.innerHTML).toContain("Demo mit Beispieldaten");
     expect(root.innerHTML).toContain("Erster Start");
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
@@ -222,7 +222,7 @@ describe("Shoot Day lifecycle", () => {
   it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     expect(fake.menus().length).toBeGreaterThan(0);
     // The first page and every rebuild come without a menu, so a hold reaches the app.
     for (const menu of fake.menus()) expect(menu).toHaveLength(0);
@@ -231,19 +231,19 @@ describe("Shoot Day lifecycle", () => {
   it("double tap in the menu asks the system to close (mode 1); the call resolving true (dialog shown) does not stop the app", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     fake.exit.answer = true;
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     await new Promise((done) => setTimeout(done, 20));
     fake.emit(DOWN); // "No", then a swipe: the app still reacts
-    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("> Teleprompter"));
+    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("● Teleprompter"));
   });
 
   it("stops only when the system ends the app (sysEvent 7) after the exit dialog", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     fake.exit.answer = true;
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
@@ -258,13 +258,13 @@ describe("Shoot Day lifecycle", () => {
   it("if the user cancels the exit dialog, the app keeps working", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     fake.exit.answer = false;
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
     await new Promise((done) => setTimeout(done, 20));
     fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("> Teleprompter"));
+    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("● Teleprompter"));
     // And a second double tap asks again.
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1]));
@@ -273,7 +273,7 @@ describe("Shoot Day lifecycle", () => {
   it("no timer, poll or stream draws while the exit dialog may be on screen; a single 2x right after restores the page first and asks the dialog only then", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     await new Promise((done) => setTimeout(done, 20));
     const creates = fake.bridge.createStartUpPageContainer.mock.calls.length;
     // The call resolves true as soon as the dialog is SHOWN, whatever the user answers later.
@@ -307,7 +307,7 @@ describe("Shoot Day lifecycle", () => {
   it("hardware order (step log 0.5.11): 4 = dialog up -> nothing drawn; 5 = dialog gone after No -> page up again, timers on, next 2x asks", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     await new Promise((done) => setTimeout(done, 20));
     const host = fake.bridge as unknown as Record<string, { mock?: { calls: unknown[] } } | undefined>;
     const pageCalls = (): number => ["createStartUpPageContainer", "rebuildPageContainer", "textContainerUpgrade", "updateImageRawData"].reduce((sum, name) => sum + (host[name]?.mock?.calls.length ?? 0), 0);
@@ -322,7 +322,7 @@ describe("Shoot Day lifecycle", () => {
     const pagesBefore = fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length;
     fake.emit(5);                                            // "No": the dialog is gone
     await vi.waitFor(() => expect(fake.bridge.createStartUpPageContainer.mock.calls.length + fake.bridge.rebuildPageContainer.mock.calls.length).toBeGreaterThan(pagesBefore)); // page up again, no gesture
-    expect(fake.header()).toBe("SHOOT DAY · Testdreh");
+    expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live");
     expect(cleared).not.toHaveBeenCalled();                  // clock and outbox timer were never stopped (no background state)
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1, 1])); // the very first 2x opens the dialog again
@@ -331,7 +331,7 @@ describe("Shoot Day lifecycle", () => {
   it("the dialog sends the app to the background (5 without 4): after No the very first 2x is not swallowed, it restores and asks again", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     await new Promise((done) => setTimeout(done, 20));
     fake.exit.answer = true;
     fake.emit(DOUBLE);
@@ -354,7 +354,7 @@ describe("Shoot Day lifecycle", () => {
       await new Promise((done) => setTimeout(done, 30));
       expect(fake.exit.calls).toEqual([1]);
       fake.emit(DOWN);
-      await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("> Teleprompter"));
+      await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("● Teleprompter"));
     } finally {
       nodeProcess.off("unhandledRejection", onUnhandled);
     }
@@ -365,28 +365,28 @@ describe("Shoot Day lifecycle", () => {
     const fake = fakeBridge(configured());
     await boot(fake);
     fake.emit(CLICK);                                       // open Takes
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · TAKES · 1 von 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("TAKES · 1 von 2 · ● live"));
     fake.emit(CLICK);                                       // actions
     await vi.waitFor(() => expect(fake.body()).toContain("> Take OK"));
     fake.emit(DOUBLE);                                      // back to the card
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · TAKES · 1 von 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("TAKES · 1 von 2 · ● live"));
     fake.emit(DOUBLE);                                      // back to the menu
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     expect(fake.exit.calls).toEqual([]);
   });
 
-  it("on a server without customers Hilfe is the last list row: a swipe gets there, a tap opens it, 2× goes back to the menu", async () => {
+  it("QUS v1: the start page has no Hilfe row; a swipe up wraps to the last entry, the packing list, and a tap opens it", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
-    fake.emit(UP);                                          // wraps to the last entry: Hilfe
-    await vi.waitFor(() => expect(fake.body()).toContain("> Hilfe"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
+    expect(fake.body()).not.toContain("Hilfe");
+    expect(fake.body().split("\n").slice(0, 4)).toEqual(["● Takes", "  Teleprompter", "  Drehtag", "    Packliste"]);
+    fake.emit(UP);                                          // wraps to the last entry
+    await vi.waitFor(() => expect(fake.body()).toContain("●   Packliste"));
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Hilfe"));
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = schließen · 2× = zurück"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live"));
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
-    await vi.waitFor(() => expect(fake.body()).toContain("> Hilfe"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     expect(fake.exit.calls).toEqual([]);
   });
 
@@ -544,7 +544,7 @@ describe("Shoot Day lifecycle", () => {
     it("outside the takes module, or without a take, the menu item only says so", async () => {
       const fake = fakeBridge(configured());
       await boot(fake);
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
       fake.menu(2);
       await vi.waitFor(() => expect(fake.body()).toContain("Take löschen: im Take-Modul"));
       expect(fake.footer()).not.toMatch(/^Nochmal/);
@@ -583,13 +583,13 @@ describe("Shoot Day lifecycle", () => {
     await boot(fake);
     fake.emit(DOWN); fake.emit(DOWN); fake.emit(DOWN);       // Packliste
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 0/2 eingepackt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live"));
     fake.emit(HOLD);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · ● live"));
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
     for (let i = 0; i < 10; i++) fake.audio(3200);
     fake.emit(RELEASE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 1/2 eingepackt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 1/2 eingepackt · ● live"));
     expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(false);
     expect(server.state.calls).toContain("POST /api/stt");
     await vi.waitFor(() => expect(server.state.items.find((i) => i.name === "Gimbal")?.packed).toBe(true));
@@ -604,14 +604,14 @@ describe("Shoot Day lifecycle", () => {
       await boot(fake);
       fake.emit(DOWN); fake.emit(DOWN); fake.emit(DOWN);     // Packliste
       fake.emit(CLICK);
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 0/2 eingepackt"));
+      await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live"));
       return fake;
     };
     const hold = async (fake: Fake): Promise<FakeSocket> => {
       const before = FakeSocket.all.length;
       fake.emit(HOLD);
       await vi.waitFor(() => expect(FakeSocket.all.length).toBe(before + 1));
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+      await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · ● live"));
       return FakeSocket.last!;
     };
 
@@ -629,7 +629,7 @@ describe("Shoot Day lifecycle", () => {
       fake.emit(RELEASE);
       await vi.waitFor(() => expect(socket.json().at(-1)).toEqual({ type: "stop" }));
       socket.say("Gimbal eingepackt.", true);
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 1/2 eingepackt"));
+      await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 1/2 eingepackt · ● live"));
       await vi.waitFor(() => expect(server.state.items.find((i) => i.name === "Gimbal")?.packed).toBe(true));
       expect(server.state.calls).not.toContain("POST /api/stt");
       expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(false);
@@ -642,7 +642,7 @@ describe("Shoot Day lifecycle", () => {
       await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
       for (let i = 0; i < 10; i++) fake.audio(3200);
       fake.emit(RELEASE);
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 1/2 eingepackt"));
+      await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 1/2 eingepackt · ● live"));
       expect(server.state.calls).toContain("POST /api/stt");
       expect(socket.closed).toBe(true);
     });
@@ -656,7 +656,7 @@ describe("Shoot Day lifecycle", () => {
       socket.drop();
       for (let i = 0; i < 5; i++) fake.audio(3200);
       fake.emit(RELEASE);
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 1/2 eingepackt"));
+      await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 1/2 eingepackt · ● live"));
       expect(server.state.calls).toContain("POST /api/stt");
     });
 
@@ -683,7 +683,7 @@ describe("Shoot Day lifecycle", () => {
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.header()).toContain("PACKLISTE"));
     fake.emit(HOLD);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · ● live"));
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
     fake.audio(32000);
     fake.emit(DOUBLE);                                      // back - the recording is dropped
@@ -702,7 +702,7 @@ describe("Shoot Day lifecycle", () => {
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.header()).toContain("PACKLISTE"));
     fake.emit(HOLD);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · ● live"));
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
     fake.audio(32000);
     fake.menu(4);                                           // arms while speaking
@@ -728,7 +728,7 @@ describe("Shoot Day lifecycle", () => {
   it("never runs two loads of the same list at once, and drops a reply that arrives after leaving", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     server.state.hang.add("/api/equipment");
     fake.emit(DOWN); fake.emit(DOWN); fake.emit(DOWN);
     fake.emit(CLICK);                                       // Packliste: request hangs
@@ -752,7 +752,7 @@ describe("Shoot Day lifecycle", () => {
   it("the phone shows the connection and escapes what it inserts", async () => {
     const fake = fakeBridge({ [SETTINGS]: JSON.stringify({ serverUrl: "https://shoot.example/<img src=x onerror=alert(1)>" }) });
     const root = await boot(fake, "en-US");
-    await vi.waitFor(() => expect(root.innerHTML).toContain("Connected – project: Testdreh"));
+    await vi.waitFor(() => expect(root.innerHTML).toContain("Connected: Testdreh"));
     expect(root.innerHTML).not.toContain("<img");
     expect(root.innerHTML).toContain("&lt;img src=x onerror=alert(1)&gt;");
   });
@@ -763,10 +763,10 @@ describe("Shoot Day lifecycle", () => {
     await boot(fake);
     fake.emit(DOWN); fake.emit(DOWN); fake.emit(DOWN);
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 0/2 eingepackt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live"));
     const speak = async (): Promise<void> => {
       fake.emit(HOLD);
-      await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+      await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · ● live"));
       await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
       await new Promise((resolve) => setTimeout(resolve, 10));
       for (let i = 0; i < 10; i++) fake.audio(3200);
@@ -777,7 +777,7 @@ describe("Shoot Day lifecycle", () => {
     expect(server.state.items.filter((i) => i.packed)).toHaveLength(0);
     fake.emit(DOUBLE);                                      // 2× only cancels the question: no leaving, nothing ticked
     await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = Haken · Halten = sprechen · 2× = zurück"));
-    expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 0/2 eingepackt");
+    expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live");
     expect(fake.exit.calls).toEqual([]);
     await speak();
     fake.emit(DOWN);
@@ -785,7 +785,7 @@ describe("Shoot Day lifecycle", () => {
     expect(server.state.items.filter((i) => i.packed)).toHaveLength(0);
     await speak();
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 2/2 eingepackt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 2/2 eingepackt · ● live"));
   });
 
   it("comes back to the same module and shot after a restart (phone locked, app unloaded)", async () => {
@@ -808,13 +808,13 @@ describe("Shoot Day lifecycle", () => {
     await boot(fake);
     fake.emit(DOWN); fake.emit(DOWN); fake.emit(DOWN);
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 0/2 eingepackt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live"));
     fake.emit(HOLD);
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
     fake.emit(5);
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(false));
     fake.emit(4);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · PACKLISTE · 0/2 eingepackt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("PACKLISTE · 0/2 eingepackt · ● live"));
   });
 
   it("sends takes logged offline on its own once the server is back", async () => {
@@ -866,8 +866,9 @@ describe("Licht & Sonne on the glasses", () => {
     const asked = vi.fn(() => new Promise(() => undefined));
     (fake.bridge as Record<string, unknown>)["getAppLocation"] = asked;
     await boot(fake);
-    fake.emit(UP); fake.emit(UP);                           // wraps to Hilfe, then Licht & Sonne
-    fake.emit(CLICK);
+    fake.emit(DOWN); fake.emit(DOWN);                       // Teleprompter, then Drehtag
+    fake.emit(CLICK);                                       // the day cockpit ...
+    fake.emit(CLICK);                                       // ... and from it the light view
     await vi.waitFor(() => expect(new Set(tileIds(fake).filter((id) => id >= 21 && id <= 24)).size).toBe(4));
     expect(asked).toHaveBeenCalled();
     // The page has exactly one input container under the tiles.
@@ -876,17 +877,19 @@ describe("Licht & Sonne on the glasses", () => {
     expect(page.textObject?.filter((text) => text.isEventCapture === 1)).toHaveLength(1);
     // The light page carries no side menu either.
     expect((page as { menuObject?: unknown }).menuObject).toBeUndefined();
+    fake.emit(DOUBLE);                                      // one level back: the day cockpit
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Menü"));
+    await vi.waitFor(() => expect(fake.header()).toContain("SHOOT DAY"));
   });
 
   it("takes the phone location, remembers it rounded, loads the schedule and shows it on the phone", async () => {
     const fake = fakeBridge(configured());
     (fake.bridge as Record<string, unknown>)["getAppLocation"] = vi.fn(async () => ({ latitude: 47.81234, longitude: 13.04567 }));
     const root = await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
-    fake.emit(UP); fake.emit(UP);                           // Hilfe, then Licht & Sonne
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
+    fake.emit(DOWN); fake.emit(DOWN);                       // Teleprompter, then Drehtag
     fake.emit(CLICK);
+    fake.emit(CLICK);                                       // light view
     await vi.waitFor(() => expect(fake.storage.get("quietglass.shootday.place.v1")).toBe(JSON.stringify({ latitude: 47.81, longitude: 13.05 })));
     await vi.waitFor(() => expect(server.state.calls).toContain("GET /api/dispo"));
     await vi.waitFor(() => expect(root.innerHTML).toContain("Standort: Handy (47.81, 13.05)"));
@@ -897,7 +900,8 @@ describe("Licht & Sonne on the glasses", () => {
     fake.emit(DOWN);
     await vi.waitFor(() => expect(tileIds(fake).length).toBeGreaterThan(before));
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
   });
 });
 
@@ -915,35 +919,37 @@ describe("customers on the glasses (server 0.5.0)", () => {
   it("starts on the customer list, opens customer, project and storyboard; a tap marks a scene done; 2× climbs back up", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 2 · ● live"));
     // The cursor waits on the customer of the project the glasses work on.
     expect(fake.body()).toContain("> Bäckerei Sonnenschein · Sonnenschein KG");
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDE · Bäckerei Sonnenschein"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDE · Bäckerei Sonnenschein · ● live"));
     await vi.waitFor(() => expect(fake.body()).toContain("> 14.10.2026 · Testdreh ●"));
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     expect(server.state.calls).toContain("POST /api/active");
     expect(server.state.active).toBe("p_000000000001");
-    expect(fake.body().split("\n")[0]).toBe("> Storyboard");
+    expect(fake.body().split("\n")[0]).toBe("● Takes");
+    fake.emit(DOWN);                                        // the storyboard hangs under the takes
+    expect(fake.body().split("\n")[1]).toBe("●   Storyboard");
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · SZENE 1/2 · 0:00–0:05"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SZENE 1/2 · 0:00–0:05 · ● live"));
     expect(fake.body()).toContain("○ Ankunft");
     expect(fake.body()).toContain("Kamera: Totale");
     expect(fake.body()).toContain("Text: \"Willkommen\"");
     fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · SZENE 2/2 · 0:05–0:12"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SZENE 2/2 · 0:05–0:12 · ● live"));
     fake.emit(DOWN);                                        // stays on the last scene
     fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.boards[0]?.scenes[1]?.done).toBe(true));
     expect(fake.body()).toContain("● Hände im Teig");
     expect(fake.body()).toContain("erledigt: Szene 2");
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDE · Bäckerei Sonnenschein"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDE · Bäckerei Sonnenschein · ● live"));
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 2 · ● live"));
     expect(fake.exit.calls).toEqual([]);
     fake.emit(DOUBLE);
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
@@ -952,13 +958,14 @@ describe("customers on the glasses (server 0.5.0)", () => {
   it("a scene tick the server refuses is taken back", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 2 · ● live"));
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.body()).toContain("> 14.10.2026 · Testdreh ●"));
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
+    fake.emit(DOWN);
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · SZENE 1/2 · 0:00–0:05"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SZENE 1/2 · 0:00–0:05 · ● live"));
     server.state.down = true;
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.body()).toContain("nicht gespeichert: nicht erreichbar"));
@@ -969,19 +976,19 @@ describe("customers on the glasses (server 0.5.0)", () => {
     server.state.heard = "Neuer Kunde clara muster.";
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 2 · ● live"));
     fake.emit(HOLD);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · ● MIC · sprich jetzt"));
+    await vi.waitFor(() => expect(fake.header()).toBe("MIC · sprich jetzt · ● live"));
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
     expect(fake.body()).toContain("Sag den Namen des neuen Kunden,");
     for (let i = 0; i < 10; i++) fake.audio(3200);
     fake.emit(RELEASE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · NEUER KUNDE"));
+    await vi.waitFor(() => expect(fake.header()).toBe("NEUER KUNDE · ● live"));
     expect(fake.body()).toContain("\"Clara Muster\"");
     expect(server.state.calls).not.toContain("POST /api/customers");
     fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.customers.map((c) => c.name)).toContain("Clara Muster"));
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 3"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 3 · ● live"));
     await vi.waitFor(() => expect(fake.body()).toContain("> Clara Muster"));
     expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(false);
   });
@@ -990,7 +997,7 @@ describe("customers on the glasses (server 0.5.0)", () => {
     server.state.heard = "anna beispiel";
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 2 · ● live"));
     fake.emit(HOLD);
     await vi.waitFor(() => expect(fake.bridge.audioControl).toHaveBeenLastCalledWith(true, "glasses"));
     for (let i = 0; i < 10; i++) fake.audio(3200);
@@ -1003,29 +1010,29 @@ describe("customers on the glasses (server 0.5.0)", () => {
   it("shows the card before the appointment with notes and open ideas", async () => {
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDEN · 2"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDEN · 2 · ● live"));
     fake.emit(CLICK);
     await vi.waitFor(() => expect(fake.body()).toContain("> 14.10.2026 · Testdreh ●"));
     fake.emit(UP); fake.emit(UP);                          // to "Kunde vor dem Termin"
     await vi.waitFor(() => expect(fake.body()).toContain("> Kunde vor dem Termin"));
     fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · TERMIN · Bäckerei Sonnenschein"));
+    await vi.waitFor(() => expect(fake.header()).toBe("TERMIN · Bäckerei Sonnenschein · ● live"));
     expect(fake.body()).toContain("Kaffee schwarz.");
     expect(fake.footer()).toBe("1/2 · Wischen = blättern · 2× = zurück");
     fake.emit(DOWN);
     await vi.waitFor(() => expect(fake.body()).toContain("· Drohnenflug am Morgen #drohne"));
     expect(fake.body()).not.toContain("BABEL");
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · KUNDE · Bäckerei Sonnenschein"));
+    await vi.waitFor(() => expect(fake.header()).toBe("KUNDE · Bäckerei Sonnenschein · ● live"));
   });
 
   it("a gesture before the server answered keeps the user where they are", async () => {
     server.state.hang.add("/api/customers");
     const fake = fakeBridge(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh"));
+    await vi.waitFor(() => expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live"));
     fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("> Teleprompter"));
-    expect(fake.header()).toBe("SHOOT DAY · Testdreh");
+    await vi.waitFor(() => expect(fake.body().split("\n")[1]).toBe("● Teleprompter"));
+    expect(fake.header()).toBe("SHOOT DAY · Testdreh · ● live");
   });
 });

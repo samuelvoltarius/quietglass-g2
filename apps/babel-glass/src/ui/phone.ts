@@ -261,12 +261,26 @@ export function conversationInner(state: ConversationState, locale: Locale): str
   return transcript + count + buttons + summary + insights + cuesHtml(state.cues ?? [], locale);
 }
 
-/** The mode buttons, the customer picker for "Gespräch" and the state of the glasses (1.0.0). Pure, so tests can read it. */
+/** Words and questions spoken in a transcript, for the key figures. */
+function transcriptFigures(log: readonly TranscriptEntry[]): { words: number; questions: number } {
+  let words = 0; let questions = 0;
+  for (const entry of log) {
+    words += entry.text.split(/\s+/).filter((word) => word !== "").length;
+    if (entry.text.includes("?")) questions += 1;
+  }
+  return { words, questions };
+}
+
+/**
+ * Jetzt (QUS v1, the Rain look): the status banner, a hero card with the mode as the one big value, 2 x 2 key
+ * figures, the three mode buttons (the pressed one is the filled one), the customer picker for "Gespräch" and a
+ * strip with the words found last. Pure, so tests can read it.
+ */
 export function nowInner(state: ConversationState, locale: Locale): string {
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
   const listening = state.overview?.listening ?? false;
   const demo = state.overview ? usesMockStt(state.overview.data) : false;
-  const status = `<p class="state ${listening ? "live" : "idle"}"><span class="dot" aria-hidden="true"></span><b>${x(listening ? "p.nowLive" : "p.nowReady")}</b>`
+  const banner = `<p class="banner tone-${listening ? "ok" : "none"}"><span class="dot" aria-hidden="true"></span><b>${x(listening ? "p.nowLive" : "p.nowReady")}</b>`
     + `${demo ? ` <span class="tag">${escapeHtml(x("g.mock"))}</span>` : ""}</p>`;
   const modeButton = (mode: "translate" | "learn" | "client"): string =>
     `<button type="button" id="talk-mode-${mode}" data-talk-mode="${mode}" class="${state.talkMode === mode ? "" : "secondary"}" aria-pressed="${state.talkMode === mode}">${escapeHtml(x("g.mode." + mode))}</button>`;
@@ -278,7 +292,29 @@ export function nowInner(state: ConversationState, locale: Locale): string {
       + state.customers.map((c) => `<option value="${escapeHtml(c.id)}"${c.id === state.customerId ? " selected" : ""}>${escapeHtml(c.name)}</option>`).join("")
       + "</select>"
     : "";
-  return status + modes + customers + `<p class="hint">${x("p.glassesHow")}</p>`;
+  const figures = transcriptFigures(state.log);
+  const stat = (label: string, value: number, unit: string): string =>
+    `<div><span>${escapeHtml(label)}</span><b>${value}</b><small>${escapeHtml(unit)}</small></div>`;
+  const hero = `
+    <section class="card hero-card">
+      <div class="hero">
+        <div><span>${escapeHtml(x("p.heroLabel"))}</span><strong class="word">${state.talkMode ? escapeHtml(x("g.mode." + state.talkMode)) : "–"}</strong></div>
+        <p>${escapeHtml(x(listening ? "p.heroSideLive" : "p.heroSideReady"))}</p>
+      </div>
+      <div class="stats">
+        ${stat(x("p.statLines"), state.log.length, x("p.unitHeard"))}
+        ${stat(x("p.statWords"), figures.words, x("p.unitSpoken"))}
+        ${stat(x("p.statQuestions"), figures.questions, x("p.unitAsked"))}
+        ${stat(x("p.statFound"), state.words?.length ?? 0, x("p.unitWordsSaved"))}
+      </div>
+      ${modes}${customers}
+    </section>`;
+  const recent = (state.words ?? []).slice(0, 8);
+  const strip = recent.length > 0
+    ? `<h2 class="strip-title">${escapeHtml(x("p.stripTitle"))}</h2><div class="strip">${recent.map((entry) =>
+      `<div class="host"><b>${escapeHtml(entry.word)}</b><span>${escapeHtml(entry.meaning || "–")}</span></div>`).join("")}</div>`
+    : "";
+  return banner + hero + strip + `<p class="hint">${x("p.glassesHow")}</p>`;
 }
 
 /** The "Meine Stimme" card's inside: status, the how-to and the two buttons (1.0.0). Pure, so tests can read it. */
@@ -488,7 +524,7 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
   return `
   <header class="brand bar">
     <div>
-      <span class="brand-mark">Quietglass</span>
+      <span class="brand-mark">${escapeHtml(x("p.kicker"))}</span>
       <h1>Babel Glass</h1>
     </div>
     <span class="chip${chipOn ? " on" : ""}">${escapeHtml(chipText)}</span>
@@ -497,7 +533,7 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
   <p id="notice" class="notice" ${notice ? "" : "hidden"}>${escapeHtml(notice)}</p>
 
   <div class="tab" data-tab="now">
-  ${conversation ? `<section class="card" id="now"><div id="now-body">${nowInner(conversation, locale)}</div></section>` : ""}
+  ${conversation ? `<div id="now"><div id="now-body">${nowInner(conversation, locale)}</div></div>` : ""}
   ${conversationCard(conversation, locale)}
   </div>
 

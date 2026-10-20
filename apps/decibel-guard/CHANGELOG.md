@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.0] — 2026-10-20
+
+Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.
+
+### Brille
+
+- **Hauptbild als Cockpit-Bild** (Muster Rain Lens, `src/screen/*` unverändert aus Rain Lens): das ganze Display ist ein Bild aus vier Kacheln. Links zwei Balken, **Pegel** (mit Strich bei der Grenze und Spitzenmarke) und **Dosis heute** (mit Strich bei 50 %), darunter groß `● MIKRO AN`. Rechts der Kopf `DECIBELGUARD  14:05`, **eine** Überschrift (`72 DB`, darunter `RUHIG` / `DOSIS ZÄHLT` / `HALBE DOSIS` / `LIMIT ERREICHT`; Schätzwerte mit `~`) und sechs Werte in drei Spalten (MAX, MITTEL, GRENZE, DAUER, ÜBER 85, REST; Dauer über der Grenze bekommt einen Rahmen). Helligkeit statt Farbe (Text 15, Label 8, gedimmt 4).
+- **Nur geänderte Kacheln werden gesendet:** beide Balken liegen in der Kachel oben links, der Pegel kostet also eine Kachel; Minutenwerte liegen unten rechts, die Uhr oben rechts. Pegelbilder höchstens alle 700 ms, derselbe Zustand sendet nichts; während der Beenden-Dialog offen sein kann, wird keine Kachel geschrieben.
+- **Das Mikrofon-Zeichen bleibt Pflicht:** solange das Mikrofon an ist, steht `● MIKRO AN` unten links groß und die Hinweiszeile beginnt damit, auch bei jeder Rückfrage.
+- Eine Hinweiszeile unten über den gemeinsamen Helfer. Risiko bleibt armiert: Halten fragt „Dosis löschen?“ (Überschrift `DOSIS LÖSCHEN?`), Tippen beim Messen fragt „Messung stoppen?“; jeweils ein Tippen innerhalb von 4 s bestätigt, Wischen, 2×, Halten oder Zeitablauf brechen ab.
+- Entfallen: Textzeilen, die Hilfeseiten (Wischen tut nichts mehr, die Bedienung steht am Handy), die Zahlenbilder und das Lautsprecher-Symbol.
+- Beibehalten: `SIDE_MENU = false`, die Beenden-Dialog-Logik unverändert (`src/exit.ts`, kein Zeichnen und keine Kachel, solange er offen sein kann), Zeitlimits für jeden Aufruf an die Brille, erste Seite mit Rebuild + Create, Mikrofon- und Dosis-Behandlung.
+- Neu in der Tagesdosis (eine Zahl je Wert, bis Mitternacht, kein Verlauf): Summe Pegel x Zeit und Sekunden über der Grenze, daraus „Mittel“ und „Über Grenze“. Ältere gespeicherte Dosen laden weiter.
+
+### Handy
+
+- **Genau drei Tabs in einer Zeile: Jetzt / Heute / Einstellungen** im Rain-Look: Kicker `QUIETGLASS / GEHÖR`, Titel, Status-Pille, Statusbanner, Hero-Karte mit dem Pegel, 2×2-Kennzahlen (Dosis heute, Maximum, Mittel, Dauer), ein Hauptknopf (Messen starten / stoppen) und, unter *Heute*, die erlaubte Zeit pro Tag bei sechs Pegeln als waagrechte Kartenleiste. *Einstellungen* sind gruppierte Karten (Regeln, Abgleich, Brille, Sprache, Mehr); beim ersten Start steht eine Drei-Schritte-Checkliste oben und die Seite öffnet dort.
+- Die Seite folgt dem Pegel zweimal pro Sekunde, ohne Eingaben zu stören.
+
+### Technik
+
+- Reine Modellfunktionen mit Tests: `src/cockpit/model.ts` (Überschrift, Zellen, Balken, Hinweis), `src/cockpit/compose.ts` (nur Layout). Neue Tests: Überschrift, Zellen, Balken, Mikrofon-Zeichen in jedem Zustand, Kachel-Diff, Beenden-Dialog ohne Kachel-Sendungen, Handy-Modelle.
+- Vorschau (nicht ausgeliefert): `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit.png` und `store/preview-cockpit-high.png`.
+
+QIS: Fußzeilen über den gemeinsamen Helfer, `2× = zurück|Ende|abbrechen`.
+
 ## [0.6.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

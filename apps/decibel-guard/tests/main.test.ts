@@ -3,13 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageRawDataUpdateResult } from "@evenrealities/even_hub_sdk";
 
 // Boots the real app against a fake bridge to check the microphone and redraw loop without hardware.
-const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+const harness = vi.hoisted(() => ({ bridge: null as unknown, models: [] as import("../src/cockpit/model").CockpitModel[] }));
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
-// Canvas is unavailable in node; the icon is not what these tests are about.
-vi.mock("../src/glasses/pixel", () => ({ encodePng: async () => new Uint8Array([1]) }));
+// The cockpit is an image: the tests read the model that was drawn last.
+vi.mock("../src/cockpit/compose", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/cockpit/compose")>();
+  return { ...real, composeCockpit: (model: import("../src/cockpit/model").CockpitModel, backend: import("../src/screen/text").TextBackend) => { harness.models.push(model); return real.composeCockpit(model, backend); } };
+});
+const last = (): import("../src/cockpit/model").CockpitModel => harness.models[harness.models.length - 1]!;
 
 // tsconfig carries no node types; reach the process object structurally.
 const nodeProcess = (globalThis as unknown as { process: { on(event: string, listener: (reason: unknown) => void): void; off(event: string, listener: (reason: unknown) => void): void } }).process;
@@ -40,6 +44,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
     textContainerUpgrade: async (update: { content?: string }) => { texts.push(update.content ?? ""); await write(); return true; },
     updateImageRawData: async (update: { containerName?: string }) => {
       if (options.imageDelayMs) await new Promise((resolve) => setTimeout(resolve, options.imageDelayMs));
+      await write();
       images.push(update.containerName ?? "");
       return ImageRawDataUpdateResult.success;
     },
@@ -69,6 +74,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
 describe("decibelguard loop", () => {
   beforeEach(() => {
   resetGestureDedupe();
+    harness.models.length = 0;
     vi.useFakeTimers();
     vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -288,38 +294,42 @@ describe("decibelguard loop", () => {
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.mic).toEqual([]);
-    expect(fake.texts.join(" | ")).toContain("Microphone not available.");
-    expect(fake.texts.join(" | ")).toContain("Tap = try again");
+    expect(last().headline).toEqual(["MICROPHONE", "NOT READY"]);
+    expect(last().hint).toBe("Tap = try again · 2× = exit");
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.mic).toEqual([true]);
-    expect(fake.texts.at(-1)).toContain("● MIC");
+    expect(last().hint).toContain("● MIC");
+    expect(last().caption).toBe("● MIC");
   });
 
-  it("draws the meter, the level digits and the dose bar once, and not again while nothing changes", async () => {
+  it("sends the four tiles once, and not again while nothing changes (the clock tile aside)", async () => {
     const fake = await boot();
     await vi.advanceTimersByTimeAsync(5000);
-    expect([...fake.images].sort()).toEqual(["dose-bar", "level-digits", "pixel-icon"]);
+    expect([...fake.images].sort()).toEqual(["decibel-ne", "decibel-nw", "decibel-se", "decibel-sw"]);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(fake.images).toHaveLength(3);
+    // Only the clock in the upper right tile may have moved on.
+    expect(fake.images.slice(4).every((name) => name === "decibel-ne")).toBe(true);
+    expect(fake.images.length).toBeLessThanOrEqual(5);
   });
 
-  it("keeps updating text while an image transfer is slow", async () => {
-    // Images go through their own lane; a stalled transfer must not hold up the readout.
+  it("keeps the model and the gestures going while a tile transfer is slow", async () => {
+    // Tiles go through their own sender; a stalled transfer must not hold up the loop.
     const fake = await boot({ imageDelayMs: 60_000 });
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(100);
-    const before = fake.writes.count;
+    const before = harness.models.length;
     for (let i = 0; i < 10; i++) {
       fake.audio(2000 + i * 2500);
       await vi.advanceTimersByTimeAsync(500);
     }
-    expect(fake.writes.count).toBeGreaterThan(before);
+    expect(harness.models.length).toBeGreaterThan(before);
     expect(fake.images).toEqual([]);
-    expect(fake.texts.at(-1)).toContain("●");
+    expect(last().caption).toContain("●");
+    expect(fake.mic).toEqual([true]);
   });
 
-  it("sends each picture at most every 700 ms while the level moves", async () => {
+  it("sends the level tile at most every 700 ms while the level moves", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(5000);
@@ -328,12 +338,10 @@ describe("decibelguard loop", () => {
       fake.audio(i % 2 === 0 ? 500 : 20_000);
       await vi.advanceTimersByTimeAsync(100);
     }
-    // 10 s of a level jumping every block: at most one write per 700 ms and picture.
-    for (const name of ["pixel-icon", "level-digits"]) {
-      const writes = fake.images.slice(start).filter((n) => n === name).length;
-      expect(writes, name).toBeGreaterThan(0);
-      expect(writes, name).toBeLessThanOrEqual(15);
-    }
+    // 10 s of a level jumping every block: at most one write per 700 ms for the tile that carries it.
+    const writes = fake.images.slice(start).filter((name) => name === "decibel-nw").length;
+    expect(writes).toBeGreaterThan(0);
+    expect(writes).toBeLessThanOrEqual(15);
   });
 
   /** Measures loud audio for `seconds`, one block every 100 ms. */
@@ -361,10 +369,12 @@ describe("decibelguard loop", () => {
 
     fake.emit(9); // hold: only asks
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.some((text) => /Nochmal tippen = (Dosis )?löschen|Tap again = clear dose/.test(text))).toBe(true);
+    expect(last().hint).toMatch(/Nochmal tippen = (Dosis )?löschen|Tap again = clear/);
+    expect(last().headline[1]).toMatch(/LÖSCHEN\?|DOSE\?/);
+    expect(last().hint).toMatch(/^● MI/);
     // Left alone, the question goes away and nothing is cleared.
     await vi.advanceTimersByTimeAsync(4500);
-    expect(fake.texts.at(-1)).not.toMatch(/Nochmal tippen|Tap again/);
+    expect(last().hint).not.toMatch(/Nochmal tippen|Tap again/);
     expect(savedFraction(fake)).toBe(before);
     // A second hold while armed cancels instead of confirming.
     fake.emit(9);
@@ -431,45 +441,31 @@ describe("decibelguard loop", () => {
     const fake = await boot();
     expect(fake.pages.length).toBeGreaterThan(0);
     for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
-    // A menu click that might still arrive does not break anything.
+    // A menu click that might still arrive does not break anything and opens nothing.
+    const shown = last().headline;
     fake.menu(1);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.some((text) => /(help|Hilfe) 1\/2/.test(text))).toBe(true);
+    expect(last().headline).toEqual(shown);
   });
 
-  it("the help opens by a swipe on the main screen, a swipe turns the page, 2× goes back and only then leaves", async () => {
+  it("a swipe does nothing on the main screen (the help lives on the phone); 2× asks the exit dialog", async () => {
     const fake = await boot();
-    fake.emit(1); // swipe on the main screen
+    const shown = [...last().headline];
+    fake.emit(1);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.some((text) => /DECIBELGUARD · (help|Hilfe) 1\/2/.test(text))).toBe(true);
-    fake.emit(2); // scroll bottom = next page
+    fake.emit(2);
     await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.some((text) => /(help|Hilfe) 2\/2/.test(text))).toBe(true);
-    fake.emit(0); // a tap in the help does nothing
-    await vi.advanceTimersByTimeAsync(50);
+    expect(last().headline).toEqual(shown);
     expect(fake.mic).toEqual([]);
-    fake.emit(3);
-    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(0); // a tap starts measuring
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fake.mic).toEqual([true]);
     expect(fake.shutdown.calls).toBe(0);
-    expect(fake.texts.at(-1)).toMatch(/(Tap|Tippen) = (start|messen)/);
     fake.emit(3);
     await vi.advanceTimersByTimeAsync(50);
     expect(fake.shutdown.calls).toBe(1);
   });
 
-  it("the help pages follow the invertScroll setting", async () => {
-    const storage = new Map<string, string>([["quietglass.decibelguard.v1", JSON.stringify({ invertScroll: true })]]);
-    const fake = await boot({ storage });
-    fake.emit(1); // swipe: opens the help
-    await vi.advanceTimersByTimeAsync(50);
-    fake.emit(1); // SCROLL_TOP arrives as "down" when inverted: next page
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.some((text) => /(help|Hilfe) 2\/2/.test(text))).toBe(true);
-    fake.emit(2); // and SCROLL_BOTTOM goes back
-    await vi.advanceTimersByTimeAsync(50);
-    expect(fake.texts.at(-1)).toMatch(/Wischen = blättern|Swipe = page/);
-    expect(fake.texts.filter((text) => /(help|Hilfe) 1\/2/.test(text)).length).toBeGreaterThan(1);
-  });
 
   it("QIS v1.2: a tap while measuring only asks; a second tap within 4 s stops", async () => {
     const fake = await boot();
@@ -479,7 +475,8 @@ describe("decibelguard loop", () => {
     fake.emit(0); // asks
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.mic).toEqual([true]);
-    expect(fake.texts.some((text) => /Tap again = stop|Nochmal tippen = stoppen/.test(text))).toBe(true);
+    expect(last().hint).toMatch(/Tap again = stop|Nochmal tippen = stoppen/);
+    expect(last().hint).toMatch(/^● MI/);
     fake.emit(0); // confirms
     await vi.advanceTimersByTimeAsync(100);
     expect(fake.mic).toEqual([true, false]);
@@ -517,7 +514,7 @@ describe("decibelguard loop", () => {
 
     const second = await boot({ storage });
     await vi.advanceTimersByTimeAsync(1100);
-    expect(second.texts.some((text) => /heute \d+% vom Limit|today \d+% of limit/.test(text))).toBe(true);
+    expect(last().headline[1]).toMatch(/(HEUTE|TODAY) \d+%/);
     // The microphone opens only on a tap.
     expect(second.mic).toEqual([]);
   });

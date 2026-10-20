@@ -12,7 +12,34 @@ erreichen: sie geht über dein Handy, und das ist oft unterwegs.
 
 ## Deutsch
 
-### Was du brauchst
+### Daheim: ohne Bridge (ab 0.6.0)
+
+Ist dein Handy im selben WLAN wie der Drucker, braucht Klipper Glance **nichts
+weiter**: Die App liest Moonraker direkt.
+
+1. Even-App → Klipper Glance → Tab **Drucker** → **Drucker suchen** (oder die IP
+   eintragen, die Mainsail/Fluidd anzeigt, z. B. `192.168.0.50`) → **Speichern**.
+2. Fertig. Pause/Weiter/Abbrechen von der Brille sind aus, bis du dort
+   „… von der Brille erlauben“ anhakst.
+
+Antwortet der Drucker nicht: Steht in `moonraker.conf` unter `[authorization]`
+eine `trusted_clients`-Liste, muss dein Heimnetz darin stehen (z. B.
+`192.168.0.0/16` – bei Mainsail/Fluidd-Installationen ist das Standard).
+
+### Unterwegs: Bridge (optional)
+
+Unterwegs sieht das Handy deinen Drucker nicht. Dafür gibt es die kleine
+Bridge, die auf dem Drucker-Pi läuft und über Tailscale per HTTPS erreichbar
+ist. **Am schnellsten in einem Befehl** (auf dem Pi, als normaler Nutzer):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/samuelvoltarius/quietglass-g2/main/apps/klipper-glance/examples/install-bridge.sh | bash
+```
+
+Das Skript prüft Node.js, legt die Bridge als Dienst an, schaltet sie über
+Tailscale frei und zeigt am Ende die Adresse zum Eintragen. Von Hand geht es so:
+
+#### Was du brauchst
 
 - Einen Klipper-Drucker mit **Moonraker** (Mainsail oder Fluidd haben das).
 - Einen Rechner, der **immer an** ist und im selben Netz wie der Drucker hängt.
@@ -129,7 +156,34 @@ Brille braucht jeder Befehl zwei Tipper.
 
 ## English
 
-### What you need
+### At home: no bridge (0.6.0+)
+
+With your phone on the same Wi-Fi as the printer, Klipper Glance needs
+**nothing else**: the app reads Moonraker directly.
+
+1. Even app → Klipper Glance → **Printer** tab → **Find printer** (or enter the
+   IP that Mainsail/Fluidd shows, e.g. `192.168.0.50`) → **Save**.
+2. Done. Pause/resume/cancel from the glasses stay off until you tick
+   "… from the glasses" there.
+
+If the printer does not answer: when `moonraker.conf` has a `trusted_clients`
+list under `[authorization]`, your home network must be in it (e.g.
+`192.168.0.0/16` – the default in Mainsail/Fluidd installs).
+
+### On the go: bridge (optional)
+
+Away from home the phone cannot see your printer. The small bridge runs on the
+printer's Pi and is reached over HTTPS through Tailscale. **Quickest, one
+command** (on the Pi, as your normal user):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/samuelvoltarius/quietglass-g2/main/apps/klipper-glance/examples/install-bridge.sh | bash
+```
+
+The script checks Node.js, installs the bridge as a service, publishes it over
+Tailscale and prints the address to enter. By hand:
+
+#### What you need
 
 - A Klipper printer with **Moonraker** (Mainsail and Fluidd ship it).
 - A machine that is **always on** and in the printer's network – easiest:

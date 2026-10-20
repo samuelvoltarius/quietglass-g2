@@ -8,11 +8,14 @@ import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/ges
 import { errorDetail, errorText } from "./hud/errors";
 import { t } from "./messages";
 import { sameView } from "./glasses/diff";
-import { createPage, faceKey, forgetPage, updatePage, type MenuSpec } from "./glasses/render";
-import { MASCOT_STEP_MS, headerIcon } from "./glasses/face";
+import { COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage } from "./glasses/page";
 import type { ScreenView } from "./glasses/screen";
+import { cockpitModel } from "./cockpit/model";
+import { composeCockpit, modelKey } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import {
-  CONFIRM_MS, EMPTY_MODEL, SIDE_MENU, buildView, currentCard, decide, spokenAnswer, type HudAction, type HudGesture, type HudModel,
+  CONFIRM_MS, EMPTY_MODEL, buildView, currentCard, decide, spokenAnswer, type HudAction, type HudGesture, type HudModel,
 } from "./hud/model";
 import type { Answer } from "./api/types";
 import { loadSettings, saveSettings, type Settings } from "./storage/persist";
@@ -40,8 +43,8 @@ const VOICE_PANEL_MS = 30_000;
 const RETRY_MS = 5_000;
 const RETRY_AUTH_MS = 10_000;
 
-/** QIS v1.2 #1: the glasses' side menu. Help lives here, not in the answer list. */
-export const MENU = { help: 1 } as const;
+/** The clock, the age of the data and the recording time are redrawn this often; an unchanged view or frame sends nothing. */
+const TICK_MS = 1_000;
 
 interface Recording {
   readonly id: number;
@@ -61,14 +64,23 @@ async function boot(): Promise<void> {
   let locale: Locale = await resolveLocale(bridge);
   let closed = false;
 
-  const makeApi = (): XaventraApi | null => {
+  /** First start without a server address: the sample data runs and the glasses say how to set up the real thing (QIS v1.2 no. 7). */
+  let demoStart = false;
+  const makeApi = (): XaventraApi => {
+    demoStart = false;
     if (DEMO) return createDemoApi(locale, new URLSearchParams(globalThis.location?.search ?? "").get("scene"));
-    if (!settings.serverUrl) return null;
+    if (!settings.serverUrl) { demoStart = true; return createDemoApi(locale, null); }
     return createClient({ baseUrl: settings.serverUrl, ...(settings.token ? { token: settings.token } : {}) });
   };
   let api: XaventraApi | null = makeApi();
 
-  let model: HudModel = { ...EMPTY_MODEL, configured: api !== null };
+  /** `?demo=1&screen=status|cards` opens straight on a screen (simulator screenshots); without it the start page. */
+  const START_SCREEN = new URLSearchParams(globalThis.location?.search ?? "").get("screen");
+  const firstModel = (): HudModel => ({
+    ...EMPTY_MODEL, configured: api !== null, demo: DEMO || demoStart,
+    ...(START_SCREEN === "status" || START_SCREEN === "cards" ? { screen: START_SCREEN } : {}),
+  });
+  let model: HudModel = firstModel();
   /** Technical detail of the last feed problem (HTTP status), for the phone only. */
   let problemDetail = "";
   const patch = (change: Partial<HudModel>): void => { model = { ...model, ...change }; };
@@ -79,12 +91,11 @@ async function boot(): Promise<void> {
 
   // ---- drawing -----------------------------------------------------------
   let lastView: ScreenView | null = null;
-  let lastFace = "";
+  let lastKey = "";
   let pageReady = false;
-  /** The side menu travels with the page: another label (language) means one rebuild. */
-  let pageMenuKey = "";
-  // Off while its clicks do not arrive on the real glasses (SIDE_MENU, step log 15.10.2026): the page carries no menu.
-  const menuSpec = (): MenuSpec => SIDE_MENU ? { key: locale, items: [{ id: MENU.help, label: t(locale, "g.m.help") }] } : { key: "none", items: [] };
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
+  let textBackend: TextBackend | null = null;
   /** Set by a reconnect or a return to the foreground: the next draw rebuilds the page. */
   let rebuildWanted = false;
   /** In the background: no feed poll, no drawing. */
@@ -103,33 +114,64 @@ async function boot(): Promise<void> {
    */
   let dialogPending = false;
   let dialogShown = false;
+
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitDialogAsked && !closed && !paused && installed === "cockpit"));
+
+  /** The status cockpit shows only while nothing else (recording, a reply, recognised text) lies on top of it. */
+  const showsCockpit = (): boolean => model.screen === "status" && model.configured && model.rec === "off" && !model.voice && !model.draft;
+
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
     if (paused) return;
     // A page lost with the link (or while in the background) is rebuilt even
     // when nothing changed; the flag is read here so a reconnect during a
     // running draw is not undone by that draw's success.
-    if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; }
+    if (rebuildWanted) { rebuildWanted = false; pageReady = false; lastView = null; lastKey = ""; installed = null; }
     const now = new Date();
-    const view = buildView(model, locale, now);
-    const face = headerIcon(model, now.getTime());
-    const key = faceKey(face);
-    const menu = menuSpec();
-    if (pageReady && menu.key !== pageMenuKey) { pageReady = false; lastView = null; }
-    if (pageReady && sameView(lastView, view) && key === lastFace) return;
-    const result = pageReady ? await updatePage(bridge, view, face, lastView) : await createPage(bridge, view, face, menu);
-    if (result.ok) {
-      if (!pageReady) pageMenuKey = menu.key;
-      pageReady = true; lastView = view; lastFace = key; return;
+    if (showsCockpit()) {
+      const cockpit = cockpitModel(model, locale, now);
+      const key = modelKey(cockpit);
+      if (installed !== "cockpit") pageReady = false;
+      if (pageReady && key === lastKey) return;
+      if (!pageReady) {
+        const result = await createCockpitPage(bridge);
+        if (closed) return;
+        if (!result.ok) { pageReady = false; lastKey = ""; console.warn("[xaventrahud] draw failed:", result.reason); return; }
+        pageReady = true; installed = "cockpit"; lastView = null;
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      lastKey = key;
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tiles.push(composeCockpit(cockpit, textBackend));
+      return;
     }
+    const view = buildView(model, locale, now);
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
+    if (pageReady && sameView(lastView, view)) return;
+    const result = pageReady ? await updateTextPage(bridge, view, lastView) : await createTextPage(bridge, view);
+    if (closed) return;
+    if (result.ok) { pageReady = true; installed = "text"; lastView = view; lastKey = ""; return; }
     pageReady = false;
     lastView = null;
     console.warn("[xaventrahud] draw failed:", result.reason);
   };
 
+  /** The phone follows the state, but only when something it shows changed (a redraw every second would flicker the page). */
+  let phoneSig = "";
+  const updatePhone = (): void => {
+    const sig = JSON.stringify([model.online, model.problem, model.demo, model.feed?.version ?? null, model.feed?.cards.map((c) => c.id) ?? null, Math.floor(model.feedAt / 60_000), locale]);
+    if (sig === phoneSig) return;
+    phoneSig = sig;
+    refreshPhone();
+  };
+
   /** One draw at a time; requests made meanwhile collapse into one redraw. */
   const draw = (): Promise<void> => {
-    refreshPhone();
+    updatePhone();
     if (exitDialogAsked) return Promise.resolve();
     if (closed) return Promise.resolve();
     if (drawing) { redrawQueued = true; return drawing; }
@@ -202,7 +244,7 @@ async function boot(): Promise<void> {
           const neinGone = model.nein !== null && !cards.some((card) => card.id === model.nein);
           problemDetail = "";
           patch({
-            feed, online: true, problem: "", fault: false,
+            feed, online: true, problem: "", fault: false, feedAt: Date.now(),
             index: Math.min(model.index, Math.max(0, cards.length - 1)),
             ...(confirmGone ? { confirm: null } : {}),
             ...(neinGone ? { nein: null } : {}),
@@ -323,7 +365,7 @@ async function boot(): Promise<void> {
   const proposeAnswer = (cardId: string, answer: Answer): void => {
     const card = model.feed?.cards.find((entry) => entry.id === cardId) ?? null;
     if (!card || !model.feed) { say(t(locale, "g.msg.noCard")); return; }
-    patch({ index: model.feed.cards.indexOf(card), nein: answer === "nein" ? card.id : null, helpStop: false, help: false });
+    patch({ screen: "cards", index: model.feed.cards.indexOf(card), nein: answer === "nein" ? card.id : null });
     arm(card.id);
     say(t(locale, answer === "nein" ? "g.msg.heardNo" : "g.msg.heardYes"));
   };
@@ -472,6 +514,8 @@ async function boot(): Promise<void> {
     if (closed) return;
     pageReady = false;
     lastView = null;
+    lastKey = "";
+    installed = null;
     forgetPage(bridge);
     const run = draw().catch(() => undefined);
     restoring = run;
@@ -506,6 +550,7 @@ async function boot(): Promise<void> {
     clearTimeout(confirmTimer);
     clearTimeout(voiceTimer);
     clearTimeout(liveDrawTimer);
+    tiles.close();
   };
 
   // ---- gestures ----------------------------------------------------------
@@ -522,16 +567,31 @@ async function boot(): Promise<void> {
         return;
       case "move":
         disarm();
-        patch({ index: action.index, nein: action.nein, helpStop: action.helpStop });
+        patch({ index: action.index, nein: action.nein });
         void draw();
         return;
       case "disarm":
         disarm();
         void draw();
         return;
-      case "help":
+      case "open":
         disarm();
-        patch({ help: action.open });
+        patch({ screen: action.screen });
+        void draw();
+        return;
+      case "startMove":
+        patch({ startCursor: action.cursor });
+        void draw();
+        return;
+      case "back":
+        disarm();
+        patch({ screen: "start" });
+        void draw();
+        return;
+      case "refresh":
+        // Asks the server again at once (the long poll restarts without a version).
+        patch({ feed: model.feed ? { ...model.feed, version: "" } : null });
+        startPoll();
         void draw();
         return;
       case "dismiss":
@@ -596,16 +656,8 @@ async function boot(): Promise<void> {
       return;
     }
     if (isFinalExit(step)) { shutDown(); return; }
-    const menuId = menuItemIdFromEvent(event);
-    if (menuId !== null) {
-      // QIS v1.2 #1: Hilfe from the side menu; it lies on top of whatever is shown (a running recording goes on).
-      if (menuId === MENU.help && !rec) {
-        disarm();
-        patch({ help: true });
-        void draw();
-      }
-      return;
-    }
+    // The glasses' side menu is off (SIDE_MENU): a menu click never runs anything.
+    if (menuItemIdFromEvent(event) !== null) return;
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
     if (audio) {
       const current = rec;
@@ -659,9 +711,9 @@ async function boot(): Promise<void> {
   void draw();
   startPoll();
 
-  // The clock in the header and the face (blinks, writes, listens): redraw twice a
-  // second. An unchanged view and an unchanged face cost nothing (see drawOnce).
-  const clockTimer = setInterval(() => { if (!closed) void draw(); else clearInterval(clockTimer); }, MASCOT_STEP_MS);
+  // The clock, the age of the data and the recording time: redraw every second.
+  // An unchanged view and an unchanged cockpit frame cost nothing (see drawOnce).
+  const clockTimer = setInterval(() => { if (!closed) void draw(); else clearInterval(clockTimer); }, TICK_MS);
 
   const phone = mountPhoneUi({
     getSettings: () => settings,
@@ -676,13 +728,15 @@ async function boot(): Promise<void> {
         disarm();
         draft = null;
         problemDetail = "";
-        model = { ...EMPTY_MODEL, configured: api !== null };
+        model = firstModel();
         startPoll();
       }
       await draw();
     },
+    model: () => model,
+    refresh: () => { patch({ feed: model.feed ? { ...model.feed, version: "" } : null }); startPoll(); },
     connection: (): ConnectionState => {
-      if (DEMO) return { kind: "demo" };
+      if (DEMO || demoStart) return { kind: "demo" };
       if (!api) return { kind: "none" };
       // The phone may show the technical detail (HTTP status); the glasses never do (QIS v1.2 #8).
       if (model.problem) return { kind: "error", reason: problemDetail ? `${model.problem} (${problemDetail})` : model.problem };

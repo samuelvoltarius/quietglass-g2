@@ -1,5 +1,5 @@
 import type { AgentState } from "../terminal/types";
-import type { Armed } from "../glasses/view";
+import { showsCockpit, type Armed, type ViewMode } from "../glasses/view";
 import type { Gesture } from "./gestures";
 
 /**
@@ -27,6 +27,8 @@ export type GestureAction =
   | { readonly kind: "select"; readonly index: number }
   /** Show another screen of the current answer; 0 = the newest. */
   | { readonly kind: "page"; readonly page: number }
+  /** Switch between the status cockpit and the answer text of the open session. */
+  | { readonly kind: "mode"; readonly mode: ViewMode }
   | { readonly kind: "exit" }
   | { readonly kind: "ignore" };
 
@@ -48,6 +50,8 @@ export interface GestureContext {
   readonly choice?: 0 | 1;
   /** What a first tap has armed, if anything. */
   readonly armed?: Armed | null;
+  /** Which page of the open session is up: the status cockpit or the answer text. Omitted = no cockpit logic. */
+  readonly mode?: ViewMode;
 }
 
 const IGNORE: GestureAction = { kind: "ignore" };
@@ -63,6 +67,15 @@ export function routeGesture(gesture: Gesture, context: GestureContext): Gesture
   const { screen, state } = context;
   if (screen === "help") {
     return gesture === "click" || gesture === "doubleClick" ? { kind: "closeHelp" } : IGNORE;
+  }
+  const swiped = gesture === "scrollUp" || gesture === "scrollDown";
+  if (context.mode !== undefined) {
+    // The cockpit is the root of an open session: a swipe opens the answer text (a view only), 2x there goes back.
+    if (showsCockpit(screen, state, context.mode) && swiped) return { kind: "mode", mode: "answer" };
+    // An armed interrupt is cancelled by the 2x first (it stays on this page, QIS v1).
+    if (context.mode === "answer" && screen === "agent" && state.session && !state.error && !state.pending && gesture === "doubleClick" && context.armed !== "interrupt") {
+      return { kind: "mode", mode: "status" };
+    }
   }
   if (context.demo && gesture !== "doubleClick") return IGNORE;
 

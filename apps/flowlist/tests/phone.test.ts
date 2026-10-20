@@ -28,8 +28,8 @@ describe("phone page", () => {
   it("is split into tabs with a tab bar and keeps every control", () => {
     const { root } = mount();
     expect(root.innerHTML).toContain('class="tabbar"');
-    // QIS v1, section 5: content tabs, then Brille, Verbindung, Mehr (a missing one is simply left out).
-    expect([...root.innerHTML.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1])).toEqual(["lists", "add", "glasses", "more"]);
+    // QUS v1, section 2.1: exactly three tabs - Jetzt, the app's own list, Einstellungen.
+    expect([...root.innerHTML.matchAll(/data-tab-go="(\w+)"/g)].map((m) => m[1])).toEqual(["now", "lists", "settings"]);
     for (const id of ["#source", "#add", "#next", "#width", "#invert", "#language"]) expect(root.get(id)).toBeTruthy();
   });
 
@@ -110,8 +110,9 @@ describe("phone page for beginners", () => {
 
   it("follows the device language and says what to do first", () => {
     const page = mountIn("de-AT", firstRunData("de"));
-    expect(page.root.innerHTML).toContain("Gerade auf der Brille: <b>Haus verlassen</b>");
-    expect(page.root.innerHTML).toContain("Tipp an die Brille, um einen Schritt");
+    expect(page.root.innerHTML).toContain("QUIETGLASS / AUFGABEN");
+    expect(page.root.innerHTML).toContain("Jetzt: Fenster zu");
+    expect(page.root.innerHTML).toContain("Erste Schritte");
     expect(page.root.innerHTML).toContain('<option value="de" selected>');
   });
 
@@ -120,7 +121,8 @@ describe("phone page for beginners", () => {
     page.root.get("#language").value = "en";
     page.root.get("#language").fire("change");
     expect(page.onLocaleChange).toHaveBeenCalledWith("en");
-    expect(page.root.innerHTML).toContain("On your glasses now");
+    expect(page.root.innerHTML).toContain("QUIETGLASS / TASKS");
+    expect(page.root.innerHTML).toContain("Now: ");
   });
 
   it("explains an empty box instead of doing nothing", () => {

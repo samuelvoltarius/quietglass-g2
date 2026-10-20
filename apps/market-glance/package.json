@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/market-glance",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "description": "Quietglass Market Glance — Read-only prediction-market positions for the G2",
   "author": "Quietglass",
   "license": "MIT",

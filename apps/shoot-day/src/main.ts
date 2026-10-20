@@ -11,6 +11,8 @@ import { LIGHT_TILES, createPage, forgetPage, installLightPage, rebuildPage, sen
 import { createTileSender } from "./screen/sender";
 import { autoBackend, type TextBackend } from "./screen/text";
 import { composeLight } from "./sun/compose";
+import { composeDay } from "./day/compose";
+import { dayModel } from "./day/model";
 import { lightAt, place as validPlace, type Place } from "./sun/light";
 import { lightModel, sheetPlace, type PlaceSource } from "./sun/model";
 import { PULSE_MS, dayBarFrame, headerIcon } from "./glasses/charts";
@@ -359,7 +361,9 @@ async function boot(): Promise<void> {
   let redrawQueued = false;
 
   // ---- light view: one full-screen frame, only changed tiles go out ------
-  const lightSender = createTileSender(LIGHT_TILES, (slot, png) => sendTile(bridge, slot, png));
+  // Never while the exit dialog may be on screen, and not once the cockpit page has been left (its containers are gone).
+  const lightSender = createTileSender(LIGHT_TILES, (slot, png) =>
+    (!exitDialogAsked && !dialogPending && !closed && (mode === "light" || mode === "day") && !rec) ? sendTile(bridge, slot, png) : Promise.resolve(false));
 
   /** Where the sun is computed for: the phone, else the shoot's place, else the last known place. */
   const lightPlace = (): { place: Place; source: PlaceSource } | null => {
@@ -383,6 +387,12 @@ async function boot(): Promise<void> {
     };
   };
 
+  /** The day cockpit: the call sheet by the clock; the light cell comes from the sun model. */
+  const currentDay = () => dayModel({
+    sheet, now: new Date(), locale, customer: customer?.name ?? "", demo: isDemo(),
+    light: currentLight(0).model,
+  });
+
   const drawLight = async (): Promise<void> => {
     if (!pageReady || lastLayout !== "light") {
       const result = await installLightPage(bridge);
@@ -393,7 +403,8 @@ async function boot(): Promise<void> {
     }
     textBackend ??= autoBackend();
     // Never awaited: a slow transfer must not hold up the next gesture.
-    void lightSender.push(composeLight(currentLight(lightOffset).model, textBackend));
+    if (mode === "day") void lightSender.push(composeDay(currentDay(), textBackend));
+    else void lightSender.push(composeLight(currentLight(lightOffset).model, textBackend));
   };
 
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
@@ -406,7 +417,7 @@ async function boot(): Promise<void> {
   let dialogShown = false;
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
-    if (mode === "light" && !rec) { await drawLight(); return; }
+    if ((mode === "light" || mode === "day") && !rec) { await drawLight(); return; }
     const state = viewState();
     const view = buildView(state);
     const layout: Layout = mode === "schedule" && !rec ? "schedule" : "plain";
@@ -567,6 +578,12 @@ async function boot(): Promise<void> {
       if (!stillCurrent()) return;
       equipment = [...next.items];
       packCursor = Math.min(packCursor, Math.max(0, needed().length - 1));
+    },
+    // The day cockpit shows the call sheet; without it the picture says "no plan".
+    day: async (client, stillCurrent) => {
+      const next = await client.callSheet();
+      if (!stillCurrent()) return;
+      sheet = next;
     },
     // The light view works offline; the schedule only adds the next shoot (and maybe its place).
     light: async (client, stillCurrent) => {
@@ -1005,6 +1022,7 @@ async function boot(): Promise<void> {
     disarm();
     if (next === "takes") { takeScreen = "card"; actionCursor = TAKE_ACTIONS.indexOf("ok"); }
     if (next === "pack") showMissing = false;
+    if (next === "day") void draw();
     if (next === "light") {
       lightOffset = 0;
       void locate();
@@ -1108,8 +1126,8 @@ async function boot(): Promise<void> {
         customer ??= customerList.find((c) => c.id === activeCustomerId) ?? null;
         if (!before && mode === "menu") {
           if (!touched) mode = "customers";
-          // The storyboard came in front of the other modules: keep the same one selected.
-          else menuCursor = Math.min(menuCursor + 1, CUSTOMER_MENU.length - 1);
+          // The storyboard came in under the takes (index 1): everything below moves down one row, keep it selected.
+          else if (menuCursor >= 1) menuCursor = Math.min(menuCursor + 1, CUSTOMER_MENU.length - 1);
         }
         refreshPhone();
         await draw();
@@ -1294,9 +1312,8 @@ async function boot(): Promise<void> {
       case "click": {
         const next = items[menuCursor];
         if (!next) break;
-        if (next === "help") { showHelp(); return; }
-        // The light view needs no server.
-        if (!api && next !== "light") { requestLoad("menu"); break; }
+        // The day and the light view need no server.
+        if (!api && next !== "light" && next !== "day") { requestLoad("menu"); break; }
         enter(next);
         return;
       }
@@ -1326,13 +1343,11 @@ async function boot(): Promise<void> {
     switch (gesture) {
       case "scrollUp":
       case "scrollDown":
-        customerCursor = wrapIndex(customerCursor + step(gesture), customerList.length + (SIDE_MENU ? 1 : 2));
+        customerCursor = wrapIndex(customerCursor + step(gesture), customerList.length + 1);
         say("");
         break;
       case "click": {
         if (customerCursor === 0) { background(startRec("customer", "tap"), "starting the microphone"); return; }
-        // Hilfe is the last entry of the list (without the side menu).
-        if (!SIDE_MENU && customerCursor === customerList.length + 1) { showHelp(); return; }
         const picked = customerList[customerCursor - 1];
         if (picked) openCustomer(picked);
         return;
@@ -1575,12 +1590,19 @@ async function boot(): Promise<void> {
         else { void locate(); requestLoad("light"); }
         break;
       case "doubleClick":
-        toMenu();
+        // The light view hangs under the day: one level back.
+        enter("day");
         return;
       default:
         return;
     }
     void draw();
+  };
+
+  /** The day cockpit: tap = light view, 2× = start page. A swipe does nothing. */
+  const onDay = (gesture: Gesture): void => {
+    if (gesture === "click") { enter("light"); return; }
+    if (gesture === "doubleClick") toMenu();
   };
 
   /** Left through the system: microphone off, prompter stopped, place saved; nothing runs until the app is back. */
@@ -1732,6 +1754,7 @@ async function boot(): Promise<void> {
       case "schedule": onSchedule(gesture); break;
       case "pack": onPack(gesture); break;
       case "light": onLight(gesture); break;
+      case "day": onDay(gesture); break;
     }
     saveUi();
   });
@@ -1748,6 +1771,8 @@ async function boot(): Promise<void> {
       requestLoad("menu");
     } else requestLoad("menu");
     probeCustomers();
+    // The phone's Jetzt tab shows the call sheet whatever the glasses show.
+    if (!(savedUi && savedUi.mode === "day")) requestLoad("day");
   }
 
   // The page does not survive a disconnect; the last view is forgotten too,
@@ -1769,7 +1794,7 @@ async function boot(): Promise<void> {
     clock = setInterval(() => {
       ticks += 1;
       if (mode === "takes" && rollingHere() && !rec) void draw();
-      else if ((mode === "schedule" || mode === "light") && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
+      else if ((mode === "schedule" || mode === "light" || mode === "day") && ticks % Math.round(CLOCK_TICK_MS / PULSE_MS) === 0) void draw();
     }, PULSE_MS);
     // Takes logged offline go out as soon as the server answers again, not only on the next visit.
     outboxTimer = setInterval(() => {
@@ -1782,6 +1807,12 @@ async function boot(): Promise<void> {
 
   const phone = mountPhoneUi({
     getSettings: () => settings,
+    day: () => {
+      const now = new Date();
+      return { model: currentDay(), sheet, minutes: now.getHours() * 60 + now.getMinutes() };
+    },
+    projects: () => ({ customers: customerList, projects: projectList, activeProject: activeProjectId, project }),
+    onRefresh: () => { requestLoad("day"); requestLoad("menu"); },
     saveSettings: async (next) => {
       await saveSettings(bridge, next);
       const serverChanged = next.serverUrl !== settings.serverUrl || next.token !== settings.token;
@@ -1804,6 +1835,7 @@ async function boot(): Promise<void> {
         touched = false;
         toMenu();
         probeCustomers();
+        requestLoad("day");
       }
       await draw();
     },

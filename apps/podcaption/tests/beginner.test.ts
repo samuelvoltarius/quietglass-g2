@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { locales, tr } from "../src/i18n";
 import { messages } from "../src/messages";
-import { captionFooter } from "../src/glasses/help";
+import { captionsView } from "../src/glasses/view";
 import { failureFor } from "../src/podcast/errors";
 import { demoCaptions, readTranscript } from "../src/podcast/parse";
 import { BODY_ROWS, LINE_WIDTH, captionRows, errorRow } from "../src/podcast/view";
 
+const captionFooter = (locale: (typeof locales)[number], playing: boolean): string => captionsView({ locale, captions: [], episode: "", cursor: 0, source: "DEMO", playing, failure: "" }).footer;
 const vars = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1] ?? "").sort();
 const ERRORS = ["errEmpty", "errUnreadable", "errNoTranscript", "errTimeout", "errServer", "errOffline", "errPasteEmpty", "errUnknown"];
 
@@ -20,7 +21,7 @@ describe("messages", () => {
   });
   it.each(locales)("%s glasses header, footer and error rows fit one row", (locale) => {
     for (const playing of [true, false]) expect(captionFooter(locale, playing).length).toBeLessThanOrEqual(LINE_WIDTH);
-    for (const play of ["tagPlay", "tagPause"]) for (const source of ["tagDemo", "tagFile", "tagFeed"]) expect(`PODCAPTION · ${tr(messages, locale, play)} · ${tr(messages, locale, source)}`.length).toBeLessThanOrEqual(LINE_WIDTH);
+    for (const play of ["stPlay", "stPause"]) for (const source of ["tagDemo", "tagFile", "tagFeed"]) expect(`${tr(messages, locale, "tabCaptions")} · ${tr(messages, locale, play)} · ${tr(messages, locale, source)}`.length).toBeLessThanOrEqual(LINE_WIDTH);
     for (const key of ERRORS) { const row = errorRow(tr(messages, locale, key, { status: "503" })); expect(row.endsWith("…"), `${locale}.${key}`).toBe(false); expect(row.length).toBeLessThanOrEqual(LINE_WIDTH); }
   });
   it("keeps jargon out of the German main screen", () => {

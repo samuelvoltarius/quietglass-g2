@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.0] — 2026-10-18
+
+### Geändert (Quietglass-Bedienstandard QUS v1, „keine Textwand“)
+
+- **Startseite mit drei großen Einträgen** statt direkt in der Seitenreihe: `Aufnahme`, `Wetter`, `Letztes Bild`. Kopfzeile `Star Glass · ● live`, Wischen wählt, Tippen öffnet, 2× beendet die App (Beenden-Dialog unverändert). Eine Zeile darunter nennt, was Aufmerksamkeit braucht (Alarm, Wetterwarnung, auf dem ersten Start der Demo-Hinweis).
+- **Alle Seiten sind jetzt ein Cockpit-Bild** (die ganze Anzeige als ein Bild aus vier 288 × 144-Kacheln, Renderer aus Rain Lens): rechts klein `STAR` und die Uhrzeit, darunter **eine große Hauptaussage** (Alarm, `BILD 23/60`, `RMS 0,52"`, `ALLES BEREIT`, `KLAR BIS ~02:30`, `HFR 2,31`) und sechs Label/Wert-Zellen in drei Spalten; links die bisherige Grafik (Belichtungsring, RMS-/HFR-Felder, Wolkenverlauf, das neueste Bild) bzw. ein Ring aus einem Bogen je Gerät (Ausrüstung). Eine Hinweiszeile unten.
+- Gesendet werden nur **geänderte Kacheln**: die Uhr ändert nur die Kachel oben rechts, ein Countdown-Schritt nur die des Rings; ein unveränderter Zustand sendet nichts. Während der Beenden-Dialog offen sein kann (und im Hintergrund) wird keine Kachel gesendet.
+- Die Seiten *Übersicht*, *Guiding & Fokus* und *Ausrüstung* liegen unter `Aufnahme` (Wischen blättert dort, Anzeige `1/3`); *Wetter* und *Letztes Bild* haben je einen eigenen Eintrag.
+- Fehlt die Verbindung, sagt die Hauptaussage es (`KEINE VERBINDUNG`, `N.I.N.A. AUS`), die Zellen zeigen Striche, nie alte Zahlen; ohne HTTP-Code auf der Brille.
+- **Handy: genau drei Tabs in einer Zeile** – `Jetzt` (Statusbanner, Held-Karte mit dem Bild als großem Wert, 2×2-Kennzahlen, ein Knopf, Kartenleiste der nächsten Stunden), `Verlauf` (HFR und Guiding der letzten Bilder als Kartenleiste, Ereignisse) und `Einstellungen` (gruppierte Karten, Bridge-Karte eingeklappt sobald eingerichtet, Wetter mit eingeklappten Grenzwerten, Brille, Sprache). Erststart: Einstellungen offen mit 3-Schritt-Checkliste; ohne Bridge läuft die Demo. Look wie Status Glass/Rain Lens.
+
+### Entfernt
+
+- Hilfe-Seite der Brille (QUS: keine Hilfe-Seiten; Halten tut jetzt nichts, das Seitenmenü bleibt aus), das animierte Teleskop-Zeichen und das Wetter-Pop-up im Kopf (die Warnung ist die Hauptaussage der Seite).
+- Beim Neustart kommt die App dorthin zurück, wo man war: auf die Startseite (mit Cursor) oder die Cockpit-Seite.
+
+### Unverändert
+
+- Beenden-Dialog (`dialogPending`/`dialogShown`, `comeBack`/zweimal im Hintergrund, nichts wird gezeichnet oder gesendet, solange gefragt wird), `SIDE_MENU = false`, zeitlich begrenzte Seitenaufrufe (`bounded()`), erste Seite = Rebuild + Create, Steuern nur mit zweitem Tippen innerhalb von 4 s.
+
 ## [0.4.6] — 2026-10-17
 
 ### Behoben (Hardware-Protokoll)

@@ -8,14 +8,18 @@ import { rememberLocale, resolveLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
-import { applyMenu, buildView, createModel, decide, menuFor, mergeReport, MESSAGE_MS, ROOT_ITEMS, selectedAgent, withBrief, withLink, withLiveText, withHomePending, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { applyMenu, buildView, createModel, decide, linkBlocks, menuFor, mergeReport, MESSAGE_MS, ROOT_ITEMS, selectedAgent, withBrief, withLink, withLiveText, withHomePending, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
 import { morningStart } from "./hub/brief";
 import { createLocator } from "./hub/place";
 import { initialLivePoll, isOlder, noteLongFailure, noteReport, planPoll } from "./api/live-poll";
 import { buildLiveSttUrl, chooseVoicePath, startLiveStt, type LiveSttSession } from "./stt/live-stt";
 import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
-import { createPage, rebuildPage, updatePage } from "./glasses/render";
+import { COCKPIT_TILES, createCockpitPage, createPage, guardedTileSend, rebuildCockpitPage, rebuildPage, updatePage } from "./glasses/render";
+import { cockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { pixelIconFor } from "./glasses/icons";
 import { MASCOT_STEP_MS } from "./glasses/mascot";
 import { BLANK_ICON, isQuiet, QUIET_VIEW, quietGesture, wake } from "./hub/quiet";
@@ -31,7 +35,7 @@ import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
 const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) ?? "default";
-const BUILD = "0.9.6";
+const BUILD = "0.10.0";
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent (10 min dictation); also guards against a lost "release" event. */
@@ -231,33 +235,60 @@ async function boot(): Promise<void> {
   // send FOREGROUND_ENTER (4) when the dialog comes up and FOREGROUND_EXIT (5) when it goes away after "No".
   let dialogPending = false;
   let dialogShown = false;
+  /** Which kind of page the glasses carry: text containers (+ the face) or the cockpit's four image tiles. */
+  let installed: "text" | "cockpit" | null = null;
+  let textBackend: TextBackend | null = null;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the exit dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitDialogAsked && !closed && installed === "cockpit"));
+  /** Nothing on the glasses can be trusted (reconnect, foreground): the next draw writes everything again. */
+  const forgetShown = (): void => { lastView = null; tiles.reset(); };
+  /** The cockpit image replaces the text page only when nothing else (help, picker, a broken link) owns the screen. */
+  const cockpitShown = (): boolean => model.screen === "cockpit" && !model.help && model.picker === null && !linkBlocks(model.link);
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
     const now = Date.now();
+    const menu = menuFor(model, locale);
+    if (cockpitShown()) {
+      if (!pageCreated || installed !== "cockpit" || menu.key !== menuKey) {
+        const result = pageCreated ? await rebuildCockpitPage(bridge, menu) : await createCockpitPage(bridge, menu);
+        if (!result.ok) { console.warn("[quiethub] cockpit page failed:", result.reason); return; }
+        pageCreated = true;
+        installed = "cockpit";
+        menuKey = menu.key;
+        lastView = null;
+        lastIconShown = "";
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tiles.push(composeCockpit(cockpitModel(model, locale, now), textBackend, now));
+      return;
+    }
     // Quiet while the agent works: empty text at brightness 0/1 and a black (= transparent) face, all in place.
     const quiet = isQuiet(model, now);
     const view = quiet ? QUIET_VIEW : buildView(model, locale, now);
-    const menu = menuFor(model, locale);
     const icon = quiet ? BLANK_ICON : pixelIconFor(model, now);
-    if (sameView(lastView, view) && menu.key === menuKey && icon.join("/") === lastIconShown) return;
+    if (installed === "text" && sameView(lastView, view) && menu.key === menuKey && icon.join("/") === lastIconShown) return;
     lastIconShown = icon.join("/");
     let result;
     if (!pageCreated) {
       result = await createPage(bridge, view, icon, menu);
       if (result.ok) menuKey = menu.key;
-    } else if (menu.key !== menuKey) {
-      // Another page = another menu: the only reason to rebuild. menuObject is re-supplied.
+    } else if (menu.key !== menuKey || installed !== "text") {
+      // Another page kind (the cockpit was up) or another menu: the only reasons to rebuild. menuObject is re-supplied.
       menuKey = menu.key;
       result = await rebuildPage(bridge, view, icon, menu);
       if (!result.ok) {
-        console.warn("[quiethub] menu rebuild failed:", result.reason);
-        result = await updatePage(bridge, view, icon, lastView);
+        console.warn("[quiethub] page rebuild failed:", result.reason);
+        result = installed === "text" ? await updatePage(bridge, view, icon, lastView) : result;
       }
     } else {
       result = await updatePage(bridge, view, icon, lastView);
     }
     if (result.ok) {
       pageCreated = true;
+      installed = "text";
       lastView = view;
       return;
     }
@@ -289,7 +320,7 @@ async function boot(): Promise<void> {
   // The face blinks and looks around, the working line counts up: redraw twice a
   // second on the pages that show them. Unchanged frames cost nothing (see drawOnce).
   setInterval(() => {
-    if (closed || (model.screen !== "agent" && model.screen !== "root")) return;
+    if (closed || (model.screen !== "agent" && model.screen !== "root" && model.screen !== "cockpit")) return;
     // Quiet and already drawn quiet: the face animation is paused, nothing to compute or send.
     if (lastView?.dim === true && isQuiet(model, Date.now())) return;
     void draw();
@@ -368,6 +399,7 @@ async function boot(): Promise<void> {
     // The dialog takes the page away and a plain rebuild no longer reaches it (store review 16.10.2026):
     // put the page up again the way of the first one (rebuild + create), so input (and the next 2×) reaches the app.
     pageCreated = false;
+    installed = null;
     lastView = null;
     menuKey = "";
     lastIconShown = "";
@@ -616,7 +648,7 @@ async function boot(): Promise<void> {
       return;
     }
     if (systemType === 4) {
-      lastView = null;
+      forgetShown();
       void draw();
       return;
     }
@@ -626,6 +658,7 @@ async function boot(): Promise<void> {
     }
     if (systemType === 6 || systemType === 7) {
       closed = true;
+      tiles.close();
       if (pollTimer !== null) clearTimeout(pollTimer);
       if (mic.active) void mic.stop();
       stopLiveStt();
@@ -667,13 +700,13 @@ async function boot(): Promise<void> {
   // wake event, so this hook (plus visibilitychange below) is the re-render.
   unsubscribeDevice = bridge.onDeviceStatusChanged((device) => {
     if (device?.connectType === "connected" && !closed) {
-      lastView = null;
+      forgetShown();
       void draw();
     }
   });
   globalThis.addEventListener?.("visibilitychange", () => {
     if (globalThis.document?.visibilityState === "visible" && !closed) {
-      lastView = null;
+      forgetShown();
       void draw();
     }
   });
@@ -748,11 +781,12 @@ async function boot(): Promise<void> {
       onLocale: (next) => {
         locale = next;
         rememberLocale(bridge, next);
-        lastView = null;
+        forgetShown();
         void draw();
         refreshPhone();
       },
       onSettings: applySettings,
+      onRefresh: () => { fast = true; if (pollTimer !== null) clearTimeout(pollTimer); pollTimer = null; void poll(); },
       onBriefRefresh: () => runEffect({ kind: "brief", refresh: true }),
       onTest: async (candidate) => {
         const started = Date.now();

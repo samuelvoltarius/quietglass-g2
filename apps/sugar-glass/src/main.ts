@@ -4,31 +4,31 @@ import { createClient, toApiError, type SugarApi } from "./ns/client";
 import { createDemo, DEMO_SCENES, type DemoScene } from "./ns/demo";
 import { EMPTY_TREATMENTS, type PumpStatus, type Reading, type Treatments } from "./ns/model";
 import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
-import { t } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
-import { forgetPage, installPage, setPageMenu, updatePage, type MenuSpec } from "./glasses/render";
-import { bitmapKey } from "./glasses/gfx";
-import { ICON_STEP_MS } from "./glasses/charts";
-import { PAGES, SIDE_MENU, buildFrames, buildView, errorReason, type Connection, type Frames, type Layout, type Page, type PageView, type ViewState } from "./glasses/views";
+import { COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage, type TextView } from "./glasses/page";
+import { PAGES, errorReason, startRows, startView, type Connection, type Page, type ViewState } from "./glasses/views";
+import { cockpitModel } from "./cockpit/model";
+import { composeCockpit, type CockpitModel } from "./cockpit/compose";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings } from "./storage/persist";
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.3.6";
-
-/** QIS v1.2: ids of the glasses side menu (Hold opens it). */
-export const MENU = { help: 1, refresh: 2, swipe: 3 } as const;
+export const BUILD = "0.4.0";
 
 const params = new URLSearchParams(globalThis.location?.search ?? "");
 const DEMO = params.get("demo") === "1";
 const SCENE: DemoScene = DEMO_SCENES.includes(params.get("scene") as DemoScene) ? (params.get("scene") as DemoScene) : "normal";
-/** `?page=2` opens on the pump page (simulator screenshots). */
-const START_PAGE = Math.max(0, Math.min(PAGES.length - 1, Number(params.get("page") ?? 1) - 1)) || 0;
+/** `?page=2` opens the pump cockpit, `?page=1` the glucose cockpit (simulator screenshots); without it the start page. */
+const START_PAGE = params.get("page") === null ? null : Math.max(0, Math.min(PAGES.length - 1, Number(params.get("page")) - 1)) || 0;
 
 /** A sensor reports every 5 minutes; asking once a minute catches a new value within a minute. */
 export const POLL_MS = 60_000;
 /** Treatments (meals, boluses) change rarely. */
 const TREATMENTS_MS = 5 * 60_000;
+/** The cockpit is redrawn this often: the clock and the age stay current; an unchanged frame sends nothing. */
+const TICK_MS = 15_000;
 /** Four hours of readings (the curve shows three). */
 const READINGS = 48;
 
@@ -46,9 +46,10 @@ async function boot(): Promise<void> {
   let pump: PumpStatus | null = null;
   let treatments: Treatments = EMPTY_TREATMENTS;
   let treatmentsAt = 0;
-  let page: Page = PAGES[START_PAGE] ?? "glucose";
-  /** The help page is open (side menu); only 2× does anything there (back). */
-  let helpOpen = false;
+  /** What is on the glasses: the start page or the cockpit of `page`. */
+  let screen: "start" | "cockpit" = START_PAGE === null ? "start" : "cockpit";
+  let page: Page = PAGES[START_PAGE ?? 0] ?? "glucose";
+  let startCursor = 0;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let polling = false;
@@ -60,31 +61,18 @@ async function boot(): Promise<void> {
   const viewState = (): ViewState => ({
     locale, demo: DEMO, connection,
     data: readings ? { readings, pump, treatments } : null,
-    page, help: helpOpen, unit: settings.unit, limits: settings.limits,
+    page, unit: settings.unit, limits: settings.limits,
     now: Date.now(),
     ...(demoStart ? { demoHint: true } : {}),
   });
 
-  let lastView: PageView | null = null;
-  let lastLayout: Layout | null = null;
-  let lastKey = "";
-  /** Key of the side menu the page on the glasses carries; a different one needs a rebuild. */
-  let pageMenuKey = "";
+  let lastView: TextView | null = null;
   let pageReady = false;
+  /** Which kind of page the glasses carry: a change means one rebuild. */
+  let installed: "text" | "cockpit" | null = null;
+  let textBackend: TextBackend | null = null;
   let drawing: Promise<void> | null = null;
   let redrawQueued = false;
-
-  /** Off while its clicks do not arrive on the real glasses (SIDE_MENU, step log 15.10.2026): the pages carry no menu. QIS v1.2: Hold opens the side menu: Hilfe, Neu laden and the swipe direction (its label names the state, so a change rebuilds the page once). */
-  const menuSpec = (): MenuSpec => SIDE_MENU ? ({
-    key: `${locale}:${settings.invertScroll ? 1 : 0}`,
-    items: [
-      { id: MENU.help, label: t(locale, "m.help") },
-      { id: MENU.refresh, label: t(locale, "m.refresh") },
-      { id: MENU.swipe, label: t(locale, settings.invertScroll ? "m.swipeInverted" : "m.swipeNormal") },
-    ],
-  }) : { key: "none", items: [] };
-
-  const frameKey = (f: Frames): string => [f.icon, f.value, f.curve].map((b) => (b ? bitmapKey(b) : "-")).join("|");
 
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
@@ -96,21 +84,37 @@ async function boot(): Promise<void> {
    */
   let dialogPending = false;
   let dialogShown = false;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitDialogAsked && !closed && installed === "cockpit"));
+
+  const sameView = (a: TextView | null, b: TextView): boolean => a !== null && a.header === b.header && a.footer === b.footer && a.body.join("|") === b.body.join("|");
+
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
     const state = viewState();
-    const view = buildView(state);
-    const frames = buildFrames(state, view.layout);
-    const key = frameKey(frames);
-    const same = lastView && view.layout === lastView.layout && view.header === lastView.header && view.footer === lastView.footer
-      && view.body.join("\n") === lastView.body.join("\n");
-    const menu = menuSpec();
-    if (pageReady && same && key === lastKey && menu.key === pageMenuKey) return;
-    setPageMenu(menu);
-    const result = !pageReady || view.layout !== lastLayout || menu.key !== pageMenuKey
-      ? await installPage(bridge, view, frames)
-      : await updatePage(bridge, view, frames, lastView);
-    if (result.ok) { pageReady = true; lastView = view; lastLayout = view.layout; lastKey = key; pageMenuKey = menu.key; return; }
+    if (screen === "cockpit") {
+      const model: CockpitModel = cockpitModel(state);
+      if (installed !== "cockpit") pageReady = false;
+      if (!pageReady) {
+        const result = await createCockpitPage(bridge);
+        if (closed) return;
+        if (!result.ok) { pageReady = false; console.warn("[sugarglass] draw failed:", result.reason); return; }
+        pageReady = true; installed = "cockpit"; lastView = null;
+        // A new page starts with blank images.
+        tiles.reset();
+      }
+      textBackend ??= autoBackend();
+      // Never awaited: a slow transfer must not hold up the next gesture.
+      void tiles.push(composeCockpit(model, textBackend));
+      return;
+    }
+    const view = startView(state, startCursor);
+    // Leaving the cockpit: its containers are about to go, no tile may be written any more.
+    if (installed === "cockpit") { installed = null; pageReady = false; }
+    if (pageReady && sameView(lastView, view)) return;
+    const result = pageReady ? await updateTextPage(bridge, view, lastView) : await createTextPage(bridge, view);
+    if (closed) return;
+    if (result.ok) { pageReady = true; installed = "text"; lastView = view; return; }
     pageReady = false;
     lastView = null;
     console.warn("[sugarglass] draw failed:", result.reason);
@@ -136,7 +140,7 @@ async function boot(): Promise<void> {
   let refreshPhone: () => void = () => undefined;
   let phoneSignature = "";
   const updatePhone = (force = false): void => {
-    const signature = JSON.stringify([phoneConnection(), readings?.[0]?.at ?? null, Math.floor(Date.now() / 60_000), locale, settings.unit, settings.invertScroll]);
+    const signature = JSON.stringify([phoneConnection(), readings?.[0]?.at ?? null, Math.floor(Date.now() / 60_000), locale, settings.unit, settings.invertScroll, pump?.at ?? null]);
     if (!force && signature === phoneSignature) return;
     const active = (globalThis.document as Document | undefined)?.activeElement as HTMLElement | null | undefined;
     if (!force && active?.matches?.("#app input, #app select")) return;
@@ -216,6 +220,7 @@ async function boot(): Promise<void> {
     if (closed) return;
     pageReady = false;
     lastView = null;
+    installed = null;
     forgetPage(bridge);
     const run = draw().catch(() => undefined);
     restoring = run;
@@ -245,21 +250,31 @@ async function boot(): Promise<void> {
     closed = true;
     clearInterval(pollTimer);
     clearInterval(tickTimer);
+    tiles.close();
+  };
+
+  /** Opens the row under the cursor of the start page. */
+  const openStartRow = (): void => {
+    const row = startRows()[startCursor];
+    if (!row) return;
+    screen = "cockpit";
+    page = row.kind;
   };
 
   const onGesture = (gesture: Gesture): void => {
-    // QIS v1: the help page is read-only; 2× goes back to the page it came from.
-    if (helpOpen) {
-      if (gesture === "doubleClick") { helpOpen = false; void draw(); }
+    // 2× only goes back (on the start page: the exit dialog); swipes only move; Hold has no function; nothing here changes data.
+    if (screen === "start") {
+      switch (gesture) {
+        case "click": openStartRow(); break;
+        case "scrollDown": startCursor = Math.min(startRows().length - 1, startCursor + 1); break;
+        case "scrollUp": startCursor = Math.max(0, startCursor - 1); break;
+        case "doubleClick": requestExit(); return;
+        default: return;
+      }
+      void draw();
       return;
     }
     switch (gesture) {
-      // Without a working side menu (SIDE_MENU): a hold opens the help.
-      case "longPress":
-        if (SIDE_MENU) return;
-        helpOpen = true;
-        void draw();
-        return;
       case "scrollDown":
       case "scrollUp": {
         const index = (PAGES.indexOf(page) + (gesture === "scrollDown" ? 1 : -1) + PAGES.length) % PAGES.length;
@@ -272,27 +287,11 @@ async function boot(): Promise<void> {
         void poll();
         return;
       case "doubleClick":
-        requestExit();
+        screen = "start";
+        void draw();
         return;
       default:
         return;
-    }
-  };
-
-  /** An item of the glasses side menu: help, refresh and the swipe direction never ride on a gesture. */
-  const onMenu = (itemId: number): void => {
-    switch (itemId) {
-      case MENU.help: helpOpen = true; void draw(); break;
-      case MENU.refresh: treatmentsAt = 0; void poll(); break;
-      case MENU.swipe: {
-        const next = { ...settings, invertScroll: !settings.invertScroll };
-        settings = next;
-        void saveSettings(bridge, next).catch(() => undefined);
-        updatePhone();
-        void draw();
-        break;
-      }
-      default: break;
     }
   };
 
@@ -320,8 +319,8 @@ async function boot(): Promise<void> {
       dialogShown = false;
     }
     if (systemType !== 5) exitBack();
-    const menuId = menuItemIdFromEvent(event);
-    if (menuId !== null) { if (ready) onMenu(menuId); return; }
+    // The glasses' side menu is off (SIDE_MENU): a menu click never runs anything.
+    if (menuItemIdFromEvent(event) !== null) return;
     const parsed = gestureFromEvent(event, { invertScroll: settings.invertScroll });
     if (!parsed) return;
     // Before the first page exists only "leave" means anything.
@@ -333,6 +332,7 @@ async function boot(): Promise<void> {
     if (device?.connectType === "connected" && !closed) {
       pageReady = false;
       lastView = null;
+      installed = null;
       void draw();
     }
   });
@@ -345,8 +345,8 @@ async function boot(): Promise<void> {
 
   await draw();
   startPolling();
-  // The drop animates and alerts pulse; drawOnce writes only what changed.
-  tickTimer = setInterval(() => { void draw(); updatePhone(); }, ICON_STEP_MS);
+  // Keeps the clock and the age of the value current; drawOnce writes only what changed.
+  tickTimer = setInterval(() => { void draw(); updatePhone(); }, TICK_MS);
 
   const phone = mountPhoneUi({
     getSettings: () => settings,
@@ -368,7 +368,8 @@ async function boot(): Promise<void> {
       await draw();
     },
     connection: phoneConnection,
-    newest: () => readings?.[0] ?? null,
+    state: viewState,
+    refresh: () => { treatmentsAt = 0; void poll(); },
     locale: () => locale,
     onLocaleChange: (next) => {
       locale = next;

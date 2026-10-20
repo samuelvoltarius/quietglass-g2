@@ -95,20 +95,20 @@ describe("Sugar Glass lifecycle", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  it("first run: starts in demo with the hint line and the notice, explains the setup on the phone and fetches nothing", async () => {
+  it("first run: starts in demo on the start page with the hint line and the notice, explains the setup on the phone and fetches nothing", async () => {
     const fake = fakeGlasses();
     const root = await boot(fake);
     // QIS v1.2 no. 7: no empty setup page, demo values with the hint to set up the connection.
     await vi.waitFor(() => expect(fake.body()).toContain("Demo · Verbindung am Handy einrichten"));
-    expect(fake.header()).toContain("DEMO");
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("Nur Info – maßgeblich sind Pumpe und Sensor."));
-    await vi.waitFor(() => expect(root.innerHTML).toContain("Erster Start"));
+    expect(fake.header()).toBe("Sugar Glass · Demo");
+    expect(fake.body()).toContain("● Zucker ·");
+    await vi.waitFor(() => expect(root.innerHTML).toContain("In drei Schritten"));
     expect(root.innerHTML).toContain("maßgeblich sind Pumpe und Sensor");
-    // The phone page is split into tabs, with the bar at the bottom.
+    // The phone page has exactly three tabs in one bar at the bottom.
     expect(root.innerHTML).toContain('<nav class="tabbar"');
-    for (const tab of ["now", "glasses", "link", "more"]) expect(root.innerHTML).toContain(`data-tab="${tab}"`);
-    expect(root.innerHTML).toContain("</span>Brille</button>");
+    expect((root.innerHTML.match(/data-tab-go=/g) ?? []).length).toBe(3);
+    for (const tab of ["now", "history", "settings"]) expect(root.innerHTML).toContain(`data-tab="${tab}"`);
+    expect(root.innerHTML).toContain("</span>Einstellungen</button>");
     expect(server.fetchMock).not.toHaveBeenCalled();
   });
 
@@ -195,38 +195,44 @@ describe("Sugar Glass lifecycle", () => {
     expect(fake.exit.calls).toEqual([1]);
   });
 
-  it("shows the value; one ignored rebuild, one create, then only rebuilds between pages", async () => {
+  it("starts on the start page; a tap opens the glucose cockpit as an image, a swipe the pump; one ignored rebuild, one create", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
-    expect(fake.body()).toContain("IOB 0,80 E · Reservoir 80 E · Modus –");
+    await vi.waitFor(() => expect(fake.header()).toBe("Sugar Glass · ● live"));
+    expect(fake.body()).toContain("● Zucker · 123 mg/dL");
+    expect(fake.body()).toContain("  Pumpe · IOB 0,80 E");
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     expect(fake.bridge.rebuildPageContainer.mock.invocationCallOrder[0]).toBeLessThan(fake.bridge.createStartUpPageContainer.mock.invocationCallOrder[0]!);
-    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.some((c) => c[0].containerName === "curve")).toBe(true));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalledTimes(4));
+    const images = fake.bridge.updateImageRawData.mock.calls.length;
     fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · PUMPE · MiniMed 780G"));
-    expect(fake.body()).toContain("Reservoir: 80 E · Pumpen-Akku: 50 %");
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData.mock.calls.length).toBeGreaterThan(images));
+    expect(fake.exit.calls).toEqual([]);
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.header()).toBe("Sugar Glass · ● live"));
+    expect(fake.exit.calls).toEqual([]);
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     for (const page of fake.pages) expect((page.imageObject ?? []).length).toBeLessThanOrEqual(4);
   });
 
-  it("a hold opens the help page; only 2× leaves it (back), then 2× on the value exits", async () => {
+  it("a hold does nothing; 2x in the cockpit goes back, 2x on the start page asks the exit dialog", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
+    await vi.waitFor(() => expect(fake.header()).toBe("Sugar Glass · ● live"));
     fake.emit(HOLD);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · Hilfe"));
-    expect(fake.body()).toContain("Halten = diese Hilfe");
-    fake.emit(DOWN);
-    fake.emit(CLICK);
     await new Promise((r) => setTimeout(r, 30));
-    expect(fake.header()).toBe("SUGARGLASS · Hilfe");
+    expect(fake.header()).toBe("Sugar Glass · ● live");
+    expect(fake.exit.calls).toEqual([]);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalled());
+    fake.emit(HOLD);
+    await new Promise((r) => setTimeout(r, 30));
     expect(fake.exit.calls).toEqual([]);
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
+    await vi.waitFor(() => expect(fake.pages.length).toBeGreaterThan(1));
     expect(fake.exit.calls).toEqual([]);
+    await new Promise((r) => setTimeout(r, 30));
     fake.emit(DOUBLE);
     expect(fake.exit.calls).toEqual([1]);
   });
@@ -241,50 +247,49 @@ describe("Sugar Glass lifecycle", () => {
     }
   });
 
-  it("a failing devicestatus never hides the glucose value; tap refreshes", async () => {
+  it("a failing devicestatus never hides the glucose value; a low value shows on the start page as an alert row after a tap-refresh", async () => {
     server.state.pumpFails = true;
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
+    await vi.waitFor(() => expect(fake.body()).toContain("● Zucker · 123 mg/dL"));
     server.state.sgv = 64;
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toMatch(/NIEDRIG 64 mg\/dL/));
+    fake.emit(CLICK);                                   // open the cockpit
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalled());
+    fake.emit(CLICK);                                   // refresh
+    await vi.waitFor(() => expect(server.state.calls.filter((c) => c.url.includes("sgv.json")).length).toBeGreaterThan(1));
+    fake.emit(DOUBLE);                                  // back to the start page
+    await vi.waitFor(() => expect(fake.body()).toMatch(/! NIEDRIG 64 mg\/dL/));
   });
 
   it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · PUMPE · MiniMed 780G"));
+    await vi.waitFor(() => expect(fake.header()).toBe("Sugar Glass · ● live"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.bridge.updateImageRawData).toHaveBeenCalled());
     expect(fake.pages.length).toBeGreaterThan(0);
     for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
     expect(fake.menus().every((menu) => menu.length === 0)).toBe(true);
-  });
-
-  it("a tap still refreshes the values", async () => {
-    const fake = fakeGlasses(configured());
-    await boot(fake);
-    await vi.waitFor(() => expect(fake.header()).toBe("SUGARGLASS · 123 mg/dL · vor 1 min"));
-    server.state.sgv = 64;
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.header()).toMatch(/NIEDRIG 64 mg\/dL/));
+    // A menu click would never run anything.
+    fake.menu(1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fake.exit.calls).toEqual([]);
   });
 
   it("QIS v1.2: a server that answers with an error shows no HTTP code on the glasses; the phone keeps it", async () => {
     server.fetchMock.mockImplementation(async () => new Response("{}", { status: 503 }));
     const fake = fakeGlasses(configured());
     const root = await boot(fake);
-    await vi.waitFor(() => expect(fake.body()).toContain("Server: Serverfehler"));
+    await vi.waitFor(() => expect(fake.header()).toBe("Sugar Glass · offline"));
     expect(fake.body() + fake.header()).not.toMatch(/HTTP|503/);
     await vi.waitFor(() => expect(root.innerHTML).toContain("HTTP 503"));
   });
 
-  it("an unreachable server is named, not hidden", async () => {
+  it("an unreachable server is named on the phone and the glasses say offline", async () => {
     server.fetchMock.mockImplementation(async () => { throw new TypeError("Failed to fetch"); });
     const fake = fakeGlasses(configured());
-    await boot(fake);
-    await vi.waitFor(() => expect(fake.body()).toContain("Server: nicht erreichbar"));
-    expect(fake.header()).toBe("SUGARGLASS · keine Verbindung");
+    const root = await boot(fake);
+    await vi.waitFor(() => expect(fake.header()).toBe("Sugar Glass · offline"));
+    await vi.waitFor(() => expect(root.innerHTML).toContain("nicht erreichbar"));
   });
 });

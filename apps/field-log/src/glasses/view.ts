@@ -1,5 +1,5 @@
-import { countBySeverity, durationSeconds, type Inspection, type Severity } from "../log/entries";
-import { MAX_UPLOAD_SECONDS, type SttStatus } from "../stt/provider";
+import type { Inspection, LogEntry, Severity } from "../log/entries";
+import { MAX_UPLOAD_SECONDS } from "../stt/provider";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { armedFooter, FOOTER_WIDTH, footer } from "./footer";
@@ -7,19 +7,19 @@ import { armedFooter, FOOTER_WIDTH, footer } from "./footer";
 export { FOOTER_WIDTH };
 
 /**
- * What the glasses show.
+ * What the text pages of the glasses show (QUS v1): the start list, the notes
+ * list, the reading view of one note, the quick-note list and the review of a
+ * transcript. The resting and recording states are the cockpit image
+ * (src/cockpit), not text.
  *
- * During a walk the display answers two questions and nothing else: am I
- * recording, and what did I just say? Reviewing the log happens on the phone
- * afterwards — on the glasses it would only slow the walk down.
+ * Every page is the same three parts: a header, a body of at most
+ * MAX_BODY_ROWS rows and ONE footer line with the gestures that do something.
  */
 export interface LogView {
   readonly header: string;
   readonly body: readonly string[];
   readonly footer: string;
 }
-
-const MIC_ON = "● MIC";
 
 /**
  * - `idle`: between entries
@@ -28,251 +28,223 @@ const MIC_ON = "● MIC";
  */
 export type Phase = "idle" | "pick" | "recording" | "transcribing" | "review";
 
-export interface ViewOptions {
-  readonly phase: Phase;
-  readonly severity: Severity;
-  /** Text awaiting confirmation in the review phase. */
-  readonly pending: string | null;
-  readonly status: SttStatus;
-  readonly mock: boolean;
-  readonly lineWidth?: number;
-  readonly locale?: Locale;
-  /** True when a speech server is set up: tap dictates instead of picking. */
-  readonly voice?: boolean;
-  /** Quick notes offered in the `pick` phase; "Cancel" is appended. */
-  readonly quickNotes?: readonly string[];
-  /** Highlighted row in the `pick` phase, the cancel row included. */
-  readonly pickIndex?: number;
-  /** Something the user asked for did not happen: said on the resting screen. */
-  readonly notice?: FieldNotice | null;
-  /** The choice under review: 0 = keep, 1 = keep and take a photo, 2 = discard. A swipe moves it, a tap carries it out. */
-  readonly reviewChoice?: ReviewChoice;
-  /** "Discard" was tapped once: the footer says a second tap discards. */
-  readonly confirmDiscard?: boolean;
-  /** The help page is open. */
-  readonly help?: boolean;
-  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default: the hold and the swipe do the menu's work. */
-  readonly sideMenu?: boolean;
-  /** Without a side menu: the type selector on the resting screen stands on its last entry, "Help". */
-  readonly helpSelected?: boolean;
-  /** Live text while recording: off (batch only), connecting, live, or lost (batch takes over). */
-  readonly live?: LiveView;
-  /** Everything heard so far (finals + current partial), shown while recording. */
-  readonly liveText?: string;
-  /** How long the microphone has been on, shown in the recording footer. */
-  readonly elapsedMs?: number;
-  /** The text under review covers only the last part of a long recording. */
-  readonly truncated?: boolean;
-}
-
-/** 0 = keep, 1 = keep and take a photo (the camera shutter is its confirmation), 2 = discard (armed first). */
+/** The choice under review: 0 = keep, 1 = keep and take a photo, 2 = discard. A swipe moves it, a tap carries it out. */
 export type ReviewChoice = 0 | 1 | 2;
 
 export type LiveView = "off" | "connecting" | "live" | "lost";
 
-/** Why a tap or a hold did not do what it usually does. */
+/** Why a tap did not do what it usually does. */
 export type FieldNotice = "micDenied" | "noPhoto" | "heardNothing";
-
-const DEFAULT_WIDTH = 56;
 
 /** Rows the body container holds; more are pushed off the display. */
 export const MAX_BODY_ROWS = 7;
-/** Characters the header holds on one line in the G2's proportional font. */
+/** Rows a list shows at most (QUS 1.3). */
+export const VISIBLE_ROWS = 5;
+/** Characters one row holds in the G2's proportional font. */
+export const LINE_WIDTH = 56;
 export const HEADER_WIDTH = 56;
 
-export function buildView(
-  inspection: Inspection | null,
-  options: ViewOptions,
-  now = Date.now(),
-): LogView {
-  const locale = options.locale ?? "en";
-  const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
-  const width = options.lineWidth ?? DEFAULT_WIDTH;
+export type LiveWord = "live" | "local" | "demo";
 
-  const head = (state: string): string => truncate(`${L("g.title")} · ${state}`, HEADER_WIDTH);
-
-  // The help page: every gesture of the app, reachable from the resting screen.
-  if (options.help) {
-    return {
-      header: head(L("g.h.help")),
-      body: [1, 2, 3, 4, 5, 6, 7].map((n) => L("g.help" + n)),
-      footer: footer(locale, {}, "back"),
-    };
-  }
-
-  // Never a dead end: a tap starts an inspection right here.
-  if (!inspection) {
-    return {
-      header: head(L("g.h.none")),
-      body: [L("g.none.1"), L("g.none.2")],
-      footer: footer(locale, { tap: L("g.w.start"), hold: L(options.sideMenu === true ? "g.w.menu" : "g.w.help") }, "exit"),
-    };
-  }
-
-  const counts = countBySeverity(inspection);
-  const tally = L("g.tally", counts);
-
-  switch (options.phase) {
-    case "pick": {
-      const notes = [...(options.quickNotes ?? []), L("g.cancel")];
-      const index = Math.min(Math.max(0, options.pickIndex ?? 0), notes.length - 1);
-      const rows = notes.map((note, i) => truncate((i === index ? "> " : "  ") + note, width));
-      return {
-        header: head(L("g.h.pick")),
-        body: [...windowAround(rows, index, MAX_BODY_ROWS - 1), savedAs(options.severity, locale)],
-        footer: footer(locale, { tap: L("g.w.save"), swipe: L("g.w.pick") }, "back"),
-      };
-    }
-
-    case "recording": {
-      const live = options.live ?? "off";
-      const text = live === "live" ? (options.liveText ?? "").trim() : "";
-      // Newest words visible: the tail of the text, the severity row below it.
-      const body = text
-        ? [...tailRows(wrap(text, width), MAX_BODY_ROWS - 1, width), savedAs(options.severity, locale)]
-        : [
-          L("g.listening"),
-          ...(live === "lost" ? [truncate(L("g.live.lost"), width)] : []),
-          savedAs(options.severity, locale),
-        ];
-      const parts = [
-        MIC_ON + (options.elapsedMs !== undefined ? " " + clockLabel(options.elapsedMs) : ""),
-        ...(options.mock ? [L("g.mock")] : []),
-        ...(live === "connecting" ? [L("g.live.connecting")] : live === "lost" ? [L("g.live.off")] : []),
-      ];
-      return {
-        header: head(parts.join(" · ")),
-        body,
-        // 2× does nothing while the microphone is on: a running recording is never lost by a slip.
-        footer: footer(locale, { tap: L("g.w.done") }, null),
-      };
-    }
-
-    case "transcribing":
-      return {
-        header: head(L("g.transcribing")),
-        body: [L("g.transcribing")],
-        // No gesture does anything while the text is being recognised: the footer says how far it is.
-        footer: statusLabel(options.status, locale),
-      };
-
-    // The transcript is shown before it is kept. Speech recognition is
-    // imperfect and an inspection report is a document someone acts on, so a
-    // wrong entry must be catchable at the moment it is made.
-    case "review": {
-      // A swipe only moves between the two choices; discarding is a choice that is armed first (QIS v1).
-      const choice = options.reviewChoice ?? 0;
-      const armed = choice === 2 && options.confirmDiscard === true;
-      const keepRow = (choice === 0 ? "> " : "  ") + L("g.choice.keep");
-      const photoRow = (choice === 1 ? "> " : "  ") + L("g.choice.keepPhoto");
-      const discardRow = (choice === 2 ? "> " : "  ") + (armed ? L("g.choice.sure") : "") + L("g.choice.discard");
-      return {
-        header: head(L(options.truncated ? "g.h.reviewCut" : "g.h.review", { seconds: MAX_UPLOAD_SECONDS })),
-        // The severity row and the three choices always stay visible; a long transcript is cut
-        // with "…" — the full text is in the log on the phone.
-        body: [
-          ...clampRows(wrap(options.pending ?? "", width), MAX_BODY_ROWS - 4, width),
-          savedAs(options.severity, locale),
-          keepRow,
-          photoRow,
-          discardRow,
-        ],
-        // 2× does nothing here (the text is not lost by a slip); while armed it cancels.
-        footer: armed
-          ? armedFooter(locale, L("g.a.discard"))
-          : footer(locale, { tap: L(choice === 0 ? "g.w.keep" : choice === 1 ? "g.w.keepPhoto" : "g.w.discard"), swipe: L("g.w.choice") }, null),
-      };
-    }
-
-    case "idle":
-    default: {
-      // A failed connection says what to do instead of silently ignoring taps.
-      const error = options.notice === "micDenied"
-        ? [L("g.micDenied.1"), truncate(L("g.micDenied.2"), width)]
-        : options.notice === "noPhoto" ? [truncate(L("g.noPhoto"), width)]
-        : options.notice === "heardNothing" ? [truncate(L("g.heardNothing"), width)]
-        : options.voice && options.status === "error"
-          ? [L("g.serverError.1"), truncate(L("g.serverError.2"), width)]
-          : [];
-      const time = formatDuration(durationSeconds(inspection, now));
-      const sideMenu = options.sideMenu === true;
-      const next = truncate(!sideMenu && options.helpSelected === true
-        ? L("g.nextHelp")
-        : L(sideMenu ? "g.nextSeverityMenu" : "g.nextSeverity", { severity: severityLabel(options.severity, locale) }), width);
-      const restHeader = sectionHeader(inspection, L("g.title"), L("g.h.since", { time }));
-      // With a side menu (QIS v1.2) the hold opens it and a swipe does nothing here; without one the swipe
-      // picks the type (or the Help stop), the tap opens Help on that stop, the hold takes a photo.
-      const restFooter = sideMenu
-        ? footer(locale, { tap: L(options.voice ? "g.w.record" : "g.w.note"), hold: L("g.w.menu") }, "exit")
-        : footer(locale, {
-          tap: L(options.helpSelected === true ? "g.w.help" : options.voice ? "g.w.record" : "g.w.note"),
-          swipe: L("g.w.type"),
-          hold: L("g.w.photo"),
-        }, "exit");
-      if (inspection.entries.length === 0) {
-        return {
-          header: restHeader,
-          body: [...error, ...(error.length > 0 ? [""] : []), L("g.noEntries"), truncate(L("g.firstNote"), width), "", next],
-          footer: restFooter,
-        };
-      }
-      // The last three entries, newest at the bottom, then the tally and the next type.
-      // A server error takes its rows from the older entries first.
-      const room = MAX_BODY_ROWS - error.length - 2;
-      const body = [...error, ...recentEntryLines(inspection, Math.min(RECENT_ENTRIES, room), width, locale), tally, next];
-      return {
-        header: restHeader,
-        body,
-        footer: restFooter,
-      };
-    }
-  }
+/** `live` with a speech server, `local` with quick notes only, `demo` for the sample data. */
+export function liveWord(voice: boolean, demo: boolean): LiveWord {
+  return demo ? "demo" : voice ? "live" : "local";
 }
 
-/** `FIELDLOG · section · for 12m`: the section gives way when the line is too long, the time stays. */
-function sectionHeader(inspection: Inspection, app: string, since: string): string {
-  const fixed = `${app} · `.length + ` · ${since}`.length;
-  const label = truncate(inspection.section || inspection.title, Math.max(4, HEADER_WIDTH - fixed));
-  return `${app} · ${label} · ${since}`;
-}
-
-/** How many entries the resting screen lists. */
-export const RECENT_ENTRIES = 3;
-
-/** The last `count` entries, oldest first so the newest sits at the bottom. */
-export function recentEntryLines(inspection: Inspection, count: number, width: number, locale: Locale): string[] {
-  if (count <= 0) return [];
-  return inspection.entries.slice(-count).map((entry) => {
-    const mark = entry.severity === "major" ? "! " : entry.severity === "minor" ? "· " : "  ";
-    const photo = entry.attachment ? " " + t(locale, "g.photo") : "";
-    return truncate(mark + entry.text + photo, width);
-  });
+/** `FIELDLOG · ● live` (QUS 1.1): the mode, a dot while live, the state as a word otherwise. */
+export function headerLine(locale: Locale, title: string, word: LiveWord): string {
+  const state = word === "live" ? "● " + t(locale, "g.live") : word === "demo" ? t(locale, "g.demoWord") : t(locale, "g.localWord");
+  return truncate(`${title} · ${state}`, HEADER_WIDTH);
 }
 
 export function severityLabel(severity: Severity, locale: Locale = "en"): string {
   return t(locale, "g.sev." + severity);
 }
 
-/** The row that says which type the entry will be filed as. */
-function savedAs(severity: Severity, locale: Locale): string {
-  return t(locale, "g.as", { severity: severityLabel(severity, locale) });
+// ---- start page ---------------------------------------------------------------------
+
+export type StartRow =
+  /** Opens the recorder (speech server) or the quick-note list (none). */
+  | { readonly kind: "record" }
+  /** The notes of the open walk, newest first. Only when there are some. */
+  | { readonly kind: "notes"; readonly count: number }
+  /** The type of the next entry; a tap sets the next one. */
+  | { readonly kind: "type" };
+
+/** At most three entries (QUS 1.1): record, the notes (only when there are some), the type. */
+export function startRows(entryCount: number): StartRow[] {
+  return [
+    { kind: "record" },
+    ...(entryCount > 0 ? [{ kind: "notes", count: entryCount } as const] : []),
+    { kind: "type" },
+  ];
 }
 
-export function statusLabel(status: SttStatus, locale: Locale = "en"): string {
-  switch (status) {
-    case "connecting": return t(locale, "g.status.connecting");
-    case "reconnecting": return t(locale, "g.status.reconnecting");
-    case "error": return t(locale, "g.status.error");
-    default: return t(locale, "g.status.working");
+export interface StartOptions {
+  readonly locale: Locale;
+  readonly voice: boolean;
+  readonly demo: boolean;
+  readonly severity: Severity;
+  readonly entryCount: number;
+}
+
+function startLabel(row: StartRow, options: StartOptions): string {
+  const { locale } = options;
+  switch (row.kind) {
+    case "record": return t(locale, options.voice ? "g.start.record" : "g.start.quick");
+    case "notes": return t(locale, "g.start.notes", { n: row.count });
+    case "type": return t(locale, "g.start.type", { severity: severityLabel(options.severity, locale) });
   }
 }
 
-/** A run of `size` items that keeps `index` in view. */
-function windowAround(items: readonly string[], index: number, size: number): string[] {
-  if (items.length <= size) return [...items];
-  const start = Math.min(Math.max(0, index - Math.floor(size / 2)), items.length - size);
-  return items.slice(start, start + size);
+export function startView(cursor: number, options: StartOptions): LogView {
+  const { locale } = options;
+  const rows = startRows(options.entryCount);
+  const at = Math.min(Math.max(0, cursor), rows.length - 1);
+  const selected = rows[at];
+  const body = rows.map((row, index) => truncate((index === at ? "● " : "  ") + startLabel(row, options), LINE_WIDTH));
+  const tap = selected?.kind === "record" ? t(locale, options.voice ? "g.w.speak" : "g.w.pickNote")
+    : selected?.kind === "notes" ? t(locale, "g.w.open")
+      : t(locale, "g.w.setType");
+  return {
+    header: headerLine(locale, t(locale, "g.title"), liveWord(options.voice, options.demo)),
+    body,
+    footer: footer(locale, { tap, swipe: t(locale, "g.w.pick") }, "exit"),
+  };
 }
+
+// ---- notes list and reading view -----------------------------------------------------
+
+/** The window of `rows` around the cursor: where it starts. */
+export function windowStart(total: number, cursor: number, rows: number): number {
+  return Math.max(0, Math.min(cursor - Math.floor(rows / 2), total - rows));
+}
+
+/** Entries newest first: the list the glasses show. */
+export function newestFirst(inspection: Inspection): LogEntry[] {
+  return [...inspection.entries].reverse();
+}
+
+function entryTime(entry: LogEntry): string {
+  const date = new Date(entry.at);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** One row of the notes list: `● 14:02 ! Fenster …` (a dot for the selection, `!` for important). */
+export function noteRow(entry: LogEntry, selected: boolean, locale: Locale): string {
+  const mark = entry.severity === "major" ? "! " : entry.severity === "minor" ? "· " : "";
+  const photo = entry.attachment ? " " + t(locale, "g.photo") : "";
+  return truncate(`${selected ? "● " : "  "}${entryTime(entry)} ${mark}${entry.text}${photo}`, LINE_WIDTH);
+}
+
+export function notesView(inspection: Inspection, cursor: number, locale: Locale, voice: boolean, demo: boolean): LogView {
+  const list = newestFirst(inspection);
+  const at = Math.min(Math.max(0, cursor), Math.max(0, list.length - 1));
+  const first = windowStart(list.length, at, VISIBLE_ROWS);
+  return {
+    header: headerLine(locale, t(locale, "g.h.notes"), liveWord(voice, demo)),
+    body: list.slice(first, first + VISIBLE_ROWS).map((entry, index) => noteRow(entry, first + index === at, locale)),
+    footer: footer(locale, { tap: t(locale, "g.w.open"), swipe: t(locale, "g.w.pick") }, "back"),
+  };
+}
+
+/** The text of one note, split into pages of `rows` rows. */
+export function readPages(text: string, rows: number = MAX_BODY_ROWS - 1, width: number = LINE_WIDTH): string[][] {
+  const lines = wrap(text, width);
+  if (lines.length === 0) return [[""]];
+  const pages: string[][] = [];
+  for (let i = 0; i < lines.length; i += rows) pages.push(lines.slice(i, i + rows));
+  return pages;
+}
+
+/** How many pages the reading view has for the note at `index` (newest first). */
+export function readPageCount(inspection: Inspection, index: number, locale: Locale): number {
+  const entry = newestFirst(inspection)[index];
+  if (!entry) return 1;
+  return readPages(entry.text + (entry.attachment ? " " + t(locale, "g.photo") : "")).length;
+}
+
+/** The reading view of one note: a context header, the text, the way on. */
+export function readView(inspection: Inspection, index: number, page: number, locale: Locale): LogView {
+  const list = newestFirst(inspection);
+  const at = Math.min(Math.max(0, index), Math.max(0, list.length - 1));
+  const entry = list[at];
+  if (!entry) return { header: t(locale, "g.h.notes"), body: [""], footer: footer(locale, {}, "back") };
+  const pages = readPages(entry.text + (entry.attachment ? " " + t(locale, "g.photo") : ""));
+  const shown = Math.min(Math.max(0, page), pages.length - 1);
+  const more = pages.length > 1 ? ` ${shown + 1}/${pages.length}` : "";
+  const head = t(locale, "g.h.read", { i: at + 1, n: list.length, time: entryTime(entry), severity: severityLabel(entry.severity, locale) });
+  return {
+    header: truncate(head, HEADER_WIDTH - more.length) + more,
+    body: pages[shown] ?? [""],
+    footer: footer(locale, { tap: t(locale, "g.w.next"), ...(pages.length > 1 ? { swipe: t(locale, "g.w.page") } : {}) }, "back"),
+  };
+}
+
+// ---- quick notes and review ----------------------------------------------------------
+
+export interface PickOptions {
+  readonly locale: Locale;
+  readonly severity: Severity;
+  readonly quickNotes: readonly string[];
+  /** Highlighted row, the cancel row included. */
+  readonly pickIndex: number;
+}
+
+/** The quick-note list: five rows, a dot on the highlighted one, "Cancel" last. */
+export function pickView(options: PickOptions): LogView {
+  const { locale } = options;
+  const notes = [...options.quickNotes, t(locale, "g.cancel")];
+  const index = Math.min(Math.max(0, options.pickIndex), notes.length - 1);
+  const rows = notes.map((note, i) => truncate((i === index ? "● " : "  ") + note, LINE_WIDTH));
+  const first = windowStart(rows.length, index, VISIBLE_ROWS);
+  return {
+    header: truncate(t(locale, "g.h.pickType", { severity: severityLabel(options.severity, locale) }), HEADER_WIDTH),
+    body: rows.slice(first, first + VISIBLE_ROWS),
+    footer: footer(locale, { tap: t(locale, "g.w.save"), swipe: t(locale, "g.w.pick") }, "back"),
+  };
+}
+
+export interface ReviewOptions {
+  readonly locale: Locale;
+  readonly severity: Severity;
+  readonly pending: string | null;
+  readonly reviewChoice: ReviewChoice;
+  /** "Discard" was tapped once: the footer says a second tap discards. */
+  readonly confirmDiscard: boolean;
+  /** The text covers only the last part of a long recording. */
+  readonly truncated: boolean;
+}
+
+/** Text rows the review shows above its three choices. */
+const REVIEW_TEXT_ROWS = 3;
+
+/** The transcript is shown before it is kept (a report is a document someone acts on). */
+export function reviewView(options: ReviewOptions): LogView {
+  const { locale } = options;
+  const choice = options.reviewChoice;
+  const armed = choice === 2 && options.confirmDiscard;
+  const row = (selected: boolean, text: string): string => (selected ? "● " : "  ") + text;
+  const head = options.truncated
+    ? t(locale, "g.h.reviewCut", { seconds: MAX_UPLOAD_SECONDS })
+    : t(locale, "g.h.reviewType", { severity: severityLabel(options.severity, locale) });
+  return {
+    header: truncate(head, HEADER_WIDTH),
+    // The three choices always stay visible; a long transcript is cut with "…" - the full text is in the log on the phone.
+    body: [
+      ...clampRows(wrap(options.pending ?? "", LINE_WIDTH), REVIEW_TEXT_ROWS, LINE_WIDTH),
+      row(choice === 0, t(locale, "g.choice.keep")),
+      row(choice === 1, t(locale, "g.choice.keepPhoto")),
+      row(choice === 2, (armed ? t(locale, "g.choice.sure") : "") + t(locale, "g.choice.discard")),
+    ],
+    // 2× does nothing here (the text is not lost by a slip); while armed it cancels.
+    footer: armed
+      ? armedFooter(locale, t(locale, "g.a.discard"))
+      : footer(locale, { tap: t(locale, choice === 0 ? "g.w.keep" : choice === 1 ? "g.w.keepPhoto" : "g.w.discard"), swipe: t(locale, "g.w.choice") }, null),
+  };
+}
+
+// ---- helpers --------------------------------------------------------------------------
 
 /** Greedy word wrap; a word longer than the line is split rather than overflowing. */
 export function wrap(text: string, maxWidth: number): string[] {
@@ -296,20 +268,6 @@ export function wrap(text: string, maxWidth: number): string[] {
   return lines;
 }
 
-/** The last `max` rows; a cut at the front is marked with "…" so the newest words stay visible. */
-export function tailRows(lines: readonly string[], max: number, width: number): string[] {
-  if (lines.length <= max) return [...lines];
-  const kept = lines.slice(lines.length - max);
-  kept[0] = truncate("… " + (kept[0] ?? ""), width);
-  return kept;
-}
-
-/** Recording time as m:ss. */
-export function clockLabel(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
-}
-
 /** At most `max` rows; a cut is marked with an ellipsis on the last row kept. */
 function clampRows(lines: readonly string[], max: number, width: number): string[] {
   if (lines.length <= max) return [...lines];
@@ -324,6 +282,7 @@ export function truncate(text: string, maxWidth: number): string {
   return text.slice(0, Math.max(0, maxWidth - 1)).trimEnd() + "…";
 }
 
+/** The length of a walk: 12m or 1h 5m. */
 export function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.round(totalSeconds));
   const minutes = Math.floor(seconds / 60);

@@ -12,7 +12,6 @@ vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
 }));
-vi.mock("../src/glasses/pixel", () => ({ ICON_WIDTH: 64, ICON_HEIGHT: 30, renderPixelIcon: async () => new Uint8Array([1]) }));
 
 const vars = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 
@@ -98,8 +97,11 @@ function screens(locale: Locale): LumenView[] {
   }
   views.push(buildView(null, { ...idle, error: "HTTP 500" }));
   views.push(buildView(status(), { ...idle, error: "NetworkError when attempting to fetch resource xyz" }));
-  // Loading.
+  // Loading, and the start page in every state.
   views.push(buildView(null, idle));
+  views.push(buildView(null, { ...idle, screen: "start", error: "HTTP 500", demo: true }));
+  views.push(buildView(status(), { ...idle, screen: "start", demo: true }));
+  views.push(buildView(status({ quest: null }), { ...idle, screen: "start", startCursor: 1 }));
   // Every moth state, with and without a quest, short and long footers.
   for (const [licht, zustand] of [[95, "leuchtet"], [60, "wach"], [40, "matt"], [20, "schläfrig"], [0, "eingerollt"]] as const) {
     views.push(buildView(status({ licht, zustand }), idle));
@@ -118,7 +120,7 @@ function screens(locale: Locale): LumenView[] {
 
 describe("glasses text budget", () => {
   for (const locale of ["de", "en"] as const) {
-    it(`fits every ${locale} screen: ${MAX_BODY_ROWS} rows of ${BODY_COLS} full width, ${HEADER_COLS} for the header beside the pixel moth, ${LINE_COLS} for the footer`, () => {
+    it(`fits every ${locale} screen: ${MAX_BODY_ROWS} rows of ${BODY_COLS} full width, ${HEADER_COLS} for the header, ${LINE_COLS} for the footer`, () => {
       for (const view of screens(locale)) {
         expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_COLS);
         expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_COLS);
@@ -129,25 +131,26 @@ describe("glasses text budget", () => {
     });
   }
 
-  it("keeps the light window in the German body and the gestures in the footer", () => {
+  it("the German quest page: heading and instruction in the body, the gestures in the footer", () => {
     const view = buildView(status({ streak: 3, window: { art: "golden", in_minuten: 51 }, quest: { medium: "foto", dauer_min: 30 } }), { phase: "idle", result: null, error: null, locale: "de" });
-    expect(view.body.at(-1)).toContain("Gold in 51 min");
-    expect(view.footer).toBe("Tippen = Foto · Halten = Quest · 2× = Ende");
+    expect(view.body[0]).toBe("Bird's Eye Pattern");
+    expect(view.body.at(-1)).toBe("FOTO · 30 min");
+    expect(view.footer).toBe("Tippen = Foto · Halten = Quest · 2× = zurück");
   });
 
   it("speaks German on the glasses, with the app name untouched", () => {
     const de = { phase: "idle" as const, result: null, error: null, locale: "de" as const };
     const failed = buildView(null, { ...de, error: "LUMEN unreachable" });
-    expect(failed.header).toBe("LUMEN · Fehler");
+    expect(failed.header).toBe("Lumen · Fehler");
     expect(failed.body[0]).toBe("LUMEN nicht erreichbar");
     expect(failed.body).toContain("Prüf die Adresse in der Handy-App.");
-    expect(failed.footer).toBe("Tippen = nochmal · 2× = Ende");
-    expect(buildView(null, de).header).toBe("LUMEN · verbinde");
+    expect(failed.footer).toBe("Tippen = nochmal · 2× = zurück");
+    expect(buildView(null, de).header).toBe("Lumen · verbinde");
     expect(buildView(null, { ...de, error: "HTTP 500" }).body[0]).toBe("LUMEN meldet einen Fehler");
     expect(windowLabel("golden", 135, "de")).toBe("Gold in 2 h 15 min");
     expect(windowLabel("blau", 0, "de")).toBe("Blau jetzt");
     const ok = buildView(status(), { ...de, phase: "result", result: { ok: true, text: "" } });
-    expect(ok.header).toBe("LUMEN · Angenommen");
+    expect(ok.header).toBe("Lumen · Angenommen");
     expect(ok.body.join(" ")).toContain("Gesendet.");
   });
 });
@@ -164,8 +167,8 @@ describe("phone page", () => {
     expect(html).toContain('<option value="de" selected>');
     expect(html).toContain('id="language"');
     expect(html).toContain('class="tabbar"');
-    expect(html).toContain('data-tab-go="more"');
-    expect(html).toContain(">Mehr<");
+    expect(html).toContain('data-tab-go="settings"');
+    expect(html).toContain(">Einstellungen<");
     expect(html).toContain("Speichern");
     expect(html).toContain("angemeldet");
     expect(html).not.toContain("abcdef");
@@ -241,19 +244,20 @@ describe("switching language on the phone", () => {
     for (let i = 0; i < 100 && !handler; i++) await vi.advanceTimersByTimeAsync(100);
     await vi.advanceTimersByTimeAsync(100);
 
+    // QUS v1: the app opens on the start page; an unreachable LUMEN shows as `offline` and the reason in a row.
+    expect(glasses.header).toBe("Lumen · offline");
     expect(glasses.body).toContain("LUMEN unreachable");
-    expect(html).toContain("Not connected");
+    expect(html).toMatch(/Connecting to Lumen|Lumen is unreachable/);
     expect(onLanguage).toBeDefined();
 
     select.value = "de";
     onLanguage?.({ target: select });
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(glasses.header).toBe("LUMEN · Fehler");
+    expect(glasses.header).toBe("Lumen · offline");
     expect(glasses.body).toContain("LUMEN nicht erreichbar");
-    expect(glasses.body).toContain("Prüf die Adresse in der Handy-App.");
-    expect(glasses.footer).toBe("Tippen = nochmal · 2× = Ende");
-    expect(html).toContain("Nicht verbunden");
+    expect(glasses.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
+    expect(html).toContain("Lumen ist nicht erreichbar");
     expect(stored.get("quietglass.locale")).toBe("de");
   });
 });

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Departure, Ride, RideStop, Stop } from "../src/transit/types";
 import { boardingIndex, followRide } from "../src/ride/follow";
-import {
-  boardScene, bySoonest, followLoadingScene, glanceHeadsign, followScene, messageScene, sureness,
-} from "../src/glasses/board";
+import { bySoonest, glanceHeadsign, messageScene, sureness } from "../src/glasses/board";
+import { boardScene } from "../src/cockpit/scene";
+import { followLoadingModel, followModel, followLoadingScene, followScene } from "../src/cockpit/follow";
+import { boardModel } from "../src/cockpit/model";
 import { BOARD_ROWS } from "../src/glasses/layout";
 
 const NOW = new Date("2026-10-13T10:00:00Z");
@@ -110,20 +111,26 @@ describe("the board page: one thing big, little text", () => {
     expect(bySoonest(departures).map((d) => d.tripId)).toEqual(["b", "d", "a", "c"]);
   });
 
-  it("puts the minutes, the line and the direction into pictures, at most three short rows beneath", () => {
+  it("the board is the cockpit: the line and minutes as the headline, the direction under it, six cells, one hint line", () => {
     const sorted = bySoonest(departures);
-    const scene = boardScene(MIRABELL, sorted, 99, "de", 1, NOW);
-    expect(scene.kind).toBe("board");
-    expect(scene.images.map((image) => image.key)).toEqual([
-      "big:4|min|n", "badge:O-Bus 6", "strip:→ Itzling West", "strip:→ Itzling West",
+    const model = boardModel({ stop: MIRABELL, departures: sorted, selected: 1, metresAway: 99, now: NOW, locale: "de" });
+    expect(model.headline).toBe("O-BUS 6 · 4 MIN");
+    expect(model.direction).toBe("→ ITZLING WEST");
+    expect(model.cells).toEqual([
+      { label: "DANACH", value: "9 MIN" },
+      { label: "STEIG", value: "A" },
+      { label: "VERSPÄTUNG", value: "0 MIN" },
+      { label: "HALT", value: "SALZBURG MIRABELLPLATZ" },
+      { label: "WEG", value: "100 M" },
+      { label: "ABFAHRT", value: expect.stringMatching(/^\d\d:\d\d$/) },
     ]);
-    expect(scene.view.body).toEqual([
-      "Steig A · ● pünktlich · Salzburg Mirabellplatz · 99 m",
-      "9 min · O-Bus 3 · Salzburg Süd",
-      "16 min · Bus 150 · Salzburg Hbf",
-    ].map((row) => (row.length > 50 ? row.slice(0, 49) + "…" : row)));
-    expect(scene.view.body.length).toBeLessThanOrEqual(BOARD_ROWS);
-    expect(scene.view.footer).toBe("2/4 · Tippen = folgen · Halten = Ziel · 2× = Ende");
+    expect(model.hint).toBe("2/4 · Tippen = folgen · Wischen = wählen · Halten = Ziel · 2× = zurück");
+    expect(model.hint.length).toBeLessThanOrEqual(70);
+    expect(model.hint.endsWith("2× = zurück")).toBe(true);
+    const scene = boardScene(MIRABELL, sorted, 99, "de", 1, NOW);
+    expect(scene.kind).toBe("cockpit");
+    expect(scene.images.map((image) => image.id)).toEqual([4, 5, 6, 7]);
+    expect(scene.view.footer).toBe(model.hint);
   });
 
   it("keeps only where a bus goes, not the way it takes", () => {
@@ -139,67 +146,67 @@ describe("the board page: one thing big, little text", () => {
     expect(sureness({ ...departures[0]!, cancelled: true }, "de")).toBe("fällt aus");
   });
 
-  it("keeps the same page shape for every state of the board screen, so nothing is rebuilt", () => {
+  it("board and followed bus share the cockpit page, so tapping a departure never rebuilds", () => {
     const ride: Ride = { line: "Bus 150", headsign: "Bad Ischl via Hof ~ Fuschl", stops: stops(1) };
     const chosen = departure();
     const coming = followRide(ride, 2, at(5), NOW, AT_STOP)!;
     const riding = followRide({ ...ride, stops: stops(-6) }, 2, at(-2), NOW, { lat: 47.8068, lon: 13.047 })!;
     const scenes = [
       boardScene(MIRABELL, bySoonest(departures), 99, "de", 0, NOW),
-      boardScene(MIRABELL, [], 99, "de", 0, NOW),
-      followLoadingScene(chosen, NOW, "de"),
-      followScene(chosen, coming, NOW, "de", 0),
-      followScene(chosen, riding, NOW, "de", 0),
-      messageScene("ÖBB nicht erreichbar", "Prüfe das Internet am Handy und tippe nochmal.", "Tippen = nochmal · 2× = Ende", "!"),
+      followLoadingScene(chosen, NOW, "de", MIRABELL.name),
+      followScene(chosen, coming, NOW, "de"),
+      followScene(chosen, riding, NOW, "de"),
     ];
     for (const scene of scenes) {
-      expect(scene.kind).toBe("board");
+      expect(scene.kind).toBe("cockpit");
       expect(scene.images.map((image) => image.id)).toEqual([4, 5, 6, 7]);
-      expect(scene.view.body.length).toBeLessThanOrEqual(BOARD_ROWS);
-      expect(scene.view.body.every((row) => row.length <= 50)).toBe(true);
+      expect(scene.view.footer.length).toBeLessThanOrEqual(70);
     }
+    // Empty boards and failures stay on the message page.
+    const message = messageScene("ÖBB nicht erreichbar", "Prüfe das Internet am Handy und tippe nochmal.", "Tippen = nochmal · 2× = zurück", "!");
+    expect(message.kind).toBe("board");
+    expect(message.view.body.length).toBeLessThanOrEqual(BOARD_ROWS);
+    expect(boardScene(MIRABELL, [], 99, "de", 0, NOW).kind).toBe("board");
   });
 
   it("answers the tap with the picked bus while its stops load", () => {
-    const scene = followLoadingScene(departure(), NOW, "de");
-    expect(scene.view.body).toEqual(["Fahrt wird geladen …"]);
-    expect(scene.view.footer).toBe("Tippen = abbrechen · 2× = Ende");
-    expect(scene.images[2]!.key).toBe("strip:Bus 150 → Bad Ischl");
+    const model = followLoadingModel(departure(), NOW, "de", MIRABELL.name);
+    expect(model.title).toBe("FOLGEN · ● live");
+    expect(model.headline).toBe("BUS 150 · 4 MIN");
+    expect(model.direction).toBe("→ BAD ISCHL");
+    expect(model.caption).toBe("Fahrt wird geladen …");
+    expect(model.hint).toBe("Tippen = abbrechen · 2× = Ende");
   });
 
   it("waiting: minutes until it leaves here, where the bus is, the board's direction", () => {
     const ride: Ride = { line: "Bus 150", headsign: "Bad Ischl via Hof ~ Fuschl ~ St.Gilgen", stops: stops(1) };
-    const scene = followScene(departure(), followRide(ride, 2, at(5), NOW, AT_STOP)!, NOW, "de", 0);
-    expect(scene.images[0]!.key).toBe("big:5|min|n");
-    expect(scene.images[1]!.key).toBe("stop-bus:-1");
-    expect(scene.images[2]!.key).toBe("strip:Bus 150 → Bad Ischl");
-    expect(scene.view.body[1]).toBe("Bus bei Salzburg Hbf · 2 vor dir");
-    expect(scene.animated).toBe(false);
-    // In the last minute the bus drives in, one frame per beat.
-    const last = followScene(departure(), followRide(ride, 2, at(5), at(5), AT_STOP)!, at(5), "de", 2);
-    expect(last.animated).toBe(true);
-    expect(last.images[1]!.key).toBe("stop-bus:2");
+    const model = followModel(departure(), followRide(ride, 2, at(5), NOW, AT_STOP)!, NOW, "de");
+    expect(model.headline).toBe("BUS 150 · 5 MIN");
+    expect(model.ring).toMatchObject({ center: "5", sub: "MIN" });
+    expect(model.cells.find((cell) => cell.label === "BUS BEI")?.value).toBe("SALZBURG HBF");
+    expect(model.cells.find((cell) => cell.label === "VOR DIR")?.value).toBe("2");
+    // In the last minute the ring is full and says "jetzt".
+    const last = followModel(departure(), followRide(ride, 2, at(5), at(5), AT_STOP)!, at(5), "de");
+    expect(last.ring).toMatchObject({ progress: 1, center: "JETZT" });
   });
 
-  it("riding: the next stop in bold, minutes to it big, then and the terminus as two rows (place left out)", () => {
+  it("riding: the next stop is the headline, minutes to it in the ring, then and the terminus in cells (place left out)", () => {
     const ride: Ride = { line: "Bus 150", headsign: "Bad Ischl", stops: stops(-6) };
     const state = followRide(ride, 2, at(-2), NOW, { lat: 47.8068, lon: 13.047 })!;
-    const scene = followScene(departure(), state, NOW, "de", 0);
-    expect(scene.images[2]!.key).toBe("strip:Hofwirt");
-    expect(scene.images[1]!.key).toContain("nächster");
-    expect(scene.view.body).toEqual([
-      "danach Sterneckstraße · 2 min",
-      "bis Gnigl Bahnhst · " + clockOf(at(4)) + " · 3 Stationen",
-    ]);
-    expect(scene.view.footer).toBe("GPS · Tippen = Fahrt abbrechen · 2× = Ende");
+    const model = followModel(departure(), state, NOW, "de");
+    expect(model.headline).toBe("HOFWIRT");
+    expect(model.direction).toMatch(/^NÄCHSTER HALT · (\d+ MIN|JETZT)$/);
+    expect(model.cells.find((cell) => cell.label === "DANACH")?.value).toBe("STERNECKSTRASSE");
+    expect(model.cells.find((cell) => cell.label === "ZIEL")?.value).toBe("GNIGL BAHNHST");
+    expect(model.cells.find((cell) => cell.label === "AN")?.value).toBe(clockOf(at(4)));
+    expect(model.cells.find((cell) => cell.label === "NOCH")?.value).toBe("3");
+    expect(model.hint).toBe("GPS · Tippen = Fahrt abbrechen · 2× = Ende");
   });
 
-  it("riding out of town: the names stay whole", () => {
-    const out = stops(-6).map((s, i, all) => (i === all.length - 1 ? { ...s, stop: { ...s.stop, name: "Koppl Ort" } } : s));
-    const state = followRide({ line: "Bus 150", headsign: "Bad Ischl", stops: out }, 2, at(-2), NOW, { lat: 47.8068, lon: 13.047 })!;
-    const scene = followScene(departure(), state, NOW, "de", 0);
-    expect(scene.images[2]!.key).toBe("strip:Salzburg Hofwirt");
-    expect(scene.view.body[1]).toMatch(/^bis Koppl Ort · /);
+  it("armed, the hint is the confirming line", () => {
+    const ride: Ride = { line: "Bus 150", headsign: "Bad Ischl", stops: stops(-6) };
+    const state = followRide(ride, 2, at(-2), NOW, { lat: 47.8068, lon: 13.047 })!;
+    expect(followScene(departure(), state, NOW, "de", true).view.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen");
   });
 });
 

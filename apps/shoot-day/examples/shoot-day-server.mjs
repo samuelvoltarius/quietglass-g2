@@ -35,7 +35,9 @@
  *                 one-way, 10 s after the last change (shoot-day-wd.mjs). Empty = off
  *   SHOOT_WD_DEBOUNCE_MS  wait after the last save (default 10000)
  *   SHOOT_WD_STATUS_OPEN, SHOOT_WD_STATUS_DONE  task status names (default open / done, as the dashboard uses)
- *   SHOOT_GCAL_*  write project dates into Google Calendar (see shoot-day-gcal.mjs); off without them
+ *   SHOOT_GCAL_*  write project dates into Google Calendar (see shoot-day-gcal.mjs); off without them.
+ *                 With the Work Dashboard sync on, its confirmed appointments go there too (in the
+ *                 rhythm of SHOOT_WD_POLL_MS and on POST /api/gcal/sync)
  *   SHOOT_WD_POLL_MS  how often the dashboard tasks of a project are looked at for changes made
  *                 there (cheap fingerprint; a change → the project is understood again).
  *                 Default 900000 (15 min), 0 = off; only with the Work Dashboard sync on
@@ -74,7 +76,8 @@ import { cleanPoints, extractTalkPoints, pointCount } from "./shoot-day-talkpoin
 import { TEMPLATE_IDS, isInternalTemplate, docContext, draftDocuments, findChrome, loadBrand, matchTemplate, printPdf, templateLabel, writePurpose } from "./shoot-day-docs.mjs";
 import { HINT_ID, HINT_TITLE, analyseProject, fallbackAnalysis, materialHash, projectSources } from "./shoot-day-brain.mjs";
 import { createVectorIndex } from "./shoot-day-vectors.mjs";
-import { configFromEnv as gcalConfig, createSync as createGcalSync } from "./shoot-day-gcal.mjs";
+import { configFromEnv as gcalConfig, createEventSync, createSync as createGcalSync } from "./shoot-day-gcal.mjs";
+import { parseEvent } from "./shoot-day-events.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env["PORT"] ?? 8899);
@@ -148,7 +151,7 @@ const presetItems = () =>
 // project, so switching projects never leaves last week's script or packing
 // list on the glasses. "active" is the project the glasses work on.
 // ---------------------------------------------------------------------------
-let state = { version: 2, active: "", customers: Object.create(null), projects: Object.create(null), wdGone: [], gcalIds: Object.create(null), inboxSeen: Object.create(null) };
+let state = { version: 2, active: "", customers: Object.create(null), projects: Object.create(null), wdGone: [], gcalIds: Object.create(null), gcalEvents: Object.create(null), inboxSeen: Object.create(null) };
 
 const str = (value, max = TEXT) => (typeof value === "string" ? value : typeof value === "number" ? String(value) : "").slice(0, max);
 const time = (value, fallback) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback);
@@ -382,10 +385,14 @@ function ensureUnassigned() {
 
 /** Version 1 (projects by name, no customers) or version 2 → version 2. */
 function migrate(raw) {
-  const next = { version: 2, active: "", customers: Object.create(null), projects: Object.create(null), wdGone: [], gcalIds: Object.create(null), inboxSeen: Object.create(null) };
+  const next = { version: 2, active: "", customers: Object.create(null), projects: Object.create(null), wdGone: [], gcalIds: Object.create(null), gcalEvents: Object.create(null), inboxSeen: Object.create(null) };
   if (raw?.version === 2) {
     // project id -> Google event id; lets a deleted project's event be removed later
     for (const [id, eventId] of Object.entries(raw.gcalIds ?? {})) if (ID.test(id) && typeof eventId === "string" && eventId) next.gcalIds[id] = eventId.slice(0, 200);
+    // dashboard task id -> {Google event id, signature of what was sent}; lets a cancelled appointment be removed
+    for (const [id, entry] of Object.entries(raw.gcalEvents ?? {})) {
+      if (/^[\w-]{1,60}$/.test(id) && typeof entry?.eventId === "string" && entry.eventId) next.gcalEvents[id] = { eventId: entry.eventId.slice(0, 200), sig: str(entry.sig, 64) };
+    }
     for (const [id, customer] of Object.entries(raw.customers ?? {})) if (ID.test(id)) next.customers[id] = cleanCustomer(customer, id);
     for (const [id, project] of Object.entries(raw.projects ?? {})) {
       if (!ID.test(id)) continue;
@@ -1187,13 +1194,24 @@ async function api(request, response, url) {
     return send(response, 202, { ok: true, queued: id });
   }
 
-  if (path === "/api/gcal/status" && method === "GET") return send(response, 200, gcal.status());
+  if (path === "/api/gcal/status" && method === "GET") return send(response, 200, { ...gcal.status(), events: gcalEvents.status() });
   if (path === "/api/gcal/sync" && method === "POST") {
     if (!gcal.enabled()) return send(response, 409, { error: "Google Calendar is not configured", ...gcal.status() });
     const dated = Object.values(state.projects).filter((x) => x.date).length;
     send(response, 202, { ok: true, started: true, dated, ...gcal.status() });
     gcal.request();
+    void gcalEvents.request();
     return;
+  }
+
+  // an appointment typed in → a checked proposal (local model, else rules); creates nothing
+  if (path === "/api/events/parse") {
+    if (method !== "POST") return send(response, 405, { error: "method not allowed" });
+    const b = await json(); if (!b) return;
+    const text = str(b.text, 1000).trim();
+    if (!text) return send(response, 400, { error: "text missing" });
+    const result = await parseEvent({ text, today: str(b.today, 10), tz: str(b.tz, 60) || gcalCfg.tz, candidates: eventCandidates() }, LLM_URL ? llmOptions() : null);
+    return send(response, 200, result);
   }
 
   // search over every customer and project (vector index, shoot-day-vectors.mjs)
@@ -1244,8 +1262,32 @@ const wd = createWdSync({
   statusDone: process.env["SHOOT_WD_STATUS_DONE"] || "done",
   // the PDF of a draft, for the dashboard attachment
   isInternal: isInternalTemplate,
+  eventTz: gcalCfg.tz,
   readDraft: async (projectId, file) => { try { return await readFile(filePath(projectId, file)); } catch { return null; } },
 });
+
+/** The dashboard's confirmed appointments → Google Calendar (only with both on). */
+const gcalEvents = createEventSync(gcalCfg, {
+  enabled: () => wd.enabled,
+  list: () => wd.events(),
+  known: () => state.gcalEvents,
+  save: () => persistOnly(),
+}, (message) => console.error(message));
+
+/** Every customer's projects as candidates for an appointment typed in (POST /api/events/parse). */
+function eventCandidates() {
+  return Object.values(state.projects)
+    .filter((p) => p.customerId !== UNASSIGNED && state.customers[p.customerId])
+    .sort((a, b) => b.updated - a.updated)
+    .slice(0, 80)
+    .map((p) => {
+      const customer = state.customers[p.customerId];
+      return {
+        wdProjectId: p.wdId ?? null, customer: customer.name, project: p.name, notes: customer.notes ?? "",
+        location: p.place || p.dispo?.location || "", date: p.date || "",
+      };
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Paperwork drafts (shoot-day-docs.mjs): PDF into the project's files.
@@ -1446,6 +1488,8 @@ async function pollDashboard() {
   } finally {
     wdPolling = false;
   }
+  // the dashboard's confirmed appointments → Google Calendar (never throws)
+  await gcalEvents.request();
 }
 
 // ---------------------------------------------------------------------------
@@ -1737,7 +1781,7 @@ async function runBrain(projectId, { force = false } = {}) {
   if (LLM_URL) {
     const hint = earlierProjects(projectId);
     const result = await analyseProject(sources, {
-      digests, url: LLM_URL, model: LLM_MODEL, token: LLM_TOKEN, timeoutMs: LLM_TIMEOUT_MS,
+      digests, url: LLM_URL, model: LLM_MODEL, token: LLM_TOKEN, timeoutMs: LLM_TIMEOUT_MS, tz: gcalCfg.tz,
       ...(hint ? { hints: [hint] } : {}), ...(vectors.enabled ? { rank: vectors.ranker(projectId) } : {}),
     });
     digests = result.digests;
@@ -1811,7 +1855,7 @@ function wdForget(kind, object) {
 function brainAfterWrite(url) {
   try {
     const parts = url.pathname.split("/").filter(Boolean).map((part) => { try { return decodeURIComponent(part); } catch { return ""; } });
-    if (["wd", "stt", "active", "brain", "search", "context", "inbox"].includes(parts[1])) return;
+    if (["wd", "stt", "active", "brain", "search", "context", "inbox", "events", "gcal"].includes(parts[1])) return;
     if (parts[1] === "customers") {
       if (vectors.enabled) void vectors.retain(Object.keys(state.projects));   // a deleted customer takes its projects along
       for (const p of Object.values(state.projects)) if (p.customerId === parts[2]) scheduleBrain(p.id);
@@ -1831,7 +1875,7 @@ function wdAfterWrite(url) {
   if (!wd.enabled) return;
   try {
     const parts = url.pathname.split("/").filter(Boolean).map((part) => { try { return decodeURIComponent(part); } catch { return ""; } });
-    if (["wd", "stt", "active", "search", "context", "inbox"].includes(parts[1])) return;
+    if (["wd", "stt", "active", "search", "context", "inbox", "events", "gcal"].includes(parts[1])) return;
     if (parts[1] === "customers") { if (parts[2]) wd.schedule({ customer: parts[2] }); return; }
     if (parts[1] === "projects") { if (parts[2]) wd.schedule(parts[2]); return; }
     const wanted = url.searchParams.get("project");
@@ -1900,6 +1944,6 @@ server.listen(PORT, HOST, () => {
     setInterval(() => void runInbox(), WD_POLL_MS).unref();
   }
   console.log("  Dashboard inbox: " + (inboxOn() && WD_POLL_MS > 0 ? "on (sure from " + Math.round(INBOX_MIN * 100) + " %)" : "off (needs the Work Dashboard sync, SHOOT_LLM_URL and SHOOT_WD_POLL_MS)"));
-  console.log("  Google Calendar: " + (gcal.enabled() ? "on" : "off (see shoot-day-gcal.mjs)"));
+  console.log("  Google Calendar: " + (gcal.enabled() ? "on" + (gcalEvents.enabled() ? " (also the dashboard's appointments)" : "") : "off (see shoot-day-gcal.mjs)"));
   if (!TOKEN) console.log("  No TOKEN set: anyone who can reach this port can read and change your projects.");
 });

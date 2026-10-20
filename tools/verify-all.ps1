@@ -4,7 +4,11 @@
 
 param(
   [switch]$StoreEnglish,
-  [string[]]$Include = @()
+  [string[]]$Include = @(),
+  # Store screenshots in this language (en/de). With -Tap a second picture is
+  # taken after one tap (apps whose start list leads into the cockpit).
+  [string]$Lang = "en",
+  [switch]$Tap
 )
 
 $root = "F:\quietglass"
@@ -58,10 +62,20 @@ function Test-Blank([string]$path) {
   } finally { $bitmap.Dispose() }
 }
 
+# English store pictures keep the old name (release\<app>\screenshot.png) that
+# the listings point to; other languages get a suffix.
+function Get-CapturePath([string]$dir, [string]$suffix) {
+  if ($StoreEnglish) {
+    $name = if ($Lang -eq "en") { "screenshot$suffix.png" } else { "screenshot-$Lang$suffix.png" }
+    return "$root\release\$dir\$name"
+  }
+  return "$shots\$dir-$Lang$suffix.png"
+}
+
 function Get-Capture([string]$dir, [int]$port) {
   # A fragment keeps the locale override separate without relying on cmd.exe's
   # special handling of `&` in URLs. Apps ignore `demo=1` when no demo is needed.
-  $url = "http://127.0.0.1:$port/?demo=1#lang=en"
+  $url = "http://127.0.0.1:$port/?demo=1#lang=$Lang"
   Start-Process -FilePath "cmd.exe" `
     -ArgumentList "/c", ".\node_modules\.bin\evenhub-simulator.cmd --automation-port $automationPort `"$url`" > verify-sim.log 2>&1" `
     -WindowStyle Hidden
@@ -69,16 +83,23 @@ function Get-Capture([string]$dir, [int]$port) {
   if (-not $up) { return "NO SIMULATOR" }
   Start-Sleep -Seconds 8   # let the app create its page
   try {
-    $capture = if ($StoreEnglish) { "$root\release\$dir\screenshot.png" } else { "$shots\$dir.png" }
+    $capture = Get-CapturePath $dir ""
     New-Item -ItemType Directory -Force -Path (Split-Path $capture) | Out-Null
     Invoke-WebRequest -Uri "http://127.0.0.1:$automationPort/api/screenshot/glasses" `
       -OutFile $capture -TimeoutSec 15 -ErrorAction Stop | Out-Null
+    if ($Tap) {
+      Invoke-WebRequest -Uri "http://127.0.0.1:$automationPort/api/input" -Method Post -ContentType "application/json" `
+        -Body '{"action":"click"}' -TimeoutSec 10 -UseBasicParsing | Out-Null
+      Start-Sleep -Seconds 5   # page rebuild + cockpit tiles
+      Invoke-WebRequest -Uri "http://127.0.0.1:$automationPort/api/screenshot/glasses" `
+        -OutFile (Get-CapturePath $dir "-tap") -TimeoutSec 15 -ErrorAction Stop | Out-Null
+    }
   } catch { return "SCREENSHOT FAILED" }
   finally {
     Get-Process evenhub-simulator -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 2
   }
-  $capture = if ($StoreEnglish) { "$root\release\$dir\screenshot.png" } else { "$shots\$dir.png" }
+  $capture = Get-CapturePath $dir ""
   if (Test-Blank $capture) { return "BLANK" }
   return "screenshot " + (Get-Item $capture).Length + " bytes"
 }

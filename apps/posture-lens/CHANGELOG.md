@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.8.0] — 2026-10-20
+
+Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.
+
+### Brille
+
+- **Haltungsbild als Cockpit-Bild** (Muster Rain Lens, `src/screen/*` unverändert aus Rain Lens): das ganze Display ist ein Bild aus vier Kacheln. Links oben ein **Neigungs-Zifferblatt** von 0° bis 60° mit der Warngrenze als dickem Band und einer Nadel, darunter der Winkel groß, darunter `Gespeichert`. Rechts der Kopf `POSTURE  14:05`, **eine** Überschrift (`AUFRECHT`, `GENEIGT`, `KOPF NACH VORNE`, beim ersten Start `HALTUNG SPEICHERN`, `GESPEICHERT`, `KEIN SENSOR`) und sechs Werte in drei Spalten (GRENZE, AUFRECHT, GENEIGT, HINWEIS IN, GEHALTEN, SENSOR). Helligkeit statt Farbe (Text 15, Label 8, gedimmt 4).
+- **Gute Haltung kostet keine Aufmerksamkeit:** aufrecht bleibt die Nadel weg und in der Mitte steht `OK`; Nadel und Winkel erscheinen erst beim Neigen (oder wenn der Winkel am Handy verlangt wird). Der Hinweis-Countdown läuft in 5-Sekunden-Schritten.
+- **Nur geänderte Kacheln werden gesendet:** Nadel in 2°-Schritten oben links, Winkel in ganzen Grad unten links, die Uhr oben rechts. Derselbe Zustand sendet nichts; beim Wechsel in den Sensor-Test oder die Liste wird einmal umgebaut und nach dem Verlassen des Cockpits keine Kachel mehr geschrieben, während der Beenden-Dialog offen sein kann ebenfalls nicht.
+- **Halten öffnet eine Liste mit höchstens drei Einträgen** (jetzt zwei): *Sensor-Test* und *Zählung heute löschen* (armiert: Tippen, nochmal Tippen innerhalb von 4 s). Die Hilfe-Seiten entfallen, die Bedienung steht am Handy. Neu überschreiben einer gespeicherten Haltung bleibt armiert (Tippen, nochmal Tippen; Wischen, 2× oder Zeitablauf brechen ab).
+- Eine Hinweiszeile unten über den gemeinsamen Helfer. Entfallen: Textzeilen, die Figur in der Ecke, die Zahlenbilder.
+- Beibehalten: `SIDE_MENU = false`, die Beenden-Dialog-Logik unverändert (`src/exit.ts`, kein Zeichnen und keine Kachel, solange er offen sein kann), Zeitlimits für jeden Aufruf an die Brille, erste Seite mit Rebuild + Create, IMU-Behandlung (Zeitlimit, Neustart nach Reconnect, aus im Hintergrund).
+
+### Handy
+
+- **Genau drei Tabs in einer Zeile: Jetzt / Heute / Einstellungen** im Rain-Look: Kicker `QUIETGLASS / HALTUNG`, Titel, Status-Pille, Statusbanner, Hero-Karte mit der Neigung, 2×2-Kennzahlen (Aufrecht, Geneigt, Grenze, Hinweis nach), ein Hauptknopf („Haltung speichern“; eine gespeicherte Haltung überschreiben fragt nach). *Heute* zeigt den Anteil aufrecht, die Minuten und den letzten Hinweis und eine waagrechte Kartenleiste mit einer Karte je zehn Minuten (nur im Speicher, wie die Zählung). *Einstellungen* sind gruppierte Karten (Haltung, Wann erinnern, Anzeige, Sprache, Mehr mit dem Sensor-Test); beim ersten Start steht eine Drei-Schritte-Checkliste oben und die Seite öffnet dort.
+- Haltung löschen fragt nach (erster Tipp fragt, zweiter innerhalb von 4 s löscht).
+
+### Technik
+
+- Reine Modellfunktionen mit Tests: `src/cockpit/model.ts` (Überschrift, Zellen, Zifferblatt, Hinweis), `src/cockpit/compose.ts` (nur Layout), `src/posture/buckets.ts` (Zehn-Minuten-Scheiben). Neue Tests: Zellen, Überschrift, Hinweise, Zifferblatt, Kachel-Diff, Liste, Beenden-Dialog ohne Kachel-Sendungen, Handy-Modelle.
+- Vorschau (nicht ausgeliefert): `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit.png` und `store/preview-cockpit-leaning.png`.
+
+QIS: Fußzeilen über den gemeinsamen Helfer, `2× = zurück|Ende`.
+
 ## [0.7.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

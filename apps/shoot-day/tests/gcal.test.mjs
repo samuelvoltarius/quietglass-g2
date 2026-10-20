@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildEvent, isoWithOffset, parseWhen } from "../examples/shoot-day-gcal.mjs";
+import { buildEvent, buildTaskEvent, configFromEnv, createEventSync, isoWithOffset, parseWhen } from "../examples/shoot-day-gcal.mjs";
 
 const example = (name) => fileURLToPath(new URL("../examples/" + name, import.meta.url));
 const SECRET = "s3cret-geheimwort-xyz";
@@ -221,4 +221,86 @@ describe("Google Calendar sync (fake Apps Script bridge)", () => {
     expect(everything).not.toContain(bridge.url);
     expect(everything).not.toContain(SECRET);
   }, 15000);
+});
+
+describe("dashboard appointments → Google Calendar (fake Apps Script bridge)", () => {
+  const cleanup = [];
+  afterEach(() => { for (const step of cleanup.splice(0).reverse()) step(); });
+  const cfg = (bridge) => ({ ...configFromEnv({ SHOOT_GCAL_WEBHOOK: bridge.url, SHOOT_GCAL_SECRET: SECRET }), retryMs: 100 });
+  // made-up appointments as shoot-day-wd.mjs events() lists them
+  const appointment = (extra) => ({
+    taskId: "700", title: "Drehtag", customer: "Gasthof Musterwirt", project: "Sommerreel", status: "open", labels: ["termin"],
+    starts_at: "2026-10-22T09:00:00+02:00", ends_at: "2026-10-22T12:00:00+02:00", start_date: "2026-10-22", due_date: "2026-10-22", location: "Hauptplatz 3", ...extra,
+  });
+
+  it("builds the payload: timed or all day, no links; proposals, internal and cancelled ones stay out", () => {
+    const c = { tz: "Europe/Vienna", durationMin: 60, calendar: "" };
+    expect(buildTaskEvent(appointment(), c)).toEqual({
+      action: "upsert", project: "wd:700", title: "Gasthof Musterwirt – Drehtag", location: "Hauptplatz 3",
+      description: "Kunde: Gasthof Musterwirt\nProjekt: Sommerreel\nOrt: Hauptplatz 3\n— aus dem Work Dashboard",
+      allDay: false, date: "2026-10-22", start: "2026-10-22T09:00:00+02:00", end: "2026-10-22T12:00:00+02:00",
+    });
+    // UTC from the dashboard, no end → local time, default length
+    expect(buildTaskEvent(appointment({ starts_at: "2026-12-01T08:00:00Z", ends_at: "" }), c)).toMatchObject({ start: "2026-12-01T09:00:00+01:00", end: "2026-12-01T10:00:00+01:00" });
+    expect(buildTaskEvent(appointment({ starts_at: "", ends_at: "", start_date: "2026-10-23" }), c)).toMatchObject({ allDay: true, date: "2026-10-23", start: "" });
+    expect(buildTaskEvent(appointment({ labels: ["vorschlag", "termin"] }), c)).toBeNull();
+    expect(buildTaskEvent(appointment({ labels: ["intern"] }), c)).toBeNull();
+    expect(buildTaskEvent(appointment({ labels: ["abgesagt"], status: "done" }), c)).toBeNull();
+    expect(buildTaskEvent(appointment({ starts_at: "", start_date: "", due_date: "" }), c)).toBeNull();
+    expect(buildTaskEvent(appointment(), c).description).not.toMatch(/https?:/);
+  });
+
+  it("creates, updates only on a change, deletes on cancel or removal; proposals and internal never", async () => {
+    const bridge = await fakeBridge(cleanup);
+    let list = [
+      appointment(),
+      appointment({ taskId: "701", title: "Vorschlag", labels: ["vorschlag", "termin"] }),
+      appointment({ taskId: "702", title: "Teamessen", labels: ["intern"] }),
+      appointment({ taskId: "703", title: "Abnahme", starts_at: "", ends_at: "", start_date: "2026-10-30", customer: "" }),
+    ];
+    const known = {};
+    let saves = 0;
+    const sync = createEventSync(cfg(bridge), { list: async () => list, known: () => known, save: async () => { saves++; } }, () => undefined);
+    await sync.request();
+    expect([...bridge.events.keys()].sort()).toEqual(["wd:700", "wd:703"]);
+    expect(bridge.events.get("wd:703")).toMatchObject({ title: "Abnahme", allDay: true, date: "2026-10-30" });
+    expect(Object.keys(known).sort()).toEqual(["700", "703"]);
+    expect(known["700"]).toEqual({ eventId: bridge.events.get("wd:700").eventId, sig: expect.any(String) });
+    expect(saves).toBe(1);
+    // nothing changed → nothing sent
+    const calls = bridge.calls.length;
+    await sync.request();
+    expect(bridge.calls.length).toBe(calls);
+    // moved in the dashboard → one update, same event
+    list = list.map((t) => (t.taskId === "700" ? { ...t, starts_at: "2026-10-22T10:00:00+02:00" } : t));
+    await sync.request();
+    expect(bridge.calls.length).toBe(calls + 1);
+    expect(bridge.events.get("wd:700")).toMatchObject({ start: "2026-10-22T10:00:00+02:00", eventId: known["700"].eventId });
+    // the proposal is confirmed (label gone) → now it goes over
+    list = list.map((t) => (t.taskId === "701" ? { ...t, labels: ["termin"] } : t));
+    await sync.request();
+    expect(bridge.events.has("wd:701")).toBe(true);
+    // cancelled (done + "abgesagt") and deleted → removed in Google
+    list = list.filter((t) => t.taskId !== "703").map((t) => (t.taskId === "700" ? { ...t, status: "done", labels: ["termin", "abgesagt"] } : t));
+    await sync.request();
+    expect([...bridge.events.keys()]).toEqual(["wd:701"]);
+    expect(Object.keys(known)).toEqual(["701"]);
+    expect(bridge.calls.filter((c) => c.action === "delete").map((c) => c.project).sort()).toEqual(["wd:700", "wd:703"]);
+    // an unreadable dashboard deletes nothing
+    list = null;
+    await sync.request();
+    expect(bridge.events.has("wd:701")).toBe(true);
+    expect(sync.status()).toMatchObject({ enabled: true, lastError: "dashboard not readable", synced: 1 });
+    expect(bridge.calls.some((c) => c.project === "wd:702")).toBe(false);
+  }, 15000);
+
+  it("is off without webhook/secret or without the dashboard, and makes no calls", async () => {
+    const bridge = await fakeBridge(cleanup);
+    let listed = 0;
+    const hooks = { list: async () => { listed++; return [appointment()]; }, known: () => ({}), save: async () => undefined };
+    await createEventSync({ ...cfg(bridge), secret: "" }, hooks).request();
+    await createEventSync(cfg(bridge), { ...hooks, enabled: () => false }).request();
+    expect(listed).toBe(0);
+    expect(bridge.calls).toHaveLength(0);
+  });
 });

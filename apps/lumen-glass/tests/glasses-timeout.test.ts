@@ -1,74 +1,73 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createPage, IMAGE_CALL_MS, PAGE_CALL_MS, TEXT_CALL_MS, updateIcon, updatePage } from "../src/glasses/render";
-import type { LumenView } from "../src/glasses/view";
+import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { COCKPIT_TILES, IMAGE_CALL_MS, PAGE_CALL_MS, TEXT_CALL_MS, createCockpitPage, createTextPage, guardedTileSend, sendTile, updateTextPage, type TextView } from "../src/glasses/page";
 
 // Draws run one after another. A call into the glasses whose answer never
 // comes used to freeze the display on its last page. Every call is now bounded.
 
 const never = <T>(): Promise<T> => new Promise<T>(() => undefined);
-const view: LumenView = { header: "LUMEN", body: ["bereit"], footer: "" };
-const nextView: LumenView = { header: "LUMEN", body: ["Aufnahme"], footer: "Tippen = Foto" };
+const view: TextView = { header: "Titel · ● live", body: ["Zeile 1"], footer: "Tippen" };
 
-function bridge(overrides: Record<string, unknown> = {}) {
+function bridge(overrides: Record<string, unknown> = {}): EvenAppBridge {
   return {
     rebuildPageContainer: vi.fn(async () => true),
     createStartUpPageContainer: vi.fn(async () => 0),
     textContainerUpgrade: vi.fn(async () => true),
     updateImageRawData: vi.fn(async () => "success"),
     ...overrides,
-  } as never;
+  } as unknown as EvenAppBridge;
 }
 
-/** Enough of a canvas for the moth sprite to encode. */
-function fakeCanvas() {
-  return {
-    width: 0,
-    height: 0,
-    getContext: () => ({ imageSmoothingEnabled: false, fillStyle: "", fillRect: () => undefined }),
-    toBlob: (done: (blob: Blob | null) => void) => done(new Blob([new Uint8Array(4)])),
-  };
-}
-
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); });
 
 describe("calls into the glasses are bounded", () => {
   it("gives up on a page that never gets an answer, instead of waiting for ever", async () => {
     vi.useFakeTimers();
     const b = bridge({ rebuildPageContainer: vi.fn(() => never()), createStartUpPageContainer: vi.fn(() => never()) });
-    const pending = createPage(b, view);
+    const pending = createTextPage(b, view);
     await vi.advanceTimersByTimeAsync(2 * PAGE_CALL_MS + 100);
     const result = await pending;
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/no answer from the glasses/);
   });
 
+  it("gives up on a cockpit page that never gets an answer", async () => {
+    vi.useFakeTimers();
+    const b = bridge({ rebuildPageContainer: vi.fn(() => never()), createStartUpPageContainer: vi.fn(() => never()) });
+    const pending = createCockpitPage(b);
+    await vi.advanceTimersByTimeAsync(2 * PAGE_CALL_MS + 100);
+    expect((await pending).ok).toBe(false);
+  });
+
   it("gives up on a text write that hangs, and the next update works again", async () => {
     vi.useFakeTimers();
     const upgrade = vi.fn().mockImplementationOnce(() => never()).mockImplementation(async () => true);
     const b = bridge({ textContainerUpgrade: upgrade });
-    expect((await createPage(b, view)).ok).toBe(true);
-    const pending = updatePage(b, nextView);
+    expect((await createTextPage(b, view)).ok).toBe(true);
+    const pending = updateTextPage(b, view, null);
     await vi.advanceTimersByTimeAsync(TEXT_CALL_MS + 100);
     const failed = await pending;
     expect(failed.ok).toBe(false);
     expect(failed.reason).toMatch(/no answer from the glasses/);
-    const before = upgrade.mock.calls.length;
-    expect((await updatePage(b, nextView)).ok).toBe(true);
-    expect(upgrade.mock.calls.length - before).toBe(3);
+    expect((await updateTextPage(b, view, null)).ok).toBe(true);
   });
 
-  it("gives up on an image that hangs, so the next wing beat can go on", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    vi.stubGlobal("document", { createElement: () => fakeCanvas() });
+  it("gives up on an image tile that hangs, so the next draw can go on", async () => {
+    vi.useFakeTimers();
     const b = bridge({ updateImageRawData: vi.fn(() => never()) });
-    let settled: { ok: boolean; reason?: string } | null = null;
-    void updateIcon(b, ["#"]).then((r) => { settled = r; });
-    // The PNG is encoded first (real async work), then the bounded send starts.
-    for (let i = 0; i < 50 && settled === null; i++) {
-      await new Promise<void>((resolve) => (globalThis as unknown as { setImmediate(cb: () => void): void }).setImmediate(resolve));
-      await vi.advanceTimersByTimeAsync(IMAGE_CALL_MS / 4);
-    }
-    expect(settled).toEqual(expect.objectContaining({ ok: false }));
-    expect((settled as unknown as { reason: string }).reason).toMatch(/no answer from the glasses/);
+    const pending = sendTile(b, COCKPIT_TILES[0], new Uint8Array(1)).then(() => "answered", (error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(IMAGE_CALL_MS + 100);
+    expect(await pending).toMatch(/no answer from the glasses/);
+  });
+
+  it("writes no tile while the dialog may be up or the page is gone", async () => {
+    const b = bridge();
+    let allowed = false;
+    const send = guardedTileSend(b, () => allowed);
+    expect(await send(COCKPIT_TILES[0], new Uint8Array(1))).toBe(false);
+    expect((b as unknown as { updateImageRawData: ReturnType<typeof vi.fn> }).updateImageRawData).not.toHaveBeenCalled();
+    allowed = true;
+    expect(await send(COCKPIT_TILES[1], new Uint8Array(1))).toBe(true);
+    expect((b as unknown as { updateImageRawData: ReturnType<typeof vi.fn> }).updateImageRawData).toHaveBeenCalledTimes(1);
   });
 });

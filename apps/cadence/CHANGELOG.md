@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0] — 2026-10-20
+
+Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.
+
+### Brille
+
+- **Hauptbild als Cockpit-Bild** (Muster Rain Lens, `src/screen/*` unverändert aus Rain Lens): das ganze Display ist ein Bild aus vier Kacheln. Links oben die Taktpunkte und das Pendel (über 120 Schläge pro Minute nur große Punkte), links unten die Taktnummer groß und die Übung. Rechts der Kopf `CADENCE  14:05`, **eine** Überschrift (`100 BPM`, darunter `LÄUFT` / `BEREIT` / `PAUSE` / `PAUSE?`) und sechs Werte in drei Spalten (TAKTART, MARKE, HEUTE, ZEIT, BESTE, EINHEITEN). Helligkeit statt Farbe (Text 15, Label 8, gedimmt 4).
+- **Ein Schlag kostet eine Kachel:** nur geänderte Kacheln werden gesendet. Punkte und Pendel liegen in der Kachel oben links, die Taktnummer in der unten links, die Übungsminuten in der unten rechts (Minutenauflösung, damit sie nur einmal pro Minute wechselt). Derselbe Zustand sendet nichts; während der Beenden-Dialog offen sein kann, wird keine Kachel geschrieben.
+- Eine Hinweiszeile unten (Tippen / Wischen / Halten / 2×) über den gemeinsamen Fußzeilen-Helfer. Pause bleibt armiert (Tippen, nochmal Tippen innerhalb von 4 s; Wischen, Halten, 2× oder Zeitablauf brechen ab).
+- Entfallen: Textzeilen, Hilfeseite (Halten im Stand tut nichts mehr, die Bedienung steht am Handy), das Metronom-Symbol und die Zahlenbilder.
+- Beibehalten: `SIDE_MENU = false`, die Beenden-Dialog-Logik unverändert (`src/exit.ts`, kein Zeichnen und keine Kachel, solange er offen sein kann), Zeitlimits für jeden Aufruf an die Brille, erste Seite mit Rebuild + Create, Taktberechnung aus der Uhr.
+
+### Handy
+
+- **Genau drei Tabs in einer Zeile: Jetzt / Verlauf / Einstellungen** im Rain-Look: Kicker `QUIETGLASS / ÜBEN`, Titel, Status-Pille, Statusbanner, Hero-Karte mit dem Tempo, 2×2-Kennzahlen (Heute, Einheiten, Takt, Bestes Tempo), ein Hauptknopf (Takt starten / pausieren) und eine waagrechte Kartenleiste mit den letzten Einheiten. *Verlauf* zeigt die Summe von heute, die letzten sieben Tage als Karten, die Übungen und den Export; „Tagebuch löschen“ und „Entfernen“ fragen nach. *Einstellungen* sind gruppierte Karten (Tempo, Was du übst, Brille, Sprache, Mehr); beim ersten Start steht eine Drei-Schritte-Checkliste oben und die Seite öffnet dort.
+- Die Seite folgt dem Takt jede Sekunde, ohne Eingaben zu stören.
+
+### Technik
+
+- Reine Modellfunktionen mit Tests: `src/cockpit/model.ts` (Zellen, Überschrift, Punkte, Hinweis), `src/cockpit/compose.ts` (nur Layout). Neue Tests: Zellen, Überschrift, Hinweise, Kachel-Diff (Schlag, Takt, Minute, Uhr), Beenden-Dialog ohne Kachel-Sendungen, Handy-Modelle.
+- Vorschau (nicht ausgeliefert): `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit.png` und `store/preview-cockpit-ready.png`.
+
+QIS: Fußzeilen über den gemeinsamen Helfer, `2× = zurück|Ende`.
+
 ## [0.6.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

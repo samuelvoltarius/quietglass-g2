@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0] — 2026-10-20
+
+### Geändert: Quietglass-UI-Standard QUS v1 („keine Textwand“)
+
+- **Brille, Startseite:** höchstens drei große Einträge (die Projekte, zuletzt benutztes zuerst), Kopf `Schicht · ● live`, **eine** Fußzeile. Keine Hilfeseite, kein Projekt-Wähler mit Abbrechen-/Hilfe-Zeilen mehr; Halten tut nichts.
+- **Brille, laufende Schicht als Cockpit-Bild** (vier Kacheln à 288×144, Renderer aus Rain Lens): rechts klein `SHIFT  HH:MM`, **eine** große Hauptzeile (`NOCH 2:15` = Zeit bis zum Tagesziel, `PLUS 0:30` darüber hinaus, `LÄUFT 1:23` ohne Ziel, `STOPP?` beim ersten Tipp, `PAUSE 0:12` nach dem Stopp, `FEIERABEND` bei erreichtem Ziel), dazu die Zellen Start, Ende, Pause, Heute, Woche. Links ein **Ring** (Tag gegen Tagesziel, laufender Eintrag gestrichelt) statt des Tagesbalkens; der Projektname steht darunter, **eine** Hinweiszeile unten.
+- Alles zählt in ganzen Minuten: Die Uhr ändert nur die betroffenen Kacheln (rechts), ein unveränderter Frame sendet nichts, der Ring bewegt sich in Schritten von zwei Pixeln.
+- **Pause-Seite:** nach dem Stopp bleibt das Cockpit stehen. Tippen = weiter mit dem letzten Projekt, Wischen = andere Projekte (Startseite), 2× = zurück bzw. Ende.
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Schichten / Einstellungen) im Rain-Lens-Look: Kicker `QUIETGLASS / ARBEIT`, Titel, Status-Pille, Statusbanner, Hero-Karte mit **einem** großen Wert, 2×2-Kennzahlen (Heute, Woche, Start, Pause), **ein** Hauptknopf (Schicht starten/stoppen), Karten-Leiste der letzten sieben Tage. Einstellungen in gruppierten Karten (Tagesziel, Projekte, Brille, Sprache, Bedienung eingeklappt) mit Drei-Schritte-Checkliste beim ersten Start. Die Demo (`?demo=1`) läuft weiter.
+- Entfernt: Tagesbalken (`daybar`), Bild-Lane, Pixel-Icon-Kodierer, Hilfeseite der Brille, `tools/preview.mjs`.
+
+### Unverändert
+
+- `SIDE_MENU = false`, Beenden-Dialog (`src/exit.ts`, `onLifecycle`, `close(restore)`/`redrawFully`): während er offen sein kann, zeichnet nichts und sendet keine Kachel (der Kachel-Sender prüft `exitAsked`); begrenzte Aufrufe (`bounded()`), erste Seite = Rebuild + Create.
+- Stoppen bleibt scharf geschaltet (QIS v1): ein Tipp fragt, der zweite innerhalb von 4 s stoppt.
+
+### Tests
+
+- Neu: `tests/qus.test.ts` (Zellen, Hauptzeile, Startzeilen, Fußzeilen, Kachel-Diff), `tests/phone-now.test.ts`, `tests/preview.test.ts` (Vorschaubilder `store/preview-cockpit*.png` mit `QG_PREVIEW=1`).
+- Die Tests der Brille laufen jetzt gegen Cockpit-Modelle und Kachel-Zähler; die Beenden-Tests (Dialog, Wiederherstellung, kein Zeichnen über dem Dialog) bleiben in voller Stärke.
+
 ## [0.5.6] — 2026-10-17
 
 ### Behoben (Hardware-Test)

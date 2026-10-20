@@ -10,8 +10,10 @@ import {
 } from "../src/weather/warnings";
 import { cloudChart, CLOUD_CHART_HEIGHT, CLOUD_CHART_WIDTH } from "../src/glasses/charts";
 import { bitmapKey } from "../src/glasses/gfx";
-import { slotsFor } from "../src/glasses/render";
-import { HEADER_WIDTH, NO_WEATHER, SIDE_NARROW, buildFrames, buildView, layoutFor, warningText, type ViewState, type WeatherView } from "../src/glasses/views";
+import { NO_WEATHER, warningText, type ViewState, type WeatherView } from "../src/glasses/views";
+import { cockpitModel } from "../src/cockpit/model";
+import { CELL_WIDTH, cellValueLayout, headlineLayout } from "../src/cockpit/compose";
+import { pixelBackend } from "../src/screen/text";
 import { parseSettings } from "../src/storage/persist";
 
 const H = 3_600_000;
@@ -262,49 +264,52 @@ describe("N.I.N.A. weather in the status", () => {
   });
 });
 
-describe("the weather page", () => {
+describe("the weather cockpit page", () => {
   const weather = (over: Partial<WeatherView> = {}): WeatherView => ({ ...NO_WEATHER, location: "manual", forecast: forecastOf({ 1: { cloud: 20 }, 2: { cloud: 75 }, 3: { cloud: 90 }, 5: { cloud: 30 } }), ...over });
   const view = (over: Partial<ViewState> = {}): ViewState => ({
-    locale: "de", demo: false, connection: { kind: "setup" }, status: null, ageSeconds: 0, page: "weather", screen: "pages",
+    locale: "de", demo: false, connection: { kind: "setup" }, status: null, ageSeconds: 0, screen: "run", page: "weather", startCursor: 0,
     cursor: 0, armed: null, sending: false, message: "", hasPreview: false, now: NOW, utcOffset: 120, weather: weather(), ...over,
   });
 
-  it("works without a bridge: chart at the left, the night in words beside it", () => {
+  it("works without a bridge: the cloud chart at the left, the night in the headline", () => {
     const plain = view();
+    const calm = cockpitModel(plain);
+    expect(calm.headline).toEqual(["KLAR BIS", "~22:50"]);
+    expect(calm.graphic.kind).toBe("cloud");
+    expect(calm.cells.map((cell) => cell.label)).toEqual(["WOLKEN", "REGEN", "TAU", "WIND km/h", "BÖEN km/h", "SQM"]);
+    expect(calm.cells[0]).toEqual({ label: "WOLKEN", value: "38%" });
     const s = view({ weather: weather({ warnings: evaluateWeather(input(plain.weather!.forecast)) }) });
-    expect(buildView(plain).body).toContain("Keine Wetterwarnung");
-    expect(layoutFor(s)).toBe("weather");
-    expect(slotsFor("weather").map((slot) => slot.name)).toEqual(["sign", "clouds"]);
-    const v = buildView(s);
-    expect(v.layout).toBe("weather");
-    expect(v.header).toBe("STARGLASS · WETTER · ohne Bridge");
-    expect(v.body[0]).toBe("Klar bis ~22:50");
-    expect(v.body[1]).toBe("Wolken 38 % · 0/5/10");
-    expect(v.body).toContain("Wolken in ~30 min (90 %)");
-    const frames = buildFrames(s, "weather");
-    expect(frames.chart?.width).toBe(CLOUD_CHART_WIDTH);
-    expect(frames.chart?.height).toBe(CLOUD_CHART_HEIGHT);
+    const model = cockpitModel(s);
+    expect(model.headline).toEqual(["WOLKEN IN ~30", "MIN (90 %)"]);
+    expect(model.cells[0]).toEqual({ label: "WOLKEN", value: "38%", alert: true });
+    const spec = model.graphic.kind === "cloud" ? model.graphic.spec : null;
+    expect(spec?.clouds).toHaveLength(49);
+    const picture = cloudChart(spec!);
+    expect(picture.width).toBe(CLOUD_CHART_WIDTH);
+    expect(picture.height).toBe(CLOUD_CHART_HEIGHT);
   });
 
-  it("a new warning pops up over every page; afterwards the overview keeps a hint", async () => {
+  it("a warning is the headline of the imaging page, and every other page carries a mark in its title", async () => {
     const { createDemoNina } = await import("../src/nina/demo");
     const status = await createDemoNina(() => 0).status();
-    const popup: WeatherWarning = { kind: "clouds", level: "warn", minutes: 40, value: 75, source: "forecast" };
-    for (const page of ["overview", "weather", "guiding", "equipment", "image"] as const) {
-      expect(buildView(view({ page, status, connection: { kind: "ok" }, weather: weather({ popup, warnings: [popup] }) })).header).toBe("STARGLASS · Wolken in ~40 min (75 %)");
-    }
-    const after = buildView(view({ page: "overview", status, connection: { kind: "ok" }, weather: weather({ warnings: [popup] }) }));
-    expect(after.header).toBe("STARGLASS · ÜBERSICHT · läuft");
-    expect(after.body[6]).toBe("Wolken in ~40 min (75 %)");
+    const warning: WeatherWarning = { kind: "clouds", level: "warn", minutes: 40, value: 75, source: "forecast" };
+    const w = weather({ warnings: [warning] });
+    const overview = cockpitModel(view({ page: "overview", status, connection: { kind: "ok" }, weather: w }));
+    expect(overview.headline).toEqual(["WOLKEN IN ~40", "MIN (75 %)"]);
+    expect(cockpitModel(view({ page: "guiding", status, connection: { kind: "ok" }, weather: w })).title).toBe("STAR !");
+    expect(cockpitModel(view({ page: "overview", status, connection: { kind: "ok" }, weather: weather() })).title).toBe("STAR");
   });
 
   it("says why there is no forecast", () => {
-    expect(buildView(view({ weather: { ...NO_WEATHER, location: "none" } })).body.slice(0, 2)).toEqual(["Kein Standort bekannt.", "Am Handy eintragen."]);
-    expect(buildView(view({ weather: { ...NO_WEATHER, error: "HTTP 503" } })).body[0]).toBe("Wetter: Serverfehler");
-    expect(buildView(view({ weather: { ...NO_WEATHER, enabled: false } })).body[0]).toBe("Wetter aus.");
+    expect(cockpitModel(view({ weather: { ...NO_WEATHER, location: "none" } })).headline).toEqual(["KEIN", "STANDORT"]);
+    expect(cockpitModel(view({ weather: { ...NO_WEATHER, location: "none" } })).caption).toBe("Am Handy eintragen.");
+    const failed = cockpitModel(view({ weather: { ...NO_WEATHER, error: "HTTP 503" } }));
+    expect(failed.headline).toEqual(["KEINE", "WETTERDATEN"]);
+    expect(failed.caption).toBe("Serverfehler");
+    expect(cockpitModel(view({ weather: { ...NO_WEATHER, enabled: false } })).headline).toEqual(["WETTER AUS"]);
   });
 
-  it("every weather text fits its row in both languages", () => {
+  it("every weather text fits in both languages: a headline of at most two lines, cells within their box", () => {
     const worstStation = { connected: true, cloudCover: 100, rainRate: 12.5, humidity: 100, dewPoint: -10.5, temperature: 35.5, windSpeed: 120, windGust: 150, skyQuality: 21.55 };
     const status = parseStatus({ online: true, sequence: { state: "running" }, weather: worstStation, safety: { connected: true, safe: false } });
     const worstWarnings: WeatherWarning[] = [
@@ -319,18 +324,19 @@ describe("the weather page", () => {
       { kind: "clouds", level: "warn", minutes: 0, value: 100, source: "station" },
     ];
     const heavy = forecastOf(Object.fromEntries(Array.from({ length: 14 }, (_, i) => [i, { cloud: 100, cloudLow: 100, cloudMid: 100, cloudHigh: 100, rainProb: 100, wind: 120, gust: 150 }])));
+    const backend = pixelBackend();
     for (const locale of locales as Locale[]) {
       for (const w of worstWarnings) {
-        expect(warningText(w, locale).length, warningText(w, locale)).toBeLessThanOrEqual(SIDE_NARROW);
-        const header = buildView(view({ locale, status, connection: { kind: "ok" }, page: "overview", weather: weather({ popup: w, warnings: worstWarnings }) })).header;
-        expect(header.length).toBeLessThanOrEqual(HEADER_WIDTH);
+        const model = cockpitModel(view({ locale, status, connection: { kind: "ok" }, weather: weather({ warnings: [w, ...worstWarnings] }) }));
+        expect(model.headline.length).toBeLessThanOrEqual(2);
+        expect(headlineLayout(backend, model.headline).lines.join(" ")).not.toMatch(/…/);
       }
       for (const forecast of [heavy, forecastOf(), null]) {
         for (const error of [null, "HTTP 503", "bad-reply"]) {
-          const v = buildView(view({ locale, status, connection: { kind: "ok" }, weather: weather({ forecast, error, warnings: worstWarnings }) }));
-          expect(v.body.length).toBeLessThanOrEqual(7);
-          // Nothing cut off (a cut row ends in "…" right after a letter).
-          for (const row of v.body) expect(/[^ ]…$/.test(row), `${locale}: ${row}`).toBe(false);
+          const model = cockpitModel(view({ locale, status, connection: { kind: "ok" }, weather: weather({ forecast, error, warnings: worstWarnings }) }));
+          expect(model.cells).toHaveLength(6);
+          for (const cell of model.cells) expect(cellValueLayout(backend, cell.value, CELL_WIDTH).text, `${locale} ${cell.label}`).not.toMatch(/…/);
+          expect(model.hint.length).toBeLessThanOrEqual(56);
         }
       }
     }

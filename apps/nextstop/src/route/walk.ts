@@ -183,6 +183,10 @@ export interface WalkNav {
   readonly off: number;
   /** The walker is closer than this to the end of the route. */
   readonly atEnd: boolean;
+  /** The street the walker is on now (that of the manoeuvre passed last), when the route names it. */
+  readonly current?: string;
+  /** Where along the route the next decision is (index into the shape), for the map. */
+  readonly nextShapeIndex?: number;
 }
 
 /** Further than this from the route, the walker has gone the wrong way: plan afresh. */
@@ -228,5 +232,7 @@ export function walkNav(route: WalkRoute, at: LatLon): WalkNav {
     remaining: Math.max(0, total - along),
     off,
     atEnd: metresBetween(at.lat, at.lon, end.lat, end.lon) <= 25,
+    ...(previous.street && previous !== next ? { current: previous.street } : {}),
+    nextShapeIndex: next.shapeIndex,
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { locales } from "../src/i18n";
 import { MAX_BODY_ROWS, ROW_WIDTH } from "../src/glasses/screen";
-import { EMPTY_MODEL, buildView, decide, elapsed, lastRows, spokenAnswer, type HudModel } from "../src/hud/model";
+import { EMPTY_MODEL, buildView, decide, elapsed, lastRows, spokenAnswer, startRows, type HudModel } from "../src/hud/model";
 import { armedFooter, footer } from "../src/glasses/footer";
 import type { HudCard } from "../src/api/types";
 
@@ -10,7 +10,7 @@ const inner: HudCard = { id: "a", title: "Neues Modell testen?", text: "Modell Z
 const outer: HudCard = { id: "b", title: "Drucker starten?", text: "Testdruck bereit.", effect: "physisch" };
 
 const withCards = (cards: HudCard[], extra: Partial<HudModel> = {}): HudModel => ({
-  ...EMPTY_MODEL, configured: true, online: true,
+  ...EMPTY_MODEL, configured: true, online: true, screen: "cards",
   feed: { version: "v", status: "Prüft Drucker — Schritt 1/2", cards }, ...extra,
 });
 
@@ -39,34 +39,42 @@ describe("what a gesture means", () => {
     expect(decide(withCards([inner, outer], { index: 1, confirm: "a", nein: "a" }), "click")).toEqual({ kind: "confirm", cardId: "b" });
   });
 
-  it("a double tap cancels an armed answer; unarmed it leaves", () => {
+  it("a double tap cancels an armed answer; unarmed it goes back to the start page", () => {
     expect(decide(withCards([inner], { confirm: "a" }), "doubleClick")).toEqual({ kind: "disarm" });
-    expect(decide(withCards([inner]), "doubleClick")).toEqual({ kind: "exit" });
-    expect(decide(withCards([]), "doubleClick")).toEqual({ kind: "exit" });
-    expect(decide(EMPTY_MODEL, "doubleClick")).toEqual({ kind: "exit" });
+    expect(decide(withCards([inner]), "doubleClick")).toEqual({ kind: "back" });
+    expect(decide(withCards([]), "doubleClick")).toEqual({ kind: "back" });
   });
 
-  it("with no card: a tap opens the help (no side menu: help is the list row), a swipe does nothing", () => {
-    expect(decide(withCards([]), "click")).toEqual({ kind: "help", open: true });
+  it("with no card: a tap and a swipe do nothing", () => {
+    expect(decide(withCards([]), "click")).toEqual({ kind: "none" });
     expect(decide(withCards([]), "scrollDown")).toEqual({ kind: "none" });
   });
 
-  it("swiping walks Ja, Nein of each card, then Hilfe, and wraps around; a tap on Hilfe opens the help", () => {
+  it("swiping walks Ja, Nein of each card and wraps around", () => {
     const two = [inner, outer];
-    expect(decide(withCards(two), "scrollDown")).toEqual({ kind: "move", index: 0, nein: "a", helpStop: false });
-    expect(decide(withCards(two, { nein: "a" }), "scrollDown")).toEqual({ kind: "move", index: 1, nein: null, helpStop: false });
-    expect(decide(withCards(two, { index: 1, nein: "b" }), "scrollDown")).toEqual({ kind: "move", index: 1, nein: null, helpStop: true });
-    expect(decide(withCards(two, { index: 1, helpStop: true }), "scrollDown")).toEqual({ kind: "move", index: 0, nein: null, helpStop: false });
-    expect(decide(withCards(two), "scrollUp")).toEqual({ kind: "move", index: 1, nein: null, helpStop: true });
-    expect(decide(withCards(two, { index: 1, helpStop: true }), "scrollUp")).toEqual({ kind: "move", index: 1, nein: "b", helpStop: false });
-    expect(decide(withCards([inner], { helpStop: true }), "click")).toEqual({ kind: "help", open: true });
+    expect(decide(withCards(two), "scrollDown")).toEqual({ kind: "move", index: 0, nein: "a" });
+    expect(decide(withCards(two, { nein: "a" }), "scrollDown")).toEqual({ kind: "move", index: 1, nein: null });
+    expect(decide(withCards(two, { index: 1, nein: "b" }), "scrollDown")).toEqual({ kind: "move", index: 0, nein: null });
+    expect(decide(withCards(two), "scrollUp")).toEqual({ kind: "move", index: 1, nein: "b" });
   });
 
-  it("on the help page a tap or double tap closes it", () => {
-    const page = withCards([inner], { help: true });
-    expect(decide(page, "click")).toEqual({ kind: "help", open: false });
-    expect(decide(page, "doubleClick")).toEqual({ kind: "help", open: false });
-    expect(decide(page, "scrollDown")).toEqual({ kind: "none" });
+  it("start page: tap opens the entry under the cursor, swipe moves it, 2× leaves", () => {
+    const start = withCards([inner], { screen: "start" });
+    expect(startRows(start)).toEqual([{ kind: "cards", count: 1 }, { kind: "status" }]);
+    expect(decide(start, "click")).toEqual({ kind: "open", screen: "cards" });
+    expect(decide({ ...start, startCursor: 1 }, "click")).toEqual({ kind: "open", screen: "status" });
+    expect(decide(start, "scrollDown")).toEqual({ kind: "startMove", cursor: 1 });
+    expect(decide({ ...start, startCursor: 1 }, "scrollDown")).toEqual({ kind: "startMove", cursor: 1 });
+    expect(decide(start, "scrollUp")).toEqual({ kind: "startMove", cursor: 0 });
+    expect(decide(start, "doubleClick")).toEqual({ kind: "exit" });
+    expect(decide(EMPTY_MODEL, "doubleClick")).toEqual({ kind: "exit" });
+  });
+
+  it("status cockpit: tap asks again, 2× goes back, a swipe does nothing", () => {
+    const status = withCards([inner], { screen: "status" });
+    expect(decide(status, "click")).toEqual({ kind: "refresh" });
+    expect(decide(status, "doubleClick")).toEqual({ kind: "back" });
+    expect(decide(status, "scrollDown")).toEqual({ kind: "none" });
   });
 
   it("recognised text waits: tap sends it, 2× discards it, a swipe does nothing", () => {
@@ -92,24 +100,33 @@ describe("what a gesture means", () => {
 });
 
 describe("what the glasses show", () => {
-  it("shows header, status, card and the Ja / Nein / Hilfe list with the cursor on Ja", () => {
+  it("shows header `Frage 2/2 · ● live`, status, card (with what it does outside) and the Ja / Nein list with the cursor on Ja", () => {
     const view = buildView(withCards([inner, outer], { index: 1 }), "de", NOW);
-    expect(view.header).toBe("XAVENTRA · Frage 2/2 · physisch");
+    expect(view.header).toBe("Frage 2/2 · ● live");
     expect(view.body.join("\n")).toContain("> Prüft Drucker — Schritt 1/2");
-    expect(view.body.join("\n")).toContain("Drucker starten?");
-    expect(view.body.slice(-3)).toEqual(["● Ja", "○ Nein", "○ Hilfe"]);
-    expect(view.footer).toBe("Tippen = wählen · Wischen · Halten = Sprache · 2× = Ende");
+    expect(view.body.join("\n")).toContain("physisch: Drucker starten?");
+    expect(view.body.slice(-2)).toEqual(["● Ja", "○ Nein"]);
+    expect(view.footer).toBe("Tippen = wählen · Halten = Sprache · 2× = zurück");
+  });
+
+  it("start page: two entries with a dot on the cursor, the demo says so in one line", () => {
+    const view = buildView(withCards([inner], { screen: "start", demo: true }), "de", NOW);
+    expect(view.header).toBe("Xaventra · Demo");
+    expect(view.body).toEqual(["● Fragen · 1", "  Status", "Demo · Verbindung am Handy einrichten"]);
+    expect(view.footer).toBe("Tippen = öffnen · Wischen · Halten = Sprache · 2× = Ende");
+    expect(buildView(withCards([], { screen: "start", startCursor: 1 }), "en", NOW).body).toEqual(["  Questions · 0", "● Status"]);
+    expect(buildView(withCards([], { screen: "start" }), "de", NOW).header).toBe("Xaventra · ● live");
   });
 
   it("with Nein chosen the cursor is on Nein", () => {
     const view = buildView(withCards([inner], { nein: "a" }), "de", NOW);
-    expect(view.body.slice(-3)).toEqual(["○ Ja", "● Nein", "○ Hilfe"]);
+    expect(view.body.slice(-2)).toEqual(["○ Ja", "● Nein"]);
   });
 
   it("armed: the footer says what the second tap sends and how to cancel", () => {
     const ja = buildView(withCards([outer], { confirm: "b" }), "en", NOW);
     expect(ja.footer).toBe("Tap again = send Yes · Swipe/2× = cancel");
-    expect(ja.header).toBe("XAVENTRA · confirm");
+    expect(ja.header).toBe("Question 1/1 · confirm");
     const nein = buildView(withCards([outer], { confirm: "b", nein: "b" }), "de", NOW);
     expect(nein.footer).toBe("Nochmal tippen = Nein senden · Wischen/2× = abbrechen");
     expect(nein.footer).toBe(armedFooter("de", "Nein senden"));
@@ -118,16 +135,17 @@ describe("what the glasses show", () => {
   it("a feedback line goes into the body, the footer stays the gesture row", () => {
     const view = buildView(withCards([inner], { message: "Gehört: Ja. Nochmal tippen = senden." }), "de", NOW);
     expect(view.body).toContain("Gehört: Ja. Nochmal tippen = senden.");
-    expect(view.footer).toBe("Tippen = wählen · Wischen · Halten = Sprache · 2× = Ende");
-    expect(buildView(withCards([inner], { helpStop: true }), "de", NOW).footer).toBe("Tippen = Hilfe · Wischen · Halten = Sprache · 2× = Ende");
+    expect(view.footer).toBe("Tippen = wählen · Halten = Sprache · 2× = zurück");
     const idle = buildView(withCards([], { message: "Abgebrochen." }), "de", NOW);
     expect(idle.body).toContain("Abgebrochen.");
-    expect(idle.footer).toBe("Tippen = Hilfe · Halten = Sprache · 2× = Ende");
+    expect(idle.footer).toBe("Halten = Sprache · 2× = zurück");
   });
 
   it("every screen has a footer built by footer(): none is empty", () => {
     const models: HudModel[] = [
       EMPTY_MODEL,
+      withCards([inner], { screen: "start" }),
+      withCards([inner], { screen: "start", demo: true }),
       { ...EMPTY_MODEL, configured: true },
       { ...EMPTY_MODEL, configured: true, problem: "Xaventra nicht erreichbar" },
       withCards([]),
@@ -151,28 +169,25 @@ describe("what the glasses show", () => {
 
   it("recognised text is shown first with Tippen = senden · 2× = verwerfen", () => {
     const view = buildView(withCards([inner], { draft: "Wie ist der Stand?" }), "de", NOW);
-    expect(view.header).toBe("XAVENTRA · senden?");
+    expect(view.header).toBe("Xaventra · senden?");
     expect(view.body).toContain("Du: Wie ist der Stand?");
     expect(view.footer).toBe("Tippen = senden · 2× = verwerfen");
     expect(buildView(withCards([inner], { draft: "x" }), "en", NOW).footer).toBe("Tap = send · 2× = discard");
   });
 
-  it("the help page lists the gestures and ends in 2× = zurück", () => {
-    const view = buildView(withCards([inner], { help: true }), "de", NOW);
-    expect(view.header).toBe("XAVENTRA · Hilfe");
-    expect(view.body.join("\n")).toContain("Tippen = Antwort wählen");
-    expect(view.footer).toBe("Tippen = schließen · 2× = zurück");
-  });
-
   it("English footer uses Tap/Swipe/Hold and 2× = exit", () => {
-    expect(buildView(withCards([inner]), "en", NOW).footer).toBe("Tap = choose · Swipe · Hold = speak · 2× = exit");
+    expect(buildView(withCards([inner]), "en", NOW).footer).toBe("Tap = choose · Swipe · Hold = speak · 2× = back");
+    expect(buildView(withCards([inner], { screen: "start" }), "en", NOW).footer).toBe("Tap = open · Swipe · Hold = speak · 2× = exit");
   });
 
   it("marks offline and shows the problem when there is no feed yet", () => {
-    const view = buildView({ ...EMPTY_MODEL, configured: true, problem: "Token abgelehnt" }, "de", NOW);
-    expect(view.header).toBe("XAVENTRA · offline");
+    const view = buildView({ ...EMPTY_MODEL, configured: true, screen: "cards", problem: "Token abgelehnt" }, "de", NOW);
+    expect(view.header).toBe("Xaventra · offline");
     expect(view.body.join("\n")).toContain("Token abgelehnt");
-    expect(view.footer).toBe("2× = Ende");
+    expect(view.footer).toBe("2× = zurück");
+    const start = buildView({ ...EMPTY_MODEL, configured: true, problem: "Token abgelehnt" }, "de", NOW);
+    expect(start.header).toBe("Xaventra · offline");
+    expect(start.body).toContain("Token abgelehnt");
   });
 
   it("shows ● MIC and the hold hints (footer) while recording", () => {
@@ -198,8 +213,8 @@ describe("what the glasses show", () => {
       withCards([wide], { confirm: "w", nein: "w" }),
       withCards([wide], { draft: long }),
       withCards([wide], { rec: "sending", live: long }),
-      withCards([wide], { help: true }),
-      withCards([wide], { helpStop: true }),
+      withCards([wide], { screen: "start", message: long }),
+      withCards([wide], { screen: "start", problem: long, online: false, demo: true }),
       withCards([], { message: long, problem: long }),
       withCards([wide], { voice: { transcript: long, reply: long } }),
       withCards([wide], { rec: "sending" }),

@@ -3,6 +3,11 @@
  * "bridge", selfhost/services/shoot-day/google-calendar-bridge.gs). One
  * calendar event per project that has a date. No OAuth, no dependencies.
  *
+ * Also the Work Dashboard's appointments (tasks with is_event; createEventSync):
+ * confirmed ones (no label "vorschlag") are created/updated as "<Kunde> – <Titel>",
+ * cancelled ones (task gone, label "abgesagt") removed; "intern" never goes there.
+ * Same bridge and payload, keyed "wd:<task id>".
+ *
  * Environment (all needed, otherwise the sync is off and makes no calls)
  *   SHOOT_GCAL_WEBHOOK        the bridge's /exec URL
  *   SHOOT_GCAL_SECRET         shared secret, same as the script property SHOOT_SECRET
@@ -101,6 +106,74 @@ export function buildEvent(project, customer, cfg) {
 }
 
 export const signature = (event) => (event ? createHash("sha256").update(JSON.stringify(event)).digest("hex").slice(0, 24) : "");
+
+// ---------------------------------------------------------------------------
+// Appointments from the Work Dashboard (tasks with is_event). Same bridge, same
+// payload; the bridge's key is "wd:<task id>", so they never meet a project's event.
+// ---------------------------------------------------------------------------
+/** Labels that keep an appointment out of Google: a proposal not yet confirmed, internal, cancelled. */
+const NOT_IN_GOOGLE = ["vorschlag", "intern", "abgesagt"];
+const CANCELLED_STATUS = ["abgesagt", "cancelled", "canceled"];
+export const taskKey = (taskId) => "wd:" + taskId;
+
+/** A dashboard date-time → { wall (ms of the wall-clock time in `tz`), iso } or null. Without an offset it is taken as wall time in `tz`. */
+export function zonedTime(value, tz) {
+  const s = String(value ?? "").trim();
+  let m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i.exec(s);
+  if (!m) return null;
+  if (!validDate(Number(m[1]), Number(m[2]), Number(m[3])) || Number(m[4]) > 23 || Number(m[5]) > 59) return null;
+  let wall;
+  if (m[7]) {
+    const instant = Date.parse(s.replace(" ", "T"));
+    if (!Number.isFinite(instant)) return null;
+    wall = instant + offsetMinutes(new Date(instant), tz) * 60_000;
+  } else {
+    wall = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  }
+  wall = Math.floor(wall / 60_000) * 60_000;
+  return { wall, iso: isoWithOffset(wall, tz) };
+}
+
+/**
+ * The bridge payload (without the secret) for a dashboard appointment, or null when it
+ * does not belong into Google: a proposal ("vorschlag"), internal ("intern"), cancelled
+ * ("abgesagt" or a cancelled status), or without a usable date. No links, no secrets.
+ * @param {{ taskId: string, title: string, customer?: string, project?: string, status?: string, labels?: string[],
+ *   starts_at?: string, ends_at?: string, start_date?: string, due_date?: string, location?: string }} task
+ */
+export function buildTaskEvent(task, cfg) {
+  const labels = (task?.labels ?? []).map((l) => String(l).toLowerCase());
+  if (labels.some((l) => NOT_IN_GOOGLE.includes(l))) return null;
+  if (CANCELLED_STATUS.includes(String(task?.status ?? "").toLowerCase())) return null;
+  const start = zonedTime(task?.starts_at, cfg.tz);
+  const day = [task?.start_date, task?.due_date, task?.starts_at].map((v) => /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v ?? ""))).find((x) => x && validDate(Number(x[1]), Number(x[2]), Number(x[3])));
+  if (!start && !day) return null;
+  const title = String(task?.title ?? "").trim() || "Termin";
+  const customer = String(task?.customer ?? "").trim();
+  const lines = [];
+  if (customer) lines.push("Kunde: " + customer);
+  if (task?.project) lines.push("Projekt: " + task.project);
+  if (task?.location) lines.push("Ort: " + task.location);
+  lines.push("— aus dem Work Dashboard");
+  const event = {
+    action: "upsert",
+    project: taskKey(task.taskId),
+    title: customer ? customer + " – " + title : title,
+    location: task?.location || "",
+    description: lines.join("\n"),
+    allDay: !start,
+    date: start ? start.iso.slice(0, 10) : day[0],
+    start: "",
+    end: "",
+  };
+  if (start) {
+    const end = zonedTime(task?.ends_at, cfg.tz);
+    event.start = start.iso;
+    event.end = end && end.wall > start.wall ? end.iso : isoWithOffset(start.wall + cfg.durationMin * 60_000, cfg.tz);
+  }
+  if (cfg.calendar) event.calendarId = cfg.calendar;
+  return event;
+}
 
 // ---------------------------------------------------------------------------
 // Client
@@ -238,5 +311,76 @@ export function createSync(cfg, hooks, log = (m) => console.error(m)) {
     request,
     status: () => ({ enabled: enabled(), lastSync: status.lastSync, lastError: status.lastError, pending: enabled() ? pendingCount() : 0 }),
     stop: () => { clearTimeout(timer); timer = null; },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sync engine for the dashboard's appointments. Runs in the rhythm of the
+// dashboard poll (and on POST /api/gcal/sync); works from the list itself, so a
+// missed or failed run is simply repeated by the next one.
+// ---------------------------------------------------------------------------
+/**
+ * hooks: { list(): Promise<task[] | null> (null = dashboard not readable: nothing is deleted),
+ *          known(): {taskId: {eventId, sig}} (kept in the server's state.gcalEvents), save(): Promise }
+ * Sends only what changed (signature of the payload); an appointment that is gone, cancelled,
+ * internal or back to a proposal is deleted in Google.
+ */
+export function createEventSync(cfg, hooks, log = (m) => console.error(m)) {
+  const enabled = () => Boolean(cfg.webhook && cfg.secret && hooks.enabled?.() !== false);
+  const client = createClient(cfg, log);
+  const status = { lastSync: 0, lastError: "" };
+  let running = null; let again = false;
+
+  async function pass() {
+    const tasks = await hooks.list();
+    if (!Array.isArray(tasks)) return { failed: 1, lastError: "dashboard not readable", changed: false };
+    const known = hooks.known();
+    const want = new Map();
+    for (const task of tasks) {
+      const event = task?.taskId ? buildTaskEvent(task, cfg) : null;
+      if (event) want.set(String(task.taskId), event);
+    }
+    let failed = 0; let lastError = ""; let changed = false;
+    for (const taskId of Object.keys(known)) {
+      if (want.has(taskId)) continue;
+      try {
+        await client.send({ action: "delete", project: taskKey(taskId), ...(cfg.calendar ? { calendarId: cfg.calendar } : {}) });
+        delete known[taskId]; changed = true;
+      } catch (error) { failed++; lastError = error.message; }
+    }
+    for (const [taskId, event] of want) {
+      const sig = signature(event);
+      if (known[taskId]?.sig === sig) continue;
+      try {
+        const answer = await client.send(event);
+        known[taskId] = { eventId: String(answer.eventId || "synced").slice(0, 200), sig }; changed = true;
+      } catch (error) { failed++; lastError = error.message; }
+    }
+    if (changed) await hooks.save();
+    return { failed, lastError };
+  }
+
+  async function run() {
+    do {
+      again = false;
+      const { failed, lastError } = await pass();
+      if (failed) { status.lastError = clip(lastError); log("gcal: " + failed + " appointment(s) not synced: " + clip(lastError)); }
+      else { status.lastError = ""; status.lastSync = Date.now(); }
+    } while (again);
+  }
+
+  /** One pass now (queued behind a running one); never rejects. */
+  function request() {
+    if (!enabled()) return Promise.resolve();
+    if (running) { again = true; return running; }
+    running = run().catch((error) => { status.lastError = clip(error.message); log("gcal: " + clip(error.message)); })
+      .finally(() => { running = null; });
+    return running;
+  }
+
+  return {
+    enabled,
+    request,
+    status: () => ({ enabled: enabled(), lastSync: status.lastSync, lastError: status.lastError, synced: Object.keys(hooks.known() ?? {}).length }),
   };
 }

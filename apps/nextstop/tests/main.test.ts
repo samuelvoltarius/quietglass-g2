@@ -4,6 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Boots the real app against a fake bridge, so request ordering and the close
 // path can be checked without glasses or a network.
 const harness = vi.hoisted(() => ({ bridge: null as unknown }));
+// The cockpit is a picture: what it says is read from the models handed to the composer.
+interface SeenModel { title: string; headline: string; direction: string; caption: string; hint: string; cells: { label: string; value: string }[] }
+const cockpit = vi.hoisted(() => ({ models: [] as SeenModel[] }));
+vi.mock("../src/cockpit/compose", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/cockpit/compose")>();
+  return { ...real, composeTiles: (model: SeenModel, backend: never) => { cockpit.models.push(model); return real.composeTiles(model as never, backend); } };
+});
+/** Everything the last cockpit picture says, lower case. */
+const pictured = (): string => {
+  const m = cockpit.models.at(-1);
+  return m ? [m.headline, m.direction, m.caption, m.hint, ...m.cells.map((c) => c.value)].join("\n").toLowerCase() : "";
+};
 vi.mock("@evenrealities/even_hub_sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@evenrealities/even_hub_sdk")>()),
   waitForEvenAppBridge: async () => harness.bridge,
@@ -33,7 +45,11 @@ function fakeBridge() {
       backend: "motis", motisUrl: "https://motis.test", oebbUrl: "http://127.0.0.1:8079/oebb", refreshSeconds: 30,
     }),
     setLocalStorage: async () => true,
-    rebuildPageContainer: async () => false,
+    // Like the real glasses: a rebuild is accepted and replaces the page.
+    rebuildPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
+      for (const text of page.textObject ?? []) record(text.containerID, text.content);
+      return true;
+    },
     createStartUpPageContainer: async (page: { textObject?: { containerID?: number; content?: string }[] }) => {
       state.creates += 1;
       for (const text of page.textObject ?? []) record(text.containerID, text.content);
@@ -43,6 +59,7 @@ function fakeBridge() {
       record(upgrade.containerID, upgrade.content);
       return true;
     },
+    updateImageRawData: async () => "success",
     startAppLocationUpdates: async () => true,
     stopAppLocationUpdates: async () => true,
     getAppLocation: async () => ({ latitude: 47.8057, longitude: 13.0429 }),
@@ -92,6 +109,7 @@ describe("nextstop lifecycle", () => {
   resetGestureDedupe();
     unhandled = [];
     pending = [];
+    cockpit.models.length = 0;
     nodeProcess.on("unhandledRejection", onUnhandled);
     vi.stubGlobal("document", { getElementById: () => null });
     vi.stubGlobal("location", { search: "" });
@@ -135,18 +153,19 @@ describe("nextstop lifecycle", () => {
     const fake = fakeBridge();
     await boot(fake);
     await vi.waitFor(() => expect(pending.map((p) => p.stopId)).toEqual(["A"]));
+    fake.gesture(0); // start page: tap opens the departures
 
     fake.menu(10); // menu "Andere Haltestelle" (hold now starts the voice destination)
     await vi.waitFor(() => expect(pending.map((p) => p.stopId)).toEqual(["A", "B"]));
 
     pending[1]?.reply(stopTimes("Bravo-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Bravo-Ziel"));
+    await vi.waitFor(() => expect(pictured()).toContain("bravo-ziel"));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(fake.state.body).toContain("Bravo Gasse");
-    expect(fake.state.body).toContain("Bravo-Ziel");
-    expect(fake.state.body).not.toContain("Alpha-Ziel");
+    expect(pictured()).toContain("bravo gasse");
+    expect(pictured()).toContain("bravo-ziel");
+    expect(pictured()).not.toContain("alpha-ziel");
   });
 
   it("works straight after install: no saved settings means Transitous, no proxy", async () => {
@@ -162,7 +181,8 @@ describe("nextstop lifecycle", () => {
     const fake = fakeBridge();
     (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = async () => null;
     await boot(fake);
-    // "Warte auf deinen Standort" is the bold picture line; the hint is text.
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
+    fake.gesture(0); // the departures: "Warte auf deinen Standort" is the bold picture line; the hint is text.
     await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -183,12 +203,14 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    fake.gesture(0); // start page: tap opens the departures
+    await vi.waitFor(() => expect(pictured()).toContain("alpha-ziel"));
 
+    resetGestureDedupe();
     fake.gesture(0); // tap: follow the selected bus
     // The glasses answer the tap at once, before the network has (0.3.7 showed the unchanged board).
-    await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Tippen = abbrechen · 2× = Ende"));
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.caption).toBe("Fahrt wird geladen …"));
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.hint).toBe("Tippen = abbrechen · 2× = Ende"));
     await vi.waitFor(() => expect(pending).toHaveLength(2));
     const at = (minutes: number): string => new Date(Date.now() + minutes * 60000).toISOString();
     pending[1]?.reply({
@@ -203,19 +225,30 @@ describe("nextstop lifecycle", () => {
       }],
     });
     // Waiting at Alpha Platz: when it leaves from here, not the stops after it.
-    await vi.waitFor(() => expect(fake.state.body).toMatch(/^\d\d:\d\d · ~ Fahrplan · Alpha Platz\nBus ist gleich da$/), { timeout: 3000 });
+    await vi.waitFor(() => {
+      const model = cockpit.models.at(-1)!;
+      expect(model.title).toBe("FOLGEN · ● live");
+      expect(model.cells[0]!.value).toMatch(/^\d\d:\d\d$/);
+      expect(model.cells.find((cell) => cell.label === "VERSPÄTUNG")?.value).toBe("FAHRPLAN");
+      expect(model.cells.find((cell) => cell.label === "BUS BEI")?.value).toBe("HIER");
+    }, { timeout: 3000 });
 
     resetGestureDedupe(); // a person's second tap comes seconds later
     fake.gesture(0); // QIS v1: the first tap on a running ride only arms
-    await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.hint).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
     resetGestureDedupe();
     fake.gesture(0); // the second tap: back to the board, at once, with the departures already held
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.title).toBe("NEXTSTOP"));
     await vi.waitFor(() => expect(pending).toHaveLength(3));
     pending[2]?.reply(stopTimes("Alpha-Ziel"));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(fake.state.body).toContain("Alpha-Ziel");
-    fake.gesture(3); // double tap
+    expect(pictured()).toContain("alpha-ziel");
+    resetGestureDedupe();
+    fake.gesture(3); // double tap: the board is one level below the start page ...
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
+    expect(fake.state.modes).toEqual([]);
+    resetGestureDedupe();
+    fake.gesture(3); // ... and there it is the exit dialog
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });
 
@@ -228,7 +261,7 @@ describe("nextstop lifecycle", () => {
     (fake.bridge as { startAppLocationUpdates: () => Promise<unknown> }).startAppLocationUpdates = never;
     (fake.bridge as { getAppLocation: () => Promise<unknown> }).getAppLocation = never;
     await boot(fake);
-    await vi.waitFor(() => expect(fake.state.body).toContain("Erlaube den Standort in der Even-App"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
     fake.gesture(3); // double tap
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });
@@ -239,19 +272,24 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    fake.gesture(0); // start page: open the departures
+    await vi.waitFor(() => expect(pictured()).toContain("alpha-ziel"));
 
+    resetGestureDedupe();
     fake.gesture(0);
-    await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.caption).toBe("Fahrt wird geladen …"));
     await vi.waitFor(() => expect(pending).toHaveLength(2));
     resetGestureDedupe();
     fake.gesture(0); // the ride has not answered: back anyway
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
-    expect(fake.state.footer).toContain("Tippen = folgen");
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.hint).toContain("Tippen = folgen"));
 
     pending[1]?.reply({ legs: [] }); // the ride's answer, too late
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(fake.state.footer).toContain("Tippen = folgen");
+    expect(cockpit.models.at(-1)?.hint).toContain("Tippen = folgen");
+    resetGestureDedupe();
+    fake.gesture(3);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
+    resetGestureDedupe();
     fake.gesture(3);
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });
@@ -264,14 +302,21 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    fake.gesture(0); // start page: open the departures
+    await vi.waitFor(() => expect(pictured()).toContain("alpha-ziel"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     const before = rebuilds;
-    fake.gesture(0);
-    await vi.waitFor(() => expect(fake.state.body).toBe("Fahrt wird geladen …"));
     resetGestureDedupe();
     fake.gesture(0);
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.caption).toBe("Fahrt wird geladen …"));
+    resetGestureDedupe();
+    fake.gesture(0);
+    await vi.waitFor(() => expect(cockpit.models.at(-1)?.title).toBe("NEXTSTOP"));
     expect(rebuilds).toBe(before);
+    resetGestureDedupe();
+    fake.gesture(3);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
+    resetGestureDedupe();
     fake.gesture(3);
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
   });
@@ -282,7 +327,7 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
 
     fake.gesture(3); // double tap
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
@@ -300,7 +345,7 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
 
     fake.gesture(3); // double tap
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
@@ -325,7 +370,7 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
     const creates = fake.state.creates;
 
     fake.gesture(3);
@@ -361,7 +406,7 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
 
     fake.gesture(3);
     await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));
@@ -390,7 +435,7 @@ describe("nextstop lifecycle", () => {
     await boot(fake);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.reply(stopTimes("Alpha-Ziel"));
-    await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+    await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
     fake.gesture(5);                                         // genuinely left, no exit call before
     await new Promise((done) => setTimeout(done, 20));
     resetGestureDedupe();
@@ -408,7 +453,7 @@ describe("nextstop lifecycle", () => {
       await boot(fake);
       await vi.waitFor(() => expect(pending).toHaveLength(1));
       pending[0]?.reply(stopTimes("Alpha-Ziel"));
-      await vi.waitFor(() => expect(fake.state.body).toContain("Alpha-Ziel"));
+      await vi.waitFor(() => expect(fake.state.body).toContain("Abfahrten"));
 
       fake.gesture(3);
       await vi.waitFor(() => expect(fake.state.modes).toEqual([1]));

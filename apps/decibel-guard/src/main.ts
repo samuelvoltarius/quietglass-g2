@@ -4,21 +4,18 @@ import {
 import { levelFromPcm, smoothDb, toApproxSpl } from "./audio/level";
 import { accumulate, createDose, resetDose, type DoseState } from "./noise/dose";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { buildView, HELP_PAGES, type NoiseView } from "./glasses/view";
-import { sameView } from "./glasses/diff";
-import { createPage, forgetPage, sendImage, updatePage, type MenuSpec } from "./glasses/render";
-import { quantize } from "./glasses/bitmap";
-import { DOSE_BAR, METER, doseKey, dosePercent, drawDoseBar, drawMeter, meterKey, meterLevel, type MeterState } from "./glasses/gauge";
-import { createImageLane } from "./glasses/lane";
-import { LEVEL_IMAGE, drawLevel, levelKey, type LevelState } from "./glasses/digits";
+import { cockpitModel, type CockpitModel } from "./cockpit/model";
+import { composeCockpit } from "./cockpit/compose";
+import { COCKPIT_TILES, createCockpitPage, forgetPage, guardedTileSend } from "./glasses/page";
+import { meterLevel, quantize } from "./glasses/quant";
 import { updatePeak, type Peak } from "./glasses/peak";
-import { encodePng } from "./glasses/pixel";
+import { createTileSender } from "./screen/sender";
+import { autoBackend, type TextBackend } from "./screen/text";
 import { effectiveOffset, isCalibrated, load, loadDoseRaw, parseDose, save, saveDose, type NoiseData } from "./storage/persist";
 import { lifecycleFromEvent } from "./lifecycle";
-import { mountPhoneUi } from "./ui/phone";
+import { mountPhoneUi, type PhoneLive, type PhoneUi } from "./ui/phone";
 import { createExitRequest, settleRestore } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
-import { t } from "./messages";
 
 /** A hold arms "clear today's dose" and a tap arms "stop measuring"; a single tap within this window confirms (QIS v1, section 2). */
 const ARM_MS = 4000;
@@ -26,9 +23,9 @@ const ARM_MS = 4000;
  * The glasses' side menu is off: on the real glasses its clicks never arrive (`menuItemClickEvent`) and a
  * hold opens the menu instead of reaching the app (step log 15.10.2026). The menu code stays for later.
  */
-const SIDE_MENU = false;
-/** Side-menu item ids (QIS v1.2: the help lives in the glasses' side menu). */
-const MENU_HELP = 1;
+export const SIDE_MENU = false;
+/** The level pictures are renewed at most this often while the level moves (audio blocks arrive many times a second). */
+const COCKPIT_MIN_MS = 700;
 /** Taps right after the arming are ignored, so the release of the hold cannot confirm by accident. */
 const RESET_SETTLE_MS = 400;
 /** While measuring, today's dose is written this often (one number, see persist.ts). */
@@ -61,10 +58,6 @@ async function boot(): Promise<void> {
   let armedKind: "reset" | "stop" | null = null;
   let armedUntil = 0;
   let armedAt = 0;
-  /** Key of the side menu the page on the glasses carries; a different one needs a rebuild. */
-  let pageMenuKey = "";
-  /** Zero-based page of the help, null while it is closed. */
-  let helpPage: number | null = null;
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
   /** Left through the system while measuring: the microphone reopens when the app comes back. */
   let resumeAfterBackground = false;
@@ -73,8 +66,11 @@ async function boot(): Promise<void> {
   let listening = false;
   let smoothedDbfs: number | null = null;
   let lastBlockAt: number | null = null;
-  let lastView: NoiseView | null = null;
   let pageReady = false;
+  let phone: PhoneUi | null = null;
+  let textBackend: TextBackend | null = null;
+  /** When the cockpit was last pushed; audio-driven draws wait COCKPIT_MIN_MS, the 1 s tick catches up. */
+  let lastPushAt = 0;
   let closed = false;
   let tick: ReturnType<typeof setInterval> | undefined;
   /** Set while the microphone is being opened, so a stop or close can wait for it. */
@@ -89,30 +85,25 @@ async function boot(): Promise<void> {
   /** Level as last drawn in the big digits, in whole dB; the hysteresis works against it. */
   let digitsDb: number | null = null;
   let peak: Peak | null = null;
-  /** Images are written at most every 700 ms and only when their picture changes. */
-  const lane = createImageLane((target, imageData) => (exitAsked() ? Promise.resolve(false) : sendImage(bridge, target, imageData)), 700);
-
   const displayLevel = (): number | null =>
     smoothedDbfs === null ? null : toApproxSpl(smoothedDbfs, effectiveOffset(data));
 
   const isArmed = (): boolean => armedKind !== null && armedUntil > Date.now();
 
-  /** QIS v1.2: the side menu holds the help (and nothing the wearer could trigger by accident). */
-  const menuSpec = (): MenuSpec => ({
-    key: SIDE_MENU ? `help:${locale}` : "none",
-    items: SIDE_MENU ? [{ id: MENU_HELP, label: t(locale, "g.menu.help") }] : [],
-  });
-
-  const currentView = (): NoiseView =>
-    buildView(dose, data.dose, {
-      listening,
-      level: displayLevel(),
-      calibrated: isCalibrated(data),
-      locale,
-      micError,
-      armed: isArmed() ? armedKind : null,
-      helpPage,
+  const currentModel = (): CockpitModel => {
+    const shown = displayLevel();
+    meterDb = listening ? meterLevel(meterDb, shown) : null;
+    digitsDb = listening ? quantize(digitsDb, shown, 1) : null;
+    peak = listening ? updatePeak(peak, shown, Date.now()) : null;
+    return cockpitModel({
+      dose, settings: data.dose, listening, level: digitsDb, barLevel: meterDb, peak: peak ? meterLevel(null, peak.db) : null,
+      calibrated: isCalibrated(data), locale, now: Date.now(), micError, armed: isArmed() ? armedKind : null,
     });
+  };
+
+  const liveInfo = (): PhoneLive => ({
+    listening, micError, dbfs: smoothedDbfs, level: displayLevel(), dose,
+  });
 
   const persistDose = (): void => {
     lastDoseSave = Date.now();
@@ -134,49 +125,28 @@ async function boot(): Promise<void> {
     resetTimer = setTimeout(() => { disarmReset(); void draw(); }, ARM_MS + 20);
   };
 
-  /**
-   * Asks the lane for the meter and the dose bar. Both keys are quantised, so
-   * most calls change nothing and send nothing; the lane is never awaited.
-   */
-  const requestImages = (): void => {
-    if (!pageReady || closed) return;
-    const shown = displayLevel();
-    meterDb = listening ? meterLevel(meterDb, shown) : null;
-    digitsDb = listening ? quantize(digitsDb, shown, 1) : null;
-    peak = listening ? updatePeak(peak, shown, Date.now()) : null;
-    const meter: MeterState = { listening, level: meterDb, criterionDb: data.dose.criterionDb, peak: peak ? meterLevel(null, peak.db) : null };
-    lane.request(METER, meterKey(meter), () => encodePng(drawMeter(meter)));
-    const digits: LevelState = { listening, db: digitsDb, calibrated: isCalibrated(data) };
-    lane.request(LEVEL_IMAGE, levelKey(digits), () => encodePng(drawLevel(digits)));
-    const percent = dosePercent(dose.fraction);
-    lane.request(DOSE_BAR, doseKey(percent), () => encodePng(drawDoseBar(percent)));
-  };
-
   // While the exit dialog may be on screen (asked, no input since) no timer, poll or stream may draw: a page call
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
+  /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !backgrounded));
+
   const drawOnce = async (): Promise<void> => {
     if (exitAsked()) return;
     if (closed || backgrounded) return;
-    const view = currentView();
-    const menu = menuSpec();
-    // The side menu travels with the page: a different one (language) means one rebuild.
-    if (pageReady && menu.key !== pageMenuKey) pageReady = false;
-    if (!pageReady || !sameView(lastView, view)) {
-      const created = !pageReady;
-      const result = pageReady ? await updatePage(bridge, view) : await createPage(bridge, view, menu);
-      if (!result.ok) {
-        pageReady = false;
-        console.warn("[decibelguard] draw failed:", result.reason);
-        return;
-      }
+    if (!pageReady) {
+      const result = await createCockpitPage(bridge);
+      if (closed) return;
+      if (!result.ok) { console.warn("[decibelguard] draw failed:", result.reason); return; }
       pageReady = true;
-      if (created) pageMenuKey = menu.key;
-      lastView = view;
       // A new page starts with blank images.
-      if (created) lane.invalidate();
+      tiles.reset();
     }
-    requestImages();
+    const model = currentModel();
+    textBackend ??= autoBackend();
+    lastPushAt = Date.now();
+    // Never awaited: a slow transfer must not hold up the next draw.
+    void tiles.push(composeCockpit(model, textBackend));
   };
 
   /**
@@ -248,7 +218,6 @@ async function boot(): Promise<void> {
       // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
       if (closed) return;
       pageReady = false;
-      lastView = null;
       forgetPage(bridge);
       return draw();
     },
@@ -283,7 +252,6 @@ async function boot(): Promise<void> {
   const comeBack = async (): Promise<void> => {
     backgrounded = false;
     pageReady = false;
-    lastView = null;
     if (tick === undefined) tick = setInterval(onTick, 1000);
     await draw();
     if (resumeAfterBackground) {
@@ -302,7 +270,7 @@ async function boot(): Promise<void> {
     closed = true;
     if (listening) await bridge.audioControl(false).catch(() => undefined);
     listening = false;
-    lane.close();
+    tiles.close();
     persistDose();
   };
 
@@ -316,14 +284,10 @@ async function boot(): Promise<void> {
     if (lifecycle === "foreground") { void comeBack(); return; }
     if (lifecycle === "background") { void goBackground(); return; }
     if (lifecycle === "exit") { void shutDown(); return; }
+    // The glasses' side menu (off while SIDE_MENU is false): a click carries no action here.
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
-      if (backgrounded) { void comeBack(); return; }
-      if (menuId === MENU_HELP) {
-        disarmReset();
-        helpPage = 0;
-        void draw();
-      }
+      if (backgrounded) void comeBack();
       return;
     }
     const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
@@ -344,7 +308,8 @@ async function boot(): Promise<void> {
         dose = accumulate(dose, level, seconds, data.dose, now);
       }
       lastBlockAt = now;
-      void draw();
+      // Audio arrives many times a second: the picture follows at most every COCKPIT_MIN_MS, the tick catches up.
+      if (now - lastPushAt >= COCKPIT_MIN_MS) void draw();
       return;
     }
 
@@ -353,7 +318,7 @@ async function boot(): Promise<void> {
     // A gesture means the app is visible again, even if no "foreground" came first.
     if (backgrounded) {
       const restore = comeBack();
-      if (!(gesture.gesture === "doubleClick" && helpPage === null)) { void restore; return; }
+      if (gesture.gesture !== "doubleClick") { void restore; return; }
       // A 2x on the main screen while backgrounded comes back AND asks again, after the restore draw.
       void settleRestore(restore).then(exitWithDialog);
       return;
@@ -383,16 +348,6 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // The help page: swipes turn its pages, the double tap goes back; nothing else does anything.
-    if (helpPage !== null) {
-      if (gesture.gesture === "doubleClick") helpPage = null;
-      else if (gesture.gesture === "scrollDown") helpPage = Math.min(HELP_PAGES - 1, helpPage + 1);
-      else if (gesture.gesture === "scrollUp") helpPage = Math.max(0, helpPage - 1);
-      else return;
-      void draw();
-      return;
-    }
-
     switch (gesture.gesture) {
       case "click":
         // Stopping is armed first (QIS v1.2): one tap asks, a second one within 4 s stops.
@@ -404,10 +359,8 @@ async function boot(): Promise<void> {
         break;
       case "scrollUp":
       case "scrollDown":
-        // Without the side menu a swipe on the main screen opens the help again.
-        if (SIDE_MENU) return;
-        helpPage = 0;
-        break;
+        // A swipe only moves; the cockpit has nothing to move (the help lives on the phone).
+        return;
       case "doubleClick":
         void exitWithDialog();
         return;
@@ -427,6 +380,7 @@ async function boot(): Promise<void> {
   function onTick(): void {
     if (listening && Date.now() - lastDoseSave >= DOSE_SAVE_MS) persistDose();
     void draw();
+    phone?.refreshLive();
   }
   tick = setInterval(onTick, 1000);
 
@@ -439,10 +393,11 @@ async function boot(): Promise<void> {
       const seconds = (Date.now() - started) / 1000;
       smoothedDbfs = -60 + 14 * Math.sin(seconds / 4) + 4 * Math.sin(seconds * 1.7);
       void draw();
+      phone?.refreshLive();
     }, 500);
   }
 
-  mountPhoneUi({
+  phone = mountPhoneUi({
     getData: () => data,
     setData: async (next) => {
       data = next;
@@ -451,7 +406,9 @@ async function boot(): Promise<void> {
       });
       await draw();
     },
-    getLevel: () => ({ dbfs: smoothedDbfs, listening, micError }),
+    getLive: liveInfo,
+    // The phone's button is as explicit as a tap on the glasses: start, or stop straight away.
+    toggle: () => { if (closed) return; if (listening) void stopListening(); else void startListening(); },
     getLocale: () => locale,
     setLocale: (next) => {
       locale = next;

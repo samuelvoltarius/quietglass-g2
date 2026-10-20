@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.9.1] — 2026-10-20
+
+### Neu
+
+- **Straßennamen auf der Karte der Fußseite.** Die Namen kommen aus Overpass (`name`, sonst die erste `ref`; Fußwege ohne). Zuerst die Straße der nächsten Abbiegung (hell), dann die Straße, auf der du gehst, dann bis zu vier weitere benannte Straßen gedimmt; höchstens 6, ohne Überlappung, nie über Standortmarke, Ziel, Maßstabsbalken oder Nordnadel, immer waagerecht lesbar (die Karte dreht, die Schrift nicht). Platzierung aus OpenGlance Nav (`labels.ts`) übernommen.
+- Zeile 2 unter der Überschrift ist die Straße der nächsten Anweisung („LINKS · 80 M“ / „IN LINZER GASSE“), sonst die Straße, auf der du gehst. Haltestelle bzw. Ziel stehen dafür in einer eigenen Zelle (HALT / ZIEL).
+- Tests: Platzierung (Straße der Abbiegung und aktuelle Straße zuerst, keine Überlappung, aufrecht bei jeder Drehung, höchstens 6), Parser behält Namen, Überschrift und Zeile 2. Vorschauen neu mit Straßennamen.
+
+## [0.9.0] — 2026-10-20
+
+### Neu: Karte auf den Fußwegen der Begleitung (QUS v1)
+
+- **Die Fußseite der Begleitung ist jetzt ein Cockpit-Bild** (vier Kacheln 288×144) statt Pfeil und Text. Links eine **kleine Karte** (die zwei linken Kacheln, über der Hinweiszeile): Straßen gedimmt (Hauptstraßen 8, Nebenstraßen 6, Fußwege 4), der Rest des Wegs als dicke helle Linie (15) auf schwarzem Rand, die Haltestelle als Ring, das Ziel als Quadrat (liegt es außerhalb des Bildes, zeigt ein Pfeil am Rand zu ihm), du selbst als Pfeilspitze (die Karte dreht sich mit dem Weg, „Weg nach oben“) bzw. als Punkt mit Ring, wenn keine Richtung bekannt ist (dann Norden oben). Maßstab in Stufen von 150 m bis 1,2 km Breite, so gewählt, dass der Rest des Wegs ins Bild passt; Maßstabsbalken und Nordnadel.
+- Rechts klein `NEXTSTOP  HH:MM`, **eine** große Überschrift („LINKS · 80 M“, „HALTESTELLE · 320 M“, „ZIEL · 120 M“), darunter die Straße bzw. der Haltestellenname, dann drei Spalten: **WEG** (Rest), **ABFAHRT** (Zeit der Verbindung, die du erreichen willst; bei Fußweg zum Ziel **ANKUNFT**), **PUFFER** (Minuten Reserve, mit Rahmen unter 2), **LINIE**, **STEIG**. Die Hinweiszeile bleibt die der Begleitung (`1/5 · GPS · Tippen = weiter · 2× = Ende`). Warte-, Fahrt- und Ankunftsseiten sind unverändert.
+- **Sparsam gesendet:** Positionsänderungen zeichnen die Karte nur neu, wenn sich die Ansicht merklich bewegt hat (ab 8 m, ab 10° Drehung oder bei einem Maßstabssprung) und höchstens alle 4 s; die Uhr berührt nur die Kachel oben rechts. Karten-Kacheln werden nie gesendet, solange der Beenden-Dialog offen sein kann, und nicht mehr, wenn die Seite verlassen wurde.
+- **Straßen aus OpenStreetMap (Overpass):** einmal je Fußetappe für einen Rahmen um die Etappe (+ 220 m Rand) geladen und gemerkt; höchstens 8 s insgesamt, zwei Endpunkte (`overpass-api.de`, `overpass.private.coffee`), Antwortgröße begrenzt. Schlägt das Laden fehl oder dauert es zu lange, wird die Karte mit Weg und Markierungen ohne Straßen gezeichnet – die Begleitung wartet nie darauf. Kein anderes Netzziel. Im Demo-Modus gibt es keine Straßen (kein Netz).
+- **Netz-Whitelist** in `app.json`: `https://overpass-api.de` und `https://overpass.private.coffee` ergänzt, Beschreibung des Netzwerk-Rechts nennt jetzt die Kartenstraßen.
+- Entfernt: die Seitenart „walk“ (Pfeil, Entfernungskarte, Straßenstreifen) der Begleitung; ohne Wegführung oder Standort bleibt die Fußseite Text wie bisher.
+- Tests: Kamera, Projektion, Wegrahmen, Überschrift und Zellen (reine Funktionen), Kachel-Diff (unverändert sendet nichts, kleine Bewegung keine Karten-Kachel, Uhr nur oben rechts), Overpass (Parser, zweiter Endpunkt, Fehler, Zeitgrenze), Zeichnen ohne Straßen, Beenden-Dialog-Schutz im laufenden Programm. Vorschau: `QG_PREVIEW=1 npx vitest run tests/walkmap.test.ts` schreibt `store/preview-walk.png` und `store/preview-walk-transfer.png` (Straßen aus einer festen, **synthetischen** Vorlage, ohne Netz).
+
+## [0.8.0] — 2026-10-20
+
+### Geändert (Quietglass-UI-Standard QUS v1, „keine Textwand“)
+
+- **Brille: Startseite mit zwei großen Einträgen.** Kopfzeile `NEXTSTOP · ● live` (bzw. `Demo`, `kein Standort`, `offline`), darunter **Abfahrten** und **Ziele und Route**, eine Fußzeile. Wischen wählt, Tippen öffnet, Halten sagt ein Ziel, 2× beendet (System-Dialog). Die Abfahrtstafel ist eine Ebene darunter: 2× geht zurück zur Startseite. Das Hilfe-Zeilchen am Ende der Abfahrtsliste entfällt (Hilfe ist keine Brillenseite mehr; das Seitenmenü bleibt aus, `SIDE_MENU = false`).
+- **Brille: Abfahrtstafel als Cockpit-Bild** (Renderer aus Rain Lens, `src/screen/*` unverändert kopiert): rechts klein `NEXTSTOP  HH:MM`, **eine** große Überschrift („BUS 3 · 4 MIN“) mit der Richtung darunter, drei Spalten mit Danach, Steig, Verspätung, Halt, Weg, Abfahrt; links ein Countdown-Ring, der sich füllt, je näher der Bus kommt (gestrichelt bei Verspätung, blass bei Ausfall); eine Hinweiszeile (`1/4 · Tippen = folgen · Wischen = wählen · Halten = Ziel · 2× = zurück`). Gesendet werden nur die Kacheln (4 × 288×144), deren Pixel sich geändert haben; die Uhr berührt nur die Kachel oben rechts.
+- **Brille: eine verfolgte Fahrt hat dieselbe Cockpit-Seite** (Titel `FOLGEN · ● live`, Überschrift: Minuten bis zum Bus bzw. nächster Halt, Ring als Countdown, Zellen für Danach, Ziel, Ankunft, Quelle GPS/Fahrplan, eine Hinweiszeile). So baut das Antippen einer Abfahrt die Seite nicht neu auf. Das Beenden der Fahrt bleibt scharf gestellt (tippen, dann nochmal tippen); 2× in der laufenden Fahrt öffnet den System-Dialog, ohne zu beenden.
+- **Unverändert:** die grafische Begleitung (Pfeil/Entfernung, Countdown mit Bus, „noch N Stationen“), Abbruch-Dialog-Logik (`src/exit.ts`, Hintergrund-2×), alle `bounded()`-Zeitgrenzen, der Aufbau der ersten Seite (Rebuild + Create), Standort, Sprache (STT) und Sprachausgabe (TTS).
+- **Handy: genau drei Tabs in einer Zeile – Jetzt, Fahrten, Einstellungen** – im Aussehen von Rain Lens: Kicker `QUIETGLASS / ÖFFIS`, Titel, Status-Pille, Statusbanner, Hero-Karte mit **einem** großen Wert (nächste Abfahrt), Kennzahlen 2×2 (Steig, Verspätung, Weg, Abfahrt), **ein** Hauptknopf (Aktualisieren) und eine waagerechte Kartenleiste mit den weiteren Abfahrten. „Fahrten“ trägt die Ziele (Suche, Favoriten, „Jetzt“-Ziel). „Einstellungen“ sind gruppierte, einklappbare Karten (Brille und Sprache, Quelle und Server, Bedienung); beim ersten Start stehen sie offen mit einer Drei-Schritte-Liste, danach sind sie zu. Ohne Standort zeigt „Jetzt“ Beispieldaten und sagt es.
+- Tests: reine Modelltests (Zellen, Überschrift, Startzeilen, Hinweiszeile, Ring), Kachel-Diff (unveränderter Frame sendet nichts) und Vorschau-PNGs (`QG_PREVIEW=1 npx vitest run tests/preview.test.ts` schreibt `store/preview-cockpit*.png`).
+
 ## [0.7.7] — 2026-10-17
 
 ### Behoben (Hardware-Test)

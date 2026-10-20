@@ -4,11 +4,14 @@ import {
 import { HafasBackend } from "./transit/hafas";
 import { MotisBackend } from "./transit/motis";
 import type { Departure, Ride, Stop, TransitBackend } from "./transit/types";
-import { metresBetween } from "./transit/types";
+import { delayMinutes, metresBetween, minutesUntil } from "./transit/types";
 import type { Position } from "./ride/tracker";
 import { boardingIndex, followRide } from "./ride/follow";
 import { gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
-import { boardScene, bySoonest, followLoadingScene, followScene, messageScene } from "./glasses/board";
+import { bySoonest, messageScene } from "./glasses/board";
+import { followLoadingScene, followScene } from "./cockpit/follow";
+import { boardScene } from "./cockpit/scene";
+import { liveWord, startRows, startView } from "./start";
 import { sameScene } from "./glasses/diff";
 import { createPage, forgetPage, rebuildPage, updatePage } from "./glasses/render";
 import { load, save, type Settings } from "./storage/persist";
@@ -42,6 +45,9 @@ const SIDE_MENU = false;
 import type { Planner } from "./route/planner";
 import { DEMO_PLACES, DEMO_POSITION, demoBackend, demoFromUrl, demoPlanner, demoPosition, demoWalkRoute } from "./demo/demo";
 import { OFF_ROUTE_METRES, fetchWalkRoute, project, walkNav, type WalkNav, type WalkRoute } from "./route/walk";
+import { cameraFor, settleView, type Settled } from "./map/camera";
+import { classesFor, containsBox, createStreetSource, legBox, type BBox, type Street } from "./map/streets";
+import type { WalkMapInput } from "./map/draw";
 
 /**
  * NextStop.
@@ -127,6 +133,8 @@ async function boot(): Promise<void> {
   /** Destinations: favourites and the "go now" target. Demo mode never writes. */
   let places: Places = demo.enabled ? DEMO_PLACES : await loadPlaces(bridge);
   let placeIndex = 0;
+  /** Which entry of the start page is marked. */
+  let startCursor = 0;
 
   /**
    * What the glasses say is kept as a function of the language rather than as
@@ -153,7 +161,7 @@ async function boot(): Promise<void> {
   let busy: Say = (lang) => ({ error: glassesText(lang).searching, hint: "" });
 
   // The route pages: which one is open, the connections found, the guide.
-  let screen: Screen = "board";
+  let screen: Screen = "start";
   interface PlanState {
     readonly target: Destination;
     readonly status: "loading" | "ready" | "error";
@@ -269,6 +277,39 @@ async function boot(): Promise<void> {
     return walkNav(walkState.route, at);
   };
 
+  // The streets behind the walking map: fetched once per walking leg (and again only when a reroute leaves
+  // the area loaded), bounded to a few seconds. A failure leaves the map with route and markers alone.
+  interface StreetState {
+    readonly key: string;
+    readonly box: BBox;
+    readonly status: "loading" | "done" | "failed";
+    readonly streets: readonly Street[];
+  }
+  let streetState: StreetState | null = null;
+  const streetSource = createStreetSource();
+  // The map view that is on the glasses: it moves on only when the walker moved noticeably (src/map/camera.ts).
+  let mapSettled: { readonly key: string; readonly settled: Settled } | null = null;
+
+  /** The map of the walking page: the route, the target and the streets, at the view that was settled on. */
+  const walkMap = (state: ReturnType<typeof guideState>, at: Position | null): WalkMapInput | null => {
+    if (state.step.kind !== "walk" || !at || !walkState?.route) return null;
+    if (walkState.key !== walkKey(state.step.leg)) return null;
+    const leg = state.step.leg;
+    const shape = walkState.route.shape;
+    const target = { lat: leg.toLat, lon: leg.toLon };
+    const key = `${walkState.key}@${walkState.fetchedAt}`;
+    const settled = settleView(mapSettled?.key === key ? mapSettled.settled : null, cameraFor(shape, at, target), Date.now());
+    mapSettled = { key, settled };
+    const streets = streetState?.key === walkState.key && streetState.streets.length > 0 ? streetState.streets : null;
+    const nav = walkNav(walkState.route, at);
+    const turnAt = nav.next.type === "arrive" ? null : shape[nav.nextShapeIndex ?? nav.next.shapeIndex] ?? null;
+    return {
+      view: settled.view, shape, target, targetKind: leg.toDestination ? "goal" : "stop",
+      turn: turnAt, nextStreet: nav.next.type === "arrive" ? undefined : nav.next.street, currentStreet: nav.current,
+      streets, routeKey: key, streetsKey: streets ? `${walkState.key}:${streets.length}` : "none",
+    };
+  };
+
   const currentStop = (): Stop | undefined => stops[stopIndex];
   const targets = (): readonly Target[] => targetsOf(places);
 
@@ -277,10 +318,10 @@ async function boot(): Promise<void> {
     const now = clock();
     if (following) {
       const current = following;
-      if (current.status === "loading") return followLoadingScene(current.departure, now, locale);
+      if (current.status === "loading") return followLoadingScene(current.departure, now, locale, current.stop.name);
       if (current.status === "ready" && current.ride) {
         const state = followRide(current.ride, current.boarding, current.departure.expected, now, position);
-        if (state) return followScene(current.departure, state, now, locale, beatOf(Date.now()), isArmed("follow"));
+        if (state) return followScene(current.departure, state, now, locale, isArmed("follow"));
       }
       const said = current.error?.(locale) ?? { error: glassesText(locale).noRide, hint: glassesText(locale).noRideHint };
       return messageScene(said.error, said.hint, ft(locale, "exit", { tap: "back" }), "!");
@@ -288,19 +329,19 @@ async function boot(): Promise<void> {
 
     if (error) {
       const { error: message, hint } = error(locale);
-      return messageScene(message, hint, ft(locale, "exit", { tap: "again" }), "!");
+      return messageScene(message, hint, ft(locale, "back", { tap: "again" }), "!");
     }
 
     const stop = currentStop();
     if (!stop) {
       const { error: what, hint } = busy(locale);
-      return messageScene(what, hint, ft(locale, "exit"), "...");
+      return messageScene(what, hint, ft(locale, "back"), "...");
     }
 
     const away = position
       ? metresBetween(position.lat, position.lon, stop.lat, stop.lon)
       : null;
-    return boardScene(stop, departures, away, locale, selected, now, !SIDE_MENU);
+    return boardScene(stop, departures, away, locale, selected, now);
   };
 
   const planPage = (state: PlanState): Scene => {
@@ -320,6 +361,12 @@ async function boot(): Promise<void> {
   const withFooter = (scene: Scene, footer: string): Scene => ({ ...scene, view: { ...scene.view, footer } });
 
   const currentScene = (): Scene => {
+    if (screen === "start") {
+      return plainScene(startView(startCursor, {
+        locale, stopName: currentStop()?.name ?? null,
+        word: liveWord({ demo: demo.enabled, hasPosition: position !== null, failed: error !== null && departures.length === 0 }),
+      }));
+    }
     if (screen === "help") return plainScene(helpView(locale));
     if (screen === "places") return plainScene(placesView(targets(), placeIndex, clock(), locale));
     if (screen === "plans" && plan) {
@@ -337,6 +384,7 @@ async function boot(): Promise<void> {
       return guideScene(state, now, at, locale, {
         armed: isArmed("stopGuide") ? "stop" : isArmed("search") ? "search" : undefined,
         walk: walkDisplay(state, at),
+        map: walkMap(state, at),
         arrival: estimatedArrival(guide.journey),
         rerouted: reroutedUntil > Date.now(),
         beat: beatOf(Date.now()),
@@ -417,11 +465,9 @@ async function boot(): Promise<void> {
       // Soonest first by the time now expected, and the selection stays on the
       // same bus when a refresh reorders the board under the passenger's eyes.
       const kept = departures[selected]?.tripId;
-      // The Hilfe entry at the end of the list (no side menu) stays selected across a refresh.
-      const onHelp = !SIDE_MENU && departures.length > 0 && selected >= departures.length;
       departures = bySoonest(next);
       const again = kept ? departures.findIndex((departure) => departure.tripId === kept) : -1;
-      selected = again >= 0 ? again : onHelp && departures.length > 0 ? departures.length : Math.min(selected, Math.max(0, departures.length - 1));
+      selected = again >= 0 ? again : Math.min(selected, Math.max(0, departures.length - 1));
       error = null;
     } catch (thrown) {
       if (seq !== requestSeq) return;
@@ -595,6 +641,17 @@ async function boot(): Promise<void> {
     openBoard();
   };
 
+  /** The start page: nothing running, nothing asked. */
+  const openStart = (): void => {
+    disarm();
+    abortVoice();
+    planSeq++;
+    stopGuideTimer();
+    guide = null;
+    screen = "start";
+    void draw();
+  };
+
   const openBoard = (): void => {
     disarm();
     abortVoice();
@@ -654,7 +711,7 @@ async function boot(): Promise<void> {
 
   /** Hold on the goal list: record until the release, or until the hard stop. */
   const startVoice = async (): Promise<void> => {
-    if (screen !== "places" && screen !== "board") return;
+    if (screen !== "places" && screen !== "board" && screen !== "start") return;
     const seq = ++voiceSeq;
     screen = "voice";
     if (!demo.enabled && !sttBase(settings.sttUrl) && !liveSttUrl()) {
@@ -828,10 +885,48 @@ async function boot(): Promise<void> {
     walkState = { key, route: route ?? old, fetchedAt: Date.now(), loading: false };
     if (reason === "off" && route) reroutedUntil = Date.now() + 5000;
     void draw();
+    void ensureStreets();
+  };
+
+  /**
+   * The streets for the walking leg on screen, once its route is known. Nothing here can hold the guidance up:
+   * the map is drawn at once without streets and again when they arrive; no answer in time means no streets.
+   */
+  const ensureStreets = async (): Promise<void> => {
+    const session = guide;
+    const walking = walkState;
+    if (demo.enabled || screen !== "guide" || !session || !walking?.route || walking.loading) return;
+    const state = guideState(session.steps, clock(), guidePosition(), session.override);
+    if (state.step.kind !== "walk" || walkKey(state.step.leg) !== walking.key) return;
+    const leg = state.step.leg;
+    const box = legBox([{ lat: leg.fromLat, lon: leg.fromLon }, { lat: leg.toLat, lon: leg.toLon }, ...walking.route.shape]);
+    if (!box) return;
+    const known = streetState?.key === walking.key ? streetState : null;
+    if (known && (known.status !== "done" || containsBox(known.box, box))) return;
+    const key = walking.key;
+    const kept = known?.streets ?? [];
+    const classes = classesFor(box);
+    if (classes.length === 0) { streetState = { key, box, status: "done", streets: [] }; return; }
+    streetState = { key, box, status: "loading", streets: kept };
+    let outcome: Awaited<ReturnType<typeof streetSource.load>>;
+    try {
+      outcome = await streetSource.load(box, classes);
+    } catch {
+      outcome = { streets: [], error: "server" };
+    }
+    // The passenger may have left the guide or moved on to another leg meanwhile.
+    if (closed || screen !== "guide" || !guide || streetState?.key !== key) return;
+    streetState = outcome.error === null
+      ? { key, box, status: "done", streets: outcome.streets }
+      : { key, box, status: "failed", streets: kept };
+    if (outcome.error !== null) console.warn("[nextstop] map streets failed:", outcome.error);
+    void draw();
   };
 
   const startGuide = (journey: Journey, target: Destination, override: StepOverride | null = null): void => {
     walkState = null;
+    streetState = null;
+    mapSettled = null;
     stopGuideTimer();
     journeyId += 1;
     guide = { journey, steps: buildSteps(journey), override, target };
@@ -869,7 +964,8 @@ async function boot(): Promise<void> {
     refreshTimer = setInterval(() => {
       // A request the passenger started — a stop switch, a ride being loaded —
       // is never pre-empted by the background refresh.
-      if (screen === "board" && !following && settledSeq === requestSeq) void loadDepartures();
+      // The start page keeps the board fresh too, so a tap on "Abfahrten" shows current minutes at once.
+      if ((screen === "board" || screen === "start") && !following && settledSeq === requestSeq) void loadDepartures();
       if (screen === "board" && following?.status === "ready" && settledSeq === requestSeq) void refreshFollow();
       // The ride screen still redraws, because its countdown moves with the
       // clock even when no new data has arrived.
@@ -889,14 +985,14 @@ async function boot(): Promise<void> {
     wantedStopId = saved.stopId;
     if (saved.guide) startGuide(saved.guide.journey, saved.guide.target, saved.guide.override);
     else if (saved.screen === "places") screen = "places";
-    if (saved.follow) void startFollow(saved.follow);
+    if (saved.follow) { screen = "board"; void startFollow(saved.follow); }
   }
   let lastSaved = "";
   const persistSession = (): void => {
     if (demo.enabled) return;
     const session: SavedSession = {
       savedAt: Date.now(),
-      screen: (screen === "help" ? helpReturn : screen) === "guide" && guide ? "guide" : screen === "board" || (screen === "help" && helpReturn === "board") ? "board" : "places",
+      screen: (screen === "help" ? helpReturn : screen) === "guide" && guide ? "guide" : screen === "board" || screen === "start" || (screen === "help" && helpReturn === "board") ? "board" : "places",
       stopId: currentStop()?.id ?? wantedStopId,
       follow: following ? { departure: following.departure, stop: following.stop } : null,
       guide: guide ? { journey: guide.journey, target: guide.target, override: guide.override } : null,
@@ -975,8 +1071,6 @@ async function boot(): Promise<void> {
           return;
         }
         if (error) { void findStops(); return; }
-        // Without a side menu the list ends with "Hilfe": one swipe past the last departure.
-        if (!SIDE_MENU && departures.length > 0 && selected >= departures.length) { openHelp(); return; }
         void startFollow();
         return;
       case "longPress":
@@ -992,15 +1086,32 @@ async function boot(): Promise<void> {
         return;
       case "scrollDown":
         if (following || departures.length === 0) return;
-        selected = Math.min(SIDE_MENU ? departures.length - 1 : departures.length, selected + 1);
+        selected = Math.min(departures.length - 1, selected + 1);
         void draw();
         return;
       case "doubleClick":
-        // System exit dialog; departures and the ride keep updating until the user confirms.
-        void requestExit();
+        // A followed ride is a running job: 2x opens the system exit dialog (it keeps updating until the user confirms).
+        // The board itself is one level below the start page.
+        if (following) { void requestExit(); return; }
+        openStart();
         return;
       default:
         return;
+    }
+  };
+
+  /** The start page: at most three entries; a tap opens the one marked. */
+  const onStartGesture = (gesture: string): void => {
+    const rows = startRows();
+    switch (gesture) {
+      case "click":
+        if (rows[startCursor] === "goals") openPlaces(); else openBoard();
+        return;
+      case "scrollUp": startCursor = Math.max(0, startCursor - 1); void draw(); return;
+      case "scrollDown": startCursor = Math.min(rows.length - 1, startCursor + 1); void draw(); return;
+      case "longPress": void startVoice(); return;
+      case "doubleClick": void requestExit(); return;
+      default: return;
     }
   };
 
@@ -1014,7 +1125,7 @@ async function boot(): Promise<void> {
         if (target) void startPlan({ name: target.name, lat: target.lat, lon: target.lon });
         return;
       }
-      case "doubleClick": openBoard(); return;
+      case "doubleClick": openStart(); return;
       case "longPress": void startVoice(); return;
       default: return;
     }
@@ -1148,7 +1259,7 @@ async function boot(): Promise<void> {
       // Left on purpose (the user confirmed the exit dialog): a guide or a followed bus is over, the next start begins on the board.
       following = null;
       guide = null;
-      screen = "board";
+      screen = "start";
       persistSession();
       void goBackground().then(() => { void shutDown(); });
       return;
@@ -1182,7 +1293,7 @@ async function boot(): Promise<void> {
       const restore = comeBack();
       // A double tap on a root page (board, running guide) that arrives while the app thinks it is backgrounded
       // comes back AND asks the exit dialog; it waits for the restore draw like the exit helper does for its own.
-      if (gesture.gesture === "doubleClick" && (screen === "board" || screen === "guide")) {
+      if (gesture.gesture === "doubleClick" && (screen === "start" || screen === "guide" || (screen === "board" && following !== null))) {
         disarm();
         void settleRestore(restore).then(() => requestExit());
       }
@@ -1198,6 +1309,7 @@ async function boot(): Promise<void> {
     }
     switch (screen) {
       case "help": if (gesture.gesture === "click" || gesture.gesture === "doubleClick") closeHelp(); break;
+      case "start": onStartGesture(gesture.gesture); break;
       case "voice": onVoiceGesture(gesture.gesture); break;
       case "places": onPlacesGesture(gesture.gesture); break;
       case "plans": onPlansGesture(gesture.gesture); break;
@@ -1323,7 +1435,7 @@ async function boot(): Promise<void> {
     if (tickTimer !== null) clearInterval(tickTimer);
     if (beatTimer !== null) clearInterval(beatTimer);
     // A second beat so the countdown stays honest between data refreshes.
-    tickTimer = setInterval(() => { void ensureWalk(); announce(); void draw(); persistSession(); }, 2000);
+    tickTimer = setInterval(() => { void ensureWalk(); void ensureStreets(); announce(); void draw(); persistSession(); }, 2000);
     // The half-second beat of the animated guide pages (the bus, the pulse of
     // "get off"): it redraws only while such a page is on screen, so the quiet
     // pages keep their 2 s rhythm and send nothing in between.
@@ -1357,6 +1469,20 @@ async function boot(): Promise<void> {
     getPosition: () => position,
     isSeeded: () => position === seeded && seeded !== null,
     getStops: () => stops,
+    getBoard: () => {
+      const stop = currentStop();
+      if (!stop) return null;
+      const now = clock();
+      return {
+        stop: stop.name,
+        metres: position ? Math.round(metresBetween(position.lat, position.lon, stop.lat, stop.lon)) : null,
+        departures: departures.slice(0, 8).map((departure) => ({
+          line: departure.line, headsign: departure.headsign, minutes: minutesUntil(departure.expected, now),
+          delay: departure.source === "realtime" ? delayMinutes(departure) : null,
+          cancelled: departure.cancelled, track: departure.track ?? "", clock: departure.expected.getTime(),
+        })),
+      };
+    },
     refresh: () => { void findStops(); },
     getPlaces: () => places,
     setPlaces: updatePlaces,
@@ -1365,8 +1491,10 @@ async function boot(): Promise<void> {
   });
 
   // Development only: open straight on a route page, so a desk simulator can show it.
-  if (demo.enabled && demo.scene && demo.scene !== "board") {
-    if (demo.scene === "places") {
+  if (demo.enabled && demo.scene) {
+    if (demo.scene === "board") {
+      openBoard();
+    } else if (demo.scene === "places") {
       openPlaces();
     } else if (demo.scene === "recording" || demo.scene === "voice") {
       openPlaces();

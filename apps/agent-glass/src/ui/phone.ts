@@ -96,14 +96,73 @@ function enableLabel(status: SpeechStatus, active: boolean, locale: Locale): str
   return t(locale, active ? "p.disable" : status === "needs-activation" ? "p.activate" : "p.enable");
 }
 
-/** The page is split into tabs instead of one long column (Alfred, 13.10.2026). */
-const TABS: readonly { id: string; icon: string; key: string }[] = [
-  { id: "agent", icon: "🎯", key: "p.tabAgent" },
-  { id: "speech", icon: "🔊", key: "p.tabSpeech" },
-  { id: "glasses", icon: "👓", key: "p.tabGlasses" },
-  { id: "connect", icon: "🔌", key: "p.tabConnect" },
-  { id: "more", icon: "⚙️", key: "p.tabMore" },
+/** Exactly three tabs in one row (QUS v1): Jetzt, Sitzungen, Einstellungen. */
+export const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "now", icon: "🎯", key: "p.tabNow" },
+  { id: "sessions", icon: "🗂️", key: "p.tabSessions" },
+  { id: "settings", icon: "⚙️", key: "p.tabSettings" },
 ];
+
+/** Nothing set up yet: no token, the demo runs and Einstellungen opens first with a checklist. */
+export function isFirstRun(settings: Settings): boolean {
+  return settings.token === "";
+}
+
+export interface Banner { readonly tone: "ok" | "warn" | "critical" | "offline" | "none"; readonly text: string }
+
+/** The one message that counts right now. */
+export function bannerFor(settings: Settings, state: AgentState, locale: Locale): Banner {
+  const x = (key: string): string => t(locale, key);
+  if (state.error) return { tone: "offline", text: localizeError(state.error, locale) };
+  if (isFirstRun(settings)) return { tone: "none", text: x("p.bannerDemo") };
+  if (state.pending) return { tone: "warn", text: x("p.bannerAsks") };
+  if (!state.session) return { tone: "none", text: x("p.bannerNoSession") };
+  return { tone: "ok", text: state.session.title };
+}
+
+/** The big word of the hero card. */
+export function heroWord(state: AgentState, locale: Locale): string {
+  const x = (key: string): string => t(locale, key);
+  if (state.error) return x("p.heroOffline");
+  if (state.pending) return x("p.heroAsks");
+  if (!state.session) return x("p.heroNone");
+  return x(state.busy ? "p.heroWorking" : state.controllable ? "p.heroReady" : "p.heroWatch");
+}
+
+/** "Jetzt": hero card with the state and 2 x 2 key figures. Pure, redrawn live every second. */
+export function heroInner(settings: Settings, state: AgentState, locale: Locale, now: Date): string {
+  const x = (key: string): string => t(locale, key);
+  const stat = (label: string, value: string, alert = false): string =>
+    `<div${alert ? ' class="alert"' : ""}><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`;
+  const side = state.busy && state.startedAt ? elapsedText(state.startedAt, now) : "";
+  return `
+      <div class="hero">
+        <div><span>${escapeHtml(x("p.heroLabel"))}</span><strong>${escapeHtml(heroWord(state, locale))}</strong></div>
+        <p>${escapeHtml(side)}</p>
+      </div>
+      <div class="stats">
+        ${stat(x("p.statProvider"), state.session?.provider ? state.session.provider : providerName(settings.provider).split(" ")[0] ?? "–")}
+        ${stat(x("p.statSteps"), state.busy || (state.steps ?? 0) > 0 ? String(state.steps ?? 0) : "–")}
+        ${stat(x("p.statTool"), state.tool ?? "–")}
+        ${stat(x("p.statAccess"), x(state.controllable ? "p.accessControl" : "p.accessWatch"), state.pending !== null)}
+      </div>`;
+}
+
+function elapsedText(since: Date, now: Date): string {
+  const seconds = Math.max(0, Math.round((now.getTime() - since.getTime()) / 1000));
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** First-run checklist: pure, so tests can read it. */
+export function setupInner(settings: Settings, state: AgentState, locale: Locale): string {
+  const x = (key: string): string => t(locale, key);
+  const connected = !isFirstRun(settings);
+  const opened = connected && state.session !== null;
+  const step = (n: number, done: boolean, key: string): string =>
+    `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${escapeHtml(x(key))}</span></li>`;
+  return `<ol class="steps">${step(1, connected, "p.setup1")}${step(2, opened, "p.setup2")}${step(3, opened, "p.setup3")}</ol>`
+    + (connected ? "" : `<p class="hint">${escapeHtml(x("p.setupDemo"))}</p>`);
+}
 const TAB_KEY = "quietglass.agent-glass.tab";
 
 function readTab(fallback: string): string {
@@ -164,8 +223,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     box.innerHTML = transcriptHtml(ports.getTranscript(), ports.getLocale?.() ?? "en");
     if (pinned) box.scrollTop = box.scrollHeight;
   }
-  // Without a token the connection tab comes first; afterwards the stored choice wins.
-  let tab = readTab(ports.getSettings().token ? "agent" : "connect");
+  // Without a token Einstellungen comes first, with the checklist; afterwards the stored choice wins.
+  let tab = readTab(isFirstRun(ports.getSettings()) ? "settings" : "now");
 
   const render = (): void => {
     const locale = ports.getLocale?.() ?? "en";
@@ -190,31 +249,30 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const mode = ports.getManageMode?.();
     const manageRemote = mode?.rename === "remote" && mode.remove === "remote";
     const chipNow = headerChip(state, locale);
+    const firstRun = isFirstRun(settings);
+    const banner = bannerFor(settings, state, locale);
     root.innerHTML = `
-      <div class="brand bar"><div><span class="brand-mark">Quietglass</span> Agent Glass</div><span class="chip${chipNow.on ? " on" : ""}" id="hdr-chip">${escapeHtml(chipNow.text)}</span></div>
+      <header class="brand bar">
+        <div><div class="brand-mark">${x("p.kicker")}</div><h1>Agent Glass</h1></div>
+        <span class="chip${chipNow.on ? " on" : ""}" id="hdr-chip">${escapeHtml(chipNow.text)}</span>
+      </header>
+      <p class="banner tone-${banner.tone}" id="banner">${escapeHtml(banner.text)}</p>
 
-      <div class="tab" data-tab="agent">
-      <div class="card">
-        <label>${x("p.liveStatus")}</label>
-        <p class="hint" id="conn"></p>
-      </div>
+      <div class="tab" data-tab="now">
+      <section class="card hero-card">
+        <div id="hero-live">${heroInner(settings, state, locale, new Date())}</div>
+      </section>
 
-      <div class="card">
-        <span class="eyebrow">${x("p.transcriptEyebrow")}</span>
-        <h2>${x("p.transcriptTitle")}${state.session ? ` · ${escapeHtml(state.session.title)}` : ""}</h2>
-        <div id="transcript" class="transcript" aria-live="polite"></div>
-      </div>
-
-      <div class="card">
-        <span class="eyebrow">${x("p.sendEyebrow")}</span>
+      <section class="card">
         <h2>${x("p.promptTitle")}</h2>
         <textarea id="prompt" rows="3" placeholder="${escapeHtml(x("p.promptPlaceholder"))}"></textarea>
-        <button id="send-prompt" type="button"${state.session ? "" : " disabled"}>${x("p.send")}</button>
-        <p class="hint">${x("p.promptHint")}</p>
+        <button id="send-prompt" type="button" class="big"${state.session ? "" : " disabled"}>${x("p.send")}</button>
+        <details class="advanced"><summary>?</summary><p class="hint">${x("p.promptHint")}</p></details>
+      </section>
       </div>
 
-      <div class="card">
-        <span class="eyebrow">${x("p.sessionsEyebrow")}</span>
+      <div class="tab" data-tab="sessions">
+      <section class="card">
         <h2>${x("p.sessionsTitle")}</h2>
         ${capabilities.sessions ? "" : `<p class="hint">${escapeHtml(x("p.noList"))}</p>`}
         <div id="session-list">${sessionListHtml(sessions, state.session?.id, locale, new Date(), capabilities.sessions)}</div>
@@ -224,7 +282,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           ${hidden > 0 ? `<button id="restore-hidden" class="secondary" type="button">${escapeHtml(x("p.restore", { count: hidden }))}</button>` : ""}
         </div>
         ${capabilities.sessions && sessions.length > 0 && ports.renameSession ? `
-        <label for="manage-session">${x("p.manage")}</label>
+        <details class="advanced">
+        <summary>${x("p.manage")}</summary>
         <select id="manage-session">${sessions.map((session) =>
           `<option value="${escapeHtml(session.id)}"${session.id === state.session?.id ? " selected" : ""}>${escapeHtml(session.title)}</option>`).join("")}</select>
         <label for="rename-input">${x("p.renameLabel")}</label>
@@ -233,38 +292,21 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           <button id="rename-session" class="secondary" type="button">${x("p.rename")}</button>
           <button id="remove-session" class="secondary" type="button">${x("p.remove")}</button>
         </div>
-        <p class="hint">${escapeHtml(x(manageRemote ? "p.manageRemote" : "p.manageLocal"))}</p>` : ""}
-      </div>
+        <p class="hint">${escapeHtml(x(manageRemote ? "p.manageRemote" : "p.manageLocal"))}</p>
+        </details>` : ""}
+      </section>
+
+      <section class="card">
+        <h2>${x("p.transcriptTitle")}${state.session ? ` · ${escapeHtml(state.session.title)}` : ""}</h2>
+        <div id="transcript" class="transcript" aria-live="polite"></div>
+      </section>
       </div>
 
-      <div class="tab" data-tab="glasses">
-      <div class="card keys">
-        <label>${x("p.controls")}</label>
-        ${capabilities.decisions ? `
-          <p class="hint">
-            <strong>${x("p.tap")}</strong> — ${x("p.tapDo")}<br />
-            <strong>${x("p.swipe")}</strong> — ${x("p.swipePageDo")}<br />
-            <strong>${x("p.hold")}</strong> — ${x("p.holdDo")}<br />
-            <strong>${x("p.double")}</strong> — ${x("p.doubleDo")}
-          </p>
-          <p class="hint">${x("p.safeTap")}</p>
-        ` : `
-          <p class="hint">
-            <strong>${x("p.tap")}</strong> — ${x("p.tapDo")}<br />
-            <strong>${x("p.swipe")}</strong> — ${x("p.swipePageDo")}<br />
-            <strong>${x("p.hold")}</strong> — ${x("p.holdDo")}<br />
-            <strong>${x("p.double")}</strong> — ${x("p.doubleDo")}
-          </p>
-          <p class="hint">${x("p.noDecisions")}</p>
-        `}
-        <label class="check"><input id="invert-scroll" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
-      </div>
-      </div>
+      <div class="tab" data-tab="settings">
+      ${firstRun ? `<section class="card setup"><h2>${x("p.setupTitle")}</h2>${setupInner(settings, state, locale)}</section>` : ""}
 
-      <div class="tab" data-tab="connect">
-      <div class="card">
-        <span class="eyebrow">${x("p.backendEyebrow")}</span>
-        <h2>${x("p.connection")}</h2>
+      <details class="fold card"${firstRun ? " open" : ""}>
+        <summary>${escapeHtml(x("p.connFold", { name: providerName(settings.provider) }))}</summary>
         <label for="provider">${x("p.provider")}</label>
         <select id="provider">
           <option value="even-terminal"${settings.provider === "even-terminal" ? " selected" : ""}>Claude / Codex · Even Terminal</option>
@@ -277,25 +319,29 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         <label for="token">${x("p.token")}</label>
         <input id="token" type="password" autocomplete="off"
                placeholder="${escapeHtml(x("p.tokenKeep", { token: maskToken(settings.token, locale) }))}" />
-        <button id="apply" type="button">${x("p.apply")}</button>
+        <button id="apply" type="button" class="big">${x("p.apply")}</button>
         <p class="hint">${escapeHtml(providerHint(settings.provider, locale))}</p>
-      </div>
+        <p class="hint" id="conn"></p>
+        <details class="advanced"><summary>${x("p.startup")}</summary><p class="hint">${escapeHtml(setupHint(settings.provider, locale))}</p></details>
+      </details>
 
-      <div class="card">
-        <label>${x("p.startup")}</label>
-        <p class="hint">${escapeHtml(setupHint(settings.provider, locale))}</p>
-      </div>
-      </div>
+      <section class="card">
+        <h2>${x("p.tabGlasses")}</h2>
+        <label class="check"><input id="invert-scroll" type="checkbox" ${settings.invertScroll ? "checked" : ""} /> ${x("p.invert")}</label>
+        <details class="fold">
+          <summary>${x("p.controls")}</summary>
+          <p class="hint">
+            <strong>${x("p.tap")}</strong> — ${x("p.tapDo")}<br />
+            <strong>${x("p.swipe")}</strong> — ${x("p.swipePageDo")}<br />
+            <strong>${x("p.hold")}</strong> — ${x("p.holdDo")}<br />
+            <strong>${x("p.double")}</strong> — ${x("p.doubleDo")}
+          </p>
+          <p class="hint">${x(capabilities.decisions ? "p.safeTap" : "p.noDecisions")}</p>
+        </details>
+      </section>
 
-      <div class="tab" data-tab="speech">
-      <div class="card speech-card">
-        <div class="card-title-row">
-          <div>
-            <span class="eyebrow">${x("p.audioEyebrow")}</span>
-            <h2>${x("p.spoken")}</h2>
-          </div>
-          <span class="status-chip ${speechStatus}">${speechStatusText(speechStatus, locale)}</span>
-        </div>
+      <details class="fold card speech-card">
+        <summary>${x("p.spoken")} · <span class="status-chip ${speechStatus}">${speechStatusText(speechStatus, locale)}</span></summary>
         <p class="hint">${x("p.spokenHint")}</p>
         <div class="button-row">
           <button id="speech-enable" type="button"${speechStatus === "unavailable" ? " disabled" : ""}>
@@ -324,13 +370,9 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         <label for="speech-rate">${x("p.speed", { rate: settings.speechRate.toFixed(1) })}</label>
         <input id="speech-rate" type="range" min="0.7" max="1.5" step="0.1" value="${settings.speechRate}" />
         <p class="hint privacy-note">${x("p.speechNote")}</p>
-      </div>
-      </div>
+      </details>
 
-      <div class="tab" data-tab="more">
-      <div class="card">${languageSelect(locale)}</div>
-
-      </div>
+      <section class="card compact">${languageSelect(locale)}</section>
       </div>
 
       <nav class="tabbar" role="tablist">
@@ -345,7 +387,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     applyTab(root, tab);
     root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
       button.addEventListener("click", () => {
-        tab = button.dataset["tabGo"] ?? "agent";
+        tab = button.dataset["tabGo"] ?? "now";
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
         applyTab(root, tab);
         window.scrollTo({ top: 0 });
@@ -454,6 +496,14 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     if (list) {
       const html = sessionListHtml(ports.getSessions(), ports.getState().session?.id, locale, new Date(), ports.getCapabilities().sessions);
       if (list.innerHTML !== html) list.innerHTML = html;
+    }
+    const bannerNow = bannerFor(ports.getSettings(), ports.getState(), locale);
+    const bannerEl = root.querySelector<HTMLElement>("#banner");
+    if (bannerEl && bannerEl.textContent !== bannerNow.text) { bannerEl.textContent = bannerNow.text; bannerEl.className = `banner tone-${bannerNow.tone}`; }
+    const heroEl = root.querySelector<HTMLElement>("#hero-live");
+    if (heroEl) {
+      const heroHtml = heroInner(ports.getSettings(), ports.getState(), locale, new Date());
+      if (heroEl.innerHTML !== heroHtml) heroEl.innerHTML = heroHtml;
     }
     const hdr = root.querySelector<HTMLElement>("#hdr-chip");
     if (hdr) {

@@ -1,19 +1,15 @@
-import {
-  formatClock, isRunning, openSeconds, openSecondsOnDay, secondsOnDay, startOfDay,
-  type ClockState, type TimeEntry,
-} from "../tracking/clock";
 import type { Locale } from "../i18n";
 import { defaultProject, t } from "../messages";
-import { dayBarState, type DayBarState } from "./daybar";
-import { armedFooter, footer } from "./footer";
+import type { TimeEntry } from "../tracking/clock";
+import { footer } from "./footer";
 
 /**
- * What the glasses show.
+ * The text page of the glasses (QUS v1): the start page. The running shift,
+ * the pause and the finish are the cockpit image (src/cockpit), not text.
  *
- * While the clock runs, the elapsed time is the whole point and gets the
- * display. The project name and the day's total sit around it. When stopped,
- * the app says what will happen on the next tap — never leaving the user
- * guessing whether time is being counted.
+ * The page is the same three parts as everywhere: a header `Schicht · ● live`,
+ * a body of at most three big entries and ONE footer line with the gestures
+ * that do something.
  */
 export interface ClockView {
   readonly header: string;
@@ -21,163 +17,76 @@ export interface ClockView {
   readonly footer: string;
 }
 
-/** Rows the body container holds; more are pushed off the display. */
-export const MAX_BODY_ROWS = 7;
-/** Characters the header holds on one line in the G2's proportional font. */
-export const HEADER_WIDTH = 56;
-/** The body sits beside the pixel icon, so its lines are shorter. */
-export const BODY_WIDTH = 46;
-
-/** The footer is one full-width line, like the header. */
-export const FOOTER_WIDTH = 56;
-
-/**
- * Picker row that leaves the list without starting anything. A control
- * character cannot be typed into a project name, so it never collides.
- */
-export const CANCEL = "\u0000cancel";
-/** Picker row that opens the help page (last entry; a control character, like CANCEL). Only without the side menu. */
-export const HELP = "\u0000help";
+/** Entries the start page shows at most (QUS 1.1: three big entries). */
+export const VISIBLE_ROWS = 3;
+/** Characters one row holds across the 576 px display in its proportional font. */
+export const LINE_WIDTH = 56;
+export const HEADER_WIDTH = LINE_WIDTH;
+export const FOOTER_WIDTH = LINE_WIDTH;
 
 /** A stop must be confirmed by a second tap within this time (QIS v1, section 2). */
 export const ARM_MS = 4_000;
 
-export interface ViewOptions {
-  /** Highlighted project in the picker (or CANCEL), when the user is choosing. */
-  readonly selecting?: string | null;
-  readonly projects?: readonly string[];
-  readonly locale?: Locale;
-  /** Daily target in hours, shown as a body row and on the day bar. */
-  readonly targetHours?: number | null;
-  /** The running clock was tapped once: the next tap stops it. */
-  readonly armed?: boolean;
-  /** The help page is open. */
-  readonly help?: boolean;
-  /** No side menu: a hold opens the help (named in the footers) and the picker has a "Help" row. */
-  readonly holdHelp?: boolean;
+export type StartRow =
+  /** Starts this project. */
+  | { readonly kind: "project"; readonly name: string }
+  /** No project yet: one tap creates the default one, so the glasses are never a dead end. */
+  | { readonly kind: "create"; readonly name: string };
+
+/**
+ * The selectable rows: the projects, the most recently used first (the one
+ * wanted again is nearly always on top). Without a project the one row that
+ * creates it.
+ */
+export function startRows(projects: readonly string[], entries: readonly TimeEntry[], locale: Locale): StartRow[] {
+  if (projects.length === 0) return [{ kind: "create", name: defaultProject(locale) }];
+  const lastUsed = new Map<string, number>();
+  for (const entry of entries) lastUsed.set(entry.project, Math.max(lastUsed.get(entry.project) ?? 0, entry.endedAt));
+  return projects
+    .map((name, index) => ({ name, index, used: lastUsed.get(name) ?? -1 }))
+    .sort((a, b) => b.used - a.used || a.index - b.index)
+    .map((row): StartRow => ({ kind: "project", name: row.name }));
 }
 
-export function buildView(
-  state: ClockState,
-  entries: readonly TimeEntry[],
-  options: ViewOptions = {},
-  now = Date.now(),
-): ClockView {
-  const projects = options.projects ?? [];
-  const locale = options.locale ?? "en";
-  const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
-  const holdPart: { hold?: string } = options.holdHelp ? { hold: L("g.f.help") } : {};
+export type LiveWord = "live" | "demo";
 
-  if (options.help) {
-    return {
-      header: L("g.h.help"),
-      body: [1, 2, 3, 4, 5, 6].map((n) => L("g.help." + n)),
-      footer: footer(locale, {}, "back"),
-    };
-  }
+/** `Schicht · ● live` (QUS 1.1): the mode, a dot while live, the state as a word otherwise. */
+export function headerLine(locale: Locale, word: LiveWord): string {
+  const state = word === "live" ? "● " + t(locale, "g.live") : t(locale, "g.demoWord");
+  return `${t(locale, "g.title")} · ${state}`;
+}
 
-  // Armed stop: nothing has happened yet, and the screen says so.
-  if (options.armed && isRunning(state)) {
-    return {
-      header: L("g.h.armed"),
-      body: [truncate(L("g.project", { project: state.project ?? "" }), BODY_WIDTH), formatClock(openSeconds(state, now)), L("g.armed.1")],
-      footer: armedFooter(locale, L("g.f.stop")),
-    };
-  }
+export interface StartOptions {
+  readonly locale: Locale;
+  readonly demo: boolean;
+  /** The page opened from the pause page: 2× goes back there instead of leaving. */
+  readonly canGoBack: boolean;
+}
 
-  // Never a dead end: one tap creates a project to track against.
-  if (projects.length === 0 && !isRunning(state)) {
-    const name = truncate(defaultProject(locale), 12);
-    return {
-      header: L("g.h.none"),
-      body: [L("g.none.1"), L("g.none.2", { name }), L("g.none.3")].map((row) => truncate(row, BODY_WIDTH)),
-      footer: footer(locale, { tap: L("g.f.create"), ...holdPart }, "exit"),
-    };
-  }
+/** Where the window of `rows` around the cursor starts. */
+export function windowStart(total: number, cursor: number, rows: number): number {
+  return Math.max(0, Math.min(cursor - Math.floor(rows / 2), total - rows));
+}
 
-  // Choosing which project to start: the list replaces the clock, because
-  // picking is the only thing that matters at that moment.
-  if (options.selecting != null && !isRunning(state)) {
-    return {
-      header: L("g.h.picker"),
-      body: pickerRows(projects, options.selecting, L("g.cancel"), options.holdHelp ? L("g.helpRow") : null),
-      footer: footer(locale, { tap: L("g.f.start"), swipe: L("g.f.choose") }, "back"),
-    };
-  }
-
-  const today = startOfDay(now);
-  const todaySeconds = secondsOnDay(entries, today);
-  const target = targetRow(options.targetHours ?? null, todaySeconds + openSecondsOnDay(state, today, now), locale);
-
-  if (!isRunning(state)) {
-    // With a single project the tap starts it directly; say which one.
-    const only = projects.length === 1 ? projects[0] : undefined;
-    return {
-      header: L("g.h.stopped"),
-      body: [
-        ...(only === undefined ? [L("g.stopped")] : [L("g.stopped"), truncate(L("g.project", { project: only }), BODY_WIDTH)]),
-        L("g.today", { total: formatClock(todaySeconds) }),
-        ...target,
-      ],
-      footer: footer(locale, { tap: L(only === undefined ? "g.f.chooseProject" : "g.f.start"), ...holdPart }, "exit"),
-    };
-  }
-
-  const running = openSeconds(state, now);
+export function startView(rows: readonly StartRow[], cursor: number, options: StartOptions): ClockView {
+  const { locale } = options;
+  const at = Math.min(Math.max(0, cursor), Math.max(0, rows.length - 1));
+  const first = windowStart(rows.length, at, VISIBLE_ROWS);
+  const body = rows.slice(first, first + VISIBLE_ROWS).map((row, index) => {
+    // The cursor is a dot.
+    const mark = first + index === at ? "● " : "  ";
+    const label = row.kind === "create" ? t(locale, "g.create", { name: row.name }) : row.name;
+    return truncate(mark + label, LINE_WIDTH);
+  });
+  const create = rows[at]?.kind === "create";
   return {
-    header: truncate(L("g.h.running", { project: state.project ?? "" }), HEADER_WIDTH),
-    // The day total includes the entry still running, so the number on screen
-    // is what the day actually stands at — not what it stood at an hour ago.
-    // Only today's part counts: a shift begun last night is split at midnight.
-    body: [formatClock(running), L("g.today", { total: formatClock(todaySeconds + openSecondsOnDay(state, today, now)) }), ...target],
-    footer: footer(locale, { tap: L("g.f.stop"), ...holdPart }, "exit"),
+    header: headerLine(locale, options.demo ? "demo" : "live"),
+    body,
+    footer: footer(locale, {
+      tap: t(locale, create ? "g.f.create" : "g.f.start"),
+      ...(rows.length > 1 ? { swipe: t(locale, "g.f.choose") } : {}),
+    }, options.canGoBack ? "back" : "exit"),
   };
-}
-
-/**
- * What the day bar shows: today's recorded time, the part of the running
- * entry that falls on today, and the target. Quantized in `dayBarState`, so
- * the image only changes every five minutes of tracked time.
- */
-export function dayBarFor(
-  state: ClockState,
-  entries: readonly TimeEntry[],
-  targetHours: number | null,
-  now = Date.now(),
-): DayBarState {
-  const today = startOfDay(now);
-  return dayBarState(secondsOnDay(entries, today), openSecondsOnDay(state, today, now), isRunning(state), targetHours);
-}
-
-/** An empty row, then how far the target is — only when a target is set. */
-function targetRow(targetHours: number | null, todaySeconds: number, locale: Locale): string[] {
-  if (targetHours === null || targetHours <= 0) return [];
-  const target = formatTargetHours(targetHours, locale);
-  const left = targetHours * 3600 - todaySeconds;
-  const row = left > 0
-    ? t(locale, "g.target", { target, left: formatClock(left) })
-    : t(locale, "g.targetReached", { target });
-  return ["", truncate(row, BODY_WIDTH)];
-}
-
-/** "8", "7,5" / "7.5": hours as the language writes them, no trailing zeros. */
-export function formatTargetHours(hours: number, locale: Locale): string {
-  const text = String(Math.round(hours * 100) / 100);
-  return locale === "de" ? text.replace(".", ",") : text;
-}
-
-/**
- * The project picker: a window of at most seven rows that keeps the choice in
- * view. The last rows leave the picker without starting anything; without the side menu the very last opens the help.
- */
-function pickerRows(projects: readonly string[], selecting: string, cancelLabel: string, helpLabel: string | null): string[] {
-  const choices = helpLabel === null ? [...projects, CANCEL] : [...projects, CANCEL, HELP];
-  const label = (p: string): string => (p === CANCEL ? cancelLabel : p === HELP ? (helpLabel ?? "") : p);
-  const rows = choices.map((p) => truncate((p === selecting ? "> " : "  ") + label(p), BODY_WIDTH));
-  if (rows.length <= MAX_BODY_ROWS) return rows;
-  const index = Math.max(0, choices.indexOf(selecting));
-  const start = Math.min(Math.max(0, index - Math.floor(MAX_BODY_ROWS / 2)), rows.length - MAX_BODY_ROWS);
-  return rows.slice(start, start + MAX_BODY_ROWS);
 }
 
 export function truncate(text: string, maxWidth: number): string {

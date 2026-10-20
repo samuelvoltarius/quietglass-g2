@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, tr } from "../src/i18n";
 import { messages } from "../src/messages";
-import { buildView, composeView } from "../src/glasses/view";
-import { BODY_COLS, BODY_ROWS, HEADER_COLS, LINE_COLS } from "../src/glasses/fit";
+import { cockpitModel } from "../src/cockpit/model";
+import { ROW_WIDTH } from "../src/glasses/footer";
 import { COMMON_SIGNATURES, createState, DEFAULT_SETTINGS, MAX_BPM, start, type MetronomeSettings } from "../src/metronome/engine";
 import { formatDuration } from "../src/practice/log";
 import { mountPhoneUi } from "../src/ui/phone";
@@ -75,21 +75,26 @@ describe("language choice", () => {
   });
 });
 
-describe("glasses text budget", () => {
+describe("glasses cockpit text", () => {
   for (const locale of ["de", "en"] as const) {
-    it(`fits every ${locale} screen into 7 rows before any safety cut`, () => {
-      const views = [];
+    it(`keeps every ${locale} cockpit line short (headline, cells, hint) before any cut`, () => {
       for (const signature of COMMON_SIGNATURES) {
         const settings: MetronomeSettings = { ...DEFAULT_SETTINGS, bpm: MAX_BPM, signature };
-        views.push(composeView(createState(), settings, { locale }, 0));
-        views.push(composeView(start(createState(), 0), settings, { locale, sessionSeconds: 35_999 }, 3_600_000 * 9));
-        views.push(composeView(start(createState(), 0), settings, { locale }, 0));
-      }
-      for (const view of views) {
-        expect(view.header.length).toBeLessThanOrEqual(HEADER_COLS);
-        expect(view.footer.length, view.footer).toBeLessThanOrEqual(LINE_COLS);
-        expect(view.body.length).toBeLessThanOrEqual(BODY_ROWS);
-        for (const line of view.body) expect(line.length, line).toBeLessThanOrEqual(BODY_COLS);
+        for (const state of [createState(), start(createState(), 0)]) {
+          const model = cockpitModel({
+            state, settings, now: 3_600_000 * 9, locale, item: "Bach Partita No. 2 in D minor, Chaconne", sessionSeconds: 35_999,
+            todaySeconds: 35_999, todayCount: 12, best: 240, armed: state.running,
+          });
+          expect(model.hint.length, model.hint).toBeLessThanOrEqual(ROW_WIDTH);
+          expect(model.headline).toHaveLength(2);
+          for (const line of model.headline) expect(line.length, line).toBeLessThanOrEqual(12);
+          expect(model.cells).toHaveLength(6);
+          for (const cell of model.cells) {
+            expect(cell.label.length, cell.label).toBeLessThanOrEqual(10);
+            expect(cell.value.length, cell.value).toBeLessThanOrEqual(10);
+          }
+          expect(model.caption.length).toBeLessThanOrEqual(24);
+        }
       }
     });
   }
@@ -98,28 +103,22 @@ describe("glasses text budget", () => {
 describe("first run", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it("tells the user on the glasses exactly what to do", () => {
-    const view = buildView(createState(), DEFAULT_SETTINGS, { locale: "de" }, 0);
-    expect(view.header).toBe("CADENCE · bereit");
-    expect(view.body).toContain("Tippe einmal, um den Takt zu starten.");
-    expect(view.body[1]).toBe("100 BPM  4/4  Takt 1");
-    expect(view.footer).toBe("Tippen = Start · Halten = Hilfe · 2× = Ende");
+  it("the glasses say READY and the one thing to do, in German", () => {
+    const model = cockpitModel({ state: createState(), settings: DEFAULT_SETTINGS, now: 0, locale: "de" });
+    expect(model.headline).toEqual(["100 BPM", "BEREIT"]);
+    expect(model.hint).toBe("Tippen = Start · Wischen = Tempo · 2× = Ende");
+    expect(model.caption).toBe("Keine Übung");
   });
 
-  it("drops the first-run sentence once the beat runs", () => {
-    const view = buildView(start(createState(), 0), DEFAULT_SETTINGS, { locale: "de" }, 0);
-    expect(view.body).toHaveLength(2);
-    expect(view.footer).toContain("Tippen = Pause");
-    expect(view.header).toBe("CADENCE · läuft");
-  });
-
-  it("leads the phone page with the next step, in German", () => {
+  it("opens the phone on Einstellungen with the three-step checklist, in German", () => {
     let html = "";
     const root = { set innerHTML(value: string) { html = value; }, get innerHTML() { return html; }, querySelector: () => null, querySelectorAll: () => [] };
     vi.stubGlobal("document", { getElementById: () => root });
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     mountPhoneUi({ getData: () => EMPTY_DATA, setData: async () => undefined, getLocale: () => "de" });
-    expect(html).toContain("Tippe auf der Brille einmal auf den Bügel");
+    expect(html).toContain("Erste Schritte");
+    expect(html.match(/class="num"/g)).toHaveLength(3);
     expect(html).toContain('<option value="de" selected>');
-    expect(html.indexOf("card next")).toBeLessThan(html.indexOf("Taktart"));
+    expect(html.indexOf("Erste Schritte")).toBeLessThan(html.indexOf('id="bpm"'));
   });
 });

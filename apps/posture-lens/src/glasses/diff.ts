@@ -1,11 +1,11 @@
-import type { PostureView } from "./view";
+import type { TextView } from "./page";
 
 /**
- * The run screen redraws on every gesture, but the display should only be
+ * The text pages redraw on every gesture, but the display should only be
  * written when something actually changed: each update crosses BLE, and
  * needless writes cost latency and battery for no visible benefit.
  */
-export function sameView(a: PostureView | null, b: PostureView): boolean {
+export function sameView(a: TextView | null, b: TextView): boolean {
   if (!a) return false;
   return (
     a.header === b.header &&

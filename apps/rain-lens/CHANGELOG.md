@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0] — 2026-10-20
+
+### Geändert (QUS v1 „keine Textwand“)
+
+- **Handy: genau drei Tabs in einer Zeile** (Jetzt / Prognose / Einstellungen). Vorher vier Tabs, die auf zwei Zeilen umbrachen. „Ort“, „Brille“ und „Mehr“ sind in Einstellungen aufgegangen: Ort-Karte (eingeklappt, sobald ein Ort funktioniert; „Erweitert“ für Koordinaten), Brille (Wischrichtung, Gesten eingeklappt), Cockpit (Böen-Warnung), Sprache, Info.
+- Beim Erststart steht in Einstellungen eine Drei-Schritt-Checkliste (Standort, Wetter lädt, Brille); ohne Standort läuft die Beispiel-Vorhersage.
+- Jetzt: Statusbanner, Hero-Karte mit einem großen Wert, Kennzahlen, ein Knopf, Stundenleiste. Prognose: die Tage.
+- **Brille: Kopfzeile `RAINLENS · Ansicht · ● live`** (bzw. `demo`), unten eine Hinweiszeile. Der Ortsname steht im Cockpit und am Handy.
+- Vorschau-Bilder des Cockpits: `store/preview-cockpit.png` (+ `-warn`), erzeugt mit `QG_PREVIEW=1 npx vitest run tests/preview.test.ts`.
+- Unverändert: kein Seitenmenü, Beenden-Dialog, begrenzte Aufrufe, Neuaufbau der ersten Seite.
+
 ## [0.7.7] — 2026-10-17
 
 ### Behoben (Hardware-Test)

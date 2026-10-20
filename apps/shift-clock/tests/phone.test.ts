@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mountPhoneUi } from "../src/ui/phone";
+import { mountPhoneUi, TABS } from "../src/ui/phone";
 import { addProject, EMPTY_DATA, firstRunData, type ClockData } from "../src/storage/persist";
 import { fakeRoot } from "./fake-dom";
 
@@ -63,21 +63,24 @@ describe("phone page", () => {
     await vi.waitFor(() => expect(page.root.innerHTML).toContain("Could not save"));
   });
 
-  it("splits the page into tabs with a tab bar", () => {
+  it("has exactly three tabs in one tab bar: Jetzt, Schichten, Einstellungen", () => {
     const page = mount(EMPTY_DATA);
     const html = page.root.innerHTML;
-    for (const tab of ["today", "projects", "glasses", "more"]) {
+    const tabs = ["now", "shifts", "settings"];
+    for (const tab of tabs) {
       expect(html).toContain('data-tab="' + tab + '"');
       expect(html).toContain('data-tab-go="' + tab + '"');
     }
+    expect([...html.matchAll(/data-tab-go="/g)]).toHaveLength(3);
+    expect([...html.matchAll(/data-tab="/g)]).toHaveLength(3);
+    expect(TABS.map((tab) => tab.id)).toEqual(tabs);
     expect(html).toContain('class="tabbar"');
-    expect(html.indexOf('id="target"')).toBeLessThan(html.indexOf('data-tab="projects"'));
-    expect(html.indexOf('id="language"')).toBeGreaterThan(html.indexOf('data-tab="more"'));
-    // QIS v1.2: [content] · Brille · Mehr, no Verbindung (no server); the swipe switch is on Brille.
-    const order = ["today", "projects", "glasses", "more"].map((tab) => html.indexOf('data-tab-go="' + tab + '"'));
+    const order = tabs.map((tab) => html.indexOf('data-tab-go="' + tab + '"'));
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(html.indexOf('id="invert"')).toBeGreaterThan(html.indexOf('data-tab="glasses"'));
-    expect(html.indexOf('id="invert"')).toBeLessThan(html.indexOf('data-tab="more"'));
+    // The target, the projects and the swipe switch are settings; the one button is on Jetzt.
+    expect(html.indexOf('id="target"')).toBeGreaterThan(html.indexOf('data-tab="settings"'));
+    expect(html.indexOf('id="invert"')).toBeGreaterThan(html.indexOf('data-tab="settings"'));
+    expect(html.indexOf('id="toggle"')).toBeLessThan(html.indexOf('data-tab="shifts"'));
     expect(html).not.toMatch(/Doppeltipp|Double tap/);
   });
 
@@ -102,13 +105,13 @@ describe("phone page for beginners", () => {
 
   it("first run: says in one sentence how to start the default project", () => {
     const page = mountIn("de-AT", firstRunData("de"));
-    expect(page.root.innerHTML).toContain("Tipp an die Brille, um die Zeit für <b>Arbeit</b> zu starten.");
+    expect(page.root.innerHTML).toContain("Tipp an die Brille, um die Schicht in „Arbeit“ zu starten.");
     expect(page.root.innerHTML).toContain('<option value="de" selected>');
   });
 
   it("with no project, offers to create one in one tap", () => {
     const page = mountIn("de-AT", EMPTY_DATA);
-    expect(page.root.innerHTML).toContain("Leg unten ein Projekt an");
+    expect(page.root.innerHTML).toContain("Lege unter Einstellungen ein Projekt an");
     page.root.get("#add-default").fire("click");
     expect(page.data().projects).toEqual(["Arbeit"]);
     expect(page.root.querySelector("#add-default")).toBeNull();
@@ -152,14 +155,15 @@ describe("phone page for beginners", () => {
     page.root.get("#language").value = "en";
     page.root.get("#language").fire("change");
     expect(page.onLocaleChange).toHaveBeenCalledWith("en");
-    expect(page.root.innerHTML).toContain("Tap the glasses to start the clock");
+    expect(page.root.innerHTML).toContain("Tap the glasses to start the shift");
   });
 
   it("shows a clock started on the glasses when refreshed", () => {
     const page = mountIn("en-US", firstRunData("en"));
     page.external({ ...page.data(), open: { project: "Work", startedAt: 1_000 } });
     page.ui.refresh();
-    expect(page.root.innerHTML).toContain("Running now: <b>Work</b>");
+    expect(page.root.innerHTML).toContain("Running: Work since");
+    expect(page.root.innerHTML).toContain("Stop shift");
   });
 });
 

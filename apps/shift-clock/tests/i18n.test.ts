@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocale, languageSelect, locales, setLocale, tr, type Messages } from "../src/i18n";
 import { defaultProject, messages, t } from "../src/messages";
-import { BODY_WIDTH, buildView, CANCEL, FOOTER_WIDTH, HEADER_WIDTH, MAX_BODY_ROWS } from "../src/glasses/view";
-import { startProject, STOPPED, toCsv, type TimeEntry } from "../src/tracking/clock";
+import { FOOTER_WIDTH, HEADER_WIDTH, LINE_WIDTH, startRows, startView, VISIBLE_ROWS } from "../src/glasses/view";
+import { cockpitModel } from "../src/cockpit/model";
+import { STOPPED, toCsv, type TimeEntry } from "../src/tracking/clock";
 import { firstRunData, parseData } from "../src/storage/persist";
 
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").sort();
 /** Worst-case values for every placeholder that reaches the glasses. */
 const WORST: Record<string, string | number> = { total: "99:59:59", name: "Arbeit", project: "", target: "12,75", left: "16:00:00" };
-const widthOf = (key: string): number => (key.startsWith("g.h.") || key.startsWith("g.f.") ? FOOTER_WIDTH : BODY_WIDTH);
+const widthOf = (key: string): number => (key.startsWith("g.f.") ? FOOTER_WIDTH : LINE_WIDTH);
 
 describe("message catalogue", () => {
   it("has every key in German and English, none empty", () => {
@@ -24,7 +25,7 @@ describe("message catalogue", () => {
     }
   });
 
-  it("keeps every glasses string within its row: 56 in header/footer, 46 beside the day bar", () => {
+  it("keeps every glasses string within its row: 56 characters", () => {
     expect(HEADER_WIDTH).toBe(56);
     for (const locale of locales) {
       for (const key of Object.keys(messages[locale]).filter((k) => k.startsWith("g."))) {
@@ -71,25 +72,38 @@ describe("i18n helpers", () => {
   });
 });
 
-const ids = (): (() => string) => { let n = 0; return () => "e" + ++n; };
+const day = 4 * 86_400_000;
+const EMPTY_CLOCK = { project: null, startedAt: null } as const;
 
 describe("glasses copy fits the display", () => {
   const long = "Kundenprojekt Müller & Söhne, Auftrag 2026-0815, Dachsanierung";
   for (const locale of locales) {
-    it(`${locale}: every screen stays within 7 rows, the body within 38 characters`, () => {
+    it(`${locale}: the start page shows at most three rows, header and footer one line each`, () => {
       const projectSets = [[], [defaultProject(locale)], [long], Array.from({ length: 10 }, (_, i) => long + i)];
-      const day = 4 * 86_400_000;
       for (const projects of projectSets) {
-        const states = [STOPPED, startProject(STOPPED, projects[0] ?? long, day, ids()).state];
-        const pickers = [null, projects[0] ?? null, CANCEL, projects[7] ?? null];
-        for (const state of states) {
-          for (const selecting of pickers) {
-            const view = buildView(state, [], { projects, selecting, locale }, day + 359_999_000);
-            expect(view.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
-            for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(BODY_WIDTH);
-            expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_WIDTH);
-            expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
-            expect(view.footer).not.toBe("");
+        const rows = startRows(projects, [], locale);
+        for (const cursor of [0, 1, 5, 9, 99]) {
+          for (const demo of [false, true]) {
+            for (const canGoBack of [false, true]) {
+              const view = startView(rows, cursor, { locale, demo, canGoBack });
+              expect(view.body.length).toBeLessThanOrEqual(VISIBLE_ROWS);
+              for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(LINE_WIDTH);
+              expect(view.header.length, view.header).toBeLessThanOrEqual(HEADER_WIDTH);
+              expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
+              expect(view.footer).not.toBe("");
+            }
+          }
+        }
+      }
+    });
+
+    it(`${locale}: every cockpit hint fits one footer row`, () => {
+      const running = { project: "Arbeit", startedAt: day };
+      for (const clock of [EMPTY_CLOCK, running]) {
+        for (const armed of [false, true]) {
+          for (const projectCount of [1, 3]) {
+            const model = cockpitModel({ clock, entries: [{ id: "e1", project: "Arbeit", startedAt: day, endedAt: day + 600_000 }], now: day + 7_200_000, locale, targetHours: 8, armed, demo: false, projectCount });
+            expect(model.hint.length, model.hint).toBeLessThanOrEqual(FOOTER_WIDTH);
           }
         }
       }
@@ -97,56 +111,12 @@ describe("glasses copy fits the display", () => {
   }
 
   it("speaks German on the glasses", () => {
-    const none = buildView(STOPPED, [], { projects: [], locale: "de" }, 0);
-    expect(none.body).toEqual(["Noch kein Projekt.", "Tippen = Projekt „Arbeit“ anlegen,", "oder am Handy eines anlegen."]);
-    expect(none.footer).toBe("Tippen = anlegen · 2× = Ende");
-    const one = buildView(STOPPED, [], { projects: ["Arbeit"], locale: "de" }, 0);
-    expect(one.body).toEqual(["Zeiterfassung gestoppt.", "Projekt: Arbeit", "heute 0:00"]);
-    expect(one.header).toBe("SHIFTCLOCK · gestoppt");
-    expect(one.footer).toBe("Tippen = starten · 2× = Ende");
-    const many = buildView(STOPPED, [], { projects: ["A", "B"], locale: "de" }, 0);
-    expect(many.footer).toBe("Tippen = Projekt wählen · 2× = Ende");
-    const picker = buildView(STOPPED, [], { projects: ["A", "B"], selecting: CANCEL, locale: "de" }, 0);
-    expect(picker.header).toBe("SHIFTCLOCK · Projekt wählen");
-    expect(picker.body).toEqual(["  A", "  B", "> Abbrechen"]);
-    expect(picker.footer).toBe("Tippen = starten · Wischen = wählen · 2× = zurück");
-    const running = buildView(startProject(STOPPED, "Arbeit", 0, ids()).state, [], { projects: ["Arbeit"], locale: "de" }, 65_000);
-    expect(running.footer).toBe("Tippen = stoppen · 2× = Ende");
-  });
-
-  it("a running clock is shown even after its project was removed", () => {
-    const running = buildView(startProject(STOPPED, "Gone", 0, ids()).state, [], { projects: [] }, 65_000);
-    expect(running.header).toBe("SHIFTCLOCK · Gone");
-    expect(running.footer).toContain("Tap = stop");
-  });
-});
-
-describe("daily target on the glasses", () => {
-  for (const locale of locales) {
-    it(`${locale}: shows how much is left, then that it is reached, within the row`, () => {
-      const day = 4 * 86_400_000;
-      const running = startProject(STOPPED, "Arbeit", day, ids()).state;
-      for (const targetHours of [0.25, 7.5, 8, 12.75, 16]) {
-        for (const state of [STOPPED, running]) {
-          const view = buildView(state, [], { projects: ["Arbeit"], locale, targetHours }, day + 9 * 3_600_000);
-          expect(view.body.length).toBeLessThanOrEqual(MAX_BODY_ROWS);
-          for (const row of view.body) expect(row.length, row).toBeLessThanOrEqual(BODY_WIDTH);
-        }
-      }
-    });
-  }
-
-  it("speaks German about the target", () => {
-    const running = startProject(STOPPED, "Arbeit", 0, ids()).state;
-    const view = buildView(running, [], { projects: ["Arbeit"], locale: "de", targetHours: 7.5 }, 3_600_000);
-    expect(view.body).toEqual(["1:00:00", "heute 1:00:00", "", "Tagesziel 7,5 h · noch 6:30:00"]);
-    const done = buildView(running, [], { projects: ["Arbeit"], locale: "de", targetHours: 0.5 }, 3_600_000);
-    expect(done.body[3]).toBe("Tagesziel 0,5 h erreicht");
-  });
-
-  it("shows nothing extra without a target", () => {
-    const view = buildView(STOPPED, [], { projects: ["A", "B"], locale: "en", targetHours: null }, 0);
-    expect(view.body).toEqual(["stopped", "today 0:00"]);
+    const view = startView(startRows([], [], "de"), 0, { locale: "de", demo: false, canGoBack: false });
+    expect(view.body).toEqual(["● Projekt „Arbeit“ anlegen"]);
+    expect(view.header).toBe("Schicht · ● live");
+    expect(view.footer).toBe("Tippen = anlegen · 2× = Ende");
+    const many = startView(startRows(["A", "B"], [], "de"), 0, { locale: "de", demo: false, canGoBack: true });
+    expect(many.footer).toBe("Tippen = starten · Wischen = wählen · 2× = zurück");
   });
 });
 
@@ -173,48 +143,10 @@ describe("CSV", () => {
   });
 });
 
-describe("QIS v1 layout", () => {
-  const states = (locale: "de" | "en") => {
-    const running = startProject(STOPPED, "Arbeit", 0, ids()).state;
-    const base = { projects: ["A", "B"], locale } as const;
-    return [
-      buildView(STOPPED, [], { projects: [], locale }, 0),
-      buildView(STOPPED, [], { projects: ["A"], locale }, 0),
-      buildView(STOPPED, [], base, 0),
-      buildView(STOPPED, [], { ...base, selecting: "A" }, 0),
-      buildView(running, [], base, 0),
-      buildView(running, [], { ...base, armed: true }, 0),
-      buildView(STOPPED, [], { ...base, help: true }, 0),
-    ];
-  };
-
-  for (const locale of locales) {
-    it(`${locale}: header is APPNAME · state, footer keeps the gesture order and ends in back/exit, all within the row`, () => {
-      const order = locale === "de" ? ["Tippen", "Wischen", "Halten", "2×"] : ["Tap", "Swipe", "Hold", "2×"];
-      for (const view of states(locale)) {
-        expect(view.header.startsWith("SHIFTCLOCK · "), view.header).toBe(true);
-        expect(view.header.length).toBeLessThanOrEqual(HEADER_WIDTH);
-        expect(view.footer.length, view.footer).toBeLessThanOrEqual(FOOTER_WIDTH);
-        expect(view.footer).toMatch(locale === "de" ? /2× = (zurück|Ende)$|abbrechen$/ : /2× = (back|exit)$|cancel$/);
-        // Gestures that appear in the footer appear in the fixed order.
-        const positions = order.map((word) => view.footer.indexOf(word)).filter((i) => i >= 0);
-        expect(positions, view.footer).toEqual([...positions].sort((a, b) => a - b));
-        expect(view.footer).not.toMatch(/2x|Tap\b.*Wisch|Wisch\b(?!en)/);
-      }
-    });
-  }
-
+describe("QIS v1 wording", () => {
   it("uses the glossary: German has no Tap or Wisch, never 2x", () => {
-    const german = Object.entries(messages.de).filter(([k]) => k.startsWith("g.")).map(([, v]) => v).join("\n");
-    expect(german).not.toMatch(/\bTap\b|\bWisch\b|\b2x\b|Doppeltipp/);
-  });
-});
-
-describe("QIS v1.2", () => {
-  it("builds the footer with the helper: armed names the action", () => {
-    const running = startProject(STOPPED, "A", 0, ids()).state;
-    expect(buildView(running, [], { projects: ["A"], locale: "de", armed: true }, 0).footer).toBe("Nochmal tippen = stoppen · Wischen/2× = abbrechen");
-    expect(buildView(running, [], { projects: ["A"], locale: "en", armed: true }, 0).footer).toBe("Tap again = stop · Swipe/2× = cancel");
+    const german = Object.entries(messages.de).filter(([k]) => k.startsWith("g.")).map(([, v]) => v).join(" ");
+    expect(german).not.toMatch(/Tap|Wisch|2x|Doppeltipp/);
   });
 
   it("the phone says 2× and never Doppeltippen / Double tap", () => {

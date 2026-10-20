@@ -6,7 +6,7 @@ import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
 import type { GeoResult } from "../route/geocode";
 import { addFavorite, MAX_FAVORITES, moveFavorite, removeFavorite, renameFavorite, setNow, type Places } from "../route/places";
-import { favoritesHtml, fullText, nowHtml, resultsHtml } from "./places-ui";
+import { escapeHtml, favoritesHtml, fullText, nowHtml, resultsHtml } from "./places-ui";
 
 /**
  * The phone side: which service to ask, and where it lives.
@@ -40,13 +40,127 @@ export interface PhoneUiPorts {
   getVoiceState?(): "needs-tap" | "server" | "browser" | "off";
   /** True in demo mode: the destinations are examples and nothing is saved. */
   isDemo?(): boolean;
+  /** The board of the stop in use, for the "Jetzt" tab; null while there is none (the tab then shows a sample). */
+  getBoard?(): PhoneBoard | null;
 }
 
-/** The page is split into tabs instead of one long column. */
-const TAB_KEY = "quietglass.nextstop.tab";
+/** One departure as the phone shows it. */
+export interface PhoneDeparture {
+  readonly line: string;
+  readonly headsign: string;
+  /** Minutes until it leaves (0 or less = now). */
+  readonly minutes: number;
+  /** Minutes late; null when the time is only the timetable. */
+  readonly delay: number | null;
+  readonly cancelled: boolean;
+  readonly track: string;
+  /** Epoch ms of the expected departure. */
+  readonly clock: number;
+}
 
-function readTab(ids: readonly string[]): string {
-  try { const v = localStorage.getItem(TAB_KEY); return ids.includes(v ?? "") ? v! : "stops"; } catch { return "stops"; }
+export interface PhoneBoard {
+  readonly stop: string;
+  readonly metres: number | null;
+  readonly departures: readonly PhoneDeparture[];
+}
+
+/** The three tabs (QUS v1). */
+export const TABS: readonly { id: string; icon: string; key: string }[] = [
+  { id: "now", icon: "🚏", key: "p.tabNow" },
+  { id: "trips", icon: "🎯", key: "p.tabTrips" },
+  { id: "settings", icon: "⚙️", key: "p.tabSettings" },
+];
+
+/** Nothing found yet: Einstellungen opens first, with the three-step checklist. */
+export function isFirstRun(position: Position | null, stops: readonly Stop[]): boolean {
+  return position === null && stops.length === 0;
+}
+
+/** Sample departures for the first start, so the page shows what it will look like. */
+export function sampleBoard(now: number): PhoneBoard {
+  const at = (minutes: number): number => now + minutes * 60_000;
+  return {
+    stop: "Mirabellplatz",
+    metres: 120,
+    departures: [
+      { line: "3", headsign: "Salzburg Hbf", minutes: 4, delay: 2, cancelled: false, track: "B", clock: at(4) },
+      { line: "6", headsign: "Obus Itzling", minutes: 9, delay: 0, cancelled: false, track: "A", clock: at(9) },
+      { line: "5", headsign: "Hallein Bahnhof", minutes: 14, delay: null, cancelled: false, track: "C", clock: at(14) },
+      { line: "25", headsign: "Salzburg Süd", minutes: 21, delay: 0, cancelled: false, track: "B", clock: at(21) },
+    ],
+  };
+}
+
+const clockText = (ms: number): string => {
+  const date = new Date(ms);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
+
+/** "+3 min", "pünktlich", "Fahrplan" (nothing confirmed), "fällt aus". */
+export function delayText(departure: PhoneDeparture, locale: Locale): string {
+  if (departure.cancelled) return t(locale, "p.cancelled");
+  if (departure.delay === null) return t(locale, "p.planned");
+  return departure.delay > 0 ? t(locale, "p.delayed", { minutes: departure.delay }) : t(locale, "p.onTime");
+}
+
+const minutesText = (minutes: number, locale: Locale): string =>
+  minutes <= 0 ? t(locale, "p.heroNow") : t(locale, "p.heroMinutes", { minutes });
+
+const toneOf = (departure: PhoneDeparture): "ok" | "warn" | "offline" =>
+  departure.cancelled ? "offline" : (departure.delay ?? 0) > 0 ? "warn" : "ok";
+
+/** The status pill: live once there is a location and stops, the state as a word otherwise. */
+export function pillOf(position: Position | null, stops: readonly Stop[], locale: Locale): { text: string; on: boolean } {
+  return position !== null && stops.length > 0
+    ? { text: t(locale, "p.pillLive"), on: true }
+    : { text: t(locale, "p.pillWaiting"), on: false };
+}
+
+/** "Jetzt": hero card (the next departure, one big value), 2 x 2 key figures, the one button, a card strip of the rest. */
+export function nowInner(board: PhoneBoard | null, now: number, locale: Locale): string {
+  const sample = board === null || board.departures.length === 0;
+  const shown = board !== null && board.departures.length > 0 ? board : sampleBoard(now);
+  const first = shown.departures[0]!;
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const stat = (label: string, value: string, unit: string, alert = false): string =>
+    `<div${alert ? ' class="alert"' : ""}><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b><small>${escapeHtml(unit)}</small></div>`;
+  const cards = shown.departures.slice(1).map((departure) =>
+    `<div class="host tone-${toneOf(departure)}"><b>${escapeHtml(departure.line)}</b><em>${escapeHtml(minutesText(departure.minutes, locale))}</em><span>${escapeHtml(departure.headsign)}</span><span><i>${escapeHtml(delayText(departure, locale))}</i></span></div>`);
+  return `
+    <section class="card hero-card">
+      <div class="hero">
+        <div><span>${escapeHtml(x("p.heroLabel"))} · ${escapeHtml(first.line)}</span><strong>${escapeHtml(first.cancelled ? x("p.cancelled") : minutesText(first.minutes, locale))}</strong></div>
+        <p>${escapeHtml(shown.stop)}</p>
+      </div>
+      <div class="stats">
+        ${stat(x("p.statTrack"), first.track || "–", x("p.unitTrack"))}
+        ${stat(x("p.statDelay"), delayText(first, locale), x("p.unitMinutes"), first.cancelled || (first.delay ?? 0) > 0)}
+        ${stat(x("p.statWalk"), shown.metres === null ? "–" : `${shown.metres} m`, x("p.unitMetres"))}
+        ${stat(x("p.statLeaves"), first.cancelled ? "–" : clockText(first.clock), x("p.unitClock"))}
+      </div>
+      <button id="refresh-now" type="button" class="big">${escapeHtml(x("p.refresh"))}</button>
+      ${sample ? `<p class="hint">${escapeHtml(x("p.sampleNote"))}</p>` : ""}
+    </section>
+    ${cards.length > 0 ? `<h2 class="strip-title">${escapeHtml(x("p.stripTitle"))}</h2><div class="strip">${cards.join("")}</div>` : ""}`;
+}
+
+/** First-run checklist: pure, so tests can read it. */
+export function setupInner(position: Position | null, stops: readonly Stop[], places: Places | null, locale: Locale): string {
+  const step = (n: number, done: boolean, key: string): string =>
+    `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${escapeHtml(t(locale, key))}</span></li>`;
+  const located = position !== null;
+  const found = located && stops.length > 0;
+  const saved = places !== null && places.favorites.length > 0;
+  return `<ol class="steps">${step(1, located, "p.setup1")}${step(2, found, "p.setup2")}${step(3, saved, "p.setup3")}</ol>`
+    + (found ? "" : `<p class="hint">${escapeHtml(t(locale, "p.setupDemo"))}</p>`);
+}
+
+/** The page is split into exactly three tabs. */
+const TAB_KEY = "quietglass.nextstop.tab.v2";
+
+function readTab(firstRun: boolean): string {
+  try { const v = localStorage.getItem(TAB_KEY); if (TABS.some((tab) => tab.id === v)) return v!; } catch { /* no storage */ }
+  return firstRun ? "settings" : "now";
 }
 
 /** Shows only the active tab; the choice survives redraws and restarts. */
@@ -92,6 +206,14 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
   const updateStatus = (): void => {
     const status = root.querySelector<HTMLElement>("#status");
     if (status) status.textContent = statusText();
+    const live = root.querySelector<HTMLElement>("#now-live");
+    if (live) live.innerHTML = nowInner(ports.getBoard?.() ?? null, Date.now(), locale());
+    const pill = root.querySelector<HTMLElement>("#pill");
+    if (pill) {
+      const state = pillOf(ports.getPosition(), ports.getStops(), locale());
+      pill.textContent = state.text;
+      pill.className = state.on ? "chip on" : "chip";
+    }
     const next = root.querySelector<HTMLElement>("#next");
     if (next) next.textContent = nextStep(ports.getPosition() !== null, ports.getStops().length, locale());
     const voiceState = root.querySelector<HTMLElement>("#voice-state");
@@ -212,50 +334,80 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     if (document.documentElement) document.documentElement.lang = lang;
 
     const hasPlaces = Boolean(ports.getPlaces && ports.setPlaces);
-    const tabs = [
-      { id: "stops", icon: "🚏", key: "p.tabStops" },
-      ...(hasPlaces ? [{ id: "goals", icon: "🎯", key: "p.tabGoals" }] : []),
-      { id: "glasses", icon: "👓", key: "p.tabGlasses" },
-      { id: "connection", icon: "🔌", key: "p.tabConnection" },
-      { id: "more", icon: "⚙️", key: "p.tabMore" },
-    ];
-    const ids = tabs.map((entry) => entry.id);
-    if (!ids.includes(tab)) tab = readTab(ids);
+    const firstRun = isFirstRun(ports.getPosition(), ports.getStops());
+    const ids = TABS.map((entry) => entry.id);
+    if (!ids.includes(tab)) tab = readTab(firstRun);
+    const pill = pillOf(ports.getPosition(), ports.getStops(), lang);
 
     root.innerHTML = `
       <header class="brand bar">
-        <div><span class="brand-mark">Quietglass</span><h1>NextStop</h1></div>
-        <span class="chip on">${x(settings.backend === "oebb" ? "p.chipOebb" : "p.chipMotis")}</span>
+        <div><span class="brand-mark">${x("p.kicker")}</span><h1>NextStop</h1></div>
+        <span class="chip${pill.on ? " on" : ""}" id="pill">${pill.text}</span>
       </header>
 
-      <div class="tab" data-tab="stops">
-      <p class="next" id="next"></p>
-
-      <div class="card">
-        <label>${x("p.status")}</label>
+      <div class="tab" data-tab="now">
+        <p class="banner tone-none" id="next"></p>
+        <div id="now-live">${nowInner(ports.getBoard?.() ?? null, Date.now(), lang)}</div>
         <p class="hint" id="status"></p>
-        <button id="refresh-now" type="button">${x("p.refreshNow")}</button>
-      </div>
       </div>
 
-      ${hasPlaces ? `<div class="tab" data-tab="goals">${placesCard(lang)}</div>` : ""}
+      <div class="tab" data-tab="trips">
+        ${hasPlaces ? placesCard(lang) : ""}
+      </div>
 
-      <div class="tab" data-tab="glasses">
-      <div class="card compact">
+      <div class="tab" data-tab="settings">
+      ${firstRun ? `<section class="card setup"><h2>${x("p.setupTitle")}</h2>${setupInner(ports.getPosition(), ports.getStops(), ports.getPlaces?.() ?? null, lang)}</section>` : ""}
+
+      <details class="card fold" id="glasses-card" ${firstRun ? "open" : ""}>
+        <summary>${x("p.cardGlasses")}</summary>
         ${languageSelect(lang)}
         <label class="check"><input id="invert" type="checkbox" /> ${x("p.invert")}</label>
         <p class="hint">${x("p.invertHint")}</p>
-      </div>
-
-      ${ports.getVoiceState ? `<div class="card">
+        ${ports.getVoiceState ? `
         <label class="check"><input id="announce" type="checkbox" /> ${x("p.announce")}</label>
         <button id="voice-on" type="button">${x("p.announceOn")}</button>
         <p class="hint" id="voice-state"></p>
-        <p class="hint">${x("p.announceHint")}</p>
-      </div>` : ""}
+        <p class="hint">${x("p.announceHint")}</p>` : ""}
+      </details>
 
-      <div class="card keys">
-        <label>${x("p.controls")}</label>
+      <details class="card fold" id="source-card" ${firstRun ? "open" : ""}>
+        <summary>${x("p.cardSource")}</summary>
+        <label for="backend">${x("p.sourceLabel")}</label>
+        <select id="backend">
+          <option value="motis">${x("p.sourceMotis")}</option>
+          <option value="oebb">${x("p.sourceOebb")}</option>
+        </select>
+        <p class="hint" id="backend-hint"></p>
+
+        <div id="advanced">
+          <h3>${x("p.advanced")}</h3>
+
+          <div id="oebb-card">
+            <label for="oebb-url">${x("p.oebbUrl")}</label>
+            <input id="oebb-url" type="url" inputmode="url" spellcheck="false" />
+            <p class="hint">${x("p.oebbUrlHint")}</p>
+          </div>
+
+          <div id="motis-card">
+            <label for="motis-url">${x("p.motisUrl")}</label>
+            <input id="motis-url" type="url" inputmode="url" spellcheck="false" />
+            <p class="hint">${x("p.motisUrlHint")}</p>
+          </div>
+
+          <div id="stt-card">
+            <label for="stt-url">${x("p.sttUrl")}</label>
+            <input id="stt-url" type="url" inputmode="url" spellcheck="false" placeholder="https://" />
+            <p class="hint">${x("p.sttUrlHint")}</p>
+          </div>
+
+          <label for="refresh">${x("p.refreshEvery", { value: '<span id="refresh-value"></span>' })}</label>
+          <input id="refresh" type="range" min="10" max="120" step="5" />
+          <p class="hint">${x("p.refreshHint")}</p>
+        </div>
+      </details>
+
+      <details class="card fold" id="keys-card">
+        <summary>${x("p.cardKeys")}</summary>
         <p class="hint">
           <strong>${x("p.swipe")}</strong> — ${x("p.swipeDoes")}<br />
           <strong>${x("p.tap")}</strong> — ${x("p.tapDoes")}<br />
@@ -264,67 +416,21 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
           ${x("p.legend")}<br />
           ${x("p.routeHowTo")}
         </p>
-      </div>
-      </div>
+      </details>
 
-      <div class="tab" data-tab="connection">
-      <div class="card">
-        <label for="backend">${x("p.sourceLabel")}</label>
-        <select id="backend">
-          <option value="motis">${x("p.sourceMotis")}</option>
-          <option value="oebb">${x("p.sourceOebb")}</option>
-        </select>
-        <p class="hint" id="backend-hint"></p>
-      </div>
-
-      <div class="card advanced" id="advanced">
-        <h2>${x("p.advanced")}</h2>
-
-        <div id="oebb-card">
-          <label for="oebb-url">${x("p.oebbUrl")}</label>
-          <input id="oebb-url" type="url" inputmode="url" spellcheck="false" />
-          <p class="hint">
-            ${x("p.oebbUrlHint")}
-          </p>
-        </div>
-
-        <div id="motis-card">
-          <label for="motis-url">${x("p.motisUrl")}</label>
-          <input id="motis-url" type="url" inputmode="url" spellcheck="false" />
-          <p class="hint">
-            ${x("p.motisUrlHint")}
-          </p>
-        </div>
-
-        <div id="stt-card">
-          <label for="stt-url">${x("p.sttUrl")}</label>
-          <input id="stt-url" type="url" inputmode="url" spellcheck="false" placeholder="https://" />
-          <p class="hint">${x("p.sttUrlHint")}</p>
-        </div>
-
-        <label for="refresh">${x("p.refreshEvery", { value: '<span id="refresh-value"></span>' })}</label>
-        <input id="refresh" type="range" min="10" max="120" step="5" />
-        <p class="hint">
-          ${x("p.refreshHint")}
-        </p>
-      </div>
-
-      </div>
-
-      <div class="tab" data-tab="more">
       <p class="credits">
         ${x("p.credits", { link: `<a href="https://transitous.org/sources/" target="_blank" rel="noopener">${x("p.creditsLink")}</a>` })}
       </p>
       </div>
 
       <nav class="tabbar" role="tablist">
-        ${tabs.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${x(key)}</button>`).join("")}
+        ${TABS.map(({ id, icon, key }) => `<button type="button" role="tab" data-tab-go="${id}"><span aria-hidden="true">${icon}</span>${x(key)}</button>`).join("")}
       </nav>
     `;
     applyTab(root, tab);
     root.querySelectorAll<HTMLButtonElement>("[data-tab-go]").forEach((button) => {
       button.addEventListener("click", () => {
-        tab = button.dataset["tabGo"] ?? "stops";
+        tab = button.dataset["tabGo"] ?? "now";
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
         applyTab(root, tab);
         window.scrollTo({ top: 0 });
@@ -442,8 +548,10 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       commit({ refreshSeconds: Number(refresh.value) || DEFAULT_SETTINGS.refreshSeconds });
     });
 
-    root.querySelector<HTMLButtonElement>("#refresh-now")
-      ?.addEventListener("click", () => { ports.refresh(); render(); });
+    // The Jetzt card is redrawn in place on every beat, so its button is wired once on the container.
+    root.querySelector<HTMLElement>("#now-live")?.addEventListener("click", (event: Event) => {
+      if ((event.target as HTMLElement | null)?.closest("#refresh-now")) { ports.refresh(); updateStatus(); }
+    });
   };
 
   render();

@@ -122,15 +122,15 @@ describe("every glasses view fits 7 rows × 56 characters", () => {
 describe("what the glasses say", () => {
   it("the menu explains the first run when no server is set up", () => {
     const view = buildView(state("de", { configured: false, demo: false, project: "" }));
-    // The side menu is off: Hilfe is the last list row again.
-    expect(view.body.slice(0, 6)).toEqual(["> Takes", "  Teleprompter", "  Tagesplan", "  Packliste", "  Licht & Sonne", "  Hilfe"]);
+    // QUS v1: three big entries, the packing list hangs under the day; no Hilfe row.
+    expect(view.body.slice(0, 4)).toEqual(["● Takes", "  Teleprompter", "  Drehtag", "    Packliste"]);
     expect(view.body).toContain("Noch kein Server: Adresse am Handy eintragen.");
-    expect(view.header).toBe("SHOOT DAY · Menü");
+    expect(view.header).toBe("SHOOT DAY · ● live");
     expect(view.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
   });
 
   it("demo data is labelled DEMO", () => {
-    expect(buildView(state("en", { project: "" })).header).toBe("SHOOT DAY · Menu · DEMO");
+    expect(buildView(state("en", { project: "" })).header).toBe("SHOOT DAY · Demo");
   });
 
   it("the take card shows shot, counts and the last take", () => {
@@ -142,7 +142,7 @@ describe("what the glasses say", () => {
         cursor: 0, ok: 2, ng: 1, last: { n: 3, status: "OK", note: "great", ts: new Date(2026, 0, 1, 14, 5).getTime(), pending: false },
       },
     }));
-    expect(view.header).toBe("SHOOT DAY · TAKES · 1 of 1");
+    expect(view.header).toBe("TAKES · 1 of 1 · ● live");
     expect(view.body).toEqual(["Scene 2 · shot B · MCU", "Over the shoulder", "", "OK 2 · NG 1", "Last: T3 OK 14:05 great", "", ""]);
     expect(view.footer).toBe("Tap = take · Swipe = shot · Hold = speak · 2× = back");
   });
@@ -157,7 +157,7 @@ describe("what the glasses say", () => {
       mode: "pack", message: "",
       pack: { items: [{ group: "", name: "Gimbal", need: true, packed: true }, { group: "", name: "Klappe", need: true, packed: false }], cursor: 1, missing: false },
     }));
-    expect(view.header).toBe("SHOOT DAY · PACKLISTE · 1/2 eingepackt · DEMO");
+    expect(view.header).toBe("PACKLISTE · 1/2 eingepackt · Demo");
     expect(view.body.slice(0, 2)).toEqual(["  ● Gimbal", "> ○ Klappe"]);
   });
 
@@ -169,7 +169,7 @@ describe("what the glasses say", () => {
         scroll: 0,
       },
     }));
-    expect(view.header).toBe("SHOOT DAY · TAGESPLAN · Mo · Call 07:30");
+    expect(view.header).toBe("TAGESPLAN · Mo · Call 07:30 · ● live");
     expect(view.body[0]).toBe("JETZT 11:00 Szene 1");
     expect(view.body[1]).toBe("GLEICH 12:30 Mittag (in 30 min)");
     expect(view.body).toContain("● 11:00 Szene 1");
@@ -177,7 +177,7 @@ describe("what the glasses say", () => {
 
   it("the microphone indicator is shown while listening", () => {
     const view = buildView(state("en", { mode: "pack", rec: { target: "pack", via: "hold", busy: false } }));
-    expect(view.header).toBe("SHOOT DAY · ● MIC · speak now");
+    expect(view.header).toBe("MIC · speak now · Demo");
     expect(view.footer).toBe("Release = done · 2× = back");
   });
 });
@@ -205,7 +205,7 @@ describe("live text while speaking", () => {
     const long = Array.from({ length: 80 }, (_, i) => `wort${i}`).join(" ");
     const base = state("de", { mode: "pack", rec: { target: "pack", via: "hold", busy: false, live: long } });
     const view = buildView(base);
-    expect(view.header).toBe("SHOOT DAY · ● MIC · sprich jetzt");
+    expect(view.header).toBe("MIC · sprich jetzt · Demo");
     expect(view.body.at(-1)).toContain("wort79");
     expect(view.body[0]?.startsWith("…")).toBe(true);
     expect(view.footer).toBe("Loslassen = fertig · 2× = zurück");
@@ -254,9 +254,9 @@ describe("customers, projects, the card before the appointment and the storyboar
         pending: null,
       },
     }));
-    expect(view.header).toBe("SHOOT DAY · KUNDEN · 2");
+    expect(view.header).toBe("KUNDEN · 2 · ● live");
     expect(view.body.slice(0, 3)).toEqual(["  + Neuer Kunde (sprechen)", "  Anna Beispiel", "> Bäckerei Sonnenschein · Sonnenschein KG"]);
-    expect(view.body[3]).toBe("  Hilfe");
+    expect(view.body[3]).toBe("");
     expect(view.footer).toBe("Tippen = öffnen · Halten = neuer Kunde · 2× = Ende");
   });
 
@@ -269,7 +269,7 @@ describe("customers, projects, the card before the appointment and the storyboar
 
   it("asks before a customer heard by voice is created", () => {
     const view = buildView(state("de", { mode: "customers", customerMode: true, message: "", customers: { list: [], cursor: 0, pending: "Anna Beispiel" } }));
-    expect(view.header).toBe("SHOOT DAY · NEUER KUNDE");
+    expect(view.header).toBe("NEUER KUNDE · Demo");
     expect(view.body).toContain("\"Anna Beispiel\"");
     expect(view.body).toContain("So anlegen?");
     // 2× only asks to discard the name (QIS v1.2 no. 2), so it is not listed.
@@ -286,7 +286,7 @@ describe("customers, projects, the card before the appointment and the storyboar
         active: "p_000000000001",
       },
     }));
-    expect(view.header).toBe("SHOOT DAY · KUNDE · Anna Beispiel");
+    expect(view.header).toBe("KUNDE · Anna Beispiel · ● live");
     expect(view.body.slice(0, 2)).toEqual(["  Kunde vor dem Termin", "> 20.10.2026 · Porträt ●"]);
   });
 
@@ -296,7 +296,7 @@ describe("customers, projects, the card before the appointment and the storyboar
       mode: "board", customerMode: true, demo: false, message: "",
       board: { boards: [{ id: "s_000000000001", title: "Reel", scenes: [SCENES[0]!, scene] }], board: 0, cursor: 1, picking: false },
     }));
-    expect(view.header).toBe("SHOOT DAY · SZENE 2/2 · 0:05–0:12");
+    expect(view.header).toBe("SZENE 2/2 · 0:05–0:12 · ● live");
     expect(view.body).toEqual(["● Hände im Teig", "Nahaufnahme der Hände.", "Kamera: Nah, langsamer Schwenk", "Text: \"Ofenfrisch\"", "Ziel: Handwerk zeigen", "", "● erledigt"]);
     expect(view.footer).toBe("Tippen = wieder offen · Wischen = Szene · 2× = zurück");
   });
@@ -317,10 +317,10 @@ describe("customers, projects, the card before the appointment and the storyboar
     expect(briefRows("de", { ...BRIEF, memory: null }).join("\n")).not.toContain("BABEL");
   });
 
-  it("the project menu puts the storyboard first and goes back to the projects", () => {
+  it("the project menu hangs the storyboard under the takes and goes back to the projects", () => {
     const view = buildView(state("de", { mode: "menu", customerMode: true, demo: false, project: "Porträt", message: "", pendingCount: 0 }));
-    expect(view.header).toBe("SHOOT DAY · Porträt");
-    expect(view.body.slice(0, 2)).toEqual(["> Storyboard", "  Takes"]);
+    expect(view.header).toBe("SHOOT DAY · Porträt · ● live");
+    expect(view.body.slice(0, 2)).toEqual(["● Takes", "    Storyboard"]);
     expect(view.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = zurück");
   });
 });

@@ -325,6 +325,7 @@ describe("Agent Glass with Hermes sessions (integration)", () => {
   it("opens the last session, pages its answer, lists sessions with age and starts a new one", async () => {
     let handler: ((event: unknown) => void) | undefined;
     const screens: string[] = [];
+    const created: { images: number }[] = [];
     const page: Record<number, string> = {};
     const snapshot = (): string => [page[1], page[2], page[3]].join("\n");
     harness.bridge = {
@@ -332,13 +333,15 @@ describe("Agent Glass with Hermes sessions (integration)", () => {
         ? JSON.stringify({ provider: "hermes", baseUrl: "ws://bridge:8765", token: "bridge-token", sessionId: "h1" })
         : "en",
       setLocalStorage: async () => true,
-      rebuildPageContainer: async (built: { textObject?: { containerID: number; content: string }[] }) => {
+      rebuildPageContainer: async (built: { textObject?: { containerID: number; content: string }[]; imageObject?: unknown[] }) => {
         for (const item of built.textObject ?? []) page[item.containerID] = item.content;
+        created.push({ images: built.imageObject?.length ?? 0 });
         screens.push(snapshot());
         return true;
       },
-      createStartUpPageContainer: async (built: { textObject?: { containerID: number; content: string }[] }) => {
+      createStartUpPageContainer: async (built: { textObject?: { containerID: number; content: string }[]; imageObject?: unknown[] }) => {
         for (const item of built.textObject ?? []) page[item.containerID] = item.content;
+        created.push({ images: built.imageObject?.length ?? 0 });
         screens.push(snapshot());
         return 0;
       },
@@ -362,12 +365,15 @@ describe("Agent Glass with Hermes sessions (integration)", () => {
     await import("../src/main");
     await vi.waitFor(() => expect(handler).toBeDefined());
     await vi.advanceTimersByTimeAsync(200);
+    // The open session opens on the status cockpit (an image, no text); a swipe opens the answer text.
+    expect(created.at(-1)).toMatchObject({ images: 4 });
+    await gesture(1);
     expect(page[1]).toBe("AGENT · ready · Hermes work");
-    expect(page[3]).toBe("Tap = replay · Swipe · Hold = sessions · 2× = exit");
+    expect(page[3]).toBe("Tap = replay · Swipe · Hold = sessions · 2× = back");
 
     await gesture(1); // swipe up: one screen back
     expect(page[1]).toMatch(/^AGENT · page \d+\/\d+ · Hermes work$/);
-    expect(page[3]).toBe("Tap = newest · Swipe · 2× = exit");
+    expect(page[3]).toBe("Tap = newest · Swipe · 2× = back");
     await gesture(0); // tap: back to the newest
     expect(page[3]).toContain("Hold = sessions");
 
