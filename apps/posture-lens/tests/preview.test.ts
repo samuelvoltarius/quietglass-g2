@@ -29,6 +29,11 @@ const states: { file: string; frame: () => Frame }[] = [
     file: "preview-cockpit-leaning.png",
     frame: () => composeCockpit(cockpitModel({ ...base, monitor: { ...tilted, goodSeconds: 1500, leaningSeconds: 140 }, digitsAngle: 31, gaugeAngle: 32 }), pixelBackend()),
   },
+  // The store screenshot (English): the old simulator capture still offered "Hold", which the temple pad never delivers (step log 21.10.2026).
+  {
+    file: "screenshot.png",
+    frame: () => composeCockpit(cockpitModel({ ...base, locale: "en", monitor: { ...tilted, goodSeconds: 1500, leaningSeconds: 140 }, digitsAngle: 31, gaugeAngle: 32 }), pixelBackend()),
+  },
 ];
 
 const env = (globalThis as unknown as { process: { env: Record<string, string | undefined>; cwd(): string } }).process;

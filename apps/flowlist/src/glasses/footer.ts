@@ -1,7 +1,8 @@
 /**
  * Footer builder of the Quietglass Interaction Standard (QIS v1): the gestures
- * that do something on a screen, always in the order Tippen -> Wischen ->
- * Halten -> 2x, ending in `2× = zurück` (subpage) or `2× = Ende` (root).
+ * that do something on a screen, always in the order Tippen -> Wischen -> 2x,
+ * ending in `2× = zurück` (subpage) or `2× = Ende` (root). Never Halten: a hold on
+ * the temple opens the system menu and never reaches the app (hardware, 21.10.2026).
  * One helper so no footer is ever hand-built and the order cannot drift.
  */
 import type { Locale } from "../i18n";
@@ -13,15 +14,13 @@ export interface FooterParts {
   readonly tap?: string;
   /** Dropped first when the row would be too wide. */
   readonly swipe?: string;
-  /** Dropped second. */
-  readonly hold?: string;
 }
 
 export type FooterEnd = "back" | "exit";
 
-export const GESTURE_WORDS: Record<Locale, { tap: string; swipe: string; hold: string; back: string; exit: string }> = {
-  de: { tap: "Tippen", swipe: "Wischen", hold: "Halten", back: "zurück", exit: "Ende" },
-  en: { tap: "Tap", swipe: "Swipe", hold: "Hold", back: "back", exit: "exit" },
+export const GESTURE_WORDS: Record<Locale, { tap: string; swipe: string; back: string; exit: string }> = {
+  de: { tap: "Tippen", swipe: "Wischen", back: "zurück", exit: "Ende" },
+  en: { tap: "Tap", swipe: "Swipe", back: "back", exit: "exit" },
 };
 
 /** Cuts a row to the display width, marking the cut with an ellipsis. */
@@ -31,8 +30,8 @@ export function fit(text: string, width = ROW_WIDTH): string {
 }
 
 /**
- * "1:23 · Tippen = erledigt · Halten = Info · 2× = Ende". `lead` (the elapsed time) stands in front
- * and goes first when the row is too wide, then the swipe part, then the hold; the 2× part never goes.
+ * "1:23 · Tippen = erledigt · Wischen = zurück · 2× = Ende". `lead` (the elapsed time) stands in front
+ * and goes first when the row is too wide, then the swipe part; the 2× part never goes.
  */
 export function footer(locale: Locale, parts: FooterParts, end: FooterEnd = "back", lead = ""): string {
   const w = GESTURE_WORDS[locale];
@@ -41,12 +40,10 @@ export function footer(locale: Locale, parts: FooterParts, end: FooterEnd = "bac
     ...(front === "" ? [] : [front]),
     ...(p.tap === undefined ? [] : [`${w.tap} = ${p.tap}`]),
     ...(p.swipe === undefined ? [] : [`${w.swipe} = ${p.swipe}`]),
-    ...(p.hold === undefined ? [] : [`${w.hold} = ${p.hold}`]),
     tail,
   ].join(" · ");
-  const noSwipe: FooterParts = { ...(parts.tap === undefined ? {} : { tap: parts.tap }), ...(parts.hold === undefined ? {} : { hold: parts.hold }) };
   const tapOnly: FooterParts = parts.tap === undefined ? {} : { tap: parts.tap };
-  const candidates: readonly (readonly [FooterParts, string])[] = [[parts, lead], [parts, ""], [noSwipe, lead], [noSwipe, ""], [tapOnly, lead], [tapOnly, ""]];
+  const candidates: readonly (readonly [FooterParts, string])[] = [[parts, lead], [parts, ""], [tapOnly, lead], [tapOnly, ""]];
   for (const [candidate, front] of candidates) {
     const row = build(candidate, front);
     if (row.length <= ROW_WIDTH) return row;

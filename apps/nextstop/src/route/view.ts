@@ -47,7 +47,7 @@ export function placesView(targets: readonly Target[], selected: number, now: Da
     return {
       header,
       body: ["", t(locale, "r.noPlaces1"), "", t(locale, "r.noPlaces2"), t(locale, "r.noPlaces3"), "", t(locale, "r.hintVoice")],
-      footer: ft(locale, "back", { hold: "speak" }),
+      footer: ft(locale, "back", { tap: "speak" }),
     };
   }
   const first = Math.max(0, Math.min(selected - ROUTE_ROWS + 1, targets.length - ROUTE_ROWS));
@@ -55,7 +55,7 @@ export function placesView(targets: readonly Target[], selected: number, now: Da
     const label = target.isNow ? t(locale, "r.nowPrefix", { name: target.name }) : target.name;
     return row(`${first + offset === selected ? CURSOR : " "} ${label}`);
   });
-  return { header, body, footer: ft(locale, "back", { tap: "go", swipe: "select", hold: "speak" }) };
+  return { header, body, footer: ft(locale, "back", { tap: "go", swipe: "select" }) };
 }
 
 // ---- connections ----------------------------------------------------------
@@ -346,7 +346,8 @@ export type VoiceState =
     readonly phase: "results"; readonly heard: string; readonly results: readonly GeoResult[];
     readonly selected: number; readonly saved: boolean;
   }
-  | { readonly phase: "error"; readonly error: string; readonly hint: string };
+  /** `retry: false`: a tap cannot help (no speech server), it goes back instead of recording again. */
+  | { readonly phase: "error"; readonly error: string; readonly hint: string; readonly retry?: boolean };
 
 export function voiceView(state: VoiceState, now: Date, locale: Locale): StopView {
   const header = t(locale, "r.headerVoice", { time: clock(now) });
@@ -357,13 +358,13 @@ export function voiceView(state: VoiceState, now: Date, locale: Locale): StopVie
         return {
           header,
           body: [t(locale, "r.voiceRecording"), "", ...tailLines(state.live, ROUTE_WIDTH, ROUTE_ROWS - 2)],
-          footer: ft(locale, "back", { hold: "speak" }),
+          footer: ft(locale, "back", { tap: "done" }),
         };
       }
       return {
         header,
         body: [t(locale, "r.voiceRecording"), t(locale, "r.voiceRelease"), "", row(t(locale, "r.voiceSay"))],
-        footer: ft(locale, "back", { hold: "speak" }),
+        footer: ft(locale, "back", { tap: "done" }),
       };
     case "working":
       return {
@@ -375,7 +376,8 @@ export function voiceView(state: VoiceState, now: Date, locale: Locale): StopVie
       return {
         header,
         body: [...wrapRows(state.error), "", ...wrapRows(state.hint)].slice(0, ROUTE_ROWS),
-        footer: ft(locale, "back", { tap: "back" }),
+        // A tap tries again where that can help; without a speech server it only goes back.
+        footer: ft(locale, "back", { tap: state.retry === false ? "back" : "again" }),
       };
     case "results": {
       const rows: string[] = [row(t(locale, "r.voiceHeard", { text: state.heard }))];
@@ -392,7 +394,7 @@ export function voiceView(state: VoiceState, now: Date, locale: Locale): StopVie
 export function helpView(locale: Locale): StopView {
   return {
     header: `NEXTSTOP · ${t(locale, "h.title")}`,
-    body: ["", t(locale, "h.tap"), t(locale, "h.swipe"), t(locale, "h.hold"), t(locale, "h.back"), t(locale, "h.arm"), t(locale, "h.needs")],
+    body: ["", t(locale, "h.tap"), t(locale, "h.swipe"), t(locale, "h.voice"), t(locale, "h.back"), t(locale, "h.arm"), t(locale, "h.needs")],
     footer: ft(locale, "back", { tap: "close" }),
   };
 }

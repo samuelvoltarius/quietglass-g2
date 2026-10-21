@@ -6,8 +6,11 @@ import { LINE_COLS } from "./fit";
  * The footer line of every glasses screen (Quietglass interaction standard, QIS v1).
  *
  * Only the gestures that do something on the screen, always in the order
- * Tippen -> Wischen -> Halten -> 2x, ending in `2x = zurueck` (a subpage) or
+ * Tippen -> Wischen -> 2x, ending in `2x = zurueck` (a subpage) or
  * `2x = Ende` (the root). Never build a footer by hand.
+ * There is deliberately no hold part: on the temple pad a hold opens the system
+ * menu and never reaches the app (only the optional R1 ring delivers it, step
+ * log 21.10.2026), so no glasses line may offer one.
  */
 
 /** Characters one footer row holds (same limit as every other row). */
@@ -19,10 +22,8 @@ export const FOOTER_SEPARATOR = " · ";
 export interface FooterParts {
   /** What a single tap does, already in the chosen language. */
   readonly tap?: string;
-  /** What a swipe does (it only ever moves). */
+  /** What a swipe does (it never changes data). */
   readonly swipe?: string;
-  /** What holding does. */
-  readonly hold?: string;
 }
 
 /**
@@ -35,7 +36,6 @@ export function footer(locale: Locale, parts: FooterParts, end: "back" | "exit",
   const build = (withSwipe: boolean): string => [
     ...part("g.f.tap", parts.tap),
     ...(withSwipe ? part("g.f.swipe", parts.swipe) : []),
-    ...part("g.f.hold", parts.hold),
     last,
   ].join(FOOTER_SEPARATOR);
   const full = build(true);

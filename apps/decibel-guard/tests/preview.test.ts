@@ -26,6 +26,8 @@ const states: { file: string; frame: () => Frame }[] = [
     file: "preview-cockpit-high.png",
     frame: () => composeCockpit(cockpitModel({ ...base, dose: dose(0.62, 9000), level: 91, barLevel: 90, peak: 96, calibrated: false }), pixelBackend()),
   },
+  // The store screenshot (English): the old simulator capture still offered "Hold", which the temple pad never delivers (step log 21.10.2026).
+  { file: "screenshot.png", frame: () => composeCockpit(cockpitModel({ ...base, locale: "en" }), pixelBackend()) },
 ];
 
 const env = (globalThis as unknown as { process: { env: Record<string, string | undefined>; cwd(): string } }).process;

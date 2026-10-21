@@ -26,7 +26,7 @@ import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 import type { Destination, Journey, TransitLeg } from "./route/journey";
 import { buildWav } from "./audio/wav";
-import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
+import { MAX_VOICE_MS, MIN_TAP_STOP_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
 import { chooseTranscript, liveSttUrl, LIVE_REDRAW_MS, openLiveStt, shouldRedraw, type LiveSession } from "./voice/live-stt";
 import { addFavorite, loadPlaces, savePlaces, targetsOf, type Places, type Target } from "./route/places";
 import { estimatedArrival, guideState, buildSteps, stepBy, withFreshTimes, withLeg, type Step, type StepOverride } from "./route/guide";
@@ -38,8 +38,9 @@ import { MENU, menuFor, type Screen } from "./route/menu";
 
 /**
  * The glasses' side menu. Off: its clicks never reach the app on the real glasses, and while a page carries a
- * menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it the departure list
- * ends with "Hilfe" again and a hold in the guidance arms "stop guidance" (one more tap carries it out).
+ * menu the hold opens it instead of reaching the app (step log of 15.10.2026). A hold reaches the app only from
+ * the R1 ring (step log 21.10.2026), so nothing depends on it: voice is a start-page entry, and swiping up on the
+ * first guide step arms "stop guidance" (one more tap carries it out); the ring's hold does the same as an extra.
  */
 const SIDE_MENU = false;
 import type { Planner } from "./route/planner";
@@ -199,6 +200,8 @@ async function boot(): Promise<void> {
   let voiceSeq = 0;
   let micActive = false;
   let recordTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the recording in progress started: a tap sooner than MIN_TAP_STOP_MS after it does not end it. */
+  let recordStartedAt = 0;
   const micChunks: Uint8Array[] = [];
   /** Live recognition of the recording in progress (private build: VITE_LIVE_STT_URL), and its redraw throttle. */
   let live: LiveSession | null = null;
@@ -703,22 +706,29 @@ async function boot(): Promise<void> {
     await draw();
   };
 
-  const showVoiceError = (error: string, hint: string): void => {
-    voice = { phase: "error", error, hint };
+  /** `retry: false` when another recording cannot help (no speech server): a tap then only goes back. */
+  const showVoiceError = (error: string, hint: string, retry = true): void => {
+    voice = { phase: "error", error, hint, retry };
     screen = "voice";
     void draw();
   };
 
-  /** Hold on the goal list: record until the release, or until the hard stop. */
+  /**
+   * "Ziel per Sprache" on the start page (a tap), a tap on an empty goal list, a tap on a voice error that can be
+   * retried, or a hold from the R1 ring: record until the next tap (or the ring's release), or until the hard stop.
+   * The temple touchpad never delivers a hold (it opens the system menu), so the tap is the way that always works.
+   */
   const startVoice = async (): Promise<void> => {
-    if (screen !== "places" && screen !== "board" && screen !== "start") return;
+    const retrying = screen === "voice" && voice?.phase === "error";
+    if (screen !== "places" && screen !== "board" && screen !== "start" && !retrying) return;
     const seq = ++voiceSeq;
     screen = "voice";
     if (!demo.enabled && !sttBase(settings.sttUrl) && !liveSttUrl()) {
-      showVoiceError(t(locale, "r.voiceNoServer"), t(locale, "r.voiceNoServerHint"));
+      showVoiceError(t(locale, "r.voiceNoServer"), t(locale, "r.voiceNoServerHint"), false);
       return;
     }
     voice = { phase: "recording" };
+    recordStartedAt = Date.now();
     liveShown = ""; liveShownAt = 0;
     void draw();
     if (demo.enabled) return;
@@ -747,11 +757,11 @@ async function boot(): Promise<void> {
       showVoiceError(t(locale, "r.voiceMic"), t(locale, "r.voiceMicHint"));
       return;
     }
-    // A recording must end even when the release event never arrives.
+    // A recording must end even when the ending tap (or the ring's release) never comes.
     recordTimer = setTimeout(() => { recordTimer = null; void finishVoice(); }, MAX_VOICE_MS);
   };
 
-  /** Release: send what was said, look the words up as a place, show up to three hits. */
+  /** The ending tap (or the ring's release, or the hard stop): send what was said, look the words up as a place, show up to three hits. */
   const finishVoice = async (): Promise<void> => {
     if (!voice || voice.phase !== "recording") return;
     const seq = ++voiceSeq;
@@ -1074,8 +1084,8 @@ async function boot(): Promise<void> {
         void startFollow();
         return;
       case "longPress":
-        // Hold = say where you want to go, right from the start page. Cycling
-        // through nearby stops is in the menu ("Andere Haltestelle", only with a side menu).
+        // R1 ring extra only (the temple touchpad never delivers a hold): say a destination. The way that always
+        // works is "Ziel per Sprache" on the start page. Cycling through nearby stops is in the menu (side menu only).
         if (following) return;
         void startVoice();
         return;
@@ -1104,11 +1114,16 @@ async function boot(): Promise<void> {
   const onStartGesture = (gesture: string): void => {
     const rows = startRows();
     switch (gesture) {
-      case "click":
-        if (rows[startCursor] === "goals") openPlaces(); else openBoard();
+      case "click": {
+        const row = rows[startCursor];
+        if (row === "goals") openPlaces();
+        else if (row === "voice") void startVoice();
+        else openBoard();
         return;
+      }
       case "scrollUp": startCursor = Math.max(0, startCursor - 1); void draw(); return;
       case "scrollDown": startCursor = Math.min(rows.length - 1, startCursor + 1); void draw(); return;
+      // Ring only (the temple never delivers a hold): a shortcut to the spoken destination, never the only way.
       case "longPress": void startVoice(); return;
       case "doubleClick": void requestExit(); return;
       default: return;
@@ -1123,6 +1138,8 @@ async function boot(): Promise<void> {
       case "click": {
         const target = list[placeIndex];
         if (target) void startPlan({ name: target.name, lat: target.lat, lon: target.lon });
+        // No goal yet: the tap says one (the footer offers it).
+        else void startVoice();
         return;
       }
       case "doubleClick": openStart(); return;
@@ -1135,12 +1152,18 @@ async function boot(): Promise<void> {
     const state = voice;
     if (!state) { openPlaces(); return; }
     if (state.phase === "recording") {
+      // A tap ends the recording; a tap right after the start is the starting tap's echo and is ignored.
+      if (gesture === "click") { if (Date.now() - recordStartedAt >= MIN_TAP_STOP_MS) void finishVoice(); return; }
       if (gesture === "longPressRelease") void finishVoice();
       else if (gesture === "doubleClick") openPlaces();
       return;
     }
     if (state.phase === "working") { if (gesture === "doubleClick") openPlaces(); return; }
-    if (state.phase === "error") { if (gesture === "click" || gesture === "doubleClick") openPlaces(); return; }
+    if (state.phase === "error") {
+      if (gesture === "click" && state.retry !== false) { void startVoice(); return; }
+      if (gesture === "click" || gesture === "doubleClick") openPlaces();
+      return;
+    }
     switch (gesture) {
       case "scrollUp": voice = { ...state, selected: Math.max(0, state.selected - 1) }; void draw(); return;
       case "scrollDown": voice = { ...state, selected: Math.min(state.results.length - 1, state.selected + 1) }; void draw(); return;
@@ -1181,7 +1204,12 @@ async function boot(): Promise<void> {
     if (!guide) { openPlaces(); return; }
     const state = guideState(guide.steps, clock(), guidePosition(), guide.override);
     switch (gesture) {
-      case "scrollUp": stepGuide(-1); return;
+      case "scrollUp":
+        // Swiping up past the first step asks to end the guidance (one more single tap carries it out):
+        // the way that works from the temple, where a hold never arrives.
+        if (state.index === 0 && state.phase !== "arrived" && !SIDE_MENU) { arm("stopGuide"); return; }
+        stepGuide(-1);
+        return;
       case "scrollDown": stepGuide(1); return;
       case "click":
         if (state.phase === "arrived") { leaveGuide(); return; }
@@ -1196,8 +1224,8 @@ async function boot(): Promise<void> {
         void requestExit();
         return;
       case "longPress":
-        // Without a side menu a hold asks to stop the guidance; one more single tap carries it out
-        // (swipe, 2x or 4 s without input cancel). Nothing to stop once the goal is reached.
+        // R1 ring extra (the temple never delivers a hold): asks to stop the guidance like the swipe up on
+        // the first step; one more single tap carries it out (swipe, 2x or 4 s without input cancel).
         if (SIDE_MENU || state.phase === "arrived") return;
         arm("stopGuide");
         return;

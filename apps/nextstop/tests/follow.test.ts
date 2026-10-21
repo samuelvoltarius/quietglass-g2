@@ -124,7 +124,7 @@ describe("the board page: one thing big, little text", () => {
       { label: "WEG", value: "100 M" },
       { label: "ABFAHRT", value: expect.stringMatching(/^\d\d:\d\d$/) },
     ]);
-    expect(model.hint).toBe("2/4 · Tippen = folgen · Wischen = wählen · Halten = Ziel · 2× = zurück");
+    expect(model.hint).toBe("2/4 · Tippen = folgen · Wischen = wählen · 2× = zurück");
     expect(model.hint.length).toBeLessThanOrEqual(70);
     expect(model.hint.endsWith("2× = zurück")).toBe(true);
     const scene = boardScene(MIRABELL, sorted, 99, "de", 1, NOW);

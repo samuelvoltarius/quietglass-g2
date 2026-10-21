@@ -16,8 +16,8 @@ describe("empty state", () => {
     const empty = list();
     const view = buildView(empty, startRun(empty));
     expect(view.body.join(" ")).toContain("on your phone");
-    expect(view.footer).toBe("Hold = help · 2× = exit");
-    expect(buildView(empty, startRun(empty), { sideMenu: true }).footer).toBe("Hold = menu · 2× = exit");
+    expect(view.footer).toBe("2× = exit");
+    expect(buildView(empty, startRun(empty), { sideMenu: true }).footer).toBe("2× = exit");
   });
 });
 
@@ -47,11 +47,13 @@ describe("running view", () => {
     expect(buildView(simple, state, { showNext: true }).body.join(" ")).not.toContain("next:");
   });
 
-  it("shows detail instead of the preview while held", () => {
-    const detailed = list(step("a", { detail: "engine must be cold" }));
-    const view = buildView(detailed, startRun(detailed), { showNext: true, showDetail: true });
+  it("shows the step's detail right on the step page, no gesture needed (a temple hold never reaches the app)", () => {
+    const detailed = list(step("a", { detail: "engine must be cold" }), step("b"));
+    const view = buildView(detailed, startRun(detailed), { showNext: true });
     expect(view.body.join(" ")).toContain("engine must be cold");
-    expect(view.body.join(" ")).not.toContain("next:");
+    // The preview of the next step still follows when there is room.
+    expect(view.body.join(" ")).toContain("next:");
+    expect(buildView(detailed, startRun(detailed)).body.join(" ")).toContain("engine must be cold");
   });
 });
 
@@ -91,17 +93,23 @@ describe("choice steps", () => {
 });
 
 describe("optional steps", () => {
-  it("without a side menu the footer offers back/skip on the swipe and help on the hold", () => {
+  it("without a side menu the footer offers back/skip on the swipe and never a hold", () => {
     const optional = list(step("a", { kind: "optional" }));
     const footer = buildView(optional, startRun(optional)).footer;
-    expect(footer).toContain("Swipe = back/skip");
-    expect(footer).toContain("Hold = help");
+    // First step: nothing to go back to, so the swipe only skips.
+    expect(footer).toContain("Swipe = skip");
+    expect(footer).not.toMatch(/Hold/);
+    const later = list(step("x"), step("a", { kind: "optional" }));
+    expect(buildView(later, complete(later, startRun(later))).footer).toContain("Swipe = back/skip");
+    // A plain first step names no swipe at all (it would do nothing).
+    expect(buildView(simple, startRun(simple)).footer).not.toContain("Swipe");
+    expect(buildView(simple, complete(simple, startRun(simple))).footer).toContain("Swipe = back");
   });
 
-  it("with a side menu the footer points at the menu for help, going back and skipping (QIS v1.2)", () => {
+  it("with a side menu the footer offers neither swipe nor hold (QIS v1.2)", () => {
     const optional = list(step("a", { kind: "optional" }));
     const footer = buildView(optional, startRun(optional), { sideMenu: true }).footer;
-    expect(footer).toContain("Hold = menu");
+    expect(footer).not.toMatch(/Hold/);
     expect(footer).not.toContain("Swipe");
   });
 
@@ -169,7 +177,7 @@ describe("display budget", () => {
   it("regression: a long step with its detail stays within seven rows", () => {
     const list: Checklist = { id: "x", title: "T", steps: [{ id: "a", text: long, kind: "critical", detail: long }] };
     const run = { ...startRun(list, 0), awaitingConfirm: true };
-    const view = buildView(list, run, { showDetail: true }, 0);
+    const view = buildView(list, run, {}, 0);
     fits(view.body);
     expect(view.body[0]).toBe("CONFIRM:");
     expect(view.body.some((row) => row.endsWith("…"))).toBe(true);

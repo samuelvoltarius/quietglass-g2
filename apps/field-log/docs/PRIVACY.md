@@ -34,7 +34,7 @@ been sent, and dropped right after.
 ## The camera
 
 The glasses have no camera. Photos come from the phone's own camera through the
-SDK's picker, which you trigger from the glasses (hold the temple pad). Nothing is captured
+SDK's picker, which you trigger yourself (the photo button on the phone page, or "Keep + photo" on the glasses). Nothing is captured
 without that action.
 
 ## What is stored

@@ -15,7 +15,7 @@ import type { BeatGraphic, CockpitModel } from "./model";
  *   │   26  (bar)              │ │ TAKTART  MARKE   HEUTE       │
  *   │ Tonleitern               │ │ ZEIT     BESTE   EINHEITEN   │
  *   ├──────────────────────────┴─┴──────────────────────────────┤
- *   │ Tippen = Pause · Wischen = Tempo · Halten = Takt 1 · 2× = Ende │
+ *   │ Tippen = Pause · Wischen = Tempo · 2× = Ende                   │
  *   └───────────────────────────────────────────────────────────┘
  *
  * What changes with every beat lives in the upper left tile only (dots and

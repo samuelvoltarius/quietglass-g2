@@ -10,5 +10,7 @@ regenerate rather than editing these files.
 | `background.png` | 1920×1080 | Greyscale, name and tagline |
 | `tagline.txt` | — | Line 1 English, line 2 German, each ≤ 60 characters |
 
-Screenshot: [`screenshot.png`](screenshot.png) is a direct 576×288 capture from
-the official Even Hub simulator.
+Screenshot: [`screenshot.png`](screenshot.png) is the 576×288 cockpit frame in
+English, drawn by `QG_PREVIEW=1 npx vitest run tests/preview.test.ts` (pixel font;
+on the glasses the system font draws the text). It replaced the old simulator
+capture, whose footer still offered "Hold" — a temple hold never reaches the app.

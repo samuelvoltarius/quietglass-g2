@@ -35,16 +35,12 @@ export interface ViewState {
   readonly message: string;
   /** Wall clock (ms) for the finish time; omitted in older callers = no finish time. */
   readonly now?: number;
-  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default: the hold opens the help and the footer says so. */
+  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default; no footer offers the hold (temple hold never reaches the app). */
   readonly sideMenu?: boolean;
   /** State of the layer model for the model screen. */
   readonly model?: "none" | "preparing" | "ready" | "failed";
 }
 
-/** Without a side menu the HUD footers name the hold: it opens the help. */
-function holdHelp(state: ViewState): { hold?: string } {
-  return state.sideMenu === true ? {} : { hold: t(state.locale, "g.v.help") };
-}
 
 /** "Tempo 100 % · fertig 23:40" — the speed row, with the finish clock when it is known. */
 function speedRow(state: ViewState, speed: number, minutesLeft: number | null): string {
@@ -81,10 +77,10 @@ export function modelView(state: ViewState): ScreenView {
   return screen(header, [], footer(state.locale, { tap: L("g.v.reload"), swipe }, "back"));
 }
 
-/** The help page (QIS v1; opened from the side menu, v1.2): the gestures in footer order, what the control screen does, what the app needs. */
+/** The help page (QIS v1; an optional R1-ring extra, see main.ts): the gestures in footer order, what the control screen does, what the app needs. */
 export function helpView(state: ViewState): ScreenView {
   const L = (key: string): string => t(state.locale, key);
-  const rows = ["g.help.1", "g.help.2", "g.help.3", "g.help.4", "g.help.5", "g.help.6"].map(L);
+  const rows = ["g.help.1", "g.help.2", "g.help.4", "g.help.5", "g.help.6"].map(L);
   return screen(L("g.help.header"), rows, footer(state.locale, { tap: L("g.v.back") }, "back"));
 }
 
@@ -111,7 +107,7 @@ function hudView(state: ViewState): ScreenView {
   };
 
   if (state.connection.kind === "setup") {
-    return screen(L("g.title"), [L("g.setup.1"), L("g.setup.2")], footer(state.locale, holdHelp(state), "exit"));
+    return screen(L("g.title"), [L("g.setup.1"), L("g.setup.2")], footer(state.locale, {}, "exit"));
   }
 
   const status = state.status;
@@ -120,10 +116,10 @@ function hudView(state: ViewState): ScreenView {
       return screen(
         L("g.header", { state: L("g.state.noBridge") }),
         [L("g.noBridge", { reason: errorReason(state.locale, state.connection.code, state.connection.status) }), "", state.message],
-        footer(state.locale, { tap: L("g.v.refresh"), ...holdHelp(state) }, "exit"),
+        footer(state.locale, { tap: L("g.v.refresh") }, "exit"),
       );
     }
-    return screen(tag(L("g.header", { state: L("g.state.loading") })), state.demo ? [L("g.demoHint")] : [], footer(state.locale, { tap: L("g.v.refresh"), ...holdHelp(state) }, "exit"));
+    return screen(tag(L("g.header", { state: L("g.state.loading") })), state.demo ? [L("g.demoHint")] : [], footer(state.locale, { tap: L("g.v.refresh") }, "exit"));
   }
 
   // The bridge failed this round, but older values exist: show them, marked stale, with the reason.
@@ -136,7 +132,7 @@ function hudView(state: ViewState): ScreenView {
     if (status.reason !== "searching") body.push(L("g.offline.hint"));
     if (status.nextScanSeconds) body.push(L("g.offline.next", { seconds: status.nextScanSeconds }));
     body.push("", bridgeLine || state.message);
-    return screen(tag(L("g.header", { state: L("g.state.offline") })), body, footer(state.locale, { tap: L("g.v.search"), ...holdHelp(state) }, "exit"));
+    return screen(tag(L("g.header", { state: L("g.state.offline") })), body, footer(state.locale, { tap: L("g.v.search") }, "exit"));
   }
 
   const left = duration(status.minutesLeft);
@@ -176,7 +172,7 @@ function controlView(state: ViewState): ScreenView {
 function hudFooter(state: ViewState, status: PrinterStatus): string {
   const L = (key: string): string => t(state.locale, key);
   const control = availableCommands(status).length > 0;
-  return footer(state.locale, { tap: L(control ? "g.v.control" : "g.v.refresh"), swipe: L("g.v.model"), ...holdHelp(state) }, "exit");
+  return footer(state.locale, { tap: L(control ? "g.v.control" : "g.v.refresh"), swipe: L("g.v.model") }, "exit");
 }
 
 function ageText(seconds: number): string {

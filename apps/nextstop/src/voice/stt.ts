@@ -1,13 +1,16 @@
 /**
  * Speaking a destination: the recording goes to a Whisper server of the
  * user's own (OpenAI-compatible `/v1/audio/transcriptions`) and comes back as
- * text. Nothing is recorded unless the touchpad is held, nothing is kept.
+ * text. Nothing is recorded unless the passenger started it on the glasses
+ * (a tap on "Ziel per Sprache"; a tap ends it), nothing is kept.
  */
 
 /** Less audio than this is a mis-press (16 kHz, 16 bit, mono = 32 bytes per ms): 0.4 s. */
 export const MIN_VOICE_BYTES = 32 * 400;
-/** The hard stop of a recording whose release event never arrives. */
-export const MAX_VOICE_MS = 30_000;
+/** The hard stop of a recording: it ends on its own after this, even without the tap that ends it. */
+export const MAX_VOICE_MS = 15_000;
+/** A tap this soon after the start does not end the recording (a duplicate of the starting tap, a mis-tap). */
+export const MIN_TAP_STOP_MS = 600;
 
 /** Set at build time in a private build: `VITE_STT_URL=https://… npm run build`. */
 const BUILD_STT_URL: string | undefined = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_STT_URL;

@@ -7,7 +7,7 @@
 > **So startest du:**
 > 1. NextStop in der Even-App installieren und öffnen.
 > 2. Den Standort erlauben, wenn die Even-App fragt. Die Brille zeigt dann die Abfahrten der nächsten Haltestelle.
-> 3. Die Startseite hat zwei große Einträge: **Abfahrten** und **Ziele und Route**. Auf der Abfahrtstafel (als Bild: Linie und Minuten groß, Steig, Verspätung, Halt) wählt **Wischen** eine Abfahrt, **Tippen** fährt mit (nächster Halt), **Halten** sagt ein Ziel, **2×** geht zurück; auf der Startseite beendet **2×** (System-Dialog).
+> 3. Die Startseite hat drei große Einträge: **Abfahrten**, **Ziel per Sprache** und **Ziele und Route** (Wischen wählt, Tippen öffnet). Auf der Abfahrtstafel (als Bild: Linie und Minuten groß, Steig, Verspätung, Halt) wählt **Wischen** eine Abfahrt, **Tippen** fährt mit (nächster Halt), **2×** geht zurück; auf der Startseite beendet **2×** (System-Dialog).
 >
 > **Optional:** ÖBB-Echtzeit in Österreich (Verspätungen bis zum Stadtbus). Dafür läuft ein kleines Zusatzprogramm auf einem Computer im selben WLAN – siehe [ÖBB-Echtzeit](#öbb-echtzeit-optional). Ohne es funktioniert alles mit Fahrplanzeiten.
 >
@@ -17,7 +17,7 @@
 >
 > 1. Install and open NextStop in the Even app.
 > 2. Allow location when the Even app asks. The glasses then show the departures of the nearest stop.
-> 3. The start page has two big entries: **Departures** and **Goals and route**. On the departure board (drawn as a picture: line and minutes big, track, delay, stop) **swipe** picks a departure, **tap** rides along (next stop), **hold** says a destination, **2×** goes back; on the start page **2×** exits (system dialog).
+> 3. The start page has three big entries: **Departures**, **Say a destination** and **Goals and route** (swipe picks, tap opens). On the departure board (drawn as a picture: line and minutes big, track, delay, stop) **swipe** picks a departure, **tap** rides along (next stop), **2×** goes back; on the start page **2×** exits (system dialog).
 >
 > `●` = live, `~` = timetable only, `+3` = three minutes late. Optional: ÖBB live times in Austria need a small add-on on a computer on the same Wi-Fi (see [ÖBB-Echtzeit](#öbb-echtzeit-optional)); without it everything works with timetable times.
 >
@@ -27,9 +27,9 @@ Am Bahnsteig: was fährt hier weg, und ist es pünktlich.
 Im Bus: welcher Halt kommt als Nächstes, und wann bin ich da.
 Unterwegs zu einem Ziel: **Route planen** und Schritt für Schritt begleiten lassen (seit 0.3.0).
 
-> **Neu in 0.3.0 – Route planen:** Am Handy unter „Ziele“ Orte suchen und als Favoriten speichern („Heim“, „Arbeit“ …). Auf der Brille **Halten** und das Ziel sagen (2× in der Aufnahme öffnet die Zielliste mit den Favoriten): Ziel wählen, 3–4 Verbindungen ab deinem Standort ansehen (`in 4 min · Bus 3 → O-Bus 7 · an 14:52 · 1×`), mit **Tippen** startet die Begleitung: „Geh zu Haltestelle …“, „Bus 3 Richtung … um 14:32“, „Aussteigen: Mirabellplatz – noch 2 Halte“, „Umsteigen: O-Bus 7, Steig B“, „Ziel erreicht“. **Doppeltippen** geht einen Schritt zurück (in der Begleitung erst nach Rückfrage). Verbindungen, Orte und Favoriten kommen von Transitous; die Favoriten bleiben auf dem Handy.
+> **Neu in 0.3.0 – Route planen:** Am Handy unter „Ziele“ Orte suchen und als Favoriten speichern („Heim“, „Arbeit“ …). Auf der Brille **Ziel per Sprache** antippen und das Ziel sagen, nochmal tippen (2× in der Aufnahme öffnet die Zielliste mit den Favoriten): Ziel wählen, 3–4 Verbindungen ab deinem Standort ansehen (`in 4 min · Bus 3 → O-Bus 7 · an 14:52 · 1×`), mit **Tippen** startet die Begleitung: „Geh zu Haltestelle …“, „Bus 3 Richtung … um 14:32“, „Aussteigen: Mirabellplatz – noch 2 Halte“, „Umsteigen: O-Bus 7, Steig B“, „Ziel erreicht“. **Doppeltippen** geht einen Schritt zurück (in der Begleitung erst nach Rückfrage). Verbindungen, Orte und Favoriten kommen von Transitous; die Favoriten bleiben auf dem Handy.
 >
-> **New in 0.3.0 – route planning:** Under "Destinations" on the phone, search for places and save favourites ("Home", "Work" …). On the glasses, **hold** and say the destination (2× during the recording opens the destination list with your favourites): pick a destination, see 3–4 connections from where you are (`in 4 min · Bus 3 → O-Bus 7 · arr 14:52 · 1×`), **tap** to start guidance: walk to the stop, which bus at what time, "Get off: …, 2 stops left", "Change to …", "You have arrived". **Double-tap** goes back (in the guide it asks once more). Connections and place search come from Transitous; favourites stay on the phone.
+> **New in 0.3.0 – route planning:** Under "Destinations" on the phone, search for places and save favourites ("Home", "Work" …). On the glasses, tap **Say a destination**, say it and tap again (2× during the recording opens the destination list with your favourites): pick a destination, see 3–4 connections from where you are (`in 4 min · Bus 3 → O-Bus 7 · arr 14:52 · 1×`), **tap** to start guidance: walk to the stop, which bus at what time, "Get off: …, 2 stops left", "Change to …", "You have arrived". **Double-tap** goes back (in the guide it asks once more). Connections and place search come from Transitous; favourites stay on the phone.
 
 ---
 
@@ -135,15 +135,16 @@ Wohin? · 14:29                   → Heim · 14:29
                                  Gehen 15 min · Dauer 35 min
 ```
 
-**Ziel sprechen (optional):** Auf der Zielliste Touchpad **halten** und das Ziel sagen,
-beim Loslassen (oder nach spätestens 8 s) geht die Aufnahme als WAV an einen
+**Ziel sprechen (optional):** Auf der Startseite **Ziel per Sprache** antippen und das Ziel sagen,
+beim nächsten Tippen (oder nach spätestens 15 s) geht die Aufnahme als WAV an einen
 Whisper-Server (OpenAI-kompatibel, `/v1/audio/transcriptions`, Formular-Upload ohne eigene
 Header, damit kein CORS-Preflight nötig ist). Die Brille zeigt „Verstanden: …“ und bis zu drei
 Treffer der Ortssuche; Wischen wählt, Tippen sucht Verbindungen, 2× geht zurück. „Als Favorit merken“ gibt es
 nur mit dem Seitenmenü der Brille (derzeit aus), Favoriten legst du am Handy an. Die Adresse des Servers steht am Handy unter „Erweitert“; die
 öffentliche App hat keine Vorgabe (dann sagt die Brille, dass ein eigener Server nötig ist), ein
-privater Build kann sie mit `VITE_STT_URL` vorgeben. Aufnahmen werden nur gesendet, solange du
-hältst, und nicht gespeichert.
+privater Build kann sie mit `VITE_STT_URL` vorgeben. Aufgenommen wird nur zwischen den
+beiden Tippern, nichts wird gespeichert. Halten erreicht die App nur über den optionalen R1-Ring
+(dort zusätzlich: halten = sprechen, loslassen = fertig); vom Bügel öffnet Halten das System-Menü.
 
 **Fußwege mit Abbiegehinweisen:** Die Begleitung führt jede Etappe: Auf Fußwegen steht oben die
 nächste Abbiegung (`←  60 m  links abbiegen`, Straße, Rest der Strecke), aktualisiert per GPS.
@@ -202,16 +203,16 @@ optimistisch sein. Das steht dann auch da.
 
 | Geste | Wirkung |
 |---|---|
-| **Wischen** | Abfahrt auswählen; ganz unten der Eintrag „Hilfe“ (Tippen öffnet ihn); bewegt nur, ändert nie etwas |
-| **Tippen** | Fahrt verfolgen; eine laufende Fahrt abbrechen: tippen, dann nochmal tippen |
-| **Halten** | Ziel sagen; in der Begleitung: Abbrechen vormerken (dann nochmal tippen) |
+| **Wischen** | Eintrag bzw. Abfahrt auswählen; bewegt nur, ändert nie etwas |
+| **Tippen** | öffnen; Fahrt verfolgen; eine laufende Fahrt abbrechen: tippen, dann nochmal tippen; in der Aufnahme: fertig |
+| **Ring: Halten** | nur mit dem R1-Ring, zusätzlich: Ziel sagen; in der Begleitung: Beenden vormerken |
 | **2×** | zurück; auf der Abfahrtstafel: NextStop verlassen (System-Dialog) |
 
 Auf den Route-Seiten: **Wischen** wählt das Ziel bzw. die Verbindung, **Tippen** öffnet
 die Verbindungen bzw. startet die Begleitung, **Doppeltippen** geht zurück. In der
 Begleitung bedeutet Tippen „nächster Schritt“ und Wischen blättert vor und zurück.
 Alles, was eine laufende Fahrt oder Begleitung beendet, ist **scharf geschaltet** (QIS v1):
-erst tippen bzw. in der Begleitung halten, dann `Nochmal tippen = Fahrt abbrechen` innerhalb von
+erst tippen bzw. in der Begleitung im ersten Schritt nach oben wischen, dann `Nochmal tippen = Fahrt abbrechen` innerhalb von
 4 s; Wischen, 2× oder 4 s ohne Eingabe brechen ab. 2× beendet nie eine laufende Fahrt oder
 Begleitung (in der Begleitung öffnet es den System-Dialog zum Verlassen, den du ablehnen
 kannst). Die Wischrichtung lässt sich am Handy unter „Einstellungen“ umkehren.

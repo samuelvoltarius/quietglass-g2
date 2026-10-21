@@ -66,13 +66,13 @@ describe("what the glasses say", () => {
       "halterung", "", "●●●●●●●●●●●○○○○○○○○○○○  50 %", "Schicht 90/180 · noch 1 h 15 min",
       "Düse 219/220 °C · Bett 60/60 °C", "Tempo 100 %", "",
     ]);
-    expect(view.footer).toBe("Tippen = steuern · Halten = Hilfe · 2× = Ende");
+    expect(view.footer).toBe("Tippen = steuern · Wischen = Modell · 2× = Ende");
   });
 
   it("without control permission, tap only refreshes", () => {
     const view = buildView(state("en", { status: online({ controllable: false }) }));
-    expect(view.footer).toBe("Tap = refresh · Swipe = model · Hold = help · 2× = exit");
-    // With the side menu switched on (SIDE_MENU in main.ts) the HUD footer drops the hold.
+    expect(view.footer).toBe("Tap = refresh · Swipe = model · 2× = exit");
+    // The side menu (SIDE_MENU in main.ts) changes nothing in the footer.
     expect(buildView({ ...state("en", { status: online({ controllable: false }) }), sideMenu: true }).footer).toBe("Tap = refresh · Swipe = model · 2× = exit");
   });
 

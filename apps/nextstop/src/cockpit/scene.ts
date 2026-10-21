@@ -51,7 +51,7 @@ export function boardScene(
 ): Scene {
   if (departures.length === 0) {
     const place = rideStopName(stop.name, 30);
-    return messageScene(t(locale, "g.emptyBoardTitle"), `${place} · ${t(locale, "g.emptyBoardHint")}`, ft(locale, "back", { hold: "goal" }), "--");
+    return messageScene(t(locale, "g.emptyBoardTitle"), `${place} · ${t(locale, "g.emptyBoardHint")}`, ft(locale, "back"), "--");
   }
   return cockpitScene(boardModel({ stop, departures, selected, metresAway, now, locale }));
 }

@@ -25,8 +25,6 @@ export interface FlowView {
 export interface ViewOptions {
   /** Show a dimmed preview of what comes next. */
   readonly showNext?: boolean;
-  /** Show the detail text instead of the preview (long press). */
-  readonly showDetail?: boolean;
   /** Characters per line before wrapping. */
   readonly lineWidth?: number;
   /** Language of the app's own words; checklist text is shown as written. */
@@ -35,7 +33,7 @@ export interface ViewOptions {
   readonly headlineFits?: (text: string) => boolean;
   /** Skip or restart was asked for: the next single tap carries it out (QIS v1). */
   readonly armed?: Armed | null;
-  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default: swipe and hold do its work. */
+  /** The page carries the glasses' side menu (SIDE_MENU in main.ts). Off by default: the swipe does its work. */
   readonly sideMenu?: boolean;
   /** The help page is open. */
   readonly help?: boolean;
@@ -53,8 +51,8 @@ const DEFAULT_WIDTH = 56;
 
 /**
  * The step itself is a picture across the top (96 px); the body container
- * below it holds four rows of support: the confirm banner, choices, detail or
- * the next step. Anything beyond is cut with an ellipsis.
+ * below it holds four rows of support: the confirm banner, choices, the step's
+ * detail (always shown, no gesture needed) and the next step. Anything beyond is cut with an ellipsis.
  */
 export const MAX_BODY_ROWS = 4;
 /** Characters the header holds on one line in the G2's proportional font. */
@@ -88,7 +86,7 @@ export function buildView(
       header: headerOf(t(locale, "g.s.empty")),
       headline: t(locale, "g.empty.1"),
       body: clampRows(wrap(t(locale, "g.empty.2"), width), MAX_BODY_ROWS, width),
-      footer: footer(locale, { hold: t(locale, options.sideMenu === true ? "g.v.menu" : "g.v.help") }, end),
+      footer: footer(locale, {}, end),
     };
   }
 
@@ -114,11 +112,13 @@ export function buildView(
       truncate((index === state.choiceIndex ? "> " : "  ") + choice.label, width));
     const room = Math.max(1, rows - Math.min(text.length, 2));
     extra = windowAround(labels, state.choiceIndex, Math.min(MAX_CHOICE_ROWS, room));
-  } else if (options.showDetail && step.detail) {
-    extra = wrap(step.detail, width);
-  } else if (options.showNext) {
-    const next = nextStepText(list, state);
-    if (next) extra = [truncate(t(locale, "g.next", { text: next }), width)];
+  } else {
+    // The detail stands right under the step, no gesture needed: a hold only reaches the app from the
+    // optional R1 ring, on the temple it opens the system menu (hardware, 21.10.2026).
+    if (step.detail) extra = wrap(step.detail, width);
+    const room = rows - Math.min(text.length, 2);
+    const next = options.showNext ? nextStepText(list, state) : null;
+    if (next && extra.length < room) extra = [...extra, truncate(t(locale, "g.next", { text: next }), width)];
   }
 
   const shown = clampRows(text, Math.max(Math.min(text.length, 2), rows - extra.length), width);
@@ -143,12 +143,12 @@ function headerOf(label: string): string {
   return truncate(`${APP} · ${label}`, HEADER_TEXT_WIDTH);
 }
 
-/** The help page: the gestures in footer order (the picture line says what the app needs). */
+/** The help page (an R1-ring extra, see main.ts): the gestures in footer order (the picture line says what the app needs). */
 function helpView(locale: Locale, width: number): FlowView {
   return {
     header: headerOf(t(locale, "g.s.help")),
     headline: t(locale, "g.h.needs"),
-    body: (["g.h.tap", "g.h.swipe", "g.h.hold", "g.h.end"] as const).map((key) => truncate(t(locale, key), width)),
+    body: (["g.h.tap", "g.h.swipe", "g.h.info", "g.h.end"] as const).map((key) => truncate(t(locale, key), width)),
     footer: footer(locale, { tap: t(locale, "g.v.back") }, "back"),
   };
 }
@@ -170,8 +170,8 @@ function finishedView(list: Checklist, state: RunState, now: number, width: numb
       : backArmed
         ? armedFooter(locale, t(locale, "g.v.undo"))
         : sideMenu
-          ? footer(locale, { tap: t(locale, "g.v.restart"), hold: t(locale, "g.v.menu") }, end)
-          : footer(locale, { tap: t(locale, "g.v.restart"), swipe: t(locale, "g.v.back"), hold: t(locale, "g.v.help") }, end),
+          ? footer(locale, { tap: t(locale, "g.v.restart") }, end)
+          : footer(locale, { tap: t(locale, "g.v.restart"), swipe: t(locale, "g.v.back") }, end),
   };
 }
 
@@ -190,7 +190,7 @@ export function progressBarFor(list: Checklist, state: RunState): ProgressBarSta
 }
 
 /**
- * The gestures win the one footer line (QIS v1: Tippen, Wischen, Halten, 2×); the elapsed time stands
+ * The gestures win the one footer line (QIS v1: Tippen, Wischen, 2×; never Halten); the elapsed time stands
  * in front when it fits. A pending confirmation or skip shows the armed row instead.
  */
 function footerText(list: Checklist, state: RunState, now: number, locale: Locale, armed: Armed | null, sideMenu: boolean, end: "back" | "exit"): string {
@@ -200,13 +200,16 @@ function footerText(list: Checklist, state: RunState, now: number, locale: Local
   if (armed === "back") return armedFooter(locale, t(locale, "g.v.undo"));
 
   const time = formatDuration(elapsedSeconds(state, now));
-  // QIS v1.2 with a side menu: a swipe only moves the highlight on a question; help, info, back and skip are in the menu.
-  // Without one: swipe asks back/skip, hold shows the step info (or opens the help).
-  const hold = t(locale, sideMenu ? "g.v.menu" : step?.detail ? "g.v.info" : "g.v.help");
-  if (step?.kind === "choice") return footer(locale, { tap: t(locale, "g.v.go"), swipe: t(locale, "g.v.choose"), hold }, end, time);
-  if (sideMenu) return footer(locale, { tap: t(locale, "g.v.done"), hold }, end, time);
-  const swipe = t(locale, step?.kind === "optional" ? "g.v.backSkip" : "g.v.back");
-  return footer(locale, { tap: t(locale, "g.v.done"), swipe, hold }, end, time);
+  // QIS v1.2 with a side menu: a swipe only moves the highlight on a question; back and skip are in the menu.
+  // Without one: swipe asks back/skip. The step's detail is always on the page, so nothing waits behind a hold.
+  if (step?.kind === "choice") return footer(locale, { tap: t(locale, "g.v.go"), swipe: t(locale, "g.v.choose") }, end, time);
+  if (sideMenu) return footer(locale, { tap: t(locale, "g.v.done") }, end, time);
+  // The swipe is named only where it does something: up needs a step to go back to, down an optional step.
+  const canBack = state.history.length > 0;
+  const optional = step?.kind === "optional";
+  const swipeKey = canBack && optional ? "g.v.backSkip" : canBack ? "g.v.back" : optional ? "g.v.skip" : null;
+  if (swipeKey === null) return footer(locale, { tap: t(locale, "g.v.done") }, end, time);
+  return footer(locale, { tap: t(locale, "g.v.done"), swipe: t(locale, swipeKey) }, end, time);
 }
 
 function nextStepText(list: Checklist, state: RunState): string | null {

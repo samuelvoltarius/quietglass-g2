@@ -23,7 +23,7 @@ $apps = Get-ChildItem "$root\apps" -Directory | ForEach-Object {
 } | Where-Object {
   $_.dir -ne "node_modules" -and
   ($Include.Count -eq 0 -or $Include -contains $_.dir) -and
-  (-not $StoreEnglish -or $_.dir -ne "klipper-glance")
+  $true
 }
 
 $shots = "$root\.verify"

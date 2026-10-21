@@ -32,7 +32,7 @@ describe("messages", () => {
   });
   it.each(locales)("%s header and footer fit the full width", (locale) => {
     for (const page of ["now", "hourly", "days"]) expect(width(`RAINLENS · ${tr(messages, locale, page)} · ${tr(messages, locale, "updating")}`)).toBeLessThanOrEqual(56);
-    for (const tap of ["fRefresh", "fRetry"]) expect(width(footer(locale, { tap: tr(messages, locale, tap), swipe: tr(messages, locale, "fView"), hold: tr(messages, locale, "fHelp") })), `${locale}.${tap}`).toBeLessThanOrEqual(56);
+    for (const tap of ["fRefresh", "fRetry"]) expect(width(footer(locale, { tap: tr(messages, locale, tap), swipe: tr(messages, locale, "fView") })), `${locale}.${tap}`).toBeLessThanOrEqual(56);
   });
   it("keeps jargon out of the German main screen", () => {
     const advanced = new Set(["latitude", "longitude", "useCoords", "help", "badCoords", "credits", "advanced"]);

@@ -99,7 +99,7 @@ export function runWord(state: MetronomeState, armed: boolean): RunWord {
 
 export function cockpitHint(locale: Locale, word: RunWord): string {
   if (word === "armed") return armedFooter(locale, t(locale, "g.a.pause"));
-  if (word === "running") return footer(locale, { tap: t(locale, "g.a.pauseShort"), swipe: t(locale, "g.a.tempo"), hold: t(locale, "g.a.top") }, "exit");
+  if (word === "running") return footer(locale, { tap: t(locale, "g.a.pauseShort"), swipe: t(locale, "g.a.tempo") }, "exit");
   return footer(locale, { tap: t(locale, "g.a.start"), swipe: t(locale, "g.a.tempo") }, "exit");
 }
 

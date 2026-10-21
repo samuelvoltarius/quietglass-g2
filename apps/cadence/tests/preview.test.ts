@@ -30,6 +30,14 @@ const states: { file: string; frame: () => Frame }[] = [
     file: "preview-cockpit-ready.png",
     frame: () => composeCockpit(cockpitModel({ state: createState(), settings: DEFAULT_SETTINGS, now: NOW, locale: "de" }), pixelBackend()),
   },
+  // The store screenshot (English): the old simulator capture still offered "Hold", which the temple pad never delivers (step log 21.10.2026).
+  {
+    file: "screenshot.png",
+    frame: () => composeCockpit(cockpitModel({
+      state: running, settings: DEFAULT_SETTINGS, now: NOW, locale: "en", item: "Scales", sessionSeconds: 12 * 60,
+      todaySeconds: 34 * 60, todayCount: 2, best: 112,
+    }), pixelBackend()),
+  },
 ];
 
 const env = (globalThis as unknown as { process: { env: Record<string, string | undefined>; cwd(): string } }).process;

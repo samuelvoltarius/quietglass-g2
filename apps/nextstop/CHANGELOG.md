@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.3] — 2026-10-21
+
+### Geändert: nichts mehr nur per Halten (Hardware-Messung 21.10.2026)
+
+Halten (LONG_PRESS 9/10) erreicht die App nur vom optionalen R1-Ring (`eventSource 2`); am Bügel-Touchpad öffnet Halten das System-Menü. Store-Prüfer testen ohne Ring – darum ist jetzt alles mit Tippen, Wischen und 2× erreichbar, und keine Brillen-Fußzeile oder -Hilfe bietet „Halten/Hold“ mehr an.
+
+- **Startseite mit drei Einträgen (QUS v1):** **Abfahrten**, **Ziel per Sprache**, **Ziele und Route**. Wischen wählt, Tippen öffnet; Fußzeile `Tippen = öffnen · Wischen = wählen · 2× = Ende`.
+- **Ziel per Sprache per Tippen:** Antippen startet die Aufnahme, das nächste Tippen beendet und sendet sie (`Tippen = fertig · 2× = zurück`). Ein Tippen innerhalb von 0,6 s nach dem Start zählt nicht (Doppel-Ereignis der Firmware). Die Aufnahme endet spätestens nach **15 s** von selbst (vorher 30 s als Notbremse für ein fehlendes Loslassen). 2× in der Aufnahme bricht ab und öffnet die Zielliste.
+- **Fehlerseiten der Spracheingabe:** Tippen = nochmal aufnehmen (Zu kurz, Nichts verstanden, Kein Ort, Mikrofon, Netz); ohne Spracherkennungs-Server geht Tippen nur zurück. Die Hinweise sagen „Tippen und …“ statt „Nochmal halten …“.
+- **Leere Zielliste:** Tippen = Ziel sagen.
+- **Begleitung vorzeitig beenden:** im ersten Schritt nach oben wischen, dann nochmal tippen (Wischen/2×/4 s brechen ab). Bisher ging das nur per Halten.
+- **Ring-Extra bleibt:** Mit dem R1-Ring startet Halten weiterhin die Aufnahme (Loslassen = fertig) bzw. fragt in der Begleitung nach dem Beenden – wird auf der Brille aber nirgends angeboten.
+- **Fußzeilen-Baustein (`src/footer.ts`):** kennt kein `hold` mehr; Tafel-Hinweis `1/4 · Tippen = folgen · Wischen = wählen · 2× = zurück`, leere Tafel `2× = zurück`.
+- **Handy:** Gestentabelle mit eigener Zeile „Ziel per Sprache“ und „Ring: Halten“ nur als Zusatz; Whisper-Hinweis, Zielhinweis und Route-Anleitung angepasst.
+- **Store/Doku:** `app.json`-Mikrofonbeschreibung, `store/listing.json`, `docs/PRIVACY.md`, README ohne „Touchpad halten“; `store/screenshot.png` ist jetzt die aktuelle Abfahrtstafel (die alte Simulator-Aufnahme zeigte „Hold = destination“). Beenden-Dialog (Abschnitt 1a) unverändert.
+- **Tests:** Startseite per Wischen+Tippen bis zum Treffer (Echo-Tippen ignoriert), Selbststopp nach 15 s, Wiederholen per Tippen, leere Zielliste, Begleitung per Hochwischen beenden, und ein Wächter: keine Brillen-Zeichenkette und keine Fußzeile enthält „Halten/Hold/loslassen/release“.
+
 ## [0.9.1] — 2026-10-20
 
 ### Neu

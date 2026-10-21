@@ -90,7 +90,14 @@ function storedEntries(fake: Fake): Array<{ text: string; attachment?: unknown }
   return saved.inspections?.[0]?.entries ?? [];
 }
 
+/** Every app booted in the current test; ended afterwards so its clock cannot write into the next test. */
+const booted: Fake[] = [];
+function endBooted(): void {
+  for (const fake of booted.splice(0)) fake.emit(7);
+}
+
 async function boot(fake: Fake): Promise<FakeRoot> {
+  booted.push(fake);
   const root = fakeRoot();
   vi.stubGlobal("document", { getElementById: () => root });
   vi.stubGlobal("location", { search: "" });
@@ -140,7 +147,7 @@ describe("fieldlog dictation over HTTP", () => {
     whisper = fakeWhisper();
     vi.stubGlobal("fetch", whisper.fetchMock);
   });
-  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  afterEach(() => { endBooted(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   it("tap records, tap stops: one WAV form post without own headers, the text comes back for review", async () => {
     const fake = fakeBridge(data());
@@ -632,7 +639,7 @@ describe("fieldlog live dictation", () => {
     vi.stubEnv("VITE_LIVE_STT_URL", "wss://live.test:8449");
     FakeSocket.last = null;
   });
-  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+  afterEach(() => { endBooted(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
   const startRecording = async (fake: Fake): Promise<FakeSocket> => {
     fake.emit(0);

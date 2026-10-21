@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.5] — 2026-10-21
+
+Schrittprotokoll für die Store-Ablehnung „nach 2× und Nein verschwindet die Seite“ (nur private Builds mit `VITE_TRAFFIC_URL`; Store-Build: aus, keine URL im Bundle). Keine Verhaltensänderung.
+
+- `src/diag/` (aus Klipper): jedes Even-Hub-Ereignis roh (Mikrofon/IMU-Strom gezählt), jeder Seiten-/Bildaufruf mit Dauer und Ergebnis.
+- Marker: Beenden-Frage, Dialog gezeigt/geschlossen, Wiederherstellung (Start/Ende mit Zustand), Lebenszyklus, Seitenaufbau-Ergebnis, übersprungene Zeichnungen mit Grund, vom Wächter abgewiesene Kacheln (gezählt).
+
+## [0.7.3] — 2026-10-21
+
+Nichts mehr nur per Halten (Schrittprotokoll 21.10.2026: Halten am Bügel öffnet das Systemmenü und kommt nie in der App an, nur der optionale R1-Ring liefert es; Store-Prüfer haben keinen Ring).
+
+### Brille
+
+- **Dosis löschen per Wischen** (hoch oder runter, das Cockpit hat sonst nichts zu bewegen): Wischen fragt nur (`DOSIS LÖSCHEN?`), ein Tippen innerhalb von 4 s bestätigt; nochmal Wischen, 2× oder Zeitablauf brechen ab. Ein Tippen direkt nach dem Wischen zählt nicht als Bestätigung.
+- **Hinweiszeilen ohne Halten:** beim Messen `● MIKRO AN · Tippen = aus · Wischen = Reset · 2× = Ende` („Stopp“ wurde zu „aus“, damit der Wisch-Hinweis in die Zeile passt), sonst `Tippen = messen · Wischen = Dosis löschen · 2× = Ende`. Der Fußzeilen-Helfer kennt keinen Halten-Teil mehr.
+- R1-Ring halten bleibt als optionales Extra (fragt dasselbe wie Wischen).
+- Beenden-Dialog unverändert (Abschnitt 1a).
+
+### Handy
+
+- Bedienungstabelle: Wischen = Dosis löschen (mit Bestätigung); die Halten-Zeile heißt jetzt „R1-Ring halten (optional)“.
+- Store-Screenshot neu aus dem Cockpit-Renderer (der alte zeigte noch „Hold = reset“).
+
 ## [0.7.0] — 2026-10-20
 
 Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.

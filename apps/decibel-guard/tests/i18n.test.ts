@@ -121,7 +121,7 @@ describe("first run", () => {
   it("the glasses say what is going on and what to tap, in German", () => {
     const model = cockpitModel(input({ calibrated: false }));
     expect(model.headline).toEqual(["BEREIT", "NICHT AKTIV"]);
-    expect(model.hint).toBe("Tippen = messen · Halten = Dosis löschen · 2× = Ende");
+    expect(model.hint).toBe("Tippen = messen · Wischen = Dosis löschen · 2× = Ende");
     expect(model.caption).toBe("Schätzwert");
   });
 
@@ -156,7 +156,7 @@ describe("first run", () => {
 describe("QIS v1 layout", () => {
   for (const locale of ["de", "en"] as const) {
     it(`${locale}: the hint keeps the gesture order and ends in back/exit/cancel, within the row`, () => {
-      const order = locale === "de" ? ["Tippen", "Wischen", "Halten", "2×"] : ["Tap", "Swipe", "Hold", "2×"];
+      const order = locale === "de" ? ["Tippen", "Wischen", "2×"] : ["Tap", "Swipe", "2×"];
       for (const listening of [false, true]) {
         for (const armed of [null, "reset", "stop"] as const) {
           const model = cockpitModel(input({ listening, level: 80, locale, armed }));
@@ -164,6 +164,10 @@ describe("QIS v1 layout", () => {
           expect(model.hint.length, model.hint).toBeLessThanOrEqual(FOOTER_WIDTH);
           const back = locale === "de" ? /2× = (zurück|Ende|abbrechen)$/ : /2× = (back|exit|cancel)$/;
           expect(model.hint, model.hint).toMatch(back);
+          // A hold never reaches the app from the temple pad (step log 21.10.2026): no line may offer one.
+          expect(model.hint, model.hint).not.toMatch(/Halten|halten|\bHold\b|\bhold\b/);
+          // The reset must stay reachable: the swipe is never dropped for width.
+          if (armed === null) expect(model.hint, model.hint).toContain(locale === "de" ? "Wischen = " : "Swipe = ");
           const positions = order.map((word) => model.hint.indexOf(word)).filter((i) => i >= 0);
           expect(positions, model.hint).toEqual([...positions].sort((a, b) => a - b));
         }
@@ -191,7 +195,9 @@ describe("QIS v1.2", () => {
     expect(model.headline).toEqual(["MESSUNG", "STOPPEN?"]);
     expect(model.hint).toBe("● MIKRO AN · Nochmal tippen = stoppen · 2× = abbrechen");
     const en = cockpitModel(input({ listening: true, level: 80, locale: "en" }));
-    expect(en.hint).toBe("● MIC · Tap = stop · Hold = reset · 2× = exit");
+    expect(en.hint).toBe("● MIC · Tap = stop · Swipe = reset · 2× = exit");
+    const de = cockpitModel(input({ listening: true, level: 80 }));
+    expect(de.hint).toBe("● MIKRO AN · Tippen = aus · Wischen = Reset · 2× = Ende");
   });
 
   it("never points at a side menu (its clicks do not arrive on the glasses)", () => {

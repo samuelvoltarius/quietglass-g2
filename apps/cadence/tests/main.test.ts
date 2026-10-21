@@ -43,7 +43,7 @@ function fakeBridge(writeDelayMs = 0, storage = new Map<string, string>()) {
     onEvenHubEvent: (callback: (event: unknown) => void) => { handler = callback; return () => undefined; },
     onDeviceStatusChanged: () => () => undefined,
   };
-  return { bridge, shutdown, writes, storage, emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })), ready: () => handler !== undefined };
+  return { bridge, shutdown, writes, storage, emit: (eventType: number, eventSource = 1) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource } })), ready: () => handler !== undefined };
 }
 
 describe("cadence run loop", () => {
@@ -233,12 +233,30 @@ describe("cadence run loop", () => {
     expect(fake.writes.count).toBeGreaterThan(writesAtFailure);
   });
 
-  it("hold starts the bar count over and keeps a running beat running", async () => {
+  it("starting again after a pause begins at bar 1 (no hold needed: the temple pad never delivers one)", async () => {
+    const fake = await boot();
+    fake.emit(0); // start
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(last().graphic.center).toBe("26");
+    fake.emit(0); // arm
+    await vi.advanceTimersByTimeAsync(100);
+    fake.emit(0); // pause
+    await vi.advanceTimersByTimeAsync(100);
+    expect(last().headline[1]).toBe("PAUSED");
+    fake.emit(0); // start again
+    await vi.advanceTimersByTimeAsync(10);
+    expect(last().graphic.center).toBe("1");
+    expect(last().headline[1]).toBe("RUNNING");
+    await vi.advanceTimersByTimeAsync(2400);
+    expect(last().graphic.center).toBe("2");
+  });
+
+  it("an R1 ring hold (optional extra) starts the bar count over and keeps a running beat running", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(last().graphic.center).toBe("26");
-    fake.emit(9);
+    fake.emit(9, 2);
     await vi.advanceTimersByTimeAsync(700);
     expect(last().graphic.center).toBe("1");
     expect(last().headline[1]).toBe("RUNNING");

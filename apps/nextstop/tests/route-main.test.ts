@@ -212,7 +212,7 @@ describe("the route pages", () => {
     await vi.waitFor(() => expect(fake.state.shutdowns).toBe(1));
   });
 
-  it("a hold in the guide only asks; a swipe, 2× or a second hold cancel, the next single tap ends it (no side menu)", async () => {
+  it("ring extra: a hold in the guide only asks; a swipe, 2× or a second hold cancel, the next single tap ends it (no side menu)", async () => {
     for (const cancel of [UP, DOWN, DOUBLE, HOLD]) {
       const fake = fakeBridge({ confirmExit: false });
       await boot(fake, "?demo=1&lang=de&scene=guide");
@@ -231,6 +231,32 @@ describe("the route pages", () => {
     fake.gesture(CLICK); // the second single tap ends the guide
     await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
     expect(fake.state.menus.every((items) => items.length === 0)).toBe(true);
+  });
+
+  it("temple only: swiping up on the first step asks to end the guide, the next single tap ends it; anything else cancels", async () => {
+    for (const cancel of [DOWN, UP, DOUBLE]) {
+      const fake = fakeBridge({ confirmExit: false });
+      await boot(fake, "?demo=1&lang=de&scene=guide");
+      await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
+      expect(fake.state.footer).not.toMatch(/Halten/);
+      fake.gesture(UP);
+      await vi.waitFor(() => expect(fake.state.footer).toBe("Nochmal tippen = Fahrt abbrechen · 2× = abbrechen"));
+      fake.gesture(cancel);
+      await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /), { timeout: 2000 });
+      expect(fake.state.shutdowns, "event " + cancel).toBe(0);
+    }
+    const fake = fakeBridge();
+    await boot(fake, "?demo=1&lang=de&scene=guide");
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · (GPS|Uhr)/));
+    fake.gesture(DOWN); // step 2: a swipe up only goes back a step
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^2\/\d+ · /));
+    fake.gesture(UP);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/\d+ · /));
+    fake.gesture(UP); // past the first step: asks
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^Nochmal tippen = Fahrt abbrechen/));
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.footer).toMatch(/^1\/4 · Tippen = los/));
+    expect(fake.state.shutdowns).toBe(0);
   });
 
   it("leaves the guide at once from the menu", async () => {

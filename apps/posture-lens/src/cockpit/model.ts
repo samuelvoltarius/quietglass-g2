@@ -117,7 +117,7 @@ export function cockpitHint(input: CockpitInput): string {
   if (input.confirm === "calibrate" && !input.sensorOff) return armedFooter(locale, t(locale, "g.a.resave"));
   if (input.sensorOff) return footer(locale, {}, "exit");
   const tap = t(locale, input.monitor.state === "uncalibrated" ? "g.w.save" : "g.w.resave");
-  return footer(locale, { tap, hold: t(locale, "g.w.menu") }, "exit");
+  return footer(locale, { tap, swipe: t(locale, "g.w.menu") }, "exit");
 }
 
 /** Seconds until the warning, in 5 s steps rounded up (the cell changes at most every 5 s), or null when not leaning. */

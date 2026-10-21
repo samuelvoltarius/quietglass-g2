@@ -15,7 +15,7 @@ import type { CockpitBar, CockpitModel } from "./model";
  *   │ ▭▭▭▭▭┃▭▭▭▭▭▭▭▭▭▭         │ │ MAX     MITTEL  GRENZE       │
  *   │ ● MIKRO AN               │ │ DAUER   ÜBER 85 REST         │
  *   ├──────────────────────────┴─┴──────────────────────────────┤
- *   │ ● MIKRO AN · Tippen = Stopp · Halten = Reset · 2× = Ende    │
+ *   │ ● MIKRO AN · Tippen = aus · Wischen = Reset · 2× = Ende     │
  *   └───────────────────────────────────────────────────────────┘
  *
  * Both bars sit in the upper left tile, so the moving level costs one tile.

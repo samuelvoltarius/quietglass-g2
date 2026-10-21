@@ -26,6 +26,9 @@ import { resolveLocale, rememberLocale, setLocale, type Locale } from "./i18n";
 import { t } from "./messages";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 import { activeConfirm, CONFIRM_WINDOW_MS, confirmStep, type PendingConfirm } from "./input/confirm";
+import { diag, diagCount, diagOn, diagSkip, startDiag } from "./diag/diag";
+import { traceBridge } from "./diag/bridge";
+import { VERSION } from "./version";
 
 /**
  * IMU sampling rate. 500 ms is plenty for posture, which changes over minutes,
@@ -46,7 +49,8 @@ const MENU_RESET = 2;
 /**
  * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app and, while a page carries it, a hold
  * opens it instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages carry
- * no menu and a hold opens the app's own menu list again (sensor test, clear tally, help).
+ * no menu and a swipe on the posture screen opens the app's own list (sensor test, clear tally). A hold from the
+ * temple pad never reaches the app at all (only the optional R1 ring delivers one, step log 21.10.2026).
  */
 export const SIDE_MENU = false;
 
@@ -67,7 +71,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 async function boot(): Promise<void> {
-  const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  // Private step log (VITE_TRAFFIC_URL, tailnet only): calls, results and events. Store builds: off, no URL in the bundle.
+  startDiag((import.meta as { env?: Record<string, string | undefined> }).env?.["VITE_TRAFFIC_URL"] ?? "", VERSION);
+  const bridge: EvenAppBridge = traceBridge(await waitForEvenAppBridge());
 
   let data: PostureData = await load(bridge);
   let monitor: PostureMonitor = createMonitor();
@@ -87,7 +93,7 @@ async function boot(): Promise<void> {
    */
   let pending: PendingConfirm<"calibrate" | "reset"> | null = null;
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The app's own list (hold); "none" is the posture screen. */
+  /** The app's own list (swipe on the posture screen); "none" is the posture screen. */
   let menuScreen: "none" | "menu" = "none";
   let menuCursor = 0;
   /** Shown in the own menu's header until the next gesture ("Tally cleared"), only without the side menu. */
@@ -177,19 +183,27 @@ async function boot(): Promise<void> {
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
   /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up or after the cockpit was left. */
-  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused && installed === "cockpit"));
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => {
+    const allowed = !exitAsked() && !closed && !paused && installed === "cockpit";
+    if (!allowed) diagCount("tileRefused:" + (exitAsked() ? "exitAsked" : closed ? "closed" : paused ? "paused" : "installed"));
+    return allowed;
+  }));
+  /** The flags that decide whether anything is drawn, for the step log. */
+  const flags = (): Record<string, string | boolean> => ({ pageReady, paused, closed, installed: installed ?? "none", rebuildWanted, exitAsked: exitAsked() });
 
   const drawOnce = async (): Promise<void> => {
-    if (exitAsked()) return;
-    if (closed || paused) return;
+    if (exitAsked()) { diagSkip("exitAsked"); return; }
+    if (closed || paused) { diagSkip(closed ? "closed" : "paused"); return; }
     if (rebuildWanted) { rebuildWanted = false; pageReady = false; }
     const scene = currentScene();
     const menu = menuSpec();
     if (scene.kind === "cockpit") {
       if (installed !== "cockpit" || (pageReady && menu.key !== pageMenuKey)) pageReady = false;
       if (!pageReady) {
+        diagSkip(null);
         const result = await createCockpitPage(bridge, menu);
-        if (closed) return;
+        diag("createCockpitPage", { ok: result.ok, reason: result.reason ?? null, ...flags() });
+        if (closed) { diagSkip("closed", { after: "createCockpitPage" }); return; }
         if (!result.ok) { pageReady = false; console.warn("[posturelens] draw failed:", result.reason); return; }
         pageReady = true;
         installed = "cockpit";
@@ -198,18 +212,22 @@ async function boot(): Promise<void> {
         // A new page starts with blank images.
         tiles.reset();
       }
+      diagSkip(null);
       textBackend ??= autoBackend();
       // Never awaited: a slow transfer must not hold up the next sample.
       void tiles.push(composeCockpit(scene.model, textBackend));
       return;
     }
     // Leaving the cockpit: its containers are about to go, no tile may be written any more.
-    if (installed === "cockpit") { installed = null; pageReady = false; }
+    if (installed === "cockpit") { diag("installed", { from: "cockpit", to: "text" }); installed = null; pageReady = false; }
     // The side menu travels with the page: a different one (language) means one rebuild.
     if (pageReady && menu.key !== pageMenuKey) pageReady = false;
-    if (pageReady && sameView(lastView, scene.view)) return;
+    if (pageReady && sameView(lastView, scene.view)) { diagSkip("sameView"); return; }
+    diagSkip(null);
+    const wasReady = pageReady;
     const result = pageReady ? await updateTextPage(bridge, scene.view, lastView) : await createTextPage(bridge, scene.view, menu);
-    if (closed) return;
+    if (!wasReady) diag("createTextPage", { ok: result.ok, reason: result.reason ?? null, ...flags() });
+    if (closed) { diagSkip("closed", { after: wasReady ? "updateTextPage" : "createTextPage" }); return; }
     if (!result.ok) { pageReady = false; console.warn("[posturelens] draw failed:", result.reason); return; }
     pageReady = true;
     installed = "text";
@@ -219,7 +237,7 @@ async function boot(): Promise<void> {
 
   /** One page write at a time; a request during a write redraws once after it. */
   const draw = (): Promise<void> => {
-    if (exitAsked()) return Promise.resolve();
+    if (exitAsked()) { diagSkip("exitAsked", { in: "draw" }); return Promise.resolve(); }
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -313,15 +331,30 @@ async function boot(): Promise<void> {
     // The dialog took the page away: put it up again the way of the first one,
     // so the glasses deliver input (and the next 2x) to the app again.
     onBack: () => {
+      diag("onBack", { phase: "start", ...flags() });
       if (closed) return;
       pageReady = false;
       lastView = null;
       installed = null;
       forgetPage(bridge);
-      return draw();
+      const restored = draw();
+      if (diagOn()) {
+        restored.then(
+          () => diag("onBack", { phase: "end", ...flags() }),
+          (error: unknown) => diag("onBack", { phase: "fail", error: String(error), ...flags() }),
+        );
+      }
+      return restored;
     },
   }, "posturelens");
   exitAsked = requestExit.asked;
+  /** Every ask for the exit dialog goes through here, so the step log sees it. */
+  const askExit = (via: string): Promise<void> => {
+    diag("exitAsk", { via, ...flags() });
+    const asked = requestExit();
+    if (diagOn()) void asked.then(() => diag("exitAskDone", { via, ...flags() }));
+    return asked;
+  };
 
   /**
    * Arms a gesture that overwrites something; the same gesture again within
@@ -364,8 +397,10 @@ async function boot(): Promise<void> {
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
-    if (requestExit.onLifecycle(event) !== null) return;
+    const dialog = requestExit.onLifecycle(event);
+    if (dialog !== null) { diag(dialog, flags()); return; }
     const step = lifecycleFromEvent(event);
+    if (step !== null) diag("lifecycle", { step, ...flags() });
     if (step === "foregroundExit") {
       // Out of sight: no IMU (battery, BLE), no drawing. The calibration and the tally stay.
       paused = true;
@@ -419,6 +454,8 @@ async function boot(): Promise<void> {
       const wasArmed = pending !== null;
       disarm();
       if (wasArmed) void draw();
+      // A swipe that cancels an armed re-calibration only cancels; it does not open the list as well.
+      if (wasArmed && menuScreen === "none" && !sensorMode && (gesture.gesture === "scrollUp" || gesture.gesture === "scrollDown")) return;
     }
 
     if (sensorMode) {
@@ -472,8 +509,12 @@ async function boot(): Promise<void> {
         if (lastSample) calibrateTo(lastSample);
         else calibratePending = true;
         break;
+      case "scrollUp":
+      case "scrollDown":
       case "longPress":
-        // Without the side menu (SIDE_MENU): hold opens the app's own menu: sensor test, clearing the tally, help.
+        // Without the side menu (SIDE_MENU): a swipe (either way) opens the app's own list: sensor test,
+        // clearing the tally. The posture screen has nothing else to move. A hold does the same, but only
+        // the optional R1 ring delivers one, so the glasses never advertise it.
         if (SIDE_MENU) return;
         menuScreen = "menu";
         menuCursor = 0;
@@ -487,13 +528,12 @@ async function boot(): Promise<void> {
           rebuildWanted = true;
           const restore = draw();
           void startImu();
-          void settleRestore(restore).then(() => requestExit());
+          void settleRestore(restore).then(() => askExit("doubleClickPaused"));
           return;
         }
-        void requestExit();
+        void askExit("doubleClick");
         return;
       default:
-        // A swipe only moves and a hold only opens the glasses' own menu; the posture screen has nothing to move.
         return;
     }
     void draw();

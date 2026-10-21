@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.3] — 2026-10-21
+
+### Geändert (Halten kommt am Bügel nie an)
+
+- **Brille bietet „Halten“ nirgends mehr an.** Auf der echten Brille kommt Halten (LONG_PRESS) nur vom optionalen R1-Ring an; am Bügel öffnet es das Systemmenü (Schrittprotokoll 21.10.2026). Store-Prüfer haben keinen Ring.
+- Fußzeilen ohne `Halten = Hilfe`; dadurch passt auf dem Druckbild wieder `Tippen = steuern · Wischen = Modell · 2× = Ende`.
+- Die Hilfe auf der Brille bleibt ein Ring-Extra (Halten am R1); sie wiederholt nur die Gesten-Tabelle am Handy, nichts hängt an ihr. Die Zeile `Halten = diese Hilfe` ist weg.
+- Handy-Tabelle: `Halten (nur R1-Ring)` = optional Hilfe öffnen.
+- Beenden-Dialog unverändert.
+
 ## [0.6.0] — 2026-10-20
 
 ### Neu

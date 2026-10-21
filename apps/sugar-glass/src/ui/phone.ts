@@ -171,7 +171,9 @@ export function setupInner(settings: Settings, answered: boolean, locale: Locale
   const step = (n: number, done: boolean, key: string): string =>
     `<li class="${done ? "done" : ""}"><span class="num" aria-hidden="true">${done ? "✓" : n}</span><span>${esc(t(locale, key))}</span></li>`;
   return `<ol class="steps">${step(1, added, "p.setup.1")}${step(2, added, "p.setup.2")}${step(3, added && answered, "p.setup.3")}</ol>`
-    + (added ? "" : `<p class="hint">${esc(t(locale, "p.setup.demo"))}</p>`);
+    + (added ? "" : `<p class="hint">${esc(t(locale, "p.setup.demo"))}</p>`)
+    // Plain text, no link: a URL in the bundle must match the network whitelist exactly (store review).
+    + `<p class="hint">${esc(t(locale, "p.setup.guide"))}</p>`;
 }
 
 /** The status pill: the value when there is one, otherwise the state in a word. */
@@ -356,7 +358,6 @@ function template(settings: Settings, connection: PhoneConnection, state: ViewSt
         <table class="keys">
           <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
           <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
-          <tr><td>${L("p.c.hold")}</td><td>${L("p.c.hold.d")}</td></tr>
           <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
         </table>
       </details>

@@ -249,7 +249,7 @@ describe("Klipper Glance lifecycle", () => {
   it("every command needs two taps; a swipe in between drops the first", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = steuern · Halten = Hilfe · 2× = Ende"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = steuern · Wischen = Modell · 2× = Ende"));
     fake.emit(CLICK);                                        // control screen
     await vi.waitFor(() => expect(fake.body()).toContain("> Pause"));
     fake.emit(CLICK);                                        // arm pause
@@ -332,7 +332,7 @@ describe("Klipper Glance lifecycle", () => {
     for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
   });
 
-  it("a hold opens the help from the HUD; tap, hold or 2× close it; 2× never exits there", async () => {
+  it("R1-ring extra: a hold opens the help from the HUD; tap, hold or 2× close it; 2× never exits there", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.header()).toBe("KLIPPER · druckt"));
@@ -369,7 +369,7 @@ describe("Klipper Glance lifecycle", () => {
     server.state.printer = { ...server.state.printer, controllable: false };
     const fake = fakeGlasses(configured());
     await boot(fake);
-    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = aktualisieren · Halten = Hilfe · 2× = Ende"));
+    await vi.waitFor(() => expect(fake.footer()).toBe("Tippen = aktualisieren · Wischen = Modell · 2× = Ende"));
     const before = server.state.statusCalls;
     fake.emit(CLICK);
     await vi.waitFor(() => expect(server.state.statusCalls).toBe(before + 1));

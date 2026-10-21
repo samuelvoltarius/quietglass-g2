@@ -10,8 +10,8 @@ import { footer } from "../src/glasses/footer";
 
 /**
  * QIS v1 (docs/BEDIENSTANDARD.md): header `RAINLENS · state`, footer in the order
- * Tippen/Wischen/Halten/2x ending in back/exit, every row within the full width in every
- * language, the help page on hold, the persisted scroll-direction switch, plus the glossary.
+ * Tippen/Wischen/2x (never Halten: a temple hold never reaches the app) ending in back/exit, every
+ * row within the full width in every language, the help page as an R1-ring extra, the persisted scroll-direction switch, plus the glossary.
  * RainLens has no destructive gesture: tap reloads, swipe only changes the view.
  */
 
@@ -65,7 +65,9 @@ function fakeBridge(options: { location?: boolean } = {}) {
   };
 }
 
-const order = (locale: Locale): string[] => (locale === "de" ? ["Tippen", "Wischen", "Halten", "2×"] : locale === "en" ? ["Tap", "Swipe", "Hold", "2×"] : []);
+const order = (locale: Locale): string[] => (locale === "de" ? ["Tippen", "Wischen", "2×"] : locale === "en" ? ["Tap", "Swipe", "2×"] : []);
+/** The hold in every language: no glasses text may offer it (hardware 21.10.2026: a temple hold opens the system menu). */
+const HOLD_WORDS = /\b(Halten|Hold|Maintenir|Mantener|Tieni)\b/i;
 const width = (text: string): number => Array.from(text).length;
 
 describe("QIS v1 on the glasses", () => {
@@ -107,11 +109,13 @@ describe("QIS v1 on the glasses", () => {
       snap("now");
       for (const name of ["hourly", "days"]) { fake.emit(DOWN); await vi.advanceTimersByTimeAsync(2000); snap(name); }
       fake.emit(HOLD); await vi.advanceTimersByTimeAsync(2000); snap("help");
+      expect(fake.last("body"), "help body").not.toMatch(HOLD_WORDS);
       for (const { name, footer: foot } of seen) {
         const exit = tr(messages, locale, "helpTitle") && name === "help"
           ? { de: "2× = zurück", en: "2× = back", fr: "2× = retour", es: "2× = atrás", it: "2× = indietro" }[locale]
           : { de: "2× = Ende", en: "2× = exit", fr: "2× = fermer", es: "2× = cerrar", it: "2× = chiudi" }[locale];
         expect(foot.endsWith(exit), name + ": " + foot).toBe(true);
+        expect(foot, name).not.toMatch(HOLD_WORDS);
         const positions = order(locale).map((word) => foot.indexOf(word)).filter((i) => i >= 0);
         expect(positions, name + ": " + foot).toEqual([...positions].sort((a, b) => a - b));
       }
@@ -121,7 +125,7 @@ describe("QIS v1 on the glasses", () => {
   it("de: the notice views (no location, offline) say what is wrong in the header and keep the footer short", async () => {
     const fake = await boot("de", { location: false });
     expect(fake.last("header")).toBe("RAINLENS · kein Standort");
-    expect(fake.last("footer")).toBe("Tippen = nochmal · Halten = Hilfe · 2× = Ende");
+    expect(fake.last("footer")).toBe("Tippen = nochmal · Wischen = Ansicht · 2× = Ende");
     vi.stubGlobal("fetch", async () => { throw new TypeError("Failed to fetch"); });
     const offline = await boot("de");
     expect(offline.last("header")).toBe("RAINLENS · offline");
@@ -136,20 +140,20 @@ describe("QIS v1 on the glasses", () => {
     expect(css).not.toMatch(/repeat\(4,[^)]*\)[^;]*tabbar/);
   });
 
-  it("the footer drops the swipe first, then the hold, never the 2×", () => {
-    expect(footer("de", { tap: "neu", swipe: "Ansicht", hold: "Hilfe" })).toBe("Tippen = neu · Halten = Hilfe · 2× = Ende");
-    expect(footer("en", { tap: "refresh", swipe: "view", hold: "help" })).toBe("Tap = refresh · Swipe = view · Hold = help · 2× = exit");
-    expect(footer("en", { tap: "refresh", swipe: "view", hold: "help" }, "exit", "Radar: RainViewer")).toBe("Radar: RainViewer · Tap = refresh · 2× = exit");
+  it("the footer drops the swipe first, never the 2×, and never offers a hold", () => {
+    expect(footer("de", { tap: "neu", swipe: "Ansicht" })).toBe("Tippen = neu · Wischen = Ansicht · 2× = Ende");
+    expect(footer("en", { tap: "refresh", swipe: "view" })).toBe("Tap = refresh · Swipe = view · 2× = exit");
+    expect(footer("en", { tap: "refresh", swipe: "view" }, "exit", "Radar: RainViewer")).toBe("Radar: RainViewer · Tap = refresh · 2× = exit");
     expect(footer("de", {}, "back")).toBe("2× = zurück");
   });
 
-  it("a hold opens the help page: read-only, chart cleared, 2× goes back; the view underneath stays", async () => {
+  it("R1-ring extra: a hold opens the help page: read-only, chart cleared, 2× goes back; the view underneath stays", async () => {
     const fake = await boot("de");
     fake.emit(DOWN); await vi.advanceTimersByTimeAsync(2000);
     expect(fake.last("header")).toContain("STUNDEN");
     fake.emit(HOLD); fake.emit(10); await vi.advanceTimersByTimeAsync(2000);
     expect(fake.last("header")).toBe("RAINLENS · Hilfe");
-    expect(fake.last("body")).toBe("Tippen = Wetter neu laden\nWischen = nächste Ansicht\nHalten = diese Hilfe\nBraucht: Internet und Standort am Handy");
+    expect(fake.last("body")).toBe("Tippen = Wetter neu laden\nWischen = nächste Ansicht\n2× = Ende (in der Hilfe: zurück)\nBraucht: Internet und Standort am Handy");
     expect(fake.last("footer")).toBe("2× = zurück");
     expect(fake.images.filter((name) => name === "rain-chart").length).toBeGreaterThanOrEqual(2);
     // Swipe and tap do nothing there, and the exit dialog is not asked.

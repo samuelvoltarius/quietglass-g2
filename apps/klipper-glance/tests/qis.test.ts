@@ -8,7 +8,7 @@ import { parseStatus, type PrinterStatus } from "../src/printer/status";
 
 /**
  * QIS v1 (docs/BEDIENSTANDARD.md): header `KLIPPER · state`, footer in the order
- * Tippen/Wischen/Halten/2× ending in back/exit, every row within the display
+ * Tippen/Wischen/2× (never Halten) ending in back/exit, every row within the display
  * budget in German and English, plus the wording glossary.
  */
 
@@ -52,7 +52,7 @@ function views(locale: Locale): { name: string; view: ScreenView }[] {
   return out;
 }
 
-const order = (locale: Locale): string[] => [GESTURE_WORDS[locale].tap, GESTURE_WORDS[locale].swipe, GESTURE_WORDS[locale].hold, "2×"];
+const order = (locale: Locale): string[] => [GESTURE_WORDS[locale].tap, GESTURE_WORDS[locale].swipe, "2×"];
 
 describe("QIS v1 on the glasses", () => {
   for (const locale of locales) {
@@ -97,9 +97,9 @@ describe("QIS v1 on the glasses", () => {
   });
 
   it("the root footers end in Ende / exit, subpages in zurück / back", () => {
-    expect(buildView(state("de", { demo: false })).footer).toBe("Tippen = steuern · Halten = Hilfe · 2× = Ende");
-    expect(buildView(state("en", { demo: false })).footer).toBe("Tap = control · Swipe = model · Hold = help · 2× = exit");
-    // With the side menu switched on (SIDE_MENU in main.ts) the hold is not offered.
+    expect(buildView(state("de", { demo: false })).footer).toBe("Tippen = steuern · Wischen = Modell · 2× = Ende");
+    expect(buildView(state("en", { demo: false })).footer).toBe("Tap = control · Swipe = model · 2× = exit");
+    // The side menu (SIDE_MENU in main.ts) changes nothing in the footer.
     expect(buildView(state("de", { demo: false, sideMenu: true })).footer).toBe("Tippen = steuern · Wischen = Modell · 2× = Ende");
     expect(buildView(state("en", { demo: false, sideMenu: true })).footer).toBe("Tap = control · Swipe = model · 2× = exit");
     expect(buildView(state("de", { screen: "control" })).footer).toBe("Tippen = wählen · Wischen = bewegen · 2× = zurück");
@@ -108,11 +108,16 @@ describe("QIS v1 on the glasses", () => {
     expect(buildView(state("en", { screen: "help" })).footer).toBe("Tap = back · 2× = back");
   });
 
-  it("without a side menu the HUD footers offer Halten = Hilfe (the hold opens the help)", () => {
+  it("no glasses footer, header or help row offers Halten/Hold (a temple hold never reaches the app, 21.10.2026)", () => {
     for (const locale of ["de", "en"] as const) {
-      const hud = views(locale).filter(({ name }) => name.startsWith("hud ") && !name.includes("none error") && !name.endsWith("error"));
-      expect(hud.length).toBeGreaterThan(0);
-      for (const { name, view } of hud) expect(view.footer, name).toMatch(locale === "de" ? /Halten = Hilfe/ : /Hold = help/);
+      const all = views(locale);
+      expect(all.length).toBeGreaterThan(0);
+      for (const { name, view } of all) {
+        expect([view.header, ...view.body, view.footer].join("\n"), name).not.toMatch(/\bHalten\b|\bHold\b/i);
+      }
+      for (const [key, text] of Object.entries(messages[locale])) {
+        if (key.startsWith("g.")) expect(text, key).not.toMatch(/\bHalten\b|\bHold\b/i);
+      }
     }
   });
 
@@ -142,14 +147,14 @@ describe("QIS v1 on the glasses", () => {
   it("the help page lists the gestures in footer order and what the app needs", () => {
     const help = buildView(state("de", { screen: "help" }));
     expect(help.header).toBe("KLIPPER · Hilfe");
-    expect(help.body.slice(0, 4).map((row) => row.split(" = ")[0])).toEqual(["Tippen", "Wischen", "Halten", "2×"]);
+    expect(help.body.slice(0, 3).map((row) => row.split(" = ")[0])).toEqual(["Tippen", "Wischen", "2×"]);
     expect(help.body.join("\n")).toContain("Braucht: Bridge");
     expect(buildView(state("en", { screen: "help" })).body.join("\n")).toContain("Needs: the bridge");
   });
 
   it("drops the swipe part first when the row would be too wide, never the 2×", () => {
-    const wide = footer("de", { tap: "aktualisieren", swipe: "Modell der Schichten", hold: "Menü" }, "exit");
-    expect(wide).toBe("Tippen = aktualisieren · Halten = Menü · 2× = Ende");
+    const wide = footer("de", { tap: "aktualisieren", swipe: "Modell der Schichten ansehen und drehen" }, "exit", "Druck 73 % · Schicht 120/300");
+    expect(wide).toBe("Tippen = aktualisieren · 2× = Ende");
     expect(footer("de", { tap: "neu", swipe: "drehen" }, "back")).toBe("Tippen = neu · Wischen = drehen · 2× = zurück");
   });
 

@@ -115,7 +115,7 @@ describe("first run", () => {
   it("tells the user on the glasses exactly what to do", () => {
     const model = cockpitModel({ monitor: createMonitor(), settings: DEFAULT_SETTINGS, locale: "de", now: 0 });
     expect(model.headline).toEqual(["HALTUNG", "SPEICHERN"]);
-    expect(model.hint).toBe("Tippen = Haltung speichern · Halten = Menü · 2× = Ende");
+    expect(model.hint).toBe("Tippen = Haltung speichern · Wischen = Menü · 2× = Ende");
     expect(model.caption).toBe("Nicht gespeichert");
   });
 

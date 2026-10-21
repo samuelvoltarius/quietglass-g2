@@ -17,7 +17,8 @@
 >    starten und über https erreichbar machen (z. B. `tailscale serve 8898`).
 > 2. In der Even-App bei Klipper Glance die https-Adresse eintragen.
 > 3. Auf der Brille: **tippen** öffnet die Steuerung (falls erlaubt),
->    **2×** fragt, ob die App beendet werden soll, **Halten** öffnet die Hilfe.
+>    **Wischen** zeigt das Schicht-Modell, **2×** fragt, ob die App beendet werden soll.
+>    (Halten am optionalen R1-Ring öffnet zusätzlich die Hilfe; am Bügel öffnet Halten das Systemmenü.)
 
 Without a bridge address the app starts on its own in a simulated printer
 (labelled `DEMO`, hint line `Demo · set up the connection on the phone`); `?demo=1` on
@@ -72,8 +73,10 @@ Cancel is always last in the list.
 |---|---|---|
 | Tap | open control (or refresh, when control is off) | arm, then confirm |
 | Swipe | look at the layer model | move the row (cancels a pending confirmation instead) |
-| Hold | opens the **Help** (the gestures) | – |
 | 2× | **leave the app** (the system asks first) | cancels a pending confirmation, else back to the HUD |
+
+Everything works with tap, swipe and 2×. A hold reaches the app only from the optional R1 ring
+(on the temple the glasses open their system menu); there it opens the help as an extra.
 
 ## Setup
 

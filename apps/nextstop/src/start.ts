@@ -8,11 +8,15 @@ import { fit, rideStopName, type StopView } from "./glasses/view";
  * `NEXTSTOP · ● live`, ONE footer line. No menu, no help page.
  */
 
-export type StartRow = "board" | "goals";
+export type StartRow = "board" | "voice" | "goals";
 
-/** The entries, in order. Both are always there; a running guide or ride is not on this page (it is the page). */
+/**
+ * The entries, in order. All three are always there; a running guide or ride is not on this page (it is the page).
+ * "voice" starts the spoken destination with a tap: a hold never reaches the app from the temple touchpad (only
+ * from the R1 ring), so nothing may depend on it.
+ */
 export function startRows(): readonly StartRow[] {
-  return ["board", "goals"];
+  return ["board", "voice", "goals"];
 }
 
 export type LiveWord = "live" | "waiting" | "demo" | "offline";
@@ -40,6 +44,7 @@ export interface StartOptions {
 
 export function startLabel(row: StartRow, options: StartOptions): string {
   if (row === "goals") return t(options.locale, "s.goals");
+  if (row === "voice") return t(options.locale, "s.voice");
   const base = t(options.locale, "s.board");
   return options.stopName ? `${base} · ${rideStopName(options.stopName, 28)}` : base;
 }
@@ -53,6 +58,6 @@ export function startView(cursor: number, options: StartOptions): StopView {
   return {
     header: headerLine(locale, options.word),
     body,
-    footer: footer(locale, { tap: t(locale, "q.open"), swipe: t(locale, "q.select"), hold: t(locale, "q.goal") }, "exit"),
+    footer: footer(locale, { tap: t(locale, "q.open"), swipe: t(locale, "q.select") }, "exit"),
   };
 }

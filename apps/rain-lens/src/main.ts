@@ -58,7 +58,7 @@ const PAGE_KEY = "rainlens.page";
 const GUST_KEY = "rainlens.gustAlert";
 /** Phone setting "Brille": swipes arrive inverted on some hardware ("1" = invert). */
 const INVERT_KEY = "rainlens.invertScroll";
-/** QIS v1.2: ids of the glasses' side menu (Hold opens it). */
+/** QIS v1.2: ids of the glasses' side menu (off, see SIDE_MENU). */
 export const MENU = { help: 1, refresh: 2, swipe: 3 } as const;
 /** The glasses' side menu (QIS v1.2). Off: its clicks never arrive and a hold opens it instead of reaching the app (step log from the real glasses, 15.10.2026). */
 export const SIDE_MENU = false;
@@ -87,7 +87,7 @@ async function boot(): Promise<void> {
   let locale = await resolveLocale(bridge); setLocale(locale); let forecast: WeatherForecast = demoWeather(); let loading = false; let failure: ReturnType<typeof errorKey> | null = null; let pageReady = false; let last = ""; let page = 0;
   /** Set once the user confirms the exit dialog: nothing draws on the closed page. */
   let closed = false;
-  /** QIS v1 help page (hold): read-only, 2x goes back to the view it came from. */
+  /** QIS v1 help page (an R1-ring extra: hold on the ring): read-only, 2x goes back to the view it came from. */
   let helpOpen = false;
   let status: Status = "loading"; let where: ResolvedLocation | null = null;
   /** Phone-only state of the place search; never stored. */
@@ -135,7 +135,7 @@ async function boot(): Promise<void> {
   const errorText = (): string => failure ? t(failure.key, { status: failure.status ?? "" }) : "";
   /** QIS v1.2: the glasses never show a status code; the phone keeps the detail. */
   const glassesErrorText = (): string => failure ? t(failure.key === "errorServer" ? "errorServerGlasses" : failure.key) : "";
-  /** QIS v1.2: Hold opens the side menu: Hilfe, Aktualisieren and the swipe direction (its label names the state, so a change rebuilds the page once). */
+  /** QIS v1.2 (off): the side menu would offer Hilfe, Aktualisieren and the swipe direction (its label names the state, so a change rebuilds the page once). */
   const menuSpec = (): MenuSpec => !SIDE_MENU ? { key: "none", items: [] } : ({ key: `${locale}:${invertScroll() ? 1 : 0}`, items: [{ id: MENU.help, label: t("mHelp") }, { id: MENU.refresh, label: t("mRefresh") }, { id: MENU.swipe, label: t(invertScroll() ? "mSwipeInverted" : "mSwipeNormal") }] });
   /** Key of the side menu the page on the glasses carries; a different one needs a rebuild. */
   let pageMenuKey = "";
@@ -154,10 +154,10 @@ async function boot(): Promise<void> {
   const sideLines = (): string[] => { const summary = notice() ? null : chartSummary(forecast.hourly); return summary ? [t("chance"), `${summary.rain}% ${clock(summary.time, locale)}`, `${summary.high}° / ${summary.low}°`].map((line) => fit(line, SIDE_WIDTH)) : []; };
   /** Without a real forecast the glasses say what to do next instead of showing sample numbers that look real. */
   const notice = (): string | null => { const key = noticeKey(status, forecast.source); return key ? t(key) : null; };
-  /** QIS v1 footer (Tippen / Wischen / Halten / 2x); a real forecast puts its age in front. */
+  /** QIS v1 footer (Tippen / Wischen / 2x, never Halten); a real forecast puts its age in front. */
   const footerLine = (): string => {
     const lead = forecast.source === "live" && fetchedAt !== 0 && !notice() ? t("asOf", { time: hhmm(fetchedAt) }) : "";
-    return qisFooter(locale, { tap: t(notice() ? "fRetry" : "fRefresh"), swipe: t("fView"), hold: t("fHelp") }, "exit", lead);
+    return qisFooter(locale, { tap: t(notice() ? "fRetry" : "fRefresh"), swipe: t("fView") }, "exit", lead);
   };
   /** The state word beside the app name while there is no forecast to show. */
   const stateWord = (): string => { const key = noticeKey(status, forecast.source); return t(key === "glassNoLocation" ? "stNoLocation" : key === "glassOffline" ? "stOffline" : "stLoading"); };
@@ -166,7 +166,7 @@ async function boot(): Promise<void> {
     return { header: fit(text ? `RAINLENS · ${stateWord()}` : `RAINLENS · ${[t("now"), t("hourly"), t("days")][page]} · ${tag}`, FULL_WIDTH), body: text ? glassesBody(text.split("\n"), "", CHART_ROWS) : glassesBody(page === 0 ? currentLines() : page === 1 ? hourlyLines() : dailyLines(), glassesErrorText(), CHART_ROWS), side: sideLines(), footer: footerLine() };
   };
   /** The help page: the gestures, what the app needs, 2x = back. Same layout as the weather views. */
-  const helpView = (): TextView => ({ header: fit(`RAINLENS · ${t("helpTitle")}`, FULL_WIDTH), body: [t("help1"), t("help2"), t("help3"), t("help4")].map((line) => fit(line)), side: [], footer: qisFooter(locale, {}, "back") });
+  const helpView = (): TextView => ({ header: fit(`RAINLENS · ${t("helpTitle")}`, FULL_WIDTH), body: [t("help1"), t("help2"), t("help2x"), t("help4")].map((line) => fit(line)), side: [], footer: qisFooter(locale, {}, "back") });
   /**
    * Images go through the lane and are never awaited: the icon column changes
    * with the view, the chart with the forecast. Sample data gets no chart.
@@ -318,7 +318,7 @@ async function boot(): Promise<void> {
     return `<section class="card compact"><h2>${escapeHtml(t("cockpit"))}</h2><label>${escapeHtml(t("gustAlert"))}<select id="gust">${options.join("")}</select></label><p class="hint">${escapeHtml(t("gustAlertHint"))}</p></section>`;
   };
   /** Phone tab "Brille": what the gestures do and the scroll direction. */
-  const glassesCard = (): string => `<section class="card compact"><h2>${escapeHtml(t("tabGlasses"))}</h2><label class="check"><input id="invert" type="checkbox"${invertScroll() ? " checked" : ""}>${escapeHtml(t("invert"))}</label><details class="advanced"><summary>${escapeHtml(t("controlsTitle"))}</summary><p class="hint">${[t("help1"), t("help2"), t("help3"), t("help2x")].map(escapeHtml).join("<br>")}</p></details></section>`;
+  const glassesCard = (): string => `<section class="card compact"><h2>${escapeHtml(t("tabGlasses"))}</h2><label class="check"><input id="invert" type="checkbox"${invertScroll() ? " checked" : ""}>${escapeHtml(t("invert"))}</label><details class="advanced"><summary>${escapeHtml(t("controlsTitle"))}</summary><p class="hint">${[t("help1"), t("help2"), t("help2x"), t("ringHold")].map(escapeHtml).join("<br>")}</p></details></section>`;
   const renderPhone = (): void => {
     const app = document.querySelector<HTMLDivElement>("#app"); if (!app) return; const mode = storedMode(store); const current = forecast.current; const today = forecast.daily[0];
     const weather = `<section class="card weather-card"><div class="status-row"><span class="status-dot ${forecast.source === "demo" ? "warn" : ""}"></span><strong>${t(forecast.source === "live" ? "live" : "demo")}</strong><time>${clock(current.time, locale)}</time></div><div class="weather-hero"><div><span>${condition(current.weatherCode)}</span><strong>${round(current.temperature)}</strong></div><p>${t("feels")} ${round(current.feelsLike)}</p></div><div class="weather-grid"><div><span>${t("humidity")}</span><b>${Math.round(current.humidity)}%</b></div><div><span>${t("wind")}</span><b>${windCompass(current.windDirection)} ${Math.round(current.windSpeed)}</b><small>km/h</small></div><div><span>${t("precipitation")}</span><b>${current.precipitation.toFixed(1)}</b><small>mm</small></div><div><span>${t("clouds")}</span><b>${Math.round(current.cloudCover)}%</b></div></div>${failure ? `<p class="error">${escapeHtml(errorText())}</p>` : ""}<button id="refresh">${t("refresh")}</button></section>`;
@@ -444,7 +444,8 @@ async function boot(): Promise<void> {
     }
     // The help page is read-only: 2x is the only gesture there, and it goes back.
     if (helpOpen) { if (gesture.gesture === "doubleClick") closeHelp(); return; }
-    // With the side menu on, a hold opens the system menu and the app does nothing on it. Without it (SIDE_MENU), a hold opens the help again.
+    // A hold reaches the app only from the optional R1 ring (eventSource 2); on the temple it opens the system menu
+    // (hardware, 21.10.2026). So it is an unadvertised extra: it opens the help, which repeats the phone's gesture list.
     if (gesture.gesture === "longPress" || gesture.gesture === "longPressRelease") { if (!SIDE_MENU && gesture.gesture === "longPress") openHelp(); return; }
     if (gesture.gesture === "doubleClick") { void requestExit(); return; }
     if (gesture.gesture === "click") { onTap(); return; }

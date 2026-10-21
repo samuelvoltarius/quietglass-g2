@@ -26,7 +26,7 @@ service you selected. It is never stored.
 
 | Permission (`app.json`) | Why | Used for nothing else |
 |---|---|---|
-| `g2-microphone` | Record the destination you say, only while you hold the touchpad on the destinations page | Sent to the Whisper server you set up; not stored, not kept in memory after the answer |
+| `g2-microphone` | Record the destination you say, only from your tap on "Say a destination" until the next tap (at most 15 s) | Sent to the Whisper server you set up; not stored, not kept in memory after the answer |
 | `location` | Find the stops near you, and the next stop while riding | Not stored, not logged, not sent anywhere else |
 | `network` (`https://api.transitous.org`) | Load stops, departures, connections and place search | Only the service you selected is contacted |
 
@@ -41,7 +41,7 @@ glasses); the simulator is more lenient.
 |---|---|---|
 | **Transitous** (`api.transitous.org`, default) — a non-profit, provider-neutral MOTIS instance | A small map area (bounding box) around your position; then stop ids and trip ids. For route planning: the search text of a place, and the coordinates of your position and of the destination | Finding stops, loading departures, following a ride, searching a place, planning a route and refreshing its times |
 | **OpenStreetMap routing server of FOSSGIS e.V.** (`valhalla1.openstreetmap.de`, or your own Valhalla) | The coordinates of the start and end of each walk of a guided journey; again from your position when you leave the route | Only while a guide is running |
-| **Your own Whisper server** (optional, speech to text; there is no default in the public build) | The recording (WAV, up to 8 s) of what you say, language code | Only when you hold the touchpad on the destinations page |
+| **Your own Whisper server** (optional, speech to text; there is no default in the public build) | The recording (WAV, up to 15 s) of what you say, language code | Only after you tap "Say a destination" on the glasses, until the next tap |
 | **Your own MOTIS server** (optional) | The same, instead of Transitous | Only if you enter its address |
 | **ÖBB** (`fahrplan.oebb.at`, optional) via your own proxy (`examples/oebb-cors-proxy.mjs`) | Your coordinates (search ring of 1.5 km), stop and journey ids | Only if you select ÖBB and run the proxy |
 

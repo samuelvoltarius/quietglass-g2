@@ -3,7 +3,7 @@ import geocodeAnswer from "./fixtures/geocode-salzburg.json";
 import { resetGestureDedupe } from "../src/input/gestures";
 import { PLACES_KEY, serializePlaces } from "../src/route/places";
 import { buildWav } from "../src/audio/wav";
-import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, sttEndpoint, transcribe } from "../src/voice/stt";
+import { MAX_VOICE_MS, MIN_TAP_STOP_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, sttEndpoint, transcribe } from "../src/voice/stt";
 import { voiceView } from "../src/route/view";
 import { menuFor } from "../src/route/menu";
 
@@ -94,8 +94,8 @@ describe("the voice page", () => {
   it("shows the recording, the work, the hits and the errors", () => {
     expect(voiceView({ phase: "recording" }, NOW, "de")).toEqual({
       header: "NEXTSTOP · Spracheingabe · 14:29",
-      body: ["● Aufnahme …", "loslassen = fertig", "", "Sag das Ziel, z. B. „Hauptbahnhof“."],
-      footer: "Halten = sprechen · 2× = zurück",
+      body: ["● Aufnahme …", "Tippen, wenn du fertig bist (max. 15 s)", "", "Sag das Ziel, z. B. „Hauptbahnhof“."],
+      footer: "Tippen = fertig · 2× = zurück",
     });
     expect(voiceView({ phase: "working" }, NOW, "de").body).toEqual(["Verstehe …"]);
     const results = voiceView({
@@ -110,13 +110,17 @@ describe("the voice page", () => {
       "  Salzburg Hauptbahnhof", "  5020 Salzburg, AT",
       "> B+R Salzburg Hauptbahnhof", "  5020 Salzburg, AT",
     ]);
-    expect(voiceView({ phase: "error", error: "Zu kurz", hint: "Halte den Touchpad." }, NOW, "de").body).toEqual(["Zu kurz", "", "Halte den Touchpad."]);
+    const short = voiceView({ phase: "error", error: "Zu kurz", hint: "Tippen, das Ziel sagen, dann nochmal tippen.", retry: true }, NOW, "de");
+    expect(short.body).toEqual(["Zu kurz", "", "Tippen, das Ziel sagen, dann nochmal tippen."]);
+    expect(short.footer).toBe("Tippen = nochmal · 2× = zurück");
+    // Without a speech server another recording cannot help: the tap only goes back.
+    expect(voiceView({ phase: "error", error: "x", hint: "y", retry: false }, NOW, "de").footer).toBe("Tippen = zurück · 2× = zurück");
   });
 
   it("has a menu to keep the hit as a favourite", () => {
     expect(menuFor("voice", "de").items.map((item) => item.label)).toEqual(["Als Favorit merken", "Ziele", "Hilfe"]);
     expect(MIN_VOICE_BYTES).toBe(12800);
-    expect(MAX_VOICE_MS).toBe(30_000);
+    expect(MAX_VOICE_MS).toBe(15_000);
   });
 });
 
@@ -165,6 +169,7 @@ function fakeBridge(stored: Record<string, string> = {}, micGranted = true): Fak
 const LONG_PRESS = 9;
 const LONG_PRESS_RELEASE = 10;
 const CLICK = 0;
+const SWIPE_DOWN = 2;
 const DOUBLE = 3;
 const HOME = { favorites: [{ id: "h", name: "Heim", lat: 47.796, lon: 13.016 }], now: null };
 
@@ -198,7 +203,107 @@ describe("saying a destination", () => {
     await vi.waitFor(() => expect(fake.ready()).toBe(true));
   }
 
-  it("demo: hold, release, a heard text and up to three hits, then connections", async () => {
+  const STT_SETTINGS = JSON.stringify({ backend: "motis", motisUrl: "https://api.transitous.org", sttUrl: "https://stt.test:8457", refreshSeconds: 30 });
+  const sttServer = async (url: string): Promise<Response> => {
+    if (url.includes("/v1/audio/transcriptions")) return new Response(JSON.stringify({ text: "Hauptbahnhof Salzburg" }), { status: 200 });
+    if (url.includes("/api/v1/geocode")) return new Response(JSON.stringify(geocodeAnswer), { status: 200 });
+    return new Response("[]", { status: 200 });
+  };
+  /** From the start page by temple gestures only: swipe to "Ziel per Sprache", tap. */
+  const startByTap = async (fake: Fake): Promise<void> => {
+    await vi.waitFor(() => expect(fake.state.body).toContain("Ziel per Sprache"));
+    expect(fake.state.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("● Ziel per Sprache"));
+    fake.gesture(CLICK);
+  };
+  const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("temple only: \"Ziel per Sprache\" on the start page, a tap starts, its echo is ignored, the next tap sends", async () => {
+    const fake = fakeBridge({ "quietglass.nextstop.v1": STT_SETTINGS, [PLACES_KEY]: serializePlaces(HOME) });
+    await boot(fake, "", sttServer);
+    await startByTap(fake);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+    await vi.waitFor(() => expect(fake.state.body).toContain("● Aufnahme …"));
+    expect(fake.state.body).toContain("Tippen, wenn du fertig bist (max. 15 s)");
+    expect(fake.state.footer).toBe("Tippen = fertig · 2× = zurück");
+    // A duplicate of the starting tap (the firmware sends them) must not end the recording at once.
+    fake.gesture(CLICK);
+    await pause(50);
+    expect(fake.state.mic).toEqual([true]);
+    expect(fake.state.body).toContain("● Aufnahme …");
+    fake.send({ audioEvent: { audioPcm: new Uint8Array(32000) } });
+    await pause(MIN_TAP_STOP_MS + 50);
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Verstanden: Hauptbahnhof Salzburg"));
+    expect(fake.state.mic).toEqual([true, false]);
+    expect(fake.state.body).toContain("> Salzburg Hauptbahnhof");
+    expect(fake.state.footer).not.toMatch(/Halten|Hold/);
+  });
+
+  it("a recording nobody ends stops by itself after MAX_VOICE_MS and is sent", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fake = fakeBridge({ "quietglass.nextstop.v1": STT_SETTINGS, [PLACES_KEY]: serializePlaces(HOME) });
+      await boot(fake, "", sttServer);
+      await startByTap(fake);
+      await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+      fake.send({ audioEvent: { audioPcm: new Uint8Array(32000) } });
+      await vi.advanceTimersByTimeAsync(MAX_VOICE_MS - 1000);
+      expect(fake.state.mic).toEqual([true]);
+      await vi.advanceTimersByTimeAsync(1500);
+      await vi.waitFor(() => expect(fake.state.mic).toEqual([true, false]));
+      await vi.waitFor(() => expect(fake.state.body).toContain("Verstanden: Hauptbahnhof Salzburg"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a tap on a failed recording tries again; without a speech server the tap only goes back", async () => {
+    const fake = fakeBridge({ "quietglass.nextstop.v1": STT_SETTINGS });
+    await boot(fake, "", sttServer);
+    await startByTap(fake);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+    fake.send({ audioEvent: { audioPcm: new Uint8Array(100) } });
+    await pause(MIN_TAP_STOP_MS + 50);
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Zu kurz"));
+    expect(fake.state.body).toContain("Tippen, das Ziel sagen, dann nochmal tippen.");
+    expect(fake.state.footer).toBe("Tippen = nochmal · 2× = zurück");
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true, false, true]));
+    await vi.waitFor(() => expect(fake.state.body).toContain("● Aufnahme …"));
+    fake.gesture(DOUBLE); // 2× in the recording: the goal list, the microphone off
+    await vi.waitFor(() => expect(fake.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
+    expect(fake.state.mic.at(-1)).toBe(false);
+
+    vi.stubEnv("VITE_STT_URL", "");
+    const none = fakeBridge();
+    await boot(none, "", sttServer);
+    await startByTap(none);
+    await vi.waitFor(() => expect(none.state.body).toContain("Spracheingabe braucht einen eigenen Whisper-Server"));
+    expect(none.state.footer).toBe("Tippen = zurück · 2× = zurück");
+    none.gesture(CLICK);
+    await vi.waitFor(() => expect(none.state.header).toMatch(/^NEXTSTOP · Wohin\?/));
+    expect(none.state.mic).toEqual([]);
+  });
+
+  it("an empty goal list offers the spoken destination on a tap", async () => {
+    const fake = fakeBridge({ "quietglass.nextstop.v1": STT_SETTINGS });
+    await boot(fake, "", sttServer);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Ziele und Route"));
+    fake.gesture(SWIPE_DOWN);
+    fake.gesture(SWIPE_DOWN);
+    await vi.waitFor(() => expect(fake.state.body).toContain("● Ziele und Route"));
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.body).toContain("Noch keine Ziele."));
+    expect(fake.state.footer).toBe("Tippen = sprechen · 2× = zurück");
+    fake.gesture(CLICK);
+    await vi.waitFor(() => expect(fake.state.mic).toEqual([true]));
+    await vi.waitFor(() => expect(fake.state.body).toContain("● Aufnahme …"));
+  });
+
+  it("ring extra: hold, release, a heard text and up to three hits, then connections (demo)", async () => {
     const fake = fakeBridge();
     await boot(fake, "?demo=1&lang=de", () => Promise.reject(new Error("no network in the demo")));
     fake.menu(1);

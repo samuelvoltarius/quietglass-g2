@@ -60,7 +60,7 @@ export interface CockpitInput {
   readonly locale: Locale;
   readonly now: number;
   readonly micError?: boolean;
-  /** `reset` = a hold asked to clear today's dose, `stop` = a tap asked to stop measuring. */
+  /** `reset` = a swipe asked to clear today's dose, `stop` = a tap asked to stop measuring. */
   readonly armed?: "reset" | "stop" | null;
 }
 
@@ -108,9 +108,9 @@ export function hintLine(input: CockpitInput): string {
   const x = (key: string): string => t(locale, key);
   if (input.armed === "reset") return armedFooter(locale, x(input.listening ? "g.f.clear" : "g.f.clearDose"), input.listening);
   if (input.armed === "stop") return armedFooter(locale, x("g.f.stopAct"), input.listening);
-  if (input.listening) return micFooter(locale, { tap: x("g.f.stop"), hold: x("g.f.reset") }, "exit");
+  if (input.listening) return micFooter(locale, { tap: x("g.f.stop"), swipe: x("g.f.reset") }, "exit");
   if (input.micError) return footer(locale, { tap: x("g.f.retry") }, "exit");
-  return footer(locale, { tap: x("g.f.measure"), hold: x("g.f.clearDose") }, "exit");
+  return footer(locale, { tap: x("g.f.measure"), swipe: x("g.f.clearDose") }, "exit");
 }
 
 export function cockpitCells(input: CockpitInput): CockpitCell[] {

@@ -15,8 +15,8 @@
 >    auf „Checkliste hinzufügen“ tippen, dann oben auswählen.
 >
 > Wischen = bei einer Frage Antwort markieren, sonst ↑ Schritt zurück / ↓ Optionales
-> auslassen (erst vormerken, dann nochmal tippen) · Halten = Info zum Schritt, sonst
-> Hilfe · 2× = beenden.
+> auslassen (erst vormerken, dann nochmal tippen) · 2× = beenden.
+> Zusatzinfo zu einem Schritt steht direkt darunter, ganz ohne Geste.
 > Am Ende fragt ein Tippen nach, ob die Liste neu startet (nochmal tippen).
 
 One step at a time, in your field of view, advanced with a single tap. For when
@@ -67,7 +67,7 @@ lane: a slow transfer never holds up the step text.
 | **Critical steps ask twice** | A step marked `(!)` requires a second tap. It is the only place in the app that costs two taps — and only where getting it wrong is expensive. |
 | **Branching** | A step can offer choices that jump elsewhere in the list. Going *back* returns where you actually came from, not to the previous line. |
 | **Optional steps** | Marked steps can be skipped: a swipe down asks, a second tap skips (a swipe, 2× or 4 s cancel); they do not count against your progress. |
-| **Detail on demand** | Holding shows a step's fine print while held. Nothing is committed by looking. |
+| **Detail in view** | A step's fine print stands right below it, no gesture needed. |
 | **Shareable packs** | Export any checklist as a JSON pack and send it to anyone. No account, no server. |
 
 ## Controls
@@ -76,9 +76,11 @@ lane: a slow transfer never holds up the step text.
 |---|---|
 | **Tap** | Step done · confirm a critical step · take the highlighted branch |
 | **Swipe** | Moves the highlight on a question. Otherwise up = ask to go a step back, down = ask to skip an optional step; nothing happens until you tap again (swipe / 2× / 4 s = cancel) |
-| **Hold** | Shows the step's extra info while held; on a step without extra info (and on the empty and finished screens) it opens the help |
 | **2×** | Leave FlowList (cancels an open question first; in the help: back) |
 | **Tap on the summary** | Ask to start the same list again; tap again = start over |
+
+Everything works with tap, swipe and 2×. A hold reaches the app only from the optional R1 ring
+(on the temple the glasses open their system menu); there it opens the help as an extra.
 
 On a branching step **both swipes move between the options**. The **R1 ring**
 works exactly like the temple pads.

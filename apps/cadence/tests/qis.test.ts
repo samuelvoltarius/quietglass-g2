@@ -11,16 +11,17 @@ import type { Locale } from "../src/i18n";
 
 const LOCALES: readonly Locale[] = ["de", "en"];
 const WORDS = {
-  de: ["Tippen", "Wischen", "Halten", "2×"],
-  en: ["Tap", "Swipe", "Hold", "2×"],
+  de: ["Tippen", "Wischen", "2×"],
+  en: ["Tap", "Swipe", "2×"],
 } as const;
-const BANNED = { de: /\b(Tap|Wisch|Doppeltipp)\b|2x/, en: /2x/ } as const;
+// A hold never reaches the app from the temple pad (step log 21.10.2026): no glasses text may offer one.
+const BANNED = { de: /\b(Tap|Wisch|Doppeltipp|Halten|halten)\b|2x/, en: /\b(Hold|hold)\b|2x/ } as const;
 const WORDS_OF_STATE: readonly RunWord[] = ["ready", "paused", "running", "armed"];
 
 describe("hint lines follow QIS v1", () => {
   for (const locale of LOCALES) {
     it(`orders the gestures, keeps the glossary and fits the row (${locale})`, () => {
-      const [tap, swipe, hold, double] = WORDS[locale];
+      const [tap, swipe, double] = WORDS[locale];
       for (const word of WORDS_OF_STATE) {
         const row = cockpitHint(locale, word);
         expect(row.length, `${word}: ${row}`).toBeLessThanOrEqual(ROW_WIDTH);
@@ -29,7 +30,7 @@ describe("hint lines follow QIS v1", () => {
           expect(row).toBe(locale === "de" ? "Nochmal tippen = pausieren · Wischen/2× = abbrechen" : "Tap again = pause · Swipe/2× = cancel");
           continue;
         }
-        const at = [tap, swipe, hold, double].map((w) => row.indexOf(w + " =")).filter((index) => index >= 0);
+        const at = [tap, swipe, double].map((w) => row.indexOf(w + " =")).filter((index) => index >= 0);
         expect(at, `${word}: ${row}`).toEqual([...at].sort((a, b) => a - b));
         expect(row, word).toMatch(locale === "de" ? /2× = Ende$/ : /2× = exit$/);
       }
@@ -37,7 +38,7 @@ describe("hint lines follow QIS v1", () => {
   }
 
   it("drops the swipe part first when a row would be too wide, never the 2× part", () => {
-    const wide = footer("de", { tap: "Pause", swipe: "Tempo", hold: "Takt eins zurück" }, "exit");
+    const wide = footer("de", { tap: "Pause und von vorne ab Takt eins", swipe: "Tempo" }, "exit");
     expect(wide.length).toBeLessThanOrEqual(ROW_WIDTH);
     expect(wide).not.toContain("Wischen");
     expect(wide).toMatch(/2× = Ende$/);
@@ -52,9 +53,10 @@ describe("hint lines follow QIS v1", () => {
     }
   });
 
-  it("the stopped hint offers no hold (the help lives on the phone); the running one restarts the bar count", () => {
+  it("no hint offers a hold (the temple pad never delivers one); running shows tap, swipe and 2×", () => {
     expect(cockpitHint("de", "ready")).toBe("Tippen = Start · Wischen = Tempo · 2× = Ende");
-    expect(cockpitHint("de", "running")).toBe("Tippen = Pause · Halten = Takt 1 · 2× = Ende");
+    expect(cockpitHint("de", "running")).toBe("Tippen = Pause · Wischen = Tempo · 2× = Ende");
+    expect(cockpitHint("en", "running")).toBe("Tap = pause · Swipe = tempo · 2× = exit");
   });
 
   it("the headline carries the state word", () => {

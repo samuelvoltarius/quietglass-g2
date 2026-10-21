@@ -15,7 +15,7 @@ import type { CockpitModel, GaugeGraphic } from "./model";
  *   │   12°  NACH VORNE        │ │ HINWEIS IN GEHALTEN SENSOR   │
  *   │ Gespeichert              │ │                              │
  *   ├──────────────────────────┴─┴──────────────────────────────┤
- *   │ Tippen = neu speichern · Halten = Menü · 2× = Ende          │
+ *   │ Tippen = neu speichern · Wischen = Menü · 2× = Ende         │
  *   └───────────────────────────────────────────────────────────┘
  */
 

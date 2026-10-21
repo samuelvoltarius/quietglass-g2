@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.3] — 2026-10-21
+
+### Geändert (Halten kommt am Bügel nie an)
+
+- **Zusatzinfo steht jetzt direkt unter dem Schritt**, ganz ohne Geste. Bisher musste man halten – auf der echten Brille kommt Halten aber nur vom optionalen R1-Ring an; am Bügel öffnet es das Systemmenü (Schrittprotokoll 21.10.2026). Store-Prüfer haben keinen Ring. Die Vorschau auf den nächsten Schritt folgt darunter, wenn Platz ist.
+- **Brille bietet „Halten“ nirgends mehr an**: keine Fußzeile, keine Hilfezeile. Die Hilfe-Zeile `Halten = …` heißt jetzt `Zusatzinfo steht direkt unter dem Schritt`.
+- Fußzeile im Ablauf nennt Wischen nur, wo es etwas tut: `Wischen = zurück` ab dem zweiten Schritt, `auslassen` bei optionalen Schritten, `zurück/auslassen` bei beidem; am ersten normalen Schritt `0:00 · Tippen = erledigt · 2× = zurück`.
+- Die Hilfe auf der Brille bleibt ein Ring-Extra (Halten am R1) und wiederholt nur die Gesten-Tabelle am Handy. Handy-Tabelle: `Halten (nur R1-Ring)` = optional Hilfe.
+- Store-Text ohne „Hold = menu“ / „halten = Zusatzinfo“.
+- Beenden-Dialog unverändert.
+
 ## [0.6.0] — 2026-10-20
 
 ### Geändert (Quietglass UI-Standard QUS v1, „keine Textwand“)

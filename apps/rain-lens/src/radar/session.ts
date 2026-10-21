@@ -147,8 +147,8 @@ export function createRadarSession(deps: RadarDeps): RadarSession {
     frameIndex: () => (data ? frameAt(tick, data.frames.length) : 0),
     text() {
       const title = deps.t("radar");
-      // QIS v1: the credit stays; a full-screen picture keeps the footer short (swipe, then hold, drop first).
-      const footer = qisFooter(deps.locale() as Locale, { tap: deps.t("fRefresh"), swipe: deps.t("fView"), hold: deps.t("fHelp") }, "exit", deps.t("radarCredit"));
+      // QIS v1: the credit stays; a full-screen picture keeps the footer short (the swipe drops first).
+      const footer = qisFooter(deps.locale() as Locale, { tap: deps.t("fRefresh"), swipe: deps.t("fView") }, "exit", deps.t("radarCredit"));
       const position = data?.position ?? deps.position();
       const place = placeLabel(position);
       // `RAINLENS · RADAR  place  time dots`; the place goes first when the row would be too wide.

@@ -15,6 +15,9 @@ import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type PhoneLive, type PhoneUi } from "./ui/phone";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
 import { createExitRequest, settleRestore } from "./exit";
+import { diag, diagCount, diagOn, diagSkip, startDiag } from "./diag/diag";
+import { traceBridge } from "./diag/bridge";
+import { VERSION } from "./version";
 
 /** The glasses' side menu (QIS v1.2). Off: its clicks do not arrive on current firmware and a hold opens it instead of reaching the app (step log 15.10.2026). */
 export const SIDE_MENU = false;
@@ -25,7 +28,9 @@ const BPM_STEP = 4;
 const HEARTBEAT_MS = 30_000;
 
 async function boot(): Promise<void> {
-  const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  // Private step log (VITE_TRAFFIC_URL, tailnet only): calls, results and events. Store builds: off, no URL in the bundle.
+  startDiag((import.meta as { env?: Record<string, string | undefined> }).env?.["VITE_TRAFFIC_URL"] ?? "", VERSION);
+  const bridge: EvenAppBridge = traceBridge(await waitForEvenAppBridge());
 
   let data: CadenceData = await load(bridge);
   let state: MetronomeState = createState();
@@ -77,15 +82,23 @@ async function boot(): Promise<void> {
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
   /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
-  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !paused));
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => {
+    const allowed = !exitAsked() && !closed && !paused;
+    if (!allowed) diagCount("tileRefused:" + (exitAsked() ? "exitAsked" : closed ? "closed" : "paused"));
+    return allowed;
+  }));
+  /** The flags that decide whether anything is drawn, for the step log. */
+  const flags = (): Record<string, boolean> => ({ pageReady, paused, closed, exitAsked: exitAsked() });
 
   const drawOnce = async (): Promise<void> => {
-    if (exitAsked()) return;
-    if (closed || paused) return;
+    if (exitAsked()) { diagSkip("exitAsked"); return; }
+    if (closed || paused) { diagSkip(closed ? "closed" : "paused"); return; }
+    diagSkip(null);
     const model = currentModel();
     if (!pageReady) {
       const result = await createCockpitPage(bridge);
-      if (closed) return;
+      diag("createCockpitPage", { ok: result.ok, reason: result.reason ?? null, ...flags() });
+      if (closed) { diagSkip("closed", { after: "createCockpitPage" }); return; }
       if (!result.ok) { console.warn("[cadence] draw failed:", result.reason); return; }
       pageReady = true;
       // A new page starts with blank images.
@@ -102,7 +115,7 @@ async function boot(): Promise<void> {
    * recorded as the last one shown. A request during a write redraws once after.
    */
   const draw = (): Promise<void> => {
-    if (exitAsked()) return Promise.resolve();
+    if (exitAsked()) { diagSkip("exitAsked", { in: "draw" }); return Promise.resolve(); }
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -213,19 +226,38 @@ async function boot(): Promise<void> {
     onBack: () => {
       // The dialog took the page away. On the next input put it up again the way of the first one,
       // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
+      diag("onBack", { phase: "start", ...flags() });
       if (closed) return;
       pageReady = false;
       forgetPage(bridge);
-      return draw();
+      const restored = draw();
+      if (diagOn()) {
+        restored.then(
+          () => diag("onBack", { phase: "end", ...flags() }),
+          (error: unknown) => diag("onBack", { phase: "fail", error: String(error), ...flags() }),
+        );
+      }
+      return restored;
     },
   }, "cadence");
   exitAsked = requestExit.asked;
+  /** Every ask for the exit dialog goes through here, so the step log sees it. */
+  const askExit = (via: string): Promise<void> => {
+    diag("exitAsk", { via, ...flags() });
+    const asked = requestExit();
+    if (diagOn()) void asked.then(() => diag("exitAskDone", { via, ...flags() }));
+    return asked;
+  };
 
   await draw();
 
-  /** Starts or stops the beat (glasses tap after the arm step, or the phone's button). */
+  /**
+   * Starts or stops the beat (glasses tap after the arm step, or the phone's button).
+   * Starting after a pause begins at bar 1 again ("from the top"): that used to need a hold,
+   * which the temple pad never delivers (step log 21.10.2026, only the optional R1 ring does).
+   */
   const togglePlay = (now: number): void => {
-    state = toggle(state, data.settings, now);
+    state = state.running ? toggle(state, data.settings, now) : toggle(restartCount(state, now), data.settings, now);
     if (state.running) sessionStartedAt = sessionStartedAt ?? now;
     else endSession();
     persistRun();
@@ -235,8 +267,10 @@ async function boot(): Promise<void> {
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
-    if (requestExit.onLifecycle(event) !== null) return;
+    const dialog = requestExit.onLifecycle(event);
+    if (dialog !== null) { diag(dialog, flags()); return; }
     const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle !== null) diag("lifecycle", { step: lifecycle, ...flags() });
     if (lifecycle !== "background" && lifecycle !== "exit") requestExit.back();
     if (lifecycle === "foreground") { paused = true; resume(); return; }
     if (lifecycle === "background") { persistRun(); paused = true; disarm(); stopTimers(); return; }
@@ -265,7 +299,7 @@ async function boot(): Promise<void> {
     if (!gesture) return;
 
     // Anything but the confirming tap cancels a pending pause: a swipe never changes
-    // the tempo then, a hold never restarts the count, and a double tap goes back, not out.
+    // the tempo then, a ring hold never restarts the count, and a double tap goes back, not out.
     if (gesture.gesture !== "click" && isArmed()) {
       disarm();
       void draw();
@@ -299,9 +333,10 @@ async function boot(): Promise<void> {
         scheduleBeat();
         break;
       case "longPress":
-        // Stopped: nothing (the help lives on the phone).
+        // Only the optional R1 ring delivers a hold (the temple pad opens the system menu instead), so this
+        // is an extra, never the only way: the same "from the top" happens on every start after a pause.
+        // Stopped: nothing. Running: bar 1 again, the beat keeps running.
         if (!state.running) return;
-        // Running: from the top: bar 1 again, a running beat keeps running.
         state = restartCount(state, Date.now());
         persistRun();
         scheduleBeat();
@@ -309,8 +344,8 @@ async function boot(): Promise<void> {
       case "doubleClick":
         // Back one level; on the main screen it leaves: system exit dialog, the beat keeps running until the user confirms. It never pauses.
         // Coming back from the background with this very 2x: ask only after the restore draw (a dialog call while the page is being created is lost).
-        if (wasPaused) void settleRestore(draw()).then(() => requestExit());
-        else void requestExit();
+        if (wasPaused) void settleRestore(draw()).then(() => askExit("doubleClickPaused"));
+        else void askExit("doubleClick");
         return;
       default:
         return;

@@ -36,7 +36,9 @@ const journeyOf = (locale: Locale): Journey => demoJourneys(recorded, T0, HOME, 
 
 // ---- footers, headers, glossary on every view --------------------------------------------
 
-const ORDER: Record<Locale, string[]> = { de: ["Tippen", "Wischen", "Halten", "2×"], en: ["Tap", "Swipe", "Hold", "2×"] };
+// No "Halten/Hold": a hold on the temple touchpad never reaches the app (only the R1 ring delivers it).
+const ORDER: Record<Locale, string[]> = { de: ["Tippen", "Wischen", "2×"], en: ["Tap", "Swipe", "2×"] };
+const HOLD_WORD = /\bhalten\b|\bhold\b|loslassen|\brelease\b/i;
 const RETIRED: Record<Locale, RegExp> = {
   de: /\bTap\b|\bWisch\b|\b2x\b|Doppeltipp|doppeltipp/,
   en: /\b2x\b|Doppeltipp|double-tap/i,
@@ -139,12 +141,13 @@ function views(locale: Locale): Named[] {
 
 describe("QIS footers, headers and glossary", () => {
   for (const locale of ["de", "en"] as const) {
-    it(`${locale}: every footer is one row wide, in the order Tippen, Wischen, Halten, 2× and ends in 2× = back/exit`, () => {
+    it(`${locale}: every footer is one row wide, in the order Tippen, Wischen, 2×, ends in 2× = back/exit and never offers a hold`, () => {
       const all = views(locale);
       expect(all.length).toBeGreaterThan(40);
       for (const view of all) {
         const label = `${view.name}: ${view.footer}`;
         expect(view.footer.length, label).toBeLessThanOrEqual(view.limit);
+        expect(view.footer, label).not.toMatch(HOLD_WORD);
         const parts = view.footer.split(" · ");
         const last = parts.at(-1) ?? "";
         if (view.end === "armed") {
@@ -157,7 +160,7 @@ describe("QIS footers, headers and glossary", () => {
         const index = parts.map((part) => words.findIndex((w) => part.startsWith(`${w} =`)));
         const used = index.filter((i) => i >= 0);
         expect(used, label).toEqual([...used].sort((a, b) => a - b));
-        expect(index.at(-1), label).toBe(3);
+        expect(index.at(-1), label).toBe(2);
         expect(view.footer, label).not.toMatch(RETIRED[locale]);
       }
     });
@@ -172,10 +175,12 @@ describe("QIS footers, headers and glossary", () => {
     });
   }
 
-  it("the shared builder drops the swipe, then the lead, then the hold - never the 2×", () => {
-    expect(footer("de", { tap: "folgen", swipe: "wählen", hold: "Ziel" }, "exit", "1/4")).toBe("1/4 · Tippen = folgen · Halten = Ziel · 2× = Ende");
+  it("the shared builder drops the swipe, then the lead - never the 2×", () => {
+    expect(footer("de", { tap: "los", swipe: "wählen" }, "exit", "1/4")).toBe("1/4 · Tippen = los · Wischen = wählen · 2× = Ende");
+    expect(footer("de", { tap: "folgen", swipe: "wählen" }, "exit", "1/4")).toBe("1/4 · Tippen = folgen · 2× = Ende");
     expect(footer("en", { tap: "go", swipe: "select" }, "back", "2/4")).toBe("2/4 · Tap = go · Swipe = select · 2× = back");
-    expect(footer("de", { tap: "x".repeat(8), hold: "y".repeat(6) }, "exit", "1/4")).toBe(`Tippen = ${"x".repeat(8)} · Halten = ${"y".repeat(6)} · 2× = Ende`);
+    expect(footer("de", { tap: "x".repeat(20), swipe: "y".repeat(10) }, "exit", "1/4")).toBe(`1/4 · Tippen = ${"x".repeat(20)} · 2× = Ende`);
+    expect(footer("de", { tap: "x".repeat(28), swipe: "y".repeat(10) }, "exit", "1/4")).toBe(`Tippen = ${"x".repeat(28)} · 2× = Ende`);
     expect(footer("de", { tap: "x".repeat(60) }, "back").endsWith("2× = zurück")).toBe(true);
     expect(footer("de", { tap: "x".repeat(60) }, "back").length).toBeLessThanOrEqual(ROW_WIDTH);
   });
@@ -185,6 +190,15 @@ describe("QIS footers, headers and glossary", () => {
     expect(armedFooter("en", "end")).toBe("Tap again = end · Swipe/2× = cancel");
     expect(armedFooter("de", "neu suchen").endsWith("2× = abbrechen")).toBe(true);
     expect(armedFooter("de", "x".repeat(80)).length).toBeLessThanOrEqual(ROW_WIDTH);
+  });
+
+  it("no glasses string offers a hold or a release (the temple never delivers one; the ring is only an extra)", () => {
+    for (const locale of ["de", "en"] as const) {
+      for (const [key, value] of Object.entries(messages[locale] ?? {})) {
+        if (key.startsWith("p.")) continue; // the phone page may name the ring's hold as an extra
+        expect(value, `${locale} ${key}`).not.toMatch(HOLD_WORD);
+      }
+    }
   });
 
   it("no German glasses string uses the retired words", () => {

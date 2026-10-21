@@ -27,7 +27,8 @@ import { parseUi, UI_KEY, type SavedUi, type Screen } from "./ui-state";
 /**
  * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses, and while a page
  * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it a swipe
- * arms "step back" / "skip" and the hold shows the step info or opens the help.
+ * arms "step back" / "skip"; the step's detail is always on the page. A hold reaches the app only from the
+ * optional R1 ring (on the temple it opens the system menu, 21.10.2026): it opens the help as an extra.
  */
 const SIDE_MENU = false;
 
@@ -38,7 +39,7 @@ const COCKPIT_RETRY_MS = 15_000;
 const CLOCK_MS = 1000;
 /** An armed action (skip, start over, confirm) is cancelled after this long without input (QIS v1, section 2). */
 export const ARM_MS = 4000;
-/** A tap this soon after the help opened is the end of the hold itself and does not close it. */
+/** A tap this soon after the help opened is the end of the (ring) hold itself and does not close it. */
 const HELP_GUARD_MS = 400;
 
 async function boot(): Promise<void> {
@@ -51,7 +52,6 @@ async function boot(): Promise<void> {
   // After the phone was locked for a while the Even app starts FlowList anew;
   // the run continues at the step where it was left.
   let state: RunState = restoreRun(await loadRun(bridge), list) ?? startRun(list);
-  let showDetail = false;
 
   let screen: Screen = "start";
   let startCursor = 0;
@@ -103,7 +103,6 @@ async function boot(): Promise<void> {
   const currentView = (): FlowView =>
     buildView(list, state, {
       showNext: data.settings.showNext,
-      showDetail,
       lineWidth: data.settings.lineWidth,
       locale,
       armed,
@@ -264,7 +263,6 @@ async function boot(): Promise<void> {
   const restart = (): void => {
     list = activeList(data) ?? EMPTY_CHECKLIST;
     state = startRun(list);
-    showDetail = false;
     armed = null;
     lastView = null;
     persistRun();
@@ -347,23 +345,21 @@ async function boot(): Promise<void> {
   /** Moves to another screen on the glasses and remembers it. */
   const go = (next: Screen): void => {
     screen = next;
-    if (next !== "run") { helpOpen = false; showDetail = false; }
+    if (next !== "run") helpOpen = false;
     saveUi();
     phone?.refreshLive();
   };
   const enterRun = (): void => {
     helpOpen = false;
-    showDetail = false;
     go("run");
   };
 
   /** Applies what a gesture or a menu click decided. */
-  const applyResult = (result: DispatchResult, now: number, clearDetail: boolean): void => {
+  const applyResult = (result: DispatchResult, now: number): void => {
     const wasConfirming = state.awaitingConfirm;
     const changed = result.state !== state;
     if (changed) { state = result.state; persistRun(); }
     if (state.awaitingConfirm && !wasConfirming) armedAt = now;
-    if (clearDetail && changed) showDetail = false;
 
     for (const effect of result.effects) {
       if (effect.kind === "exit") {
@@ -373,7 +369,6 @@ async function boot(): Promise<void> {
         void draw();
         return;
       }
-      if (effect.kind === "showDetail") showDetail = effect.on;
       if (effect.kind === "arm") { armed = effect.action; armedAt = now; }
       if (effect.kind === "help") { helpOpen = true; helpOpenedAt = now; }
     }
@@ -468,7 +463,7 @@ async function boot(): Promise<void> {
       const now = Date.now();
       expireArm(now);
       if (helpOpen) return;
-      applyResult(dispatchMenu(list, state, menuId, armed), now, menuId !== MENU.info);
+      applyResult(dispatchMenu(list, state, menuId, armed), now);
       return;
     }
 
@@ -483,7 +478,7 @@ async function boot(): Promise<void> {
     if (screen === "cockpit") { onCockpit(gesture.gesture); return; }
     if (screen === "tasks") { onTasks(gesture.gesture); return; }
 
-    // The help page is a subpage: tap, hold or 2× go back; swipes change nothing there.
+    // The help page (R1-ring extra) is a subpage: tap, hold or 2× go back; swipes change nothing there.
     if (helpOpen) {
       const justOpened = now - helpOpenedAt < HELP_GUARD_MS;
       if (gesture.gesture === "doubleClick" || gesture.gesture === "longPress" || (gesture.gesture === "click" && !justOpened)) {
@@ -493,9 +488,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // The info pinned from the menu goes with the next gesture; a hold shows it by itself.
-    if (gesture.gesture !== "longPress" && gesture.gesture !== "longPressRelease") showDetail = false;
-    applyResult(dispatch(list, state, gesture.gesture, armed, SIDE_MENU), now, true);
+    applyResult(dispatch(list, state, gesture.gesture, armed, SIDE_MENU), now);
   });
 
   // The page does not survive a disconnect. The last view is forgotten too,

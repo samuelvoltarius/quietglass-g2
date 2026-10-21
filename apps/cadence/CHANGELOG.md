@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.5] — 2026-10-21
+
+Schrittprotokoll für die Store-Ablehnung „nach 2× und Nein verschwindet die Seite“ (nur private Builds mit `VITE_TRAFFIC_URL`; Store-Build: aus, keine URL im Bundle). Keine Verhaltensänderung.
+
+- `src/diag/` (aus Klipper): jedes Even-Hub-Ereignis roh (Mikrofon/IMU-Strom gezählt), jeder Seiten-/Bildaufruf mit Dauer und Ergebnis.
+- Marker: Beenden-Frage, Dialog gezeigt/geschlossen, Wiederherstellung (Start/Ende mit Zustand), Lebenszyklus, Seitenaufbau-Ergebnis, übersprungene Zeichnungen mit Grund, vom Wächter abgewiesene Kacheln (gezählt).
+
+## [0.7.3] — 2026-10-21
+
+Nichts mehr nur per Halten (Schrittprotokoll 21.10.2026: Halten am Bügel öffnet das Systemmenü und kommt nie in der App an, nur der optionale R1-Ring liefert es; Store-Prüfer haben keinen Ring).
+
+### Brille
+
+- **„Von vorn bei Takt 1“ ohne Halten:** Wer nach einer Pause wieder startet (Tippen), beginnt jetzt immer bei Takt 1. Die laufende Taktzählung bleibt beim Tempowechsel erhalten wie bisher.
+- **Hinweiszeile ohne Halten:** läuft der Takt `Tippen = Pause · Wischen = Tempo · 2× = Ende`, steht er `Tippen = Start · Wischen = Tempo · 2× = Ende`. Der Fußzeilen-Helfer kennt keinen Halten-Teil mehr, Tests verbieten „Halten/Hold“ in jedem Brillen-Text.
+- R1-Ring halten bleibt als optionales Extra (läuft der Takt: zurück auf Takt 1).
+- Beenden-Dialog unverändert (Abschnitt 1a).
+
+### Handy
+
+- Bedienungstabelle: Tippen erklärt den Neustart bei Takt 1; die Halten-Zeile heißt jetzt „R1-Ring halten (optional)“.
+- Store-Screenshot neu aus dem Cockpit-Renderer (der alte zeigte noch „Hold = help“).
+
 ## [0.7.0] — 2026-10-20
 
 Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.

@@ -96,7 +96,7 @@ function walk(list: Checklist, locale: "de" | "en"): ReturnType<typeof buildView
   for (let guard = 0; guard < 100; guard++) {
     views.push(buildView(list, state, opts, 3_599_000));
     const step = currentStep(list, state);
-    if (step?.detail) views.push(buildView(list, state, { ...opts, showDetail: true }, 0));
+    if (step?.detail) views.push(buildView(list, state, { locale }, 0));
     if (!step) break;
     if (step.kind === "choice") views.push(buildView(list, moveChoice(list, state, 1), opts, 0));
     if (step.kind === "optional") { state = skip(list, state, 1000); continue; }
@@ -130,9 +130,9 @@ describe("glasses copy fits the display", () => {
       const view = buildView(empty, startRun(empty), { locale });
       expect(view.headline).toBe(t(locale, "g.empty.1"));
       expect(view.body.length).toBeGreaterThanOrEqual(1);
-      expect(view.footer).toBe(locale === "de" ? "Halten = Hilfe · 2× = Ende" : "Hold = help · 2× = exit");
+      expect(view.footer).toBe(locale === "de" ? "2× = Ende" : "2× = exit");
       const withMenu = buildView(empty, startRun(empty), { locale, sideMenu: true });
-      expect(withMenu.footer).toBe(locale === "de" ? "Halten = Menü · 2× = Ende" : "Hold = menu · 2× = exit");
+      expect(withMenu.footer).toBe(locale === "de" ? "2× = Ende" : "2× = exit");
     });
   }
 
@@ -148,12 +148,12 @@ describe("glasses copy fits the display", () => {
     expect(view.body[0]).toBe("WICHTIG – nochmal tippen:");
     expect(view.footer).toContain("Nochmal tippen = bestätigen");
     const optional = complete(list, armed, "done", 0);
-    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("0:00 · Tippen = erledigt · Halten = Hilfe · 2× = Ende");
+    expect(buildView(list, optional, { locale: "de" }, 0).footer).toBe("0:00 · Tippen = erledigt · 2× = Ende");
     const done = skip(list, optional, 65_000);
     const finished = buildView(list, done, { locale: "de" }, 65_000);
     expect(finished.headline).toBe("Fertig!");
     expect(finished.body).toContain("1 von 1 erledigt");
-    expect(finished.footer).toBe("Tippen = neu starten · Halten = Hilfe · 2× = Ende");
+    expect(finished.footer).toBe("Tippen = neu starten · Wischen = zurück · 2× = Ende");
   });
 });
 

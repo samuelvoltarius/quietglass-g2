@@ -100,7 +100,7 @@ export class MotisBackend implements TransitBackend {
           // Browsers forbid scripts from setting this header and will drop it
           // silently; there the WebView's own agent is sent, which is fine.
           // It matters for Node, where there may be no agent at all.
-          "User-Agent": "NextStop/0.3 (Quietglass; +https://github.com/samuelvoltarius/quietglass)",
+          "User-Agent": "NextStop (Quietglass)",
         },
         signal: controller.signal,
       });

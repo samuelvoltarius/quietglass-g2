@@ -33,8 +33,9 @@ const DEMO_PERCENT = Number(new URLSearchParams(globalThis.location?.search ?? "
 
 /**
  * The glasses' side menu (QIS v1.2). Off: its clicks never reach the app on the real glasses, and while a page
- * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). Without it the hold
- * opens the help again.
+ * carries a menu the hold opens it instead of reaching the app (step log of 15.10.2026). A hold reaches the app
+ * only from the optional R1 ring (eventSource 2; on the temple it opens the system menu, 21.10.2026): there it
+ * opens the help as an extra. Nothing depends on it: the help repeats the phone's gesture table.
  */
 export const SIDE_MENU = false;
 /** Side menu id (QIS v1.2): Hilfe. The app has no settings of its own on the glasses. */
@@ -397,7 +398,7 @@ async function boot(): Promise<void> {
         requestExit();
         return;
       case "longPress":
-        // Without a side menu the hold opens the help (the HUD has no list to put it in).
+        // R1-ring extra only (a temple hold never arrives): the help. Never named on the glasses.
         if (SIDE_MENU) return;
         screen = "help";
         helpOpenedAt = Date.now();

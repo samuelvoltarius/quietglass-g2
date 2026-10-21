@@ -60,7 +60,7 @@ function fakeBridge(options: { writeDelayMs?: number; micDelayMs?: number; micRe
   };
   return {
     bridge, shutdown, mic, writes, texts, images, storage, pages,
-    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
+    emit: (eventType: number, eventSource = 1) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource } })),
     menu: (itemID: number) => (resetGestureDedupe(), handler?.({ menuItemClickEvent: { itemID } })),
     audio: (amplitude: number) => {
       const pcm = new Uint8Array(320);
@@ -355,7 +355,7 @@ describe("decibelguard loop", () => {
   const savedFraction = (fake: { storage: Map<string, string> }): number =>
     JSON.parse(fake.storage.get("quietglass.decibelguard.today.v1") ?? "{}").fraction ?? 0;
 
-  it("QIS v1: a plain tap, a hold, or two holds never clear today's dose", async () => {
+  it("QIS v1: a plain tap, a swipe, or two swipes never clear today's dose", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
@@ -367,7 +367,7 @@ describe("decibelguard loop", () => {
     const before = savedFraction(fake);
     expect(before).toBeGreaterThan(0);
 
-    fake.emit(9); // hold: only asks
+    fake.emit(1); // swipe: only asks
     await vi.advanceTimersByTimeAsync(50);
     expect(last().hint).toMatch(/Nochmal tippen = (Dosis )?löschen|Tap again = clear/);
     expect(last().headline[1]).toMatch(/LÖSCHEN\?|DOSE\?/);
@@ -376,10 +376,10 @@ describe("decibelguard loop", () => {
     await vi.advanceTimersByTimeAsync(4500);
     expect(last().hint).not.toMatch(/Nochmal tippen|Tap again/);
     expect(savedFraction(fake)).toBe(before);
-    // A second hold while armed cancels instead of confirming.
-    fake.emit(9);
+    // A second swipe while armed cancels instead of confirming.
+    fake.emit(2);
     await vi.advanceTimersByTimeAsync(500);
-    fake.emit(9);
+    fake.emit(1);
     await vi.advanceTimersByTimeAsync(50);
     expect(savedFraction(fake)).toBe(before);
   });
@@ -394,8 +394,8 @@ describe("decibelguard loop", () => {
     fake.emit(4);
     await vi.advanceTimersByTimeAsync(100);
     const before = savedFraction(fake);
-    for (const cancel of [1, 3]) {
-      fake.emit(9);
+    for (const cancel of [2, 3]) {
+      fake.emit(1);
       await vi.advanceTimersByTimeAsync(600);
       fake.emit(cancel);
       await vi.advanceTimersByTimeAsync(600);
@@ -407,12 +407,12 @@ describe("decibelguard loop", () => {
     expect(fake.mic).toEqual([true, false, true]);
   });
 
-  it("QIS v1: a hold followed by ONE tap within 4 s clears the dose and does not stop measuring", async () => {
+  it("QIS v1: a swipe followed by ONE tap within 4 s clears the dose and does not stop measuring", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
     await loud(fake, 5);
-    fake.emit(9);
+    fake.emit(2);
     await vi.advanceTimersByTimeAsync(600);
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
@@ -420,7 +420,21 @@ describe("decibelguard loop", () => {
     expect(savedFraction(fake)).toBe(0);
   });
 
-  it("QIS v1: a tap right on the heels of the hold is not a confirmation", async () => {
+  it("an R1 ring hold (optional extra) asks the same; ONE tap confirms", async () => {
+    const fake = await boot();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await loud(fake, 5);
+    fake.emit(9, 2);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(last().hint).toMatch(/Nochmal tippen = (Dosis )?löschen|Tap again = clear/);
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic).toEqual([true]);
+    expect(savedFraction(fake)).toBe(0);
+  });
+
+  it("QIS v1: a tap right on the heels of the arming swipe is not a confirmation", async () => {
     const fake = await boot();
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(10);
@@ -430,7 +444,7 @@ describe("decibelguard loop", () => {
     fake.emit(4);
     await vi.advanceTimersByTimeAsync(100);
     const before = savedFraction(fake);
-    fake.emit(9);
+    fake.emit(1);
     await vi.advanceTimersByTimeAsync(100);
     fake.emit(0);
     await vi.advanceTimersByTimeAsync(50);
@@ -448,11 +462,12 @@ describe("decibelguard loop", () => {
     expect(last().headline).toEqual(shown);
   });
 
-  it("a swipe does nothing on the main screen (the help lives on the phone); 2× asks the exit dialog", async () => {
+  it("a swipe on the main screen only asks to clear (a second swipe cancels); 2× asks the exit dialog", async () => {
     const fake = await boot();
     const shown = [...last().headline];
     fake.emit(1);
     await vi.advanceTimersByTimeAsync(50);
+    expect(last().hint).toMatch(/Nochmal tippen = (Dosis )?löschen|Tap again = clear/);
     fake.emit(2);
     await vi.advanceTimersByTimeAsync(50);
     expect(last().headline).toEqual(shown);

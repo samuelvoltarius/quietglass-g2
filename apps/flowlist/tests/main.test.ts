@@ -527,7 +527,7 @@ describe("flowlist QIS v1", () => {
     await vi.waitFor(() => expect(runStep(fake)).toContain('"s1":"done"'));
   });
 
-  it("a hold on a step without detail opens the help; tap, 2× or hold close it, 2× never exits there", async () => {
+  it("R1-ring extra: a hold opens the help; tap, 2× or hold close it, 2× never exits there", async () => {
     const fake = fakeBridge(data());
     await boot(fake);
     expect(lastText(fake, 1)).toBe("FLOWLIST · 1/12");

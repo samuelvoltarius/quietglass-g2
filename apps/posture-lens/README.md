@@ -87,15 +87,15 @@ gives you the chance to fix it first.
 | Gesture | Effect |
 |---|---|
 | **Tap** | Set the current posture as upright (once one is saved: a second tap within 4 s confirms) |
-| **Swipe** | Only turns the help pages. Never changes anything; cancels whatever is armed |
-| **Hold** | Opens the menu list: Sensor test · Clear today's tally · Help |
-| **2×** | Back one level (sensor test, help, menu); on the posture screen leave PostureLens |
+| **Swipe** | Posture screen: opens the list (Sensor test · Clear today's tally); in the list: moves. Never changes anything; cancels whatever is armed |
+| **2×** | Back one level (sensor test, list); on the posture screen leave PostureLens |
+| *R1 ring hold (optional)* | Same as a swipe. A hold on the temple opens the system menu and never reaches the app, so nothing depends on it |
 
 Clearing today's tally lives in the menu and is armed first (QIS v1): tap the
 entry, then tap it again within 4 s. A swipe, 2× or the timeout cancels. (The glasses' own
 side menu is off for now: its clicks do not arrive on the real glasses, `SIDE_MENU = false`.)
 
-The **R1 ring** works the same as the temple pads.
+The **R1 ring** works the same as the temple pads (plus the optional hold above).
 
 ## Sensor test (0.5.0)
 
@@ -103,7 +103,7 @@ Nobody outside Even Realities knows yet what the SDK's IMU `{x, y, z}` means on
 real hardware — unit, axis orientation, accelerometer only or gyroscope too. The
 sensor test is there to find out with the glasses on:
 
-- **Glasses:** hold, then pick "Sensor test" in the menu. Live x / y / z (two decimals) with min/max since
+- **Glasses:** swipe, then pick "Sensor test" in the list. Live x / y / z (two decimals) with min/max since
   start, magnitude and sample rate in the header, the axis that moved most
   marked with ●. At most five text updates per second, no page rebuild. Tap
   resets min/max, 2× returns to the posture screen.
@@ -118,7 +118,7 @@ What to look for: a still head with |v| ≈ 1 or ≈ 9.81 means an accelerometer
 g or m/s²; values near 0 at rest that spike while turning point to a gyroscope;
 the axis marked ● during the left/right turn versus the nod tells the axes apart.
 
-**Kurz auf Deutsch:** Halten am Bügel (oder Handy → „Mehr“ → „Sensor-Test
+**Kurz auf Deutsch:** Wischen und „Sensor-Test“ antippen (oder Handy → „Mehr“ → „Sensor-Test
 starten“) zeigt die Rohwerte des Bewegungssensors live; „Aufnahme 20 s“ führt
 durch fünf Kopfbewegungen und liefert eine CSV-Datei.
 

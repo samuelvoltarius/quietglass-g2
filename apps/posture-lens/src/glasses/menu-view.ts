@@ -5,7 +5,7 @@ import { fitView } from "./fit";
 import type { TextView } from "./page";
 
 /**
- * The app's own list (Hold on the posture screen, used while the glasses' side menu is off): at most three
+ * The app's own list (a swipe on the posture screen, used while the glasses' side menu is off): at most three
  * entries (QUS v1). Everything that is not "look at your posture" lives here: the sensor test and clearing
  * today's tally (armed first, QIS v1). A swipe only moves; the tally can only be cleared by tapping its entry
  * twice. The help lives on the phone.

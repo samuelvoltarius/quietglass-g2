@@ -16,8 +16,11 @@ import { lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type PhoneLive, type PhoneUi } from "./ui/phone";
 import { createExitRequest, settleRestore } from "./exit";
 import { rememberLocale, resolveLocale, type Locale } from "./i18n";
+import { diag, diagCount, diagOn, diagSkip, startDiag } from "./diag/diag";
+import { traceBridge } from "./diag/bridge";
+import { VERSION } from "./version";
 
-/** A hold arms "clear today's dose" and a tap arms "stop measuring"; a single tap within this window confirms (QIS v1, section 2). */
+/** A swipe arms "clear today's dose" and a tap arms "stop measuring"; a single tap within this window confirms (QIS v1, section 2). */
 const ARM_MS = 4000;
 /**
  * The glasses' side menu is off: on the real glasses its clicks never arrive (`menuItemClickEvent`) and a
@@ -26,13 +29,15 @@ const ARM_MS = 4000;
 export const SIDE_MENU = false;
 /** The level pictures are renewed at most this often while the level moves (audio blocks arrive many times a second). */
 const COCKPIT_MIN_MS = 700;
-/** Taps right after the arming are ignored, so the release of the hold cannot confirm by accident. */
+/** Taps right after the arming are ignored, so the tail of the arming gesture cannot confirm by accident. */
 const RESET_SETTLE_MS = 400;
 /** While measuring, today's dose is written this often (one number, see persist.ts). */
 const DOSE_SAVE_MS = 30_000;
 
 async function boot(): Promise<void> {
-  const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  // Private step log (VITE_TRAFFIC_URL, tailnet only): calls, results and events. Store builds: off, no URL in the bundle.
+  startDiag((import.meta as { env?: Record<string, string | undefined> }).env?.["VITE_TRAFFIC_URL"] ?? "", VERSION);
+  const bridge: EvenAppBridge = traceBridge(await waitForEvenAppBridge());
   /** audioPcm arrives as Uint8Array, number[] or base64 depending on the host
    * bridge; normalize it or every chunk is silently dropped (empty recording). */
   const toBytes = (pcm: unknown): Uint8Array | null => {
@@ -129,14 +134,22 @@ async function boot(): Promise<void> {
   // could cover it. Data keeps being collected; the back signal restores the page the way of the first one.
   let exitAsked = (): boolean => false;
   /** The cockpit is one 576 x 288 frame; only the tiles whose pixels changed cross Bluetooth. Never while the dialog may be up. */
-  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitAsked() && !closed && !backgrounded));
+  const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => {
+    const allowed = !exitAsked() && !closed && !backgrounded;
+    if (!allowed) diagCount("tileRefused:" + (exitAsked() ? "exitAsked" : closed ? "closed" : "backgrounded"));
+    return allowed;
+  }));
+  /** The flags that decide whether anything is drawn, for the step log. */
+  const flags = (): Record<string, boolean> => ({ pageReady, backgrounded, closed, listening, exitAsked: exitAsked() });
 
   const drawOnce = async (): Promise<void> => {
-    if (exitAsked()) return;
-    if (closed || backgrounded) return;
+    if (exitAsked()) { diagSkip("exitAsked"); return; }
+    if (closed || backgrounded) { diagSkip(closed ? "closed" : "backgrounded"); return; }
+    diagSkip(null);
     if (!pageReady) {
       const result = await createCockpitPage(bridge);
-      if (closed) return;
+      diag("createCockpitPage", { ok: result.ok, reason: result.reason ?? null, ...flags() });
+      if (closed) { diagSkip("closed", { after: "createCockpitPage" }); return; }
       if (!result.ok) { console.warn("[decibelguard] draw failed:", result.reason); return; }
       pageReady = true;
       // A new page starts with blank images.
@@ -155,7 +168,7 @@ async function boot(): Promise<void> {
    * A request during a write redraws once after it, with the newest level.
    */
   const draw = (): Promise<void> => {
-    if (exitAsked()) return Promise.resolve();
+    if (exitAsked()) { diagSkip("exitAsked", { in: "draw" }); return Promise.resolve(); }
     if (drawing) { drawAgain = true; return drawing; }
     drawing = (async () => {
       try {
@@ -216,10 +229,18 @@ async function boot(): Promise<void> {
     onBack: () => {
       // The dialog took the page away. On the next input put it up again the way of the first one,
       // so the glasses deliver input (and the next 2×) to the app again (store review 16.10.2026).
+      diag("onBack", { phase: "start", ...flags() });
       if (closed) return;
       pageReady = false;
       forgetPage(bridge);
-      return draw();
+      const restored = draw();
+      if (diagOn()) {
+        restored.then(
+          () => diag("onBack", { phase: "end", ...flags() }),
+          (error: unknown) => diag("onBack", { phase: "fail", error: String(error), ...flags() }),
+        );
+      }
+      return restored;
     },
   }, "decibelguard");
   exitAsked = requestExit.asked;
@@ -230,7 +251,9 @@ async function boot(): Promise<void> {
    * the screen the whole time).
    */
   const exitWithDialog = async (): Promise<void> => {
+    diag("exitAsk", flags());
     await requestExit();
+    diag("exitAskDone", flags());
   };
 
   await draw();
@@ -277,8 +300,10 @@ async function boot(): Promise<void> {
   bridge.onEvenHubEvent((event) => {
     if (closed) return;
     // The 4/5 right after an exit call are the system dialog's own show/close, not the app entering/leaving.
-    if (requestExit.onLifecycle(event) !== null) return;
+    const dialog = requestExit.onLifecycle(event);
+    if (dialog !== null) { diag(dialog, flags()); return; }
     const lifecycle = lifecycleFromEvent(event);
+    if (lifecycle !== null) diag("lifecycle", { step: lifecycle, ...flags() });
     // Not the microphone stream: PCM keeps flowing while the dialog is open and says nothing about the user.
     if (lifecycle !== "background" && lifecycle !== "exit" && (event as { audioEvent?: unknown }).audioEvent === undefined) requestExit.back();
     if (lifecycle === "foreground") { void comeBack(); return; }
@@ -324,13 +349,14 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // Risky actions take two steps (QIS v1 section 2): a hold asks to clear today's dose, a tap asks to
-    // stop measuring; ONE single tap within 4 s confirms. Anything else (a second hold, a swipe, 2×) or
-    // the timeout cancels, and a plain tap never clears.
+    // Risky actions take two steps (QIS v1 section 2): a swipe asks to clear today's dose, a tap asks to
+    // stop measuring; ONE single tap within 4 s confirms. Anything else (a second swipe, a ring hold, 2×) or
+    // the timeout cancels, and a plain tap never clears. (A hold used to ask, but on the temple pad it opens
+    // the system menu and never reaches the app – only the optional R1 ring delivers it, step log 21.10.2026.)
     if (isArmed()) {
       if (gesture.gesture === "longPressRelease") return;
       if (gesture.gesture === "click") {
-        // The tail of the hold itself is not a confirmation.
+        // The tail of the arming gesture itself is not a confirmation.
         if (armedKind === "reset" && Date.now() - armedAt < RESET_SETTLE_MS) return;
         const kind = armedKind;
         disarmReset();
@@ -354,13 +380,13 @@ async function boot(): Promise<void> {
         if (listening) arm("stop");
         else { void startListening(); return; }
         break;
-      case "longPress":
-        arm("reset");
-        break;
       case "scrollUp":
       case "scrollDown":
-        // A swipe only moves; the cockpit has nothing to move (the help lives on the phone).
-        return;
+      case "longPress":
+        // The cockpit has nothing to move, so a swipe (either way) asks to clear today's dose.
+        // A hold (R1 ring only, optional extra) asks the same.
+        arm("reset");
+        break;
       case "doubleClick":
         void exitWithDialog();
         return;

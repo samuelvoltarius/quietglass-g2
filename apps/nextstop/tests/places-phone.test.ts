@@ -175,15 +175,15 @@ describe("the goal list on the glasses", () => {
     expect(view).toEqual({
       header: "NEXTSTOP · Wohin? · 14:29",
       body: ["  Jetzt: Getreidegasse 10", "> Heim", "  Arbeit"],
-      footer: "Tippen = los · Halten = sprechen · 2× = zurück",
+      footer: "Tippen = los · Wischen = wählen · 2× = zurück",
     });
     expect(placesView(targetsOf(places), 0, NOW, "en").body[0]).toBe("> Now: Getreidegasse 10");
   });
 
   it("explains how to add a goal when there is none", () => {
     const view = placesView([], 0, NOW, "de");
-    expect(view.body).toEqual(["", "Noch keine Ziele.", "", "Öffne NextStop am Handy und lege", "unter „Ziele“ einen Favoriten an.", "", "halten = Ziel sprechen"]);
-    expect(view.footer).toBe("Halten = sprechen · 2× = zurück");
+    expect(view.body).toEqual(["", "Noch keine Ziele.", "", "Öffne NextStop am Handy und lege", "unter „Ziele“ einen Favoriten an.", "", "Oder tippen und das Ziel sagen."]);
+    expect(view.footer).toBe("Tippen = sprechen · 2× = zurück");
   });
 
   it("scrolls with the selection when there are more goals than rows", () => {

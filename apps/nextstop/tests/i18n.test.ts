@@ -223,7 +223,7 @@ describe("German output stays exactly as reviewed", () => {
     expect(departureBoard(STOP, [], null, "de")).toEqual({
       header: "Salzburg Mirabellplatz",
       body: ["", "Keine Abfahrten in der nächsten Stunde.", "", "Betriebsschluss, oder diese Haltestelle", "wird gerade nicht bedient."],
-      footer: "Halten = Ziel · 2× = Ende",
+      footer: "2× = Ende",
     });
     expect(departureBoard(STOP, [departure()], null, "de").footer).toBe("Fahrplan · Tippen = folgen · 2× = Ende");
   });
@@ -297,9 +297,13 @@ describe("German output stays exactly as reviewed", () => {
     expect(html).toContain('<nav class="tabbar"');
     expect(html).toContain("</span>Jetzt</button>");
     expect(html).toContain('<option value="motis">Überall – Fahrplan (funktioniert sofort)</option>');
-    expect(html).toContain("<strong>Tippen</strong> — Bus verfolgen: wann er kommt, dann der nächste Halt; zum Beenden der Fahrt zweimal einzeln tippen<br />");
+    expect(html).toContain("<strong>Tippen</strong> — öffnen; Bus verfolgen: wann er kommt, dann der nächste Halt; zum Beenden der Fahrt zweimal einzeln tippen<br />");
+    // The spoken destination has its own row (temple gestures); the hold appears only as the ring's extra.
+    expect(html).toContain("<strong>Ziel per Sprache</strong> — auf der Startseite hinwischen und tippen");
+    expect(html).toContain("<strong>Ring: Halten</strong> — nur mit dem R1-Ring, zusätzlich:");
+    expect(html).not.toContain("<strong>Halten</strong>");
     expect(html).toContain('<label for="refresh">Abfahrten neu laden alle <span id="refresh-value"></span> s</label>');
-    expect(html).toContain('Fahrplandaten: <a href="https://transitous.org/sources/" target="_blank" rel="noopener">Transitous und seine Quellen</a> (u. a. OpenStreetMap) · Echtzeit Österreich: ÖBB');
+    expect(html).toContain('Fahrplandaten: Transitous und seine Quellen (transitous.org/sources) (u. a. OpenStreetMap) · Echtzeit Österreich: ÖBB');
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });

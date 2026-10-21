@@ -1,8 +1,11 @@
 /**
  * Footer builder of the Quietglass Interaction Standard (QIS v1): the gestures
- * that do something on a screen, always in the order Tippen -> Wischen ->
- * Halten -> 2x, ending in `2× = zurück` (subpage) or `2× = Ende` (root).
+ * that do something on a screen, always in the order Tippen -> Wischen -> 2x,
+ * ending in `2× = zurück` (subpage) or `2× = Ende` (root).
  * One helper so no footer is ever hand-built and the order cannot drift.
+ * There is deliberately no hold part: on the temple pad a hold opens the
+ * system menu and never reaches the app (only the optional R1 ring delivers
+ * it, step log 21.10.2026), so the glasses never offer one.
  */
 import type { Locale } from "../i18n";
 
@@ -14,15 +17,13 @@ export interface FooterParts {
   readonly tap?: string;
   /** What a swipe does ("wählen"). Dropped first when the row would be too wide. */
   readonly swipe?: string;
-  /** What a hold does ("sprechen"). Dropped second. */
-  readonly hold?: string;
 }
 
 export type FooterEnd = "back" | "exit" | "none";
 
 const WORDS = {
-  de: { tap: "Tippen", swipe: "Wischen", hold: "Halten", back: "zurück", exit: "Ende" },
-  en: { tap: "Tap", swipe: "Swipe", hold: "Hold", back: "back", exit: "exit" },
+  de: { tap: "Tippen", swipe: "Wischen", back: "zurück", exit: "Ende" },
+  en: { tap: "Tap", swipe: "Swipe", back: "back", exit: "exit" },
 } as const;
 
 function cut(text: string, width = ROW_WIDTH): string {
@@ -39,13 +40,11 @@ export function footer(locale: Locale, parts: FooterParts, end: FooterEnd = "bac
     ...(lead === "" ? [] : [lead]),
     ...(p.tap === undefined ? [] : [`${w.tap} = ${p.tap}`]),
     ...(p.swipe === undefined ? [] : [`${w.swipe} = ${p.swipe}`]),
-    ...(p.hold === undefined ? [] : [`${w.hold} = ${p.hold}`]),
     ...tail,
   ].join(" · ");
-  // Too wide for the row: the swipe goes first (it is the obvious one), then the hold. The 2× part always stays.
-  const noSwipe: FooterParts = { ...(parts.tap === undefined ? {} : { tap: parts.tap }), ...(parts.hold === undefined ? {} : { hold: parts.hold }) };
+  // Too wide for the row: the swipe goes first (it is the obvious one). The 2× part always stays.
   const tapOnly: FooterParts = parts.tap === undefined ? {} : { tap: parts.tap };
-  for (const candidate of [parts, noSwipe, tapOnly]) {
+  for (const candidate of [parts, tapOnly]) {
     const row = build(candidate);
     if (row.length <= ROW_WIDTH) return row;
   }

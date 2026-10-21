@@ -121,7 +121,7 @@ export function boardCells(input: BoardInput, chosen: Departure, index: number):
 export function boardHint(locale: Locale, position: number, total: number): string {
   const lead = total > 1 ? `${position}/${total}` : "";
   return footer(locale, {
-    tap: t(locale, "q.follow"), ...(total > 1 ? { swipe: t(locale, "q.select") } : {}), hold: t(locale, "q.goal"),
+    tap: t(locale, "q.follow"), ...(total > 1 ? { swipe: t(locale, "q.select") } : {}),
   }, "back", lead, HINT_WIDTH);
 }
 

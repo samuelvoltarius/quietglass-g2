@@ -10,5 +10,8 @@ regenerate rather than editing these files.
 | `background.png` | 1920×1080 | Greyscale, name and tagline |
 | `tagline.txt` | — | Line 1 English, line 2 German, each ≤ 60 characters |
 
-Screenshot: [`screenshot.png`](screenshot.png) is a direct 576×288 capture from
-the official Even Hub simulator.
+Screenshot: [`screenshot.png`](screenshot.png) is the 576×288 departure board
+as the app draws it (a copy of `preview-cockpit.png`, written by
+`QG_PREVIEW=1 npx vitest run tests/preview.test.ts`). Since 0.9.3 it replaces the
+old simulator capture, whose footer still offered "Hold = destination" — a hold
+on the temple touchpad never reaches the app, so no screenshot may show it.

@@ -181,7 +181,7 @@ export function departureBoard(
         t(locale, "g.emptyBoard2"),
         t(locale, "g.emptyBoard3"),
       ],
-      footer: ft(locale, "exit", { hold: "goal" }),
+      footer: ft(locale, "exit"),
     };
   }
 

@@ -60,10 +60,10 @@ describe("live transcript", () => {
     expect(chooseTranscript({ ok: false, text: "" }, false)).toEqual({ use: "none" });
   });
 
-  it("has no live server in a build without VITE_LIVE_STT_URL, and a generous hard stop", () => {
+  it("has no live server in a build without VITE_LIVE_STT_URL, and a hard stop that ends a forgotten recording", () => {
     expect(liveSttUrl(undefined)).toBe("");
     expect(liveSttUrl(" wss://stt.test ")).toBe("wss://stt.test");
-    expect(MAX_VOICE_MS).toBe(30_000);
+    expect(MAX_VOICE_MS).toBe(15_000);
   });
 
   it("shows the live words on the glasses while recording", () => {

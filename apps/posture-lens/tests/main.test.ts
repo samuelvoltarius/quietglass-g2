@@ -68,7 +68,7 @@ function fakeBridge(writeDelayMs = 0, stored = JSON.stringify({ reference: { x: 
   return {
     bridge, shutdown, imu, paces, writes, saved, images, imuAnswer, pages,
     menu: (itemID: number) => (resetGestureDedupe(), handler?.({ menuItemClickEvent: { itemID } })),
-    emit: (eventType: number) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource: 1 } })),
+    emit: (eventType: number, eventSource = 1) => (resetGestureDedupe(), handler?.({ sysEvent: { eventType, eventSource } })),
     sample: (y: number) => handler?.({ sysEvent: { eventType: IMU_DATA_REPORT, imuData: { x: 0, y, z: 1 } } }),
     longPress: () => (resetGestureDedupe(), handler?.({ sysEvent: { eventType: 9, eventSource: 1 } })),
     reconnect: () => statusHandler?.({ connectType: "connected" }),
@@ -344,7 +344,7 @@ describe("posturelens loop", () => {
     expect(fake.saved).toEqual([]);
   });
 
-  it("a swipe never clears today's tally or arms anything", async () => {
+  it("a swipe never clears today's tally or arms anything (it opens the list; 2× goes back)", async () => {
     // QIS v1: a swipe only moves. It used to clear the tally on the second swipe.
     vi.stubGlobal("navigator", { language: "en-US" });
     const fake = await boot();
@@ -353,13 +353,18 @@ describe("posturelens loop", () => {
     expect(last().headline).toEqual(["UPRIGHT"]);
     expect(last().cells[1]!.value).toBe("100%");
     for (const swipe of [1, 2, 1, 2]) { fake.emit(swipe); await vi.advanceTimersByTimeAsync(600); }
+    expect(fake.writes.header).toMatch(/· (menu|Menü)$/);
+    fake.emit(3); // back to the posture screen, not out
+    await vi.advanceTimersByTimeAsync(600);
+    expect(fake.shutdown.modes).toEqual([]);
     await vi.advanceTimersByTimeAsync(1100);
     expect(last().cells[1]!.value).toBe("100%");
-    expect(last().hint).toBe("Tap = save again · Hold = menu · 2× = exit");
+    expect(last().hint).toBe("Tap = save again · Swipe = menu · 2× = exit");
   });
 
   describe("QUS v1: list, arm-and-confirm", () => {
     const HOLD = 9;
+    const UP = 1;
     const CLICK = 0;
     const DOWN = 2;
     const DOUBLE = 3;
@@ -379,22 +384,22 @@ describe("posturelens loop", () => {
       const fake = await booted();
       expect(fake.pages.length).toBeGreaterThan(0);
       for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
-      // The hold opens the app's own list (at most three entries), not a side menu.
-      await step(fake, HOLD);
+      // A swipe opens the app's own list (at most three entries), not a side menu.
+      await step(fake, UP);
       expect(fake.writes.header).toBe("POSTURE · menu");
       expect(fake.writes.body).toBe("● Sensor test\n  Clear today's tally");
       expect(fake.writes.footer).toBe("Tap = choose · Swipe = list · 2× = back");
       await step(fake, DOUBLE);
       expect(last().headline).toEqual(["UPRIGHT"]);
-      expect(last().hint).toBe("Tap = save again · Hold = menu · 2× = exit");
+      expect(last().hint).toBe("Tap = save again · Swipe = menu · 2× = exit");
       expect(fake.shutdown.modes).toEqual([]);
       for (const page of fake.pages) expect(page.menuObject).toBeUndefined();
     });
 
-    it("clearing the tally by gesture: hold, swipe to the entry, tap arms, a second tap clears", async () => {
+    it("clearing the tally by gesture: swipe opens the list, swipe to the entry, tap arms, a second tap clears", async () => {
       const fake = await booted();
       expect(last().cells[1]!.value).toBe("100%");
-      await step(fake, HOLD);
+      await step(fake, UP);
       await step(fake, DOWN);
       expect(fake.writes.body).toContain("● Clear today's tally");
       await step(fake, CLICK);
@@ -408,7 +413,7 @@ describe("posturelens loop", () => {
 
     it("a swipe, 2× or 4 s cancel the armed tally reset; nothing is cleared", async () => {
       const fake = await booted();
-      await step(fake, HOLD);
+      await step(fake, UP);
       await step(fake, DOWN);
       await step(fake, CLICK);
       expect(fake.writes.body).toContain("SURE? ");
@@ -430,13 +435,25 @@ describe("posturelens loop", () => {
       await step(fake, CLICK);
       expect(last().hint).toBe("Tap again = save again · Swipe/2× = cancel");
       await step(fake, DOWN);
-      expect(last().hint).toBe("Tap = save again · Hold = menu · 2× = exit");
+      expect(last().hint).toBe("Tap = save again · Swipe = menu · 2× = exit");
+      // The cancelling swipe only cancels: the list did not open.
+      expect(fake.writes.header).not.toMatch(/· menu$/);
       expect(fake.saved).toEqual([]);
+    });
+
+    it("an R1 ring hold (optional extra) opens the list too", async () => {
+      const fake = await booted();
+      fake.emit(HOLD, 2);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(fake.writes.header).toBe("POSTURE · menu");
+      await step(fake, DOUBLE);
+      expect(last().headline).toEqual(["UPRIGHT"]);
+      expect(fake.shutdown.modes).toEqual([]);
     });
 
     it("the list holds the sensor test and the tally only (the help lives on the phone): 2× goes back to the posture screen, a further 2× leaves", async () => {
       const fake = await booted();
-      await step(fake, HOLD);
+      await step(fake, UP);
       expect(fake.writes.body.split("\n")).toHaveLength(2);
       await step(fake, DOWN); await step(fake, DOWN); await step(fake, DOWN);
       expect(fake.writes.body).toContain("● Clear today's tally");
@@ -449,9 +466,9 @@ describe("posturelens loop", () => {
       expect(fake.shutdown.modes).toEqual([1]);
     });
 
-    it("the sensor test by gesture: hold, tap the first entry; 2× goes back to the list, then the posture screen", async () => {
+    it("the sensor test by gesture: swipe, tap the first entry; 2× goes back to the list, then the posture screen", async () => {
       const fake = await booted();
-      await step(fake, HOLD);
+      await step(fake, UP);
       await step(fake, CLICK);
       expect(fake.writes.header).toMatch(/Sensor/);
       await step(fake, HOLD);

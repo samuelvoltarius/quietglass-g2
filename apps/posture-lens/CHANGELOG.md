@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.5] — 2026-10-21
+
+Schrittprotokoll für die Store-Ablehnung „nach 2× und Nein verschwindet die Seite“ (nur private Builds mit `VITE_TRAFFIC_URL`; Store-Build: aus, keine URL im Bundle). Keine Verhaltensänderung.
+
+- `src/diag/` (aus Klipper): jedes Even-Hub-Ereignis roh (Mikrofon/IMU-Strom gezählt), jeder Seiten-/Bildaufruf mit Dauer und Ergebnis.
+- Marker: Beenden-Frage, Dialog gezeigt/geschlossen, Wiederherstellung (Start/Ende mit Zustand), Lebenszyklus, Seitenaufbau-Ergebnis, übersprungene Zeichnungen mit Grund, vom Wächter abgewiesene Kacheln (gezählt).
+
+## [0.8.3] — 2026-10-21
+
+Nichts mehr nur per Halten (Schrittprotokoll 21.10.2026: Halten am Bügel öffnet das Systemmenü und kommt nie in der App an, nur der optionale R1-Ring liefert es; Store-Prüfer haben keinen Ring).
+
+### Brille
+
+- **Liste per Wischen:** auf dem Haltungsbild öffnet Wischen (hoch oder runter) die Liste mit *Sensor-Test* und *Zählung heute löschen* (weiter armiert: Tippen, nochmal Tippen innerhalb von 4 s). Ein Wischen, das ein vorgemerktes Neu-Speichern abbricht, bricht nur ab und öffnet die Liste nicht.
+- **Hinweiszeile ohne Halten:** `Tippen = neu speichern · Wischen = Menü · 2× = Ende`. Der Fußzeilen-Helfer kennt keinen Halten-Teil mehr, Tests verbieten „Halten/Hold“ in jeder Fußzeile.
+- R1-Ring halten bleibt als optionales Extra (öffnet ebenfalls die Liste).
+- Beenden-Dialog unverändert (Abschnitt 1a).
+
+### Handy
+
+- Bedienungstabelle und Sensor-Test-Text: Wischen öffnet die Liste; die Halten-Zeile heißt jetzt „R1-Ring halten (optional)“.
+- Store-Screenshot neu aus dem Cockpit-Renderer (der alte zeigte noch „Hold = menu“).
+
 ## [0.8.0] — 2026-10-20
 
 Nach dem Quietglass UI Standard (QUS v1) umgebaut: keine Textwand mehr.

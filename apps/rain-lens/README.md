@@ -7,7 +7,7 @@
 > **So startest du:**
 > 1. RainLens in der Even-App installieren und öffnen.
 > 2. Den Standort erlauben, wenn die Even-App fragt – oder am Handy einen Ort eintippen (z. B. „Hallein“ oder „Wien“) und antippen.
-> 3. Auf der Brille: **Tippen** lädt neu, **Wischen** wechselt zwischen Jetzt, Stunden, 3 Tagen und dem Cockpit, **Halten** zeigt die Hilfe, **2×** beendet.
+> 3. Auf der Brille: **Tippen** lädt neu, **Wischen** wechselt zwischen Jetzt, Stunden, 3 Tagen und dem Cockpit, **2×** beendet. (Halten am optionalen R1-Ring zeigt zusätzlich die Hilfe.)
 >
 > **Optional:** Koordinaten von Hand eingeben (unter „Erweitert“) – nur nötig, wenn die Ortssuche deinen Ort nicht kennt.
 
@@ -24,7 +24,7 @@ RainLens zeigt nicht mehr nur Regen, sondern das komplette Wetterbild: aktuelle 
 - Drei-Tage-Prognose mit Höchst-/Tiefstwerten und Sonnenauf-/untergang
 - Telefonstandort, oder ein Ort per Namenssuche (Open-Meteo-Geocoder, ebenfalls ohne Schlüssel); Koordinaten von Hand unter „Erweitert“
 - ohne Standort zeigt die Brille keine erfundenen Werte, sondern sagt, was zu tun ist
-- Tippen aktualisiert, Wischen wechselt die Ansicht, Halten zeigt die Hilfe, 2× beendet
+- Tippen aktualisiert, Wischen wechselt die Ansicht, 2× beendet (Halten nur am R1-Ring: Hilfe)
 - verständliche Hinweise bei Netzfehlern auf Brille und Handy
 - Deutsch, Englisch, Französisch, Spanisch und Italienisch
 - keine Anmeldung und kein eigener API-Schlüssel erforderlich

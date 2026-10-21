@@ -31,7 +31,7 @@ function views(locale: Locale): { name: string; view: FlowView }[] {
   add("plain", buildView(plain, startRun(plain, 0), o, 999_000));
   add("plain-late", buildView(plain, startRun(plain, 0), o, 5_999_000));
   add("detail", buildView(detailed, startRun(detailed, 0), o, 0));
-  add("detail-open", buildView(detailed, startRun(detailed, 0), { ...o, showDetail: true }, 0));
+  add("detail-no-next", buildView(detailed, startRun(detailed, 0), { locale }, 0));
   add("optional", buildView(optional, startRun(optional, 0), o, 0));
   add("optional-armed", buildView(optional, startRun(optional, 0), { ...o, armed: "skip" }, 0));
   add("back-armed", buildView(plain, complete(plain, startRun(plain, 0)), { ...o, armed: "back" }, 0));
@@ -55,7 +55,7 @@ function views(locale: Locale): { name: string; view: FlowView }[] {
   return out;
 }
 
-const order = (locale: Locale): string[] => [GESTURE_WORDS[locale].tap, GESTURE_WORDS[locale].swipe, GESTURE_WORDS[locale].hold, "2×"];
+const order = (locale: Locale): string[] => [GESTURE_WORDS[locale].tap, GESTURE_WORDS[locale].swipe, "2×"];
 
 describe("QIS v1 on the glasses", () => {
   for (const locale of locales) {
@@ -97,31 +97,46 @@ describe("QIS v1 on the glasses", () => {
     const de = Object.fromEntries(views("de").map(({ name, view }) => [name, view]));
     expect(de["plain"]?.footer.endsWith("2× = Ende")).toBe(true);
     expect(de["help"]?.footer).toBe("Tippen = zurück · 2× = zurück");
-    expect(de["empty"]?.footer).toBe("Halten = Hilfe · 2× = Ende");
-    expect(de["plain"]?.footer).toContain("Halten = Hilfe");
-    expect(de["empty-menu"]?.footer).toBe("Halten = Menü · 2× = Ende");
-    expect(de["plain-menu"]?.footer).toContain("Halten = Menü");
+    expect(de["empty"]?.footer).toBe("2× = Ende");
+    expect(de["empty-menu"]?.footer).toBe("2× = Ende");
     const en = Object.fromEntries(views("en").map(({ name, view }) => [name, view]));
     expect(en["help"]?.footer).toBe("Tap = back · 2× = back");
+  });
+
+  it("no glasses text offers Halten/Hold (a temple hold never reaches the app, 21.10.2026)", () => {
+    for (const locale of ["de", "en"] as const) {
+      for (const { name, view } of views(locale)) {
+        expect([view.header, view.headline, ...view.body, view.footer].join("\n"), name).not.toMatch(/\bHalten\b|\bHold\b/i);
+      }
+      for (const [key, text] of Object.entries(messages[locale])) {
+        if (key.startsWith("g.")) expect(text, key).not.toMatch(/\bHalten\b|\bHold\b/i);
+      }
+    }
+  });
+
+  it("the step's detail is on the step page itself, no gesture needed", () => {
+    const de = Object.fromEntries(views("de").map(({ name, view }) => [name, view]));
+    expect(de["detail"]?.body.join(" ")).toContain("engine must be cold");
+    expect(de["detail-no-next"]?.body.join(" ")).toContain("engine must be cold");
   });
 
   it("the help page lists the gestures in footer order and what the app needs", () => {
     const help = views("de").find(({ name }) => name === "help")!.view;
     expect(help.header).toBe("FLOWLIST · Hilfe");
-    expect(help.body.map((row) => row.split(" = ")[0])).toEqual(["Tippen", "Wischen", "Halten", "2×"]);
-    // Without a side menu the help names what swipe and hold do.
+    expect(help.body.filter((row) => row.includes(" = ")).map((row) => row.split(" = ")[0])).toEqual(["Tippen", "Wischen", "2×"]);
+    // Without a side menu the help names what the swipe does, and where the step info is.
     expect(help.body[1]).toMatch(/zurück/);
     expect(help.body[1]).toMatch(/auslassen/);
-    expect(help.body[2]).toContain("Info");
+    expect(help.body[2]).toBe("Zusatzinfo steht direkt unter dem Schritt");
     expect(help.headline).toBe("Braucht nur das Handy");
   });
 
   it("drops the elapsed time first, then the swipe part, never the 2×", () => {
-    const wide = footer("de", { tap: "erledigt", swipe: "zurück/auslassen", hold: "Menü" }, "exit", "12:34");
+    const wide = footer("de", { tap: "erledigt", swipe: "einen Schritt zurück oder auslassen" }, "exit", "12:34");
     expect(wide.length).toBeLessThanOrEqual(ROW_WIDTH);
     expect(wide.endsWith("2× = Ende")).toBe(true);
     expect(wide).not.toContain("Wischen");
-    expect(footer("de", { tap: "erledigt", hold: "Menü" }, "exit", "12:34")).toBe("12:34 · Tippen = erledigt · Halten = Menü · 2× = Ende");
+    expect(footer("de", { tap: "erledigt", swipe: "zurück" }, "exit", "12:34")).toBe("12:34 · Tippen = erledigt · Wischen = zurück · 2× = Ende");
   });
 
   it("uses the glossary on the glasses: German has no Tap, Wisch, 2x or Doppeltipp; English no 2x, Double tap", () => {

@@ -364,7 +364,7 @@ function template(data: FieldLogData, view: View): string {
     <p class="hint">${L("p.advancedHint")}</p>
     <p class="hint"><strong>${L(voice ? "p.modeVoice" : "p.modeQuick")}</strong></p>
     <label for="stt">${L("p.server")}</label>
-    <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="https://your-host:8457" />
+    <input id="stt" type="text" value="${escapeHtml(data.sttUrl)}" placeholder="Whisper-Server (Adresse:Port)" />
     <label for="stt-token">${L("p.token", { state: "<em>" + escapeHtml(maskSecret(data.sttToken, locale)) + "</em>" })}</label>
     <input id="stt-token" type="password" />
     <label for="lang">${L("p.speechLanguage")}</label>

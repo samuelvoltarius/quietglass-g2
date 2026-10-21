@@ -9,7 +9,7 @@ import { addSample, calibrate, createMonitor, DEFAULT_SETTINGS } from "../src/po
 import { createStats, startRecording } from "../src/imu/diagnostics";
 import { messages } from "../src/messages";
 
-// QIS v1: header `POSTURE · state`, footer Tippen -> Wischen -> Halten -> 2x, ending 2x = zurueck / Ende, one row wide.
+// QIS v1: header `POSTURE · state`, footer Tippen -> Wischen -> 2x, ending 2x = zurueck / Ende, one row wide. Never a hold (step log 21.10.2026).
 const fast = { ...DEFAULT_SETTINGS, smoothing: 1, sustainSeconds: 10, warnAngle: 25 };
 const UPRIGHT = { x: 0, y: 0, z: 1 };
 const TILTED = { x: 0, y: 1, z: 1 };
@@ -49,11 +49,12 @@ describe("hint lines and footers follow QIS v1", () => {
     });
 
     it(`ends every ${locale} footer in 2× = back/exit, gestures in order, nothing cut`, () => {
-      const words = locale === "de" ? ["Tippen", "Wischen", "Halten"] : ["Tap", "Swipe", "Hold"];
+      const words = locale === "de" ? ["Tippen", "Wischen"] : ["Tap", "Swipe"];
       const end = locale === "de" ? { back: "2× = zurück", exit: "2× = Ende" } : { back: "2× = back", exit: "2× = exit" };
       for (const { name, view, end: kind } of screens(locale)) {
         expect(view.footer.endsWith(end[kind]), name + ": " + view.footer).toBe(true);
         expect(view.footer, name).not.toContain("…");
+        expect(view.footer, name).not.toMatch(/Halten|halten|\bHold\b|\bhold\b/);
         const positions = words.map((word) => view.footer.indexOf(word + " = ")).filter((p) => p >= 0);
         expect(positions, name).toEqual([...positions].sort((a, b) => a - b));
       }
@@ -64,13 +65,13 @@ describe("hint lines and footers follow QIS v1", () => {
     for (const { name, view } of screens("de")) expect(view.footer, name).not.toMatch(/\bTap\b|\bWisch\b|2x/);
   });
 
-  it("never lists a swipe where a swipe does nothing", () => {
+  it("the posture screen offers the list on the swipe (a hold never reaches the app from the temple pad)", () => {
     const first = screens("en").find((s) => s.name === "good")!;
-    expect(first.view.footer).not.toContain("Swipe");
+    expect(first.view.footer).toBe("Tap = save again · Swipe = menu · 2× = exit");
   });
 
   it("drops the swipe hint, never the way out, when a footer would be too long", () => {
-    const long = footer("de", { tap: "speichern", swipe: "durchblättern", hold: "Menü öffnen" }, "exit");
+    const long = footer("de", { tap: "die aktuelle Haltung speichern", swipe: "durchblättern" }, "exit");
     expect(long.length).toBeLessThanOrEqual(FOOTER_WIDTH);
     expect(long.endsWith("2× = Ende")).toBe(true);
     expect(long).not.toContain("Wischen");

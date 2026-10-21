@@ -73,7 +73,8 @@ Namen deines Servers im Tailscale-Netz ein.
 | [Agent Glass](#agent-glass) | **ja**: Server deines KI-Agenten |
 | [Quiet Hub](#quiet-hub) | **ja**: Hub-Daemon (+ Relay je Rechner mit Agenten) |
 | [Shoot Day](#shoot-day) | **ja**: eigener Server |
-| [Klipper Glance](#klipper-glance) | **ja**: Bridge für den Drucker |
+| [Klipper Glance](#klipper-glance) | daheim **nein** (Drucker-Adresse eintragen); unterwegs: Bridge |
+| [Sugar Glass](#sugar-glass) | **ja**: dein Nightscout (+ empfohlen die Sugar-Glass-Bridge) |
 | [Star Glass](#star-glass) | **ja**: Bridge neben N.I.N.A. |
 | [Xaventra HUD](#xaventra-hud) | **ja**: dein Xaventra-Rechner (Even-G2-Dienst) |
 | [Status Glass](#status-glass) | **ja**: eine Statusquelle |
@@ -428,8 +429,14 @@ pflegst du im **Web-Terminal**: dieselbe Adresse im Browser öffnen.
 
 Druckstatus deines Klipper-/Moonraker-Druckers.
 
-**Was du brauchst:** einen Rechner im Drucker-Netz, der die Bridge laufen
-lässt.
+**Daheim (gleiches WLAN wie der Drucker): ohne Bridge.** Am Handy unter
+„Drucker“ einfach die Adresse des Druckers eintragen (z. B. `192.168.1.50`,
+Port 7125 wird ergänzt) oder **Drucker suchen** tippen. Die App spricht dann
+direkt mit Moonraker – auch die 3D-Ansicht.
+
+**Unterwegs** brauchst du die Bridge: einen Rechner im Drucker-Netz, der sie
+laufen lässt und per Tailscale erreichbar macht. Anleitung im Detail:
+[`apps/klipper-glance/docs/SETUP.md`](../apps/klipper-glance/docs/SETUP.md).
 
 **Server starten** (im Ordner `apps/klipper-glance`):
 
@@ -505,6 +512,57 @@ tailscale serve --bg --https=8460 http://127.0.0.1:8893
 
 **So prüfst du, dass es läuft:** Unter „Aufnahme“ steht Zustand, Ziel und Bild n/m.
 „Bridge erreichbar, N.I.N.A. nicht“ heißt: N.I.N.A. oder das Plugin läuft nicht.
+
+### Sugar Glass
+
+Deine Glukosewerte aus deinem eigenen **Nightscout** auf der Brille: Wert mit
+Trendpfeil, Kurve der letzten 3 Stunden, Warnungen und Pumpenstatus.
+
+> Nur zur Information, keine Therapieentscheidungen – maßgeblich sind Pumpe
+> und Sensor. Kein Medizinprodukt, keine Alarmfunktion.
+
+**Was du brauchst:** ein eigenes Nightscout (z. B. per Docker), das dein
+Uploader füllt (CareLink-Brücke für MiniMed 780G, xDrip+, Dexcom-Share …).
+Empfohlen: `AUTH_DEFAULT_ROLES=denied`, damit Nightscout nicht offen liest.
+
+**Weg 1 – empfohlen: mit der Sugar-Glass-Bridge** (dann liegt kein Token in der App)
+
+1. In Nightscout unter *Admin-Werkzeuge* einen Zugang mit Rolle **`readable`**
+   anlegen und dessen Token kopieren.
+2. Die Bridge neben Nightscout starten (im Ordner `apps/sugar-glass`):
+
+   ```bash
+   NS_URL=http://127.0.0.1:1337 NS_TOKEN=<readable-token>    SUGAR_TAILSCALE_USERS=dein-login@example.com node examples/sugar-bridge.mjs
+   ```
+
+   | Variable | Bedeutung |
+   |---|---|
+   | `NS_URL` | dein Nightscout (Standard `http://127.0.0.1:1337`) |
+   | `NS_TOKEN` | Token mit Rolle `readable` (wird nie geloggt) |
+   | `SUGAR_TAILSCALE_USERS` | Tailscale-Logins, die lesen dürfen |
+   | `TOKEN` | Passwort als Alternative zu Tailscale |
+
+   Ohne `SUGAR_TAILSCALE_USERS` und ohne `TOKEN` lehnt die Bridge alles ab.
+   Dienst-Datei für Linux: [`selfhost/services/sugar-bridge`](../selfhost/services/sugar-bridge).
+3. Per https erreichbar machen (vorher `tailscale serve status` lesen):
+
+   ```bash
+   tailscale serve --bg --https=8462 http://127.0.0.1:8466
+   ```
+
+4. **Am Handy eintragen:** Adresse `https://<dein-rechner>.<dein-tailnet>.ts.net:8462`,
+   Token-Feld leer lassen, **Speichern**.
+
+**Weg 2 – ohne Bridge:** die https-Adresse deines Nightscout und den
+`readable`-Token direkt am Handy eintragen. Der Token liegt dann in der App
+und geht als `?token=` mit (Nightscouts eigener Weg).
+
+**So prüfst du, dass es läuft:** Auf der Brille steht dein aktueller Wert mit
+Trendpfeil und „vor n min“. Ohne Server zeigt die App eine Demo (mit `DEMO`
+gekennzeichnet). Einheit (mg/dL oder mmol/L), Zielbereich und Warngrenzen
+stellst du auf der Handy-Seite ein.
+
+Mehr Details (Seiten, Gesten, Warnungen): [`apps/sugar-glass`](../apps/sugar-glass).
 
 ### Xaventra HUD
 

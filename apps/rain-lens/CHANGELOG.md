@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.3] — 2026-10-21
+
+### Geändert (Halten kommt am Bügel nie an)
+
+- **Brille bietet „Halten“ nirgends mehr an** (alle fünf Sprachen). Auf der echten Brille kommt Halten nur vom optionalen R1-Ring an; am Bügel öffnet es das Systemmenü (Schrittprotokoll 21.10.2026). Store-Prüfer haben keinen Ring.
+- Fußzeilen ohne `Halten = Hilfe`; dadurch passt wieder `Tippen = neu · Wischen = Ansicht · 2× = Ende` (auch auf den Hinweisseiten „kein Standort“/„offline“).
+- Die Hilfe auf der Brille bleibt ein Ring-Extra; ihre dritte Zeile ist jetzt `2× = Ende (in der Hilfe: zurück)`. Alles, was dort steht, steht auch am Handy (Einstellungen → Brille → Bedienung), dort mit dem Hinweis `Halten (nur R1-Ring) = Hilfe auf der Brille, optional`.
+- Beenden-Dialog unverändert.
+
 ## [0.8.0] — 2026-10-20
 
 ### Geändert (QUS v1 „keine Textwand“)

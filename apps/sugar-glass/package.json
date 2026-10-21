@@ -1,6 +1,6 @@
 {
   "name": "@quietglass/sugar-glass",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "description": "Quietglass Sugar Glass — your Nightscout glucose on the Even G2: big value, trend arrow, 3-hour curve, alerts and pump status",
   "author": "Quietglass",
   "license": "MIT",

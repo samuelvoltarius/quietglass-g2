@@ -22,7 +22,6 @@ export const MENU = { help: 1, info: 2, back: 3, skip: 4 } as const;
 
 export type Effect =
   | { readonly kind: "exit" }
-  | { readonly kind: "showDetail"; readonly on: boolean }
   | { readonly kind: "help" }
   /** Sets or (null) clears the armed action. */
   | { readonly kind: "arm"; readonly action: Armed | null };
@@ -38,7 +37,9 @@ const DISARM: readonly Effect[] = [{ kind: "arm", action: null }];
 /**
  * `sideMenu` says whether the page carries the glasses' side menu (SIDE_MENU in main.ts). Without one (the
  * state of the real glasses, step log 15.10.2026) a swipe up arms "step back", a swipe down arms "skip" on an
- * optional step, and a hold without step info opens the help; one more tap carries the armed action out.
+ * optional step; one more tap carries the armed action out. The step's detail is always on the page. A hold
+ * reaches the app only from the optional R1 ring (on the temple it opens the system menu, 21.10.2026): it opens
+ * the help as an extra, which only repeats the phone's gesture table.
  */
 export function dispatch(list: Checklist, state: RunState, gesture: Gesture, armed: Armed | null = null, sideMenu = false): DispatchResult {
   // Armed: one more single tap carries it out, anything else cancels it.
@@ -79,15 +80,9 @@ export function dispatch(list: Checklist, state: RunState, gesture: Gesture, arm
       if (step?.kind === "optional") return { state, effects: [{ kind: "arm", action: "skip" }] };
       return { state, effects: NONE };
 
-    // Hold reads the detail while it is held (release hides it again), if the glasses pass the
-    // hold on to the app instead of opening the side menu. Nothing is committed by holding.
+    // R1-ring extra only (a temple hold never arrives): the help. Never named on the glasses, nothing depends on it.
     case "longPress":
-      if (step?.detail) return { state, effects: [{ kind: "showDetail", on: true }] };
-      // A step without detail (and the empty and finished screens) opens the help when there is no menu to hold it.
       return sideMenu ? { state, effects: NONE } : { state, effects: [{ kind: "help" }] };
-
-    case "longPressRelease":
-      return { state, effects: [{ kind: "showDetail", on: false }] };
 
     default:
       return { state, effects: NONE };
@@ -95,7 +90,7 @@ export function dispatch(list: Checklist, state: RunState, gesture: Gesture, arm
 }
 
 /**
- * A click in the glasses' side menu (QIS v1.2). Help and info only look; stepping back and skipping
+ * A click in the glasses' side menu (QIS v1.2). Help only looks (info changes nothing: the detail is always shown); stepping back and skipping
  * change the run, so the first click arms them and a second click of the same item (or a single
  * tap, see `dispatch`) within the window carries them out.
  */
@@ -105,7 +100,7 @@ export function dispatchMenu(list: Checklist, state: RunState, item: number, arm
     case MENU.help:
       return { state, effects: [{ kind: "help" }] };
     case MENU.info:
-      return { state, effects: step?.detail ? [{ kind: "showDetail", on: true }] : NONE };
+      return { state, effects: armed === null ? NONE : DISARM };
     case MENU.back: {
       // Nothing to undo at the first step; a pending confirmation is cancelled by swipe or 2×.
       if (state.awaitingConfirm || state.history.length === 0) return { state, effects: armed === null ? NONE : DISARM };

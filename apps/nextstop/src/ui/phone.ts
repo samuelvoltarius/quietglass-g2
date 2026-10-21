@@ -396,7 +396,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
 
           <div id="stt-card">
             <label for="stt-url">${x("p.sttUrl")}</label>
-            <input id="stt-url" type="url" inputmode="url" spellcheck="false" placeholder="https://" />
+            <input id="stt-url" type="url" inputmode="url" spellcheck="false" placeholder="Whisper-Server (Adresse:Port)" />
             <p class="hint">${x("p.sttUrlHint")}</p>
           </div>
 
@@ -411,15 +411,16 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
         <p class="hint">
           <strong>${x("p.swipe")}</strong> — ${x("p.swipeDoes")}<br />
           <strong>${x("p.tap")}</strong> — ${x("p.tapDoes")}<br />
-          <strong>${x("p.hold")}</strong> — ${x("p.holdDoes")}<br />
           <strong>${x("p.doubleTap")}</strong> — ${x("p.doubleTapDoes")}<br />
+          <strong>${x("p.voiceEntry")}</strong> — ${x("p.voiceEntryDoes")}<br />
+          <strong>${x("p.hold")}</strong> — ${x("p.holdDoes")}<br />
           ${x("p.legend")}<br />
           ${x("p.routeHowTo")}
         </p>
       </details>
 
       <p class="credits">
-        ${x("p.credits", { link: `<a href="https://transitous.org/sources/" target="_blank" rel="noopener">${x("p.creditsLink")}</a>` })}
+        ${x("p.credits", { link: `${x("p.creditsLink")} (transitous.org/sources)` })}
       </p>
       </div>
 

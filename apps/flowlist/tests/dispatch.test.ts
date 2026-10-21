@@ -88,10 +88,10 @@ describe("dispatch", () => {
     expect(dispatchMenu(simple, state, MENU.skip)).toEqual({ state, effects: [] });
   });
 
-  it("menu: Help opens the help, Info shows the detail only where there is one", () => {
+  it("menu: Help opens the help, Info changes nothing (the detail is always on the page)", () => {
     const detailed = list(step("a", { detail: "engine must be cold" }), step("b"));
     expect(dispatchMenu(simple, startRun(simple), MENU.help).effects).toEqual([{ kind: "help" }]);
-    expect(dispatchMenu(detailed, startRun(detailed), MENU.info).effects).toEqual([{ kind: "showDetail", on: true }]);
+    expect(dispatchMenu(detailed, startRun(detailed), MENU.info).effects).toEqual([]);
     expect(dispatchMenu(simple, startRun(simple), MENU.info).effects).toEqual([]);
   });
 
@@ -136,20 +136,15 @@ describe("dispatch", () => {
     expect(up.choiceIndex).toBe(0);
   });
 
-  it("shows detail while held and hides it on release", () => {
+  it("R1-ring extra: a hold opens the help (with or without detail); with a side menu it does nothing", () => {
     const detailed = list(step("a", { detail: "engine must be cold" }));
-    const state = startRun(detailed);
-    expect(dispatch(detailed, state, "longPress").effects).toEqual([{ kind: "showDetail", on: true }]);
-    expect(dispatch(detailed, state, "longPressRelease").effects)
-      .toEqual([{ kind: "showDetail", on: false }]);
-  });
-
-  it("a hold on a step without detail opens the help; with a side menu it does nothing (help lives there)", () => {
+    expect(dispatch(detailed, startRun(detailed), "longPress").effects).toEqual([{ kind: "help" }]);
     expect(dispatch(simple, startRun(simple), "longPress").effects).toEqual([{ kind: "help" }]);
     expect(dispatch(simple, startRun(simple), "longPress", null, true).effects).toEqual([]);
+    expect(dispatch(detailed, startRun(detailed), "longPressRelease").effects).toEqual([]);
   });
 
-  it("does not change the run while showing detail", () => {
+  it("a hold never changes the run", () => {
     const state = startRun(simple);
     expect(dispatch(simple, state, "longPress").state).toBe(state);
     expect(dispatch(simple, state, "longPressRelease").state).toBe(state);

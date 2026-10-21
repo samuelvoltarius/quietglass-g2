@@ -94,27 +94,28 @@ describe("cockpit ring and hint", () => {
   });
 
   it("the hint is one line: counter first, the gestures in the fixed order, 2× = zurück last", () => {
-    expect(boardHint("de", 2, 4)).toBe("2/4 · Tippen = folgen · Wischen = wählen · Halten = Ziel · 2× = zurück");
-    expect(boardHint("en", 1, 3)).toBe("1/3 · Tap = follow · Swipe = select · Hold = destination · 2× = back");
+    expect(boardHint("de", 2, 4)).toBe("2/4 · Tippen = folgen · Wischen = wählen · 2× = zurück");
+    expect(boardHint("en", 1, 3)).toBe("1/3 · Tap = follow · Swipe = select · 2× = back");
     // A single departure has nothing to swipe to.
-    expect(boardHint("de", 1, 1)).toBe("Tippen = folgen · Halten = Ziel · 2× = zurück");
+    expect(boardHint("de", 1, 1)).toBe("Tippen = folgen · 2× = zurück");
     for (const locale of ["de", "en"] as const) expect(boardHint(locale, 3, 9).length).toBeLessThanOrEqual(HINT_WIDTH);
   });
 });
 
 describe("start page", () => {
-  it("has at most three big entries: the departures and the goals", () => {
-    expect(startRows()).toEqual(["board", "goals"]);
+  it("has at most three big entries: the departures, the spoken destination and the goals", () => {
+    expect(startRows()).toEqual(["board", "voice", "goals"]);
     expect(startRows().length).toBeLessThanOrEqual(3);
   });
 
   it("names the app and the state in the header, marks the cursor, ends with one footer line", () => {
     const view = startView(0, { locale: "de", word: "live", stopName: "Salzburg Mirabellplatz (Schloss)" });
     expect(view.header).toBe("NEXTSTOP · ● live");
-    expect(view.body).toEqual(["● Abfahrten · Salzburg Mirabellplatz", "  Ziele und Route"]);
-    expect(view.footer).toBe("Tippen = öffnen · Halten = Ziel · 2× = Ende");
-    expect(startView(1, { locale: "de", word: "live", stopName: null }).body).toEqual(["  Abfahrten", "● Ziele und Route"]);
-    expect(startView(9, { locale: "en", word: "live", stopName: null }).body[1]).toBe("● Goals and route");
+    expect(view.body).toEqual(["● Abfahrten · Salzburg Mirabellplatz", "  Ziel per Sprache", "  Ziele und Route"]);
+    expect(view.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
+    expect(startView(1, { locale: "de", word: "live", stopName: null }).body).toEqual(["  Abfahrten", "● Ziel per Sprache", "  Ziele und Route"]);
+    expect(startView(9, { locale: "en", word: "live", stopName: null }).body[2]).toBe("● Goals and route");
+    expect(startView(1, { locale: "en", word: "live", stopName: null }).body[1]).toBe("● Say a destination");
   });
 
   it("says demo, waiting and offline as words instead of the live dot", () => {

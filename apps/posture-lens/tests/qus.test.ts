@@ -90,8 +90,8 @@ describe("cockpit cells", () => {
 
 describe("hint", () => {
   it("one line: tap saves, hold opens the list, 2× leaves; armed and sensorless variants", () => {
-    expect(cockpitHint(input(createMonitor()))).toBe("Tippen = Haltung speichern · Halten = Menü · 2× = Ende");
-    expect(cockpitHint(input(good))).toBe("Tippen = neu speichern · Halten = Menü · 2× = Ende");
+    expect(cockpitHint(input(createMonitor()))).toBe("Tippen = Haltung speichern · Wischen = Menü · 2× = Ende");
+    expect(cockpitHint(input(good))).toBe("Tippen = neu speichern · Wischen = Menü · 2× = Ende");
     expect(cockpitHint(input(good, { confirm: "calibrate", locale: "en" }))).toBe("Tap again = save again · Swipe/2× = cancel");
     expect(cockpitHint(input(good, { sensorOff: true }))).toBe("2× = Ende");
   });

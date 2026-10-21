@@ -105,10 +105,10 @@ or `@` get a leading `'` so a spreadsheet does not run them as formulas.
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Start / pause — also starts and ends the practice session |
+| **Tap** | Start / pause — also starts and ends the practice session; starting after a pause begins at bar 1 again |
 | **Swipe** | Tempo ±4 bpm (documented exception: the tempo is the app's core control) |
-| **Hold** | Reset the bar count (while the beat runs) / help (while stopped) |
-| **Double tap** | Back (help) / leave Cadence |
+| **Double tap** | Leave Cadence (system dialog; the beat keeps running until you confirm) |
+| *R1 ring hold (optional)* | While the beat runs: back to bar 1. A hold on the temple opens the system menu, so nothing depends on it |
 
 The **R1 ring** works the same as the temple pads — useful when your hands are
 on an instrument and reaching for your temple is not.
