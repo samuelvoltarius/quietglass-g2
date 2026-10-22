@@ -1,82 +1,88 @@
 # BYD Glass
 
-**Quietglass** · Dein BYD auf der Even G2 — Tempo, Akku, Laden, Reifen und Warnungen im Blickfeld,
-Klima und Schloss mit Rückfrage. Gebaut und getestet mit einem BYD Dolphin Surf (DiLink 3).
+**Quietglass** · Your BYD on the Even G2 — speed, battery, charging, tyres and warnings in your field of view,
+climate and lock with a confirmation step. Built and tested with a BYD Dolphin Surf (DiLink 3).
 
-> **Inoffiziell, ohne Verbindung zu BYD.** Die App liest nur, was deine eigene **byd-bridge** liefert
-> ([`selfhost/services/byd-bridge`](../../selfhost/services/byd-bridge/README.md)). Fernbefehle können verspätet,
-> gar nicht oder doppelt ankommen — prüfe das Ergebnis im Auto oder in der BYD-App.
-> Während der Fahrt gilt: Blick auf die Straße. Die Fahrt-Seite zeigt nur, was das Auto selbst schon anzeigt.
+> **Auf Deutsch, kurz:** BYD Glass zeigt dein BYD auf der Even G2: Tempo, Akku, Laden, Reifen und Warnungen,
+> dazu Klima und Schloss mit doppelter Bestätigung. Die App wählt die Startseite selbst (Fahren, Laden, Geparkt).
+> Sie liest nur, was deine eigene **byd-bridge** liefert; ohne Adresse läuft eine Demo mit erfundenen Werten.
 
-> **Auf Deutsch, kurz:** BYD Glass wählt die Startseite selbst: **beim Fahren** großes Tempo (vom Auto), Tempo-Warnung,
-> Akku % + Reichweite, Leistungsbalken (Rekuperation links von null, schraffiert), Verbrauch der letzten 50 km,
-> Blinker und Fernlicht als blinkendes Symbol oben rechts. **Beim Laden** Akku-Balken mit Lauflicht, kW, Restzeit,
-> geladene kWh, AC/DC und „Ladung fertig“. **Geparkt** der Status: verriegelt?, Türen, alle vier Reifen mit Druck
-> (bar) und Druckverlust, 12 V, SoH, Zelltemperaturen, Außentemperatur. Die **Steuerung** (Klima an mit Temperatur,
-> Klima aus, Zusperren, Aufsperren) braucht immer zwei Bestätigungen: Rückfrage, dann nach ~1 s Pause die letzte
-> Bestätigung; 2× = abbrechen. Ist das Auto an, ist die Steuerung gesperrt. Neue Warnungen erscheinen über jeder Seite.
->
-> **In 3 Schritten loslegen**
-> 1. Die Overdrive-App am Auto meldet die Werte per MQTT an deinen Broker (`overdrive/vehicle/telemetry/#`).
-> 2. `byd-bridge` daneben starten und per `tailscale serve --bg --https=8471 http://127.0.0.1:8472` freigeben
->    (Zugriff nur für deinen Tailscale-Login, kein Token in der App).
-> 3. In der Even-App bei BYD Glass die https-Adresse der Bridge eintragen (ein privater Build mit `VITE_BYD_URL`
->    bringt sie schon mit). **Ohne Adresse läuft eine Demo** mit erfundenen Werten (oben „DEMO“).
+> **Unofficial, not affiliated with BYD.** The app only reads what your own **byd-bridge** provides
+> ([`selfhost/services/byd-bridge`](../../selfhost/services/byd-bridge/README.md)). Remote commands can arrive late,
+> not at all, or twice — check the result in the car or in the BYD app.
+> While driving, keep your eyes on the road. The Drive page only shows what the car already displays itself.
 
-`?demo=1` auf der Entwicklungs-Adresse erzwingt die Demo; `&scene=tour|drive|charge|parked|warn` wählt sie
-(Standard `tour`: 40 s Fahrt, 40 s Laden, 40 s geparkt), `&page=drive|charge|status|control` hält eine Seite fest.
+BYD Glass picks the start page by itself. **While driving** it shows large speed (from the car), the speed warning,
+battery % + range, a power bar (regeneration to the left of zero, hatched), consumption over the last 50 km,
+and indicator and high beam as a blinking symbol at the top right. **While charging** it shows a battery bar with a
+running light, kW, time left, kWh added, AC/DC and "charging done". **When parked** it shows the status: locked?, doors,
+all four tyres with pressure (bar) and pressure loss, 12 V, SoH, cell temperatures and outside temperature.
+The **controls** (climate on with temperature, climate off, lock, unlock) always need two confirmations:
+a question, then after a pause of about 1 s the final confirmation; 2× cancels. While the car is on, the controls are locked.
+New warnings appear on top of every page.
+
+**Get started in 3 steps**
+
+1. The Overdrive app in the car sends the values to your broker via MQTT (`overdrive/vehicle/telemetry/#`).
+2. Start `byd-bridge` next to it and expose it with `tailscale serve --bg --https=8471 http://127.0.0.1:8472`
+   (access only for your Tailscale login, no token in the app).
+3. In the Even app, enter the https address of the bridge in BYD Glass (a private build with `VITE_BYD_URL`
+   already includes it). **Without an address, a demo runs** with made-up values ("DEMO" at the top).
+
+`?demo=1` on the development address forces the demo; `&scene=tour|drive|charge|parked|warn` selects the scene
+(default `tour`: 40 s driving, 40 s charging, 40 s parked), and `&page=drive|charge|status|control` pins one page.
 
 ---
 
-## Auf der Brille
+## On the glasses
 
-| Seite | zeigt |
+| Page | shows |
 |---|---|
-| Fahrt | links Tempo in großen Pixelziffern, `KM/H`, Gang; `TEMPO!` + Rahmen bei der Tempo-Warnung des Autos. Rechts Akku %, Reichweite, Akku-Balken, Leistungsbalken (+ Antrieb rechts bis 100 kW, − Rekuperation links bis 40 kW, schraffiert, `REKU`). Darunter Verbrauch (50 km) · Fahrt-km, Außen · Klima · 12 V |
-| Laden | Akku % + Reichweite, kW + `DC`/`AC` + Restzeit, Akku-Balken mit Lauflicht; darunter Restzeit · geladene kWh · Ladeart, Reichweite · Zellen; nach dem Laden „FERTIG“ |
-| Status | Draufsicht mit vier Reifen (bar; `!` bei niedrig, invers bei Druckverlust), Schloss (zu/offen, `TÜR OFFEN`); darunter Schloss · Türen · 12 V, SoH · Zellen · Außen, Klima · Soll · Datenalter |
-| Steuerung | Klima an 21° · Klima aus · Zusperren · Aufsperren (Auto an: alles gesperrt mit Hinweis); Bestätigungen als eigene Bildschirme; letzte Zeile: Ergebnis von der Bridge („gesendet …“, „BYD arbeitet …“, „erledigt“, „BYD beschäftigt“, „keine Rückmeldung“) |
+| Drive | On the left, speed in large pixel digits, `KM/H`, gear; `LIMIT!` + a frame when the car's speed warning is active. On the right, battery %, range, battery bar, power bar (+ drive to the right up to 100 kW, − regeneration to the left up to 40 kW, hatched, `REGEN`). Below: consumption (50 km) · trip km, outside · climate · 12 V |
+| Charge | Battery % + range, kW + `DC`/`AC` + time left, battery bar with running light; below: time left · kWh added · charge type, range · cells; after charging, "DONE" |
+| Status | Top view with four tyres (bar; `!` when low, inverted on pressure loss), lock (locked/open, `DOOR OPEN`); below: lock · doors · 12 V, SoH · cells · outside, climate · set temperature · data age |
+| Control | Climate on 21° · Climate off · Lock · Unlock (car on: everything locked, with a note); confirmations are separate screens; last line: result from the bridge ("sent …", "BYD working …", "done", "BYD busy", "no reply") |
 
-Das Auto oben rechts dreht die Räder beim Fahren, zeigt einen Blitz beim Laden, ein `P` geparkt, `!` bei einer
-kritischen Warnung und ein Kreuz, wenn die Daten alt sind (Auto schläft) oder die Bridge fehlt. Blinker und
-Warnblinker blinken als Pfeile links/rechts, Fernlicht als Striche.
+The car at the top right turns its wheels while driving, shows a lightning bolt while charging, a `P` when parked,
+`!` for a critical warning, and a cross when the data is old (the car is asleep) or the bridge is missing. Indicators and
+hazard lights blink as arrows on the left/right, the high beam as dashes.
 
-**Warnungen** (von der Bridge ausgewertet) erscheinen neu über jeder Seite (8 s oder bis Tippen), danach pulsiert
-die schlimmste in der Kopfzeile: Druckverlust, Reifendruck niedrig, Tür offen (beim Fahren kritisch), 12 V schwach,
-seit ≥ 10 min nicht versperrt (geparkt), Akku niedrig, Ladung fertig (Hinweis).
+**Warnings** (evaluated by the bridge) appear on top of every page when new (8 s or until you tap), after that
+the worst one pulses in the header: pressure loss, tyre pressure low, door open (critical while driving), 12 V weak,
+not locked for ≥ 10 min (parked), battery low, charging done (notice).
 
-| Geste | wirkt |
+| Gesture | does |
 |---|---|
-| Wischen | nächste/vorige Seite; in der Steuerung: Auswahl (am Listenende weiter zur nächsten Seite), bei „Klima an“: Temperatur ±1 °C |
-| Tippen | Warnungen zeigen; in der Steuerung: wählen → (Temperatur →) Rückfrage → nach 1 s Pause letzte Bestätigung = senden (jeder Schritt ≤ 8 s) |
-| Halten | Hilfe (die Gesten); in einer Rückfrage: abbrechen |
-| 2× | Bestätigung in jedem Schritt abbrechen, sonst App schließen |
+| Swipe | next/previous page; in Control: selection (at the end of the list, on to the next page), on "Climate on": temperature ±1 °C |
+| Tap | show warnings; in Control: choose → (temperature →) question → after a 1 s pause the final confirmation = send (each step ≤ 8 s) |
+| Hold | help (the gestures); in a question: cancel |
+| 2× | cancel the confirmation at any step, otherwise close the app |
 
-Wechselt das Auto den Modus (losfahren, anstecken, abstellen), springt die App auf die passende Seite — außer du
-bist gerade in der Steuerung beschäftigt.
+When the car changes mode (starts driving, is plugged in, is parked), the app jumps to the matching page — unless you
+are busy in Control.
 
-## Was die App anfragt
+## What the app requests
 
-Nur „simple requests“ ohne eigene Kopfzeilen (kein CORS-Preflight):
+Only "simple requests" without custom headers (no CORS preflight):
 
-| Anfrage | wann |
+| Request | when |
 |---|---|
-| `GET /state` und dann `GET /state?since=<rev>&wait=25` | dauernd als Long-Poll: die Bridge antwortet sofort bei Änderungen, sonst nach 25 s |
-| `POST /command` mit `{"action":"climate_on","value":21}` als text/plain | nur nach zwei Bestätigungen auf der Brille und nur, wenn `car_on` nicht `true` ist |
+| `GET /state` and then `GET /state?since=<rev>&wait=25` | continuously as a long poll: the bridge answers at once on changes, otherwise after 25 s |
+| `POST /command` with `{"action":"climate_on","value":21}` as text/plain | only after two confirmations on the glasses and only when `car_on` is not `true` |
 
-Bei Fehlern wartet die App 2 s, dann doppelt so lang bis 30 s, und zeigt „Bridge: … – zeigt letzten Stand“.
+On errors the app waits 2 s, then twice as long up to 30 s, and shows "Bridge: … – showing last data".
 
-## Befehle
+## Commands
 
-| Eintrag | sendet | Hinweis |
+| Entry | sends | Note |
 |---|---|---|
-| Klima an 21° | `climate_on` 16–28 | ohne Erweiterung der pybyd-mqtt-Brücke sendet sie fest 26 °C (ab 22°) oder 19 °C — die Liste zeigt dann „(sendet 26°)“ |
-| Klima aus | `climate_off` | |
-| Zusperren | `lock` | nur wenn an der Bridge ein Schloss-Weg eingerichtet ist |
-| Aufsperren | `unlock` | standardmäßig an der Bridge gesperrt; sonst nur im Stand (geparkt, 0 km/h) |
+| Climate on 21° | `climate_on` 16–28 | without an extension of the pybyd-mqtt bridge it sends a fixed 26 °C (from 22°) or 19 °C — the list then shows "(sends 26°)" |
+| Climate off | `climate_off` | |
+| Lock | `lock` | only if a lock route is set up on the bridge |
+| Unlock | `unlock` | disabled on the bridge by default; otherwise only when stationary (parked, 0 km/h) |
 
-Die Bridge prüft alles noch einmal (Allowlist, Werte, Stillstand, ein Befehl gleichzeitig, höchstens einer je 20 s)
-und protokolliert jeden Befehl.
+The bridge checks everything again (allowlist, values, standstill, one command at a time, at most one every 20 s)
+and logs every command.
 
 ## Build
 
@@ -85,12 +91,12 @@ npm install
 npm test            # vitest
 npm run build       # tsc + vite
 npx evenhub pack app.json dist -o byd-glass.ehpk --sdk-ver 0.0.16
-python3 ../../selfhost/services/byd-bridge/byd_bridge.py --selftest   # Bridge-Auswertung
+python3 ../../selfhost/services/byd-bridge/byd_bridge.py --selftest   # bridge evaluation
 ```
 
-Privater Build mit deiner Bridge: `VITE_BYD_URL=https://<host>.<tailnet>.ts.net:8471 npm run build` und packen mit
-einer `app.private.json`, deren `whitelist` genau diese Origin enthält (die Brille blockiert Wildcards).
+Private build with your bridge: `VITE_BYD_URL=https://<host>.<tailnet>.ts.net:8471 npm run build`, and pack with
+an `app.private.json` whose `whitelist` contains exactly this origin (the glasses block wildcards).
 
-## Lizenz
+## License
 
 MIT

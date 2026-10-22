@@ -5,86 +5,84 @@
 Speech appears as text in your field of view, optionally translated. The
 difference from everything else on the G2: **the recogniser is yours.**
 
-## Kurz auf Deutsch
+## In short
 
-Babel Glass zeigt dir, was um dich herum gesprochen wird, als Untertitel auf
-der Brille — auf Wunsch gleich übersetzt (z. B. Russisch oder Belarussisch →
-Deutsch). Die Spracherkennung läuft auf **deinem eigenen** Server, nicht in
-einer fremden Cloud. Ohne Server zeigt die App feste Demo-Sätze.
+> **Auf Deutsch, kurz:** Babel Glass zeigt, was um dich herum gesprochen wird, als Untertitel auf der Even G2 – auf Wunsch gleich übersetzt (z. B. Russisch oder Belarussisch → Deutsch). Die Spracherkennung läuft auf deinem eigenen Server, nicht in einer fremden Cloud. Es gibt die Modi Übersetzen, Englisch sprechen und Gespräch (mit Wortfinder, Antwort-Vorschlägen und eigenem Gedächtnis). Ohne Server zeigt die App feste Demo-Sätze.
 
-**So geht's (ab 1.0.0):** Auf der Brille stehen drei Einträge: **Übersetzen**
-(Untertitel plus Übersetzung in die am Handy eingestellte Sprache), **Englisch
-sprechen** (du übst Englisch: Untertitel des Gesagten, der Wortfinder ist immer an,
-das Gegenüber wird auf Wunsch ins Deutsche übersetzt) und **Gespräch** (Mitschrift,
-Sprecher, Zusammenfassung beim Stopp, Info-Popups und Antwort-Vorschläge; Kunden aus
-der Liste stehen darunter). Wischen bewegt den Cursor, Tippen startet. Laufen die
-Untertitel, steht oben „Modus · ● live“ und unten eine Hinweiszeile; Tippen bereitet den
-Stopp vor, ein zweites Tippen innerhalb von 4 s stoppt. Wischen blättert im Verlauf
-zurück. **2×** schließt zuerst ein Popup, stoppt dann und geht zurück zum Start; erst
-2× auf dem Startbild öffnet den Beenden-Dialog. Halten kommt auf der Brille nie in
-der App an, darum hängt nichts daran. Stimme lernen/löschen, Personen, Sprachen,
-Server und „Meine Wörter“ stehen am Handy (drei Tabs: **Jetzt**, **Meine Wörter**,
-**Einstellungen**). Die Mitschrift löschst du nur am Handy. Solange das Mikrofon offen
-ist, steht ein **●** in der Kopfzeile der Brille.
+Babel Glass shows you what is being said around you as captions on
+the glasses — translated right away if you like (e.g. Russian or Belarusian →
+German). Speech recognition runs on **your own** server, not in
+someone else's cloud. Without a server, the app shows fixed demo sentences.
 
-**Wortfinder:** Bleibst du hängen (Satz bricht ab, „ähm“, „wie sagt man“, im englischen
-Gespräch ein deutsches Wort), sucht Babel das Wort von selbst. Ist deine Stimme gelernt,
-zählen nur deine eigenen fertigen Zeilen („Ich:“), nie eine vorläufige Zeile eines
-Unbekannten.
+**How it works (from 1.0.0):** The glasses have three entries: **Translate**
+(captions plus translation into the language set on the phone), **Speak English**
+(you practise English: captions of what was said, the word finder is always on,
+the other person is translated into German if you like) and **Conversation** (transcript,
+speakers, summary on stop, info popups and reply suggestions; customers from
+the local list are recognised). Once captions are running, the top shows "Mode · ● live" and the bottom a hint line; a tap prepares
+the stop, and a second tap within 4 s stops. Swipe scrolls back through the
+history. **2×** first closes a popup, then stops and goes back to the start; only
+2× on the start screen opens the exit dialog. Hold never reaches the app on the
+glasses, so nothing depends on it. Learning/deleting your voice, people, languages,
+server and "My words" are on the phone (three tabs: **Now**, **My words**,
+**Settings**). You clear the transcript only on the phone. While the microphone is open,
+a **●** is shown in the glasses' header.
 
-**Antwort-Vorschläge (ab 0.5.0, an):** Beendet dein Gegenüber eine Frage oder
-einen Satz, auf den du antworten solltest, schlägt dein Sprachmodell **einen**
-kurzen Satz vor (höchstens 12 Wörter) – in der Gesprächssprache, damit du ihn
-vorlesen kannst; bei einer Fremdsprache mit kurzer deutscher Übersetzung in
-Klammern. Kontext: die letzte Minute plus die passendsten Einträge aus dem
-eigenen Gedächtnis. Höchstens alle 15 s, nie während du selbst sprichst, und
-nur wenn es passt (sonst antwortet das Modell „-“ und es erscheint nichts).
-Popups kommen nie übereinander: Wortfinder/eigener Satz vor Antwort-Vorschlag
-vor Erklärung; Wartendes folgt, solange es noch aktuell ist.
+**Word finder:** If you get stuck (a sentence breaks off, "um", "how do you say", in an English
+conversation a German word), Babel looks for the word by itself. If your voice has been learned,
+only your own finished lines ("Me:") count, never a provisional line from
+a stranger.
 
-**Meine Sätze übersetzen (ab 0.5.0, aus):** Normal übersetzt Babel, was das
-Gegenüber sagt (gesprochene Sprache → „Übersetzen in“, z. B. Russisch →
-Deutsch). Eingeschaltet gehen **deine eigenen** Sätze in die andere Richtung
-(Deutsch → Gesprächssprache) und stehen groß als „→ …“ in den Untertiteln, zum
-Vorlesen. Deine Sätze erkennt Babel am Sprecher-Buchstaben („Ich bin Sprecher“
-A/B) oder – ohne Sprecher bzw. bei „automatisch“ – an deiner Sprache;
-„Gesprochene Sprache“ dafür auf automatisch lassen. Klappt die Erkennung nicht:
-**am neuesten Stand nochmal zum Neuesten wischen** übersetzt deinen letzten Satz
-auf Abruf (Popup „→ …“). Beides erscheint auch in der Mitschrift am Handy
-(markiert „Antwort:“ bzw. „→ … zum Vorlesen“).
+**Reply suggestions (from 0.5.0, on):** When the other person finishes a question
+or a sentence that you should answer, your language model suggests **one**
+short sentence (at most 12 words) — in the conversation language, so that you can
+read it out; for a foreign language with a short German translation in
+brackets. Context: the last minute plus the best-matching entries from your
+own memory. At most every 15 s, never while you are speaking yourself, and
+only when it fits (otherwise the model answers "-" and nothing appears).
+Popups never stack: word finder/own sentence before reply suggestion
+before explanation; whatever is waiting follows as long as it is still current.
 
-**Gesprächs-Begleiter (ab 0.3.0):** Mit einem Server, der Streaming kann
-(Referenz: `selfhost/services/whisper/`), erscheinen vorläufige Zeilen (mit
-„…“) schon während gesprochen wird, feste Zeilen bekommen Sprecher-Buchstaben
-(„A:“, „B:“). Die Handy-Seite schreibt das ganze Gespräch mit. Fällt eine
-Sachfrage oder ein Fachbegriff, erklärt dein eigenes Sprachmodell ihn kurz als
-Popup auf der Brille. Beim Stoppen gibt es eine Zusammenfassung – kurz auf der
-Brille, ausführlich auf dem Handy. Gesucht wird dabei nichts im Internet.
+**Translate my sentences (from 0.5.0, off):** Normally Babel translates what the
+other person says (spoken language → "Translate into", e.g. Russian →
+German). Switched on, **your own** sentences go the other way
+(German → conversation language) and appear large as "→ …" in the captions, to
+read out. Babel recognises your sentences by the speaker letter ("I am speaker"
+A/B) or — without a speaker or with "automatic" — by your language;
+leave "Spoken language" on automatic for that. If recognition does not work:
+**swiping to the newest again, while already at the newest,** translates your last sentence
+on demand (popup "→ …"). Both also appear in the transcript on the phone
+(marked "Reply:" and "→ … to read out").
 
-**Wortfinder (ab 0.4.0):** Fehlt dir mitten im Gespräch ein Wort, halte den
-Bügel gedrückt. Dein Sprachmodell bekommt die letzten ~20 Sekunden und schlägt
-das wahrscheinlich gesuchte Wort plus 2–3 Ausweichwörter vor – eine Zeile auf
-der Brille, z. B. „Kostenvoranschlag · Angebot · Offerte“, bei eingestellter
-Übersetzung darunter das Wort in der Zielsprache. Nach spätestens 8 s steht
-„kein Vorschlag“ da. Unter „Ich bin Sprecher“ (Einstellungen → Weitere Optionen) wählst du deinen
-Buchstaben; „automatisch“ nimmt, wer zuletzt gesprochen hat.
+**Conversation companion (from 0.3.0):** With a server that can do streaming
+(reference: `selfhost/services/whisper/`), provisional lines (with
+"…") appear while speech is still going on, and final lines get speaker letters
+("A:", "B:"). The phone page writes down the whole conversation. If a
+factual question or a technical term comes up, your own language model explains it briefly as a
+popup on the glasses. When you stop, there is a summary — short on the
+glasses, detailed on the phone. Nothing is searched on the internet.
 
-**Eigenes Gedächtnis (ab 0.4.0):** Nach jeder Zusammenfassung merkt sich Babel
-Datum, Titel, Zusammenfassung und Abmachungen – auf deinem eigenen Server, im
-babel-llm-proxy (`selfhost/services/babel-llm-proxy/`, Endpunkte `/memory`).
-Im Gespräch bekommen die Erklär-Popups die drei passendsten früheren Einträge
-als „Notizen des Nutzers“ und erinnern nur daran, wenn es konkret passt. Am
-Handy (Einstellungen → **Gedächtnis**) siehst, löschst, ergänzt (Notizen) und exportierst du
-alles. Babel nutzt ausschließlich dieses eigene Gedächtnis. Ein älterer Proxy
-ohne `/memory` → „nicht verfügbar“, sonst ändert sich nichts.
+**Word finder (from 0.4.0):** If you are missing a word in the middle of a conversation, hold the
+temple pressed. Your language model gets the last ~20 seconds and suggests
+the word you were probably looking for plus 2–3 alternatives — one line on
+the glasses, e.g. "Kostenvoranschlag · Angebot · Offerte", and, if a
+translation is set, below it the word in the target language. After 8 s at most,
+"no suggestion" appears. Under "I am speaker" (Settings → More options) you choose your
+letter; "automatic" takes whoever spoke last.
 
-Die App gibt es auf Deutsch und Englisch; sie folgt der Sprache deines
-Handys. Umstellen kannst du das oben auf der Handy-Seite unter „Sprache“ —
-die Brille wechselt sofort mit. Die Server trägst du auf der Handy-Seite
-unter „Erweitert: Server“ ein.
+**Own memory (from 0.4.0):** After every summary, Babel remembers
+date, title, summary and agreements — on your own server, in the
+babel-llm-proxy (`selfhost/services/babel-llm-proxy/`, endpoints `/memory`).
+In a conversation, the explanation popups get the three best-matching earlier entries
+as "notes of the user" and only remind you of them when it is concretely relevant. On the
+phone (Settings → **Memory**) you view, delete, add (notes) and export
+everything. Babel uses only this own memory. An older proxy
+without `/memory` → "not available", otherwise nothing changes.
 
-The app is available in German and English: it follows the phone language
-and can be switched at the top of the phone page.
+The app is available in German and English; it follows the language of your
+phone. You can switch it at the top of the phone page under "Language" —
+the glasses switch immediately. You enter the servers on the phone page
+under "Server".
 
 ---
 

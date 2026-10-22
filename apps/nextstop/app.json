@@ -2,19 +2,20 @@
   "package_id": "glass.quiet.nextstop",
   "edition": "202601",
   "name": "NextStop",
-  "version": "0.9.3",
+  "version": "0.9.6",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Load departures, connections and place search from Transitous (MOTIS), walking directions from the OpenStreetMap routing server of FOSSGIS e.V., and the streets for the walking map from OpenStreetMap via the public Overpass API (overpass-api.de, overpass.private.coffee).",
+      "desc": "Load departures, connections and place search from Transitous (MOTIS), walking directions from the OpenStreetMap routing server of FOSSGIS e.V., and the streets for the walking map from OpenStreetMap via the public Overpass API (overpass-api.de, overpass.private.coffee), or from your own Overpass server if you enter one in the phone app.",
       "whitelist": [
         "https://api.transitous.org",
         "https://valhalla1.openstreetmap.de",
         "https://overpass-api.de",
-        "https://overpass.private.coffee"
+        "https://overpass.private.coffee",
+        "https://*"
       ]
     },
     {

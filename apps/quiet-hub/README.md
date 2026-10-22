@@ -58,7 +58,7 @@ Every action answers with a short line in the footer, and every page keeps a one
 | Swipe up/down | select / turn the page of a long answer | same |
 | Tap | open, run, **send** a confirmed voice note; risky actions (**stop** the agent, **allow / deny** a card, device / printer actions) are armed by a tap and carried out by a second tap within 4 s | same |
 | 2× (double tap) | back, **only** back (never stops, answers or sends; a voice note is kept); **Overview: Even's native exit dialog** | **page picker** (never exits) |
-| Hold | speak into the open session (max 18 s); on Zuhause: details; on a voice note: arms "discard" (one tap confirms); elsewhere: refresh | - |
+| Hold | speak into the open session (max 18 s); on Home: details; on a voice note: arms "discard" (one tap confirms); elsewhere: refresh | - |
 
 Help is the last row of the Overview; any gesture closes it. Risky actions (Stop,
 Allow / Deny, device, printer, discarding a voice note) only arm; the next tap confirms.
@@ -98,17 +98,17 @@ API a second time.
 | --- | --- | --- |
 | **Overview** | Online agents with dots (`●` idle, `*` busy, `!` waiting, `○` offline), unread alerts, lights on, printer progress, what needs you | Open the selected page |
 | **Agent** | Agents -> sessions -> session; streaming answer in pages, tool line, permission cards | Open / ask / allow (tap arms, second tap confirms) |
-| **Zuhause** | Home Assistant: favourites, then areas (list left, state right); per area "Alle Lichter" / "Alle Rollos", sensors read-only | Switch / run a scene / open an area; hold = light or blind detail |
-| **Drucker** | Job, progress, layer, time left, temperatures | Pause, resume, cancel |
-| **Meldungen** | Finished/waiting/error events from any agent (with the agent id) | Mark as read |
-| **Tagesstart** | Morning briefing: today's calendar, weather + rain nowcast, last night's glucose, car, printer, servers | Reload (swipe = next page) |
+| **Home** | Home Assistant: favourites, then areas (list left, state right); per area "All lights" / "All blinds", sensors read-only | Switch / run a scene / open an area; hold = light or blind detail |
+| **Printer** | Job, progress, layer, time left, temperatures | Pause, resume, cancel |
+| **Alerts** | Finished/waiting/error events from any agent (with the agent id) | Mark as read |
+| **Day start** | Morning briefing: today's calendar, weather + rain nowcast, last night's glucose, car, printer, servers | Reload (swipe = next page) |
 
 The Overview is a real menu: swipe to select and tap to open. Nothing has to
 be set up for it: agents appear by themselves as soon as a relay connects, and an
 empty page says in one line what is missing. The header is a fixed status line:
 `page · connection · unread · busy agents · waiting`. On internal
 pages, swipe selects and tap acts. Printer changes are armed by one tap and
-executed by a second tap within four seconds; on Zuhause a tap switches at once,
+executed by a second tap within four seconds; on Home a tap switches at once,
 only locks, alarm and garage need a second tap (see below). Double tap always goes
 back, except on Overview where it opens Even's native exit dialog.
 
@@ -147,16 +147,17 @@ agent path is the only one that thinks.
 Without `HA_URL`/`HA_TOKEN` and `MOONRAKER_URL` the Home and Printer pages show
 stand-ins that are clearly labelled **DEMO**.
 
-## Tagesstart (0.8.0)
+## Day start (0.8.0)
 
-**Deutsch.** Die Seite *Tagesstart* ist das Morgen-Briefing: ein Tippen, alles auf
-einen Blick. Der **Daemon** holt alle Quellen selbst – Adressen und Tokens bleiben
-in seiner Env-Datei, die Brille bekommt nur fertige Werte. Jeder Block ist
-optional (nicht gesetzt = ausgeblendet; nur der Kalender sagt „keine
-Kalenderquelle“), hat ein eigenes Zeitlimit (`BRIEF_TIMEOUT_MS`, Standard 6 s)
-und wird ~2 min zwischengespeichert (`BRIEF_CACHE_MS`). Fällt eine Quelle aus,
-zeigt der Block bis 30 min lang die letzten Werte mit „alt“, danach „nicht
-erreichbar“ – die anderen Blöcke bleiben unberührt.
+> **Auf Deutsch, kurz:** Die Seite *Tagesstart* ist das Morgen-Briefing: ein Tippen, alles auf einen Blick (Termine, Wetter, Zucker, Auto, Drucker, Server). Der Daemon holt alle Quellen selbst; Adressen und Tokens bleiben in seiner Env-Datei, die Brille bekommt nur fertige Werte. Jeder Block ist optional und hat ein eigenes Zeitlimit.
+
+The *Day start* page (German name: *Tagesstart*) is the morning briefing: one tap, everything at a glance. The **daemon** collects all sources itself — addresses and tokens stay
+in its env file, the glasses only get finished values. Every block is
+optional (not set = hidden; only the calendar says "no calendar
+source"), has its own timeout (`BRIEF_TIMEOUT_MS`, default 6 s)
+and is cached for ~2 min (`BRIEF_CACHE_MS`). If a source fails,
+the block shows the last values with "old" for up to 30 min, after that "unreachable"
+— the other blocks are not affected.
 
 ```
 Termine · 4 heute
@@ -171,56 +172,56 @@ Drucker · druckt 72 % · noch 41 min · esp32_gehaeuse
 Server · alle 3 ok · 1 neues Gerät
 ```
 
-| Geste | Tagesstart |
+| Gesture | Day start |
 | --- | --- |
-| Wischen | nächste / vorige Seite (ganze Blöcke, Fußzeile „1/2“) |
-| Tippen / Halten | neu laden (alle Quellen) |
-| 2× | zurück zur Übersicht |
+| Swipe | next / previous page (whole blocks, footer "1/2") |
+| Tap / Hold | reload (all sources) |
+| 2× | back to the Overview |
 
-Erreichbar über die fünfte Zeile der Übersicht und die Seitenwahl (Ring). Am Handy: Tab **Tagesstart** mit denselben Blöcken und
-der Einstellung **„Tagesstart als Startseite bis 11:00“** – dann öffnet die App
-vormittags direkt den Tagesstart (auch beim Start aus dem Brillen-Launcher).
+Reachable through the fifth row of the Overview and the page picker (ring). On the phone: the **Day start** tab with the same blocks and
+the setting **"Day start as the start page until 11:00"** — then in the morning the app
+opens the Day start directly (also when started from the glasses launcher).
 
-| Block | Env (Daemon) | Quelle | Zeigt |
+| Block | Env (daemon) | Source | Shows |
 | --- | --- | --- | --- |
-| Termine | `BRIEF_ICS_URLS` (Komma-Liste, `webcal://` geht) | ICS/iCal-Abo (z. B. „private Adresse“ von Google/iCloud/Nextcloud) | heutige Termine; ganztägig/mehrtägig, TZID, Serien DAILY/WEEKLY (INTERVAL, COUNT, UNTIL, BYDAY), einfache MONTHLY/YEARLY, EXDATE, verschobene Einzeltermine |
-| Termine (Shoot Day) | `BRIEF_SHOOT_URL` (+ `BRIEF_SHOOT_TOKEN`) | Shoot-Day-Server `GET /api/projects` und `/api/customers` | heutige Projekte (Datum `2026-10-14 10:30`, `2026-10-14` oder `14.10.2026 10:30`) als „Kunde – Projekt“ mit Ort, gemischt mit den ICS-Terminen (gleiche Zeit + ähnlicher Titel = einmal) |
-| Wetter | `BRIEF_TZ`; `BRIEF_LAT`/`BRIEF_LON` nur noch als Ausweichort; `BRIEF_GEOCODE_URL` | Open-Meteo (ohne Schlüssel) | **hier** (Handy-Standort, auf ~1 km gerundet, kommt als `?lat=&lon=`; ohne Standort der Ausweichort) – jetzt, Min/Max, „Regen ab 14:00“ – plus je Termin heute mit Ort (max. 3) die Vorhersage **zur Terminstunde am Terminort**: `10:30 Musterdorf 9° · Regen 60%` (Wind ab 30 km/h). Termine < 10 km vom Standort bekommen keine eigene Zeile. Der Ort (ICS `LOCATION`, Shoot-Day-Ort) wird über die Open-Meteo-Ortssuche gefunden (erst ganzer Text, dann Teil nach dem letzten Komma, dann Ort ohne PLZ; nur der Ortstext verlässt den Daemon; 7 Tage gemerkt); eine Vorhersage je Ort, ~10 min gemerkt |
-| Auto | `BRIEF_BYD_URL` (+ `BRIEF_BYD_TOKEN`) | BYD-Bridge `GET /state` (`selfhost/services/byd-bridge`) | Akku %, Reichweite, lädt/geladen, zu/offen |
-| Zucker | `BRIEF_SUGAR_URL` (+ `BRIEF_SUGAR_TOKEN`) | Sugar-Bridge `GET /api/v1/entries/sgv.json` (`selfhost/services/sugar-bridge`) | Wert, Trend, Alter; Nacht 22–07: Min/Max, Minuten <70 / >180 |
-| Drucker | `BRIEF_KLIPPER_URL` (+ `BRIEF_KLIPPER_TOKEN`) | Klipper-Glance-Bridge `GET /api/printer`; ohne: `MOONRAKER_URL` des Daemons | Zustand, Datei, %, Restzeit |
-| Server | `BRIEF_STATUS_URLS` = `Name\|URL,…` (+ `BRIEF_STATUS_TOKEN`) | Status-Glass-Referenzserver `/status` | ok/weg je Rechner, neue Geräte im Heimnetz |
+| Calendar | `BRIEF_ICS_URLS` (comma list, `webcal://` works) | ICS/iCal subscription (e.g. the "private address" from Google/iCloud/Nextcloud) | today's appointments; all-day/multi-day, TZID, DAILY/WEEKLY recurrences (INTERVAL, COUNT, UNTIL, BYDAY), simple MONTHLY/YEARLY, EXDATE, moved single appointments |
+| Calendar (Shoot Day) | `BRIEF_SHOOT_URL` (+ `BRIEF_SHOOT_TOKEN`) | Shoot Day server `GET /api/projects` and `/api/customers` | today's projects (date `2026-10-14 10:30`, `2026-10-14` or `14.10.2026 10:30`) as "customer – project" with place, merged with the ICS appointments (same time + similar title = once) |
+| Weather | `BRIEF_TZ`; `BRIEF_LAT`/`BRIEF_LON` now only as a fallback place; `BRIEF_GEOCODE_URL` | Open-Meteo (no key) | **here** (phone location, rounded to ~1 km, arrives as `?lat=&lon=`; without a location the fallback place) – now, min/max, "rain from 14:00" – plus, for each appointment today with a place (max. 3), the forecast **for the appointment hour at the appointment place**: `10:30 Musterdorf 9° · Regen 60%` (wind from 30 km/h). Appointments < 10 km from your location get no row of their own. The place (ICS `LOCATION`, Shoot Day place) is found through the Open-Meteo place search (first the whole text, then the part after the last comma, then the place without postcode; only the place text leaves the daemon; remembered for 7 days); one forecast per place, remembered for ~10 min |
+| Car | `BRIEF_BYD_URL` (+ `BRIEF_BYD_TOKEN`) | BYD bridge `GET /state` (`selfhost/services/byd-bridge`) | battery %, range, charging/charged, locked/open |
+| Glucose | `BRIEF_SUGAR_URL` (+ `BRIEF_SUGAR_TOKEN`) | Sugar bridge `GET /api/v1/entries/sgv.json` (`selfhost/services/sugar-bridge`) | value, trend, age; night 22–07: min/max, minutes <70 / >180 |
+| Printer | `BRIEF_KLIPPER_URL` (+ `BRIEF_KLIPPER_TOKEN`) | Klipper Glance bridge `GET /api/printer`; without it: the daemon's `MOONRAKER_URL` | state, file, %, time left |
+| Servers | `BRIEF_STATUS_URLS` = `Name\|URL,…` (+ `BRIEF_STATUS_TOKEN`) | Status Glass reference server `/status` | ok/down per machine, new devices on the home network |
 
-Standort: Die App fragt das Handy beim Laden des Tagesstarts (Berechtigung
-`location`, einmal gefragt; 4 s Zeitlimit, 30 min gemerkt) und sendet nur die auf
-2 Nachkommastellen (~1 km) gerundeten Werte. Der Daemon prüft sie (Zahlen, Bereich;
-sonst `400`), schreibt sie nie ins Zugriffsprotokoll und gibt im Wetterblock
-`place: "here"|"default"` zurück („Wetter hier“ / „Wetter (Standard)“).
+Location: The app asks the phone when the Day start loads (permission
+`location`, asked once; 4 s timeout, remembered for 30 min) and sends only the values rounded to
+2 decimal places (~1 km). The daemon checks them (numbers, range;
+otherwise `400`), never writes them to the access log, and returns
+`place: "here"|"default"` in the weather block ("Weather here" / "Weather (default)").
 
-Weitere: `BRIEF_TZ` (Tagesgrenzen und Uhrzeiten; Standard = Zeitzone des
-Rechners), `BRIEF_CACHE_MS=120000`, `BRIEF_TIMEOUT_MS=6000`,
-`BRIEF_WEATHER_URL` (eigene Open-Meteo-Instanz), `BRIEF=off` schaltet `/brief`
-ab. Die Bridges erlauben Tailscale-Logins nur über `tailscale serve`; ruft der
-Daemon sie über ihre `https://<host>.<tailnet>.ts.net:<port>`-Adresse auf und
-gehört der Daemon-Rechner nicht demselben Login, den Bridge-Token als
-`BRIEF_*_TOKEN` setzen (nie ins Repo).
+More: `BRIEF_TZ` (day boundaries and times; default = the machine's
+time zone), `BRIEF_CACHE_MS=120000`, `BRIEF_TIMEOUT_MS=6000`,
+`BRIEF_WEATHER_URL` (your own Open-Meteo instance), `BRIEF=off` switches `/brief`
+off. The bridges allow Tailscale logins only through `tailscale serve`; if the
+daemon calls them at their `https://<host>.<tailnet>.ts.net:<port>` address and
+the daemon machine does not belong to the same login, set the bridge token as
+`BRIEF_*_TOKEN` (never in the repo).
 
-> **Zuckerwerte nur zur Information – keine Therapieentscheidungen.** Maßgeblich
-> sind Pumpe, Sensor und deren Alarme.
+> **Glucose values are for information only – not for therapy decisions.** The pump, the sensor
+> and their alarms are what counts.
 
-**Deploy (Daemon-Update).** Der Daemon importiert das neue
-`examples/quiet-hub-brief.mjs` – mit der Selfhost-Unit (läuft aus dem
-Repo-Checkout) bringt es `git pull`, sonst alle `examples/quiet-hub-*.mjs` neben
-`quiet-hub-daemon.mjs` kopieren. Die `BRIEF_*`-Variablen in die Env-Datei des
-Daemons (`.env-hub`, Vorlage `.env-hub.example`) eintragen, dann
-`systemctl --user restart quiet-hub-daemon` und prüfen:
+**Deploy (daemon update).** The daemon imports the new
+`examples/quiet-hub-brief.mjs` — with the selfhost unit (runs from the
+repo checkout) a `git pull` brings it, otherwise copy all `examples/quiet-hub-*.mjs` next to
+`quiet-hub-daemon.mjs`. Enter the `BRIEF_*` variables in the daemon's env file
+(`.env-hub`, template `.env-hub.example`), then
+`systemctl --user restart quiet-hub-daemon` and check:
 `curl -s -H "Authorization: Bearer $HUB_TOKEN" http://127.0.0.1:8787/brief | head -c 400`
-(jeder Block `"status":"ok"` oder `"off"`; `"error"` nennt den Grund ohne
-Adresse). Die Startzeile des Daemons listet die aktiven Blöcke (`brief: calendar+weather+…`).
-Die Brillen-App (0.8.0) braucht keine neue Whitelist: sie spricht nur mit dem
-Daemon.
+(every block `"status":"ok"` or `"off"`; `"error"` gives the reason without
+the address). The daemon's start line lists the active blocks (`brief: calendar+weather+…`).
+The glasses app (0.8.0) needs no new whitelist: it only talks to the
+daemon.
 
-**English.** *Tagesstart* (day start) is a morning briefing collected by the
+In short: *Day start* is a morning briefing collected by the
 daemon (`GET /brief`, same auth as `/report`, cached ~2 min, `?refresh=1`
 forces). Blocks: calendar from ICS URLs, Open-Meteo weather with a rain
 nowcast, glucose from the sugar bridge (last night 22–07: min/max, minutes
@@ -228,39 +229,34 @@ below 70 / above 180 – information only), car from the BYD bridge, printer fro
 the Klipper bridge or the daemon's Moonraker, servers from Status Glass
 reference servers. Every block is optional with its own timeout. On the
 glasses swipe pages, tap reloads, double tap goes back; the phone has a
-*Tagesstart* tab and the setting "day start as the start page until 11:00".
+*Day start* tab and the setting "day start as the start page until 11:00".
 
-### Termine für OpenGlance (`GET /brief/appointments`)
+### Appointments for OpenGlance (`GET /brief/appointments`)
 
-Jeder Termin im Kalenderblock trägt jetzt `startIso` (ISO mit Offset, z. B.
-`2026-10-14T10:30:00+02:00`) und `allDay`; hat er einen Ort, den die
-Ortssuche findet, außerdem `lat`, `lon` und `placeLabel` (gleicher 7-Tage-Speicher
-wie das Wetter am Terminort, eine Anfrage je Ort). `GET /brief/appointments`
-(gleiche Anmeldung wie `/report`) antwortet nur mit
+Each appointment in the calendar block now carries `startIso` (ISO with offset, e.g.
+`2026-10-14T10:30:00+02:00`) and `allDay`; if it has a place that the
+place search finds, also `lat`, `lon` and `placeLabel` (same 7-day store
+as the weather at the appointment place, one request per place). `GET /brief/appointments`
+(same login as `/report`) answers only with
 `{date, at, status, events: [{time, end, title, place, allDay, startIso, lat?, lon?, placeLabel?}]}`
-– aus der letzten Liste, solange sie jünger als 2 min ist, sonst Kalender +
-Ortssuche neu (kein Wetter, keine anderen Blöcke; eine Abfrage zur Zeit). Die
-Ortssuche wartet höchstens 3 s, ein späterer Treffer kommt beim nächsten Mal.
-Koordinaten und Titel stehen in keinem Protokoll (Zugriffsprotokoll: nur Pfad,
-Status, Dauer). Prüfen:
+— from the last list as long as it is younger than 2 min, otherwise calendar +
+place search anew (no weather, no other blocks; one query at a time). The
+place search waits 3 s at most, a later hit arrives the next time.
+Coordinates and titles appear in no log (access log: only path,
+status, duration). To check:
 `curl -s -H "Authorization: Bearer $HUB_TOKEN" http://127.0.0.1:8787/brief/appointments | head -c 400`.
-Deploy wie oben (die `examples/quiet-hub-*.mjs` + Neustart).
+Deploy as above (the `examples/quiet-hub-*.mjs` + restart).
 
-**English.** `GET /brief/appointments` returns today's appointments with
+In short: `GET /brief/appointments` returns today's appointments with
 `startIso`, `allDay` and, when the place is found, `lat`/`lon`/`placeLabel`,
 for the OpenGlance navigation app. Calendar + geocoding only, cached 2 min,
 same bearer auth; coordinates are never logged.
 
-## Agenten verbinden / Connect agents
+## Connect agents
 
-**Deutsch.** Der Daemon spricht selbst nur mit seinem eigenen Hermes
-(Standard-ID `hermes-pi5`). Alle weiteren Agenten – mehrere Hermes, OpenClaw,
-Codex, Claude Code, auch auf anderen Rechnern (Windows, Linux, macOS) – hängen
-sich über ein **Relay** an: `examples/quiet-hub-relay.mjs` (Node ≥ 22, keine
-Abhängigkeiten). Das Relay baut nur eine **ausgehende** HTTPS-Verbindung zum
-Daemon auf (Long-Poll mit `HUB_TOKEN`), braucht also keinen offenen Port.
+> **Auf Deutsch, kurz:** Der Daemon spricht selbst nur mit seinem eigenen Hermes (Standard-ID `hermes-pi5`). Alle weiteren Agenten (mehrere Hermes, OpenClaw, Codex, Claude Code, auch auf anderen Rechnern) hängen sich über ein **Relay** an: `examples/quiet-hub-relay.mjs` (Node ≥ 22, keine Abhängigkeiten). Das Relay baut nur eine ausgehende HTTPS-Verbindung auf und braucht keinen offenen Port.
 
-**English.** The daemon itself only talks to its own Hermes (default id
+The daemon itself only talks to its own Hermes (default id
 `hermes-pi5`). Every other agent — more Hermes, OpenClaw, Codex, Claude Code,
 also on other machines (Windows, Linux, macOS) — attaches through a **relay**:
 `examples/quiet-hub-relay.mjs` (Node >= 22, no dependencies). It only makes an
@@ -417,31 +413,33 @@ only those entity ids are shown, and only `light`, `switch`, `fan`,
 `script`, `scene` can be switched (sensors are read-only). The token never
 leaves the daemon.
 
-### Zuhause page (0.7.0)
+### Home page (0.7.0)
 
-**Deutsch.** Die Seite *Zuhause* zeigt links eine Liste – zuerst die
-**Favoriten**, dann die **Räume** – und rechts den Zustand der gewählten Zeile.
-Ein Raum enthält oben „Alle Lichter“ / „Alle Rollos“ (ab zwei Geräten), dann
-Lichter, Schalter, Rollos, Szenen und zuletzt Sensoren (Temperatur, Feuchte,
-Bewegung, Akku – nur Anzeige). Der Daemon holt den Zustand alle paar Sekunden
-von Home Assistant (`HA_POLL_MS`, Standard 5000) und gibt Änderungen über den
-bestehenden Long-Poll von `/report` sofort an die Brille weiter. URL und Token
-bleiben im Daemon; die Brille sieht nur die kuratierte Ansicht.
+> **Auf Deutsch, kurz:** Die Seite *Zuhause* zeigt links eine Liste (zuerst Favoriten, dann Räume) und rechts den Zustand der gewählten Zeile. Schlösser, Alarmanlage und Garagentor sind ausgeblendet, solange `HA_SENSITIVE` sie nicht nennt; eingeschaltet brauchen sie immer zwei Tipps. URL und Token bleiben im Daemon.
 
-| Geste | Liste / Raum | Licht-Detail | Rollo-Detail |
+The *Home* page (German name: *Zuhause*) shows a list on the left — first the
+**favourites**, then the **areas** — and on the right the state of the selected row.
+An area contains "All lights" / "All blinds" at the top (from two devices), then
+lights, switches, blinds, scenes and finally sensors (temperature, humidity,
+motion, battery – display only). The daemon fetches the state every few seconds
+from Home Assistant (`HA_POLL_MS`, default 5000) and passes changes on to the glasses at once through the
+existing long poll of `/report`. URL and token
+stay in the daemon; the glasses only see the curated view.
+
+| Gesture | List / area | Light detail | Blind detail |
 | --- | --- | --- | --- |
-| Wischen | Zeile wählen | heller / dunkler (10 %) | auf / zu |
-| Tippen | schalten, Szene starten, Raum öffnen | an / aus | Stopp |
-| Halten | Licht/Rollo: Detail öffnen (sonst: aktualisieren) | – | – |
-| 2× | Raum → Liste → Übersicht | zurück | zurück |
+| Swipe | select row | brighter / dimmer (10 %) | up / down |
+| Tap | switch, run scene, open area | on / off | stop |
+| Hold | light/blind: open detail (otherwise: refresh) | – | – |
+| 2× | area → list → Overview | back | back |
 
-Schlösser, Alarmanlage und Garagentor/Tor sind **ausgeblendet**, solange
-`HA_SENSITIVE` sie nicht nennt. Eingeschaltet brauchen sie immer zwei Schritte:
-das erste Tippen holt beim Daemon nur einen Bestätigungs-Code (einmalig,
-30 s gültig), die Fußzeile zeigt „Nochmals tippen: Haustür: aufsperren (9s)“,
-erst das zweite Tippen auf dieselbe Zeile führt aus. Wischen oder 2× verwirft.
+Locks, alarm system and garage door/gate are **hidden** unless
+`HA_SENSITIVE` names them. Once enabled, they always need two steps:
+the first tap only fetches a confirmation code from the daemon (single use,
+valid for 30 s), the footer shows "Tap again: front door: unlock (9s)",
+only the second tap on the same row carries it out. Swiping or 2× discards it.
 
-Daemon-Konfiguration (`.env-hub` bzw. `~/.config/quietglass/quiet-hub-daemon.env`):
+Daemon configuration (`.env-hub` or `~/.config/quietglass/quiet-hub-daemon.env`):
 
 ```dotenv
 HA_URL=http://homeassistant.local:8123
@@ -468,7 +466,7 @@ shown – plus `lock`, `alarm_control_panel` and garage/gate covers when
 the current view; the glasses can never call another HA service.
 
 The favourites order lives in the daemon config (not on the phone); the phone's
-**Zuhause** tab shows the same list read-only and says where to change it. In
+**Home** tab shows the same list read-only and says where to change it. In
 the demo (`?demo=1`) the page has favourites, three areas and a demo lock.
 
 **Deploy (daemon update).** The daemon imports the new

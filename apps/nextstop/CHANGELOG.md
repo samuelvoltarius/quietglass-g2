@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.6] — 2026-10-22
+
+### Neu: eigener Kartenserver (Overpass) am Handy
+
+Am 22.10.2026 antworteten die öffentlichen Overpass-Server mit 406 oder gar nicht – die Gehkarte zeigte nur die Route.
+
+- **Einstellungen → Erweitert → „Eigener Kartenserver (Overpass)“** (optional). Gespeichert wird die Adresse mit `/api/interpreter`; leer = öffentliche Server.
+- **Reihenfolge:** eigener Server vom Handy → Server des privaten Builds (`VITE_OVERPASS_URL`) → öffentliche Server. Ist ein eigener Server nicht erreichbar, werden die öffentlichen gefragt.
+- Eine geänderte Adresse gilt ab der nächsten Abfrage, ohne Neustart; fehlgeschlagene Straßen werden dann neu geladen.
+- `app.json`: Whitelist zusätzlich `https://*` (wie Klipper Glance / Sugar Glass), die festen Origins bleiben.
+
 ## [0.9.3] — 2026-10-21
 
 ### Geändert: nichts mehr nur per Halten (Hardware-Messung 21.10.2026)

@@ -1,64 +1,66 @@
 # RainLens
 
-**Quietglass** · Das Wetter direkt auf deiner Even Realities G2.
+**Quietglass** · The weather, right on your Even Realities G2.
 
-> **Kurz gesagt:** RainLens zeigt dir das Wetter von jetzt, den nächsten Stunden und drei Tagen auf der Brille. Kein Konto, kein Schlüssel, kein eigener Server.
+> **Auf Deutsch, kurz:** RainLens zeigt das Wetter von jetzt, den nächsten Stunden und drei Tagen auf der Even G2, dazu ein Cockpit mit Radar und der Antwort „Regen in ~25 Min“. Kein Konto, kein Schlüssel, kein eigener Server. Standort erlauben oder am Handy einen Ort eintippen; Tippen lädt neu, Wischen wechselt die Ansicht, 2× beendet.
+
+> **In short:** RainLens shows you the weather right now, for the next hours and for three days on the glasses. No account, no key, no server of your own.
 >
-> **So startest du:**
-> 1. RainLens in der Even-App installieren und öffnen.
-> 2. Den Standort erlauben, wenn die Even-App fragt – oder am Handy einen Ort eintippen (z. B. „Hallein“ oder „Wien“) und antippen.
-> 3. Auf der Brille: **Tippen** lädt neu, **Wischen** wechselt zwischen Jetzt, Stunden, 3 Tagen und dem Cockpit, **2×** beendet. (Halten am optionalen R1-Ring zeigt zusätzlich die Hilfe.)
+> **How to start:**
+> 1. Install and open RainLens in the Even app.
+> 2. Allow location when the Even app asks – or type a place on the phone (e.g. "Hallein" or "Vienna") and tap it.
+> 3. On the glasses: **tap** reloads, **swipe** switches between Now, Hours, 3 Days and the Cockpit, **2×** exits. (Hold on the optional R1 ring additionally shows the help.)
 >
-> **Optional:** Koordinaten von Hand eingeben (unter „Erweitert“) – nur nötig, wenn die Ortssuche deinen Ort nicht kennt.
+> **Optional:** Enter coordinates by hand (under "Advanced") – only needed if the place search does not know your place.
 
-RainLens zeigt nicht mehr nur Regen, sondern das komplette Wetterbild: aktuelle Temperatur und gefühlte Temperatur, Wetterlage, Luftfeuchte, Bewölkung, Wind und Böen, Niederschlag, die nächsten Stunden sowie eine Drei-Tage-Prognose. Die Informationen sind für das monochrome 576 × 288-Display priorisiert und bleiben mit wenigen Gesten erreichbar.
+RainLens no longer shows just rain, but the complete weather picture: current and feels-like temperature, conditions, humidity, cloud cover, wind and gusts, precipitation, the next hours, and a three-day forecast. The information is prioritised for the monochrome 576 × 288 display and stays reachable with a few gestures.
 
-![RainLens im Even-Hub-Simulator](docs/screenshot.png)
+![RainLens in the Even Hub simulator](docs/screenshot.png)
 
-## Funktionen
+## Features
 
-- aktuelles Wetter mit Temperatur, gefühlter Temperatur und WMO-Wetterlage
-- klare monochrome Pixel-Piktogramme für Sonne, Wolken, Nebel, Regen, Schnee und Gewitter
-- Luftfeuchte, Bewölkung, Niederschlag, Windrichtung, Windstärke und Böen
-- zwölf kommende Stunden mit Temperatur und Regenwahrscheinlichkeit
-- Drei-Tage-Prognose mit Höchst-/Tiefstwerten und Sonnenauf-/untergang
-- Telefonstandort, oder ein Ort per Namenssuche (Open-Meteo-Geocoder, ebenfalls ohne Schlüssel); Koordinaten von Hand unter „Erweitert“
-- ohne Standort zeigt die Brille keine erfundenen Werte, sondern sagt, was zu tun ist
-- Tippen aktualisiert, Wischen wechselt die Ansicht, 2× beendet (Halten nur am R1-Ring: Hilfe)
-- verständliche Hinweise bei Netzfehlern auf Brille und Handy
-- Deutsch, Englisch, Französisch, Spanisch und Italienisch
-- keine Anmeldung und kein eigener API-Schlüssel erforderlich
-- nur im privaten Build (`VITE_RADAR=1`): animiertes Regenradar als vierte Ansicht, mit Grundkarte (Grenzen, Küste, Seen, große Flüsse, Ortsnamen) und dem nächsten Ort in der Kopfzeile
-- **Cockpit** (letzte Ansicht): alles auf einen Blick, groß gesetzt – siehe unten
+- current weather with temperature, feels-like temperature and WMO weather condition
+- clear monochrome pixel pictograms for sun, clouds, fog, rain, snow and thunderstorm
+- humidity, cloud cover, precipitation, wind direction, wind speed and gusts
+- twelve upcoming hours with temperature and chance of rain
+- three-day forecast with highs/lows and sunrise/sunset
+- phone location, or a place by name search (Open-Meteo geocoder, also without a key); coordinates by hand under "Advanced"
+- without a location, the glasses show no made-up values, but say what to do
+- tap refreshes, swipe switches the view, 2× exits (hold only on the R1 ring: help)
+- clear messages on network errors, on the glasses and on the phone
+- German, English, French, Spanish and Italian
+- no sign-in and no API key of your own required
+- private build only (`VITE_RADAR=1`): animated rain radar as a fourth view, with a base map (borders, coast, lakes, major rivers, place names) and the nearest place in the header
+- **Cockpit** (last view): everything at a glance, set large – see below
 
-## Cockpit-Ansicht
+## Cockpit view
 
-![Cockpit-Ansicht (Vorschau mit Ersatzschrift)](docs/cockpit-preview.png)
+![Cockpit view (preview with substitute font)](docs/cockpit-preview.png)
 
-Der ganze Bildschirm als ein Bild aus vier Kacheln, mit echten Schriften (fett, mehrere Größen):
+The whole screen as one image made of four tiles, with real fonts (bold, several sizes):
 
-- **links** das Radar mit Fadenkreuz (dein Standort), gestricheltem Entfernungsring, Nordpfeil und Windzeiger, darunter die Loop-Leiste (letzte Stunde durchgezogen, nächste Stunde gestrichelt mit dem Regen je Viertelstunde) und „HH:MM · Ort“. Im öffentlichen Build ohne Radar steht dort ein großes Piktogramm des aktuellen Wetters.
-- **rechts** groß die Antwort: „REGEN IN ~25 MIN“, „REGNET JETZT“, „TROCKEN BIS 18:00“ oder „TROCKEN“ (Schnee nach Wettercode), berechnet aus den Viertelstundenwerten von Open-Meteo (ab 0,1 mm je Viertelstunde). Darunter TEMP, GEFÜHLT, FEUCHTE, HIMMEL, WIND, BÖEN, REGEN 2 H und WARNUNG.
-- **WARNUNG**: amtliche Warnungen von GeoSphere Austria für Orte in Österreich (höchste Stufe, z. B. „▲ STURM (gelb)“), sonst „–“. Zusätzlich eine eigene **Böen-Warnung** am Handy (Tab „Mehr“, standardmäßig aus).
-- **Tippen** spielt den Radar-Loop einmal ab, dann wieder das Standbild.
+- **left**, the radar with crosshair (your location), dashed distance ring, north arrow and wind pointer; below it the loop bar (last hour solid, next hour dashed, with the rain per quarter hour) and "HH:MM · place". In the public build without radar, a large pictogram of the current weather is shown there instead.
+- **right**, the answer in large type: "RAIN IN ~25 MIN", "RAINING NOW", "DRY UNTIL 18:00" or "DRY" (snow according to the weather code), computed from Open-Meteo's quarter-hour values (from 0.1 mm per quarter hour). Below that: TEMP, FEELS, HUMIDITY, SKY, WIND, GUSTS, RAIN 2 H and ALERT.
+- **ALERT**: official warnings from GeoSphere Austria for places in Austria (highest level, e.g. "▲ STORM (yellow)"), otherwise "–". In addition, a separate **gust alert** on the phone ("Gust alert from", off by default).
+- **Tap** plays the radar loop once, then shows the still image again.
 
-Übertragen werden nur Kacheln, die sich geändert haben (die Uhr: eine Kachel pro Minute). Der Baukasten dafür liegt in `src/screen/` und ist zum Kopieren in andere Quietglass-Apps gedacht.
+Only tiles that have changed are transmitted (the clock: one tile per minute). The building blocks for this are in `src/screen/` and are meant to be copied into other Quietglass apps.
 
-## Datenquelle
+## Data source
 
-RainLens lädt die Vorhersage direkt von Open-Meteo (`api.open-meteo.com`) und sucht Orte über den Open-Meteo-Geocoder (`geocoding-api.open-meteo.com`, Ortsdaten von GeoNames). Beide antworten ohne Schlüssel und mit `access-control-allow-origin: *`, funktionieren also direkt aus der Even-App. Die freie Nutzung ist laut den Open-Meteo-Bedingungen auf nicht-kommerzielle Zwecke und weniger als 10 000 Aufrufe pro Tag begrenzt; die Daten stehen unter CC BY 4.0, der Hinweis steht unten in der Handy-App.
+RainLens loads the forecast directly from Open-Meteo (`api.open-meteo.com`) and looks up places through the Open-Meteo geocoder (`geocoding-api.open-meteo.com`, place data from GeoNames). Both answer without a key and with `access-control-allow-origin: *`, so they work directly from the Even app. According to the Open-Meteo terms, free use is limited to non-commercial purposes and fewer than 10,000 calls per day; the data is under CC BY 4.0, and the attribution is at the bottom of the phone app.
 
-### Radar und Karte (nur privater Build)
+### Radar and map (private build only)
 
-Das Radar kommt von RainViewer (`api.rainviewer.com`, `tilecache.rainviewer.com`; laut deren Bedingungen nur privat/zu Lernzwecken, mit sichtbarer Quellenangabe auf der Radarseite). Die Grundkarte darunter lädt nichts aus dem Netz: Grenzen, Küstenlinie, Seen, große Flüsse und Orte stammen aus [Natural Earth](https://www.naturalearthdata.com) 1:10m (gemeinfrei / public domain), auf Europa zugeschnitten, vereinfacht und in `src/radar/map-data.ts` eingebettet (~117 KB, nur im Radar-Teil des privaten Builds). Neu erzeugen: `node scripts/build-map-data.mjs <Ordner mit den Natural-Earth-GeoJSON-Dateien>`.
+The radar comes from RainViewer (`api.rainviewer.com`, `tilecache.rainviewer.com`; according to their terms only for private/learning purposes, with a visible source credit on the radar page). The base map underneath loads nothing from the network: borders, coastline, lakes, major rivers and places come from [Natural Earth](https://www.naturalearthdata.com) 1:10m (public domain), cropped to Europe, simplified and embedded in `src/radar/map-data.ts` (~117 KB, only in the radar part of the private build). To regenerate: `node scripts/build-map-data.mjs <folder with the Natural Earth GeoJSON files>`.
 
-### Warnungen (GeoSphere Austria)
+### Warnings (GeoSphere Austria)
 
-Für Orte in Österreich fragt die Cockpit-Ansicht `https://warnungen.zamg.at/wsapp/api/getWarningsForCoords?lon=…&lat=…&lang=de` ab – die öffentliche Schnittstelle hinter warnungen.zamg.at, ohne Schlüssel und mit `Access-Control-Allow-Origin: *` (geprüft am 13.10.2026). Außerhalb Österreichs wird nicht gefragt (der Dienst antwortet dort 404).
+For places in Austria, the Cockpit view queries `https://warnungen.zamg.at/wsapp/api/getWarningsForCoords?lon=…&lat=…&lang=de` – the public interface behind warnungen.zamg.at, without a key and with `Access-Control-Allow-Origin: *` (checked on 13 October 2026). Outside Austria it is not queried (the service answers 404 there).
 
-Die App übermittelt nur die zur Prognose benötigten Koordinaten bzw. den eingetippten Ortsnamen. Der gewählte Ort, eigene Koordinaten und die Sprachwahl bleiben lokal auf dem Gerät.
+The app only transmits the coordinates needed for the forecast, or the place name you typed. The chosen place, your own coordinates and the language choice stay local on the device.
 
-## Entwicklung
+## Development
 
 ```bash
 npm install
@@ -68,10 +70,10 @@ npm run dev
 npm run sim
 ```
 
-Noch nicht auf echter G2-Hardware geprüft. Wetterdaten sind modellbasierte Prognosen; amtlich sind nur die GeoSphere-Warnungen im Cockpit (Österreich).
+Not yet tested on real G2 hardware. Weather data are model-based forecasts; only the GeoSphere warnings in the Cockpit (Austria) are official.
 
-Cockpit-Vorschau neu erzeugen: `node scripts/cockpit-preview.mjs` (Node ≥ 22.18, zeichnet mit der Ersatz-Pixelschrift).
+Regenerate the Cockpit preview: `node scripts/cockpit-preview.mjs` (Node ≥ 22.18, draws with the substitute pixel font).
 
-## Datenschutz
+## Privacy
 
-Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).
+Which data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).

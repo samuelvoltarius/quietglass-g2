@@ -1,21 +1,23 @@
 # PodCaption
 
-**Quietglass** · Podcast-Untertitel für die Even Realities G2.
+**Quietglass** · Podcast captions for the Even Realities G2.
 
-> **Kurz gesagt:** PodCaption zeigt die Untertitel einer Podcast-Folge im Takt auf der Brille – praktisch, wenn du schlecht hörst oder leise mitlesen willst. Kein Konto, kein Server.
+> **Auf Deutsch, kurz:** PodCaption zeigt die Untertitel einer Podcast-Folge im Takt auf der Even G2 – praktisch, wenn du schlecht hörst oder leise mitlesen willst. Du öffnest am Handy eine Untertitel-Datei (VTT, SRT, JSON oder Text) oder fügst Text ein. Tippen spielt ab oder hält an, Wischen blättert, Halten zeigt die Hilfe, 2× beendet. Kein Konto, kein Server.
+
+> **In short:** PodCaption shows the captions of a podcast episode in time on the glasses – handy if you have trouble hearing or want to read along quietly. No account, no server.
 >
-> **So startest du:**
-> 1. PodCaption in der Even-App installieren und öffnen.
-> 2. Am Handy unter „Untertitel öffnen“ eine Datei wählen (VTT, SRT, JSON oder Text) – oder Untertitel von der Podcast-Website kopieren und unter „Oder Text einfügen“ einfügen.
-> 3. Auf der Brille **tippen** = abspielen/anhalten, **wischen** = blättern, **halten** = Hilfe, **2×** = beenden. Den Ton spielst du wie gewohnt in deiner Podcast-App.
+> **How to start:**
+> 1. Install and open PodCaption in the Even app.
+> 2. On the phone, under "Open captions", pick a file (VTT, SRT, JSON or text) – or copy captions from the podcast's website and paste them under "Or paste text".
+> 3. On the glasses: **tap** = play/pause, **swipe** = page, **hold** = help, **2×** = exit. You play the audio as usual in your podcast app.
 >
-> **Optional (Erweitert):** Untertitel automatisch aus einem RSS-Feed holen. Dafür läuft ein kleines Programm (`examples/podcast-bridge.mjs`) auf deinem Computer, weil die App den Feed sonst nicht lesen darf: der Bridge-Weg ist an `127.0.0.1:8789` gebunden (siehe `app.json`), und nicht jeder Feed erlaubt direkte Abrufe aus Apps (CORS).
+> **Optional (Advanced):** Fetch captions automatically from an RSS feed. For this, a small program (`examples/podcast-bridge.mjs`) runs on your computer, because the app is otherwise not allowed to read the feed: the bridge route is bound to `127.0.0.1:8789` (see `app.json`), and not every feed allows direct requests from apps (CORS).
 
-![PodCaption im Even-Hub-Simulator](docs/screenshot.png)
+![PodCaption in the Even Hub simulator](docs/screenshot.png)
 
-PodCaption kann WebVTT-, SRT-, JSON- oder Textdateien direkt vom Telefon öffnen oder eingefügten Text übernehmen – das ist der Standardweg und braucht weder Netz noch Server. Beim ersten Start zeigt die Brille statt eines Beispiel-Podcasts eine kurze Anleitung in der gewählten Sprache. Optional liest die Bridge den offiziellen Podcasting-2.0-Tag `podcast:transcript` aus einem RSS-Feed; bietet eine Folge mehrere Transkripte an, nimmt sie zeitcodierte Formate (WebVTT, dann SRT, JSON) vor HTML oder reinem Text und versucht bei einem defekten Link das nächste. Die Wiedergabe folgt den Zeitstempeln; nur ungetakteter Text läuft im festen 4-Sekunden-Takt. Feed- und Transkriptfehler erscheinen auf dem Telefon und als eine Zeile auf der Brille. Damit bleibt die App unabhängig von Spotify. Oberfläche und Brillensteuerung unterstützen Deutsch, Englisch, Französisch, Spanisch und Italienisch; der eigentliche Untertiteltext bleibt in seiner Originalsprache.
+PodCaption can open WebVTT, SRT, JSON or text files directly from the phone, or take pasted text. This is the default route and needs neither network nor server. On first start, instead of a sample podcast, the glasses show a short guide in the chosen language. Optionally, the bridge reads the official Podcasting 2.0 tag `podcast:transcript` from an RSS feed. If an episode offers several transcripts, it prefers time-coded formats (WebVTT, then SRT, JSON) over HTML or plain text, and tries the next one if a link is broken. Playback follows the timestamps; only text without timing runs at a fixed 4-second pace. Feed and transcript errors appear on the phone and as one line on the glasses. This keeps the app independent of Spotify. The interface and the glasses controls support German, English, French, Spanish and Italian; the caption text itself stays in its original language.
 
-## Erweitert: Start mit einem Feed
+## Advanced: starting with a feed
 
 ```powershell
 $env:PODCAST_FEED_URL = "https://example.org/podcast.xml"
@@ -27,8 +29,8 @@ npm run dev
 npm run sim
 ```
 
-Die Bridge akzeptiert ausschließlich Transkript-URLs, die im konfigurierten Feed vorkommen. Noch nicht auf echter G2-Hardware geprüft.
+The bridge accepts only transcript URLs that appear in the configured feed. Not yet tested on real G2 hardware.
 
-## Datenschutz
+## Privacy
 
-Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).
+Which data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).

@@ -1,55 +1,47 @@
-# valhalla — eigenes Routing für OpenGlance Nav und NextStop
+# valhalla — your own routing for OpenGlance Nav and NextStop
 
-Valhalla rechnet Routen für **Auto, Fahrrad und zu Fuß** (kann **keine** Fahrpläne – Öffis kommen von
-Transitous/MOTIS, wofür du nichts hosten musst). Ohne eigenen Server nutzen die Apps den öffentlichen
-FOSSGIS-Server; ein eigener ist schneller, unbegrenzt und gibt deine Positionen nicht weiter.
+Valhalla calculates routes for **car, bicycle and walking**. It **cannot** do timetables: public transport comes
+from Transitous/MOTIS, for which you do not have to host anything. Without your own server, the apps use the public
+FOSSGIS server. Your own is faster, unlimited, and does not pass on your positions.
 
-| lokal | Tailscale-Port (Vorschlag) | Build-Variable |
+| Local | Tailscale port (suggestion) | Build variable |
 |---|---|---|
-| `127.0.0.1:8112` | `8455` | `VITE_ROUTER_URL=https://<server>.<tailnet>.ts.net:8455` |
+| `127.0.0.1:8112` | `8455` | `VITE_ROUTER_URL=https://<your-machine>.<your-tailnet>.ts.net:8455` |
 
-Die Apps fragen per **GET** `…/route?json={…}` – das ist ein „einfacher“ Request ohne CORS-Preflight; Valhalla
-sendet `Access-Control-Allow-Origin: *`, mehr ist nicht nötig. (Ein `OPTIONS` beantwortet Valhalla mit 405 – bei
-GET ist das egal.)
+The apps ask with **GET** `…/route?json={…}`. That is a "simple" request without a CORS preflight. Valhalla
+sends `Access-Control-Allow-Origin: *`, and nothing more is needed. (Valhalla answers an `OPTIONS` with 405, which
+does not matter for GET.)
 
-## Installieren
+## Install
 
-Voraussetzung: Docker mit `docker compose`, ausreichend Platte (Land: 5–10 GB, Europa: ~70 GB) und RAM.
+Requirements: Docker with `docker compose`, enough disk space (a country: 5–10 GB, Europe: ~70 GB) and RAM.
 
 ```bash
 cd selfhost/services/valhalla
-cp .env.example .env && $EDITOR .env      # Region (TILE_URLS) und RAM wählen
+cp .env.example .env && $EDITOR .env      # choose the region (TILE_URLS) and RAM
 docker compose up -d
-docker compose logs -f                    # beim ersten Start: Karte laden + Kacheln bauen (Minuten bis Stunden)
+docker compose logs -f                    # on the first start: load the map + build tiles (minutes to hours)
 ```
 
-Fertig, sobald im Log der Server lauscht und das hier Antwort gibt:
+It is ready as soon as the server is listening in the log and this answers:
 
 ```bash
 curl -s http://127.0.0.1:8112/status
 curl -s 'http://127.0.0.1:8112/route?json={"locations":[{"lat":47.8,"lon":13.04},{"lat":47.81,"lon":13.06}],"costing":"auto"}' | head -c 300
 ```
 
-Dann freigeben (nie `serve reset`):
+Then publish it (never `serve reset`):
 
 ```bash
 tailscale serve --bg --https=8455 http://127.0.0.1:8112
 tailscale serve status
 ```
 
-## Pflege
+## Maintenance
 
-- Karte aktualisieren: im Ordner `custom_files/` die `*.osm.pbf` und `valhalla_tiles*` löschen (oder in `docker-compose.yml`
-  `force_rebuild=True` kurzzeitig setzen), dann `docker compose up -d --force-recreate`.
-- Region ändern: `TILE_URLS` anpassen und neu bauen – die Kacheln werden dann neu erzeugt.
-- Höhendaten (genauerer Verbrauch am Berg) sind aus; für eine kleine Region kann `build_elevation=True` in der
-  Compose-Datei helfen.
-
-## English
-
-Self-hosted Valhalla (docker-valhalla by nilsnolde) for car/bike/foot routing; no timetables (public transport
-comes from Transitous). Copy `.env.example` to `.env`, pick a Geofabrik region and RAM cap, `docker compose up -d`,
-wait for the first tile build, check `curl http://127.0.0.1:8112/status`, publish with
-`tailscale serve --bg --https=8455 http://127.0.0.1:8112` and build the apps with
-`VITE_ROUTER_URL=https://<server>.<tailnet>.ts.net:8455`. The apps use GET `?json=` (no CORS preflight).
-Reference setup: Valhalla 3.5.1, Europe extract (~35 GB tiles, 48 GB RAM cap).
+- Update the map: in the folder `custom_files/`, delete the `*.osm.pbf` and `valhalla_tiles*` (or temporarily set
+  `force_rebuild=True` in `docker-compose.yml`), then `docker compose up -d --force-recreate`.
+- Change the region: adjust `TILE_URLS` and rebuild. The tiles are then created anew.
+- Elevation data (more accurate consumption on mountains) is off. For a small region, `build_elevation=True` in the
+  compose file can help.
+- Reference setup: Valhalla 3.5.1 (docker-valhalla by nilsnolde), Europe extract (~35 GB of tiles, 48 GB RAM cap).

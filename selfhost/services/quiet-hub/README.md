@@ -1,52 +1,45 @@
-# quiet-hub — Daemon + Relay für Quiet Hub
+# quiet-hub — daemon + relay for Quiet Hub
 
-Ein **Daemon** (die Brille spricht nur mit ihm; alle Tokens bleiben dort) und je Rechner mit Agenten ein **Relay**,
-das **ausgehend** zum Daemon verbindet. **Der Code liegt im Repo und wird nicht kopiert:**
+One **daemon** (the glasses talk only to it; all tokens stay there) and, on each machine with agents, one **relay**
+that connects **outbound** to the daemon. **The code is in the repo and is not copied:**
 [`apps/quiet-hub/examples/`](../../../apps/quiet-hub/examples) (`quiet-hub-daemon.mjs`, `quiet-hub-relay.mjs`,
-`relay.example.json`; Node ≥ 18). Alle Daemon-Optionen: [`apps/quiet-hub/.env-hub.example`](../../../apps/quiet-hub/.env-hub.example),
-Details: [`apps/quiet-hub/README.md`](../../../apps/quiet-hub/README.md).
+`relay.example.json`; Node ≥ 18). All daemon options: [`apps/quiet-hub/.env-hub.example`](../../../apps/quiet-hub/.env-hub.example),
+details: [`apps/quiet-hub/README.md`](../../../apps/quiet-hub/README.md).
 
-| Teil | lokal | Tailscale-Port (Vorschlag) | App-Feld / Build |
+| Part | Local | Tailscale port (suggestion) | App field / build |
 |---|---|---|---|
-| Daemon | `127.0.0.1:8787` | `8443` | „Hub-Adresse“ = `https://<server>.<tailnet>.ts.net:8443` |
-| Relay | – (verbindet nach außen) | – | `QUIET_HUB_URL` in `quiet-hub-relay.env` |
+| Daemon | `127.0.0.1:8787` | `8443` | "Hub address" (Hub-Adresse) = `https://<your-machine>.<your-tailnet>.ts.net:8443` |
+| Relay | – (connects outward) | – | `QUIET_HUB_URL` in `quiet-hub-relay.env` |
 
-Optional braucht der Daemon: [whisper](../whisper) (Sprache), einen OpenAI-kompatiblen LLM-Server (Antwortvorschläge),
-Home Assistant, Moonraker. Der Daemon startet auf Wunsch ein lokales Hermes (`hermes chat`); ohne Hermes setze
-`LOCAL_AGENT=off` in der Env-Datei und nutze nur Relays.
+Optionally, the daemon needs: [whisper](../whisper) (speech), an OpenAI-compatible LLM server (reply suggestions),
+Home Assistant, Moonraker. On request, the daemon starts a local Hermes (`hermes chat`). Without Hermes, set
+`LOCAL_AGENT=off` in the env file and use only relays.
 
-## Daemon installieren
+## Install the daemon
 
 ```bash
-git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2     # falls noch nicht da
+git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2     # if not there yet
 mkdir -p ~/.config/quietglass ~/.config/systemd/user
 cp daemon.env.example ~/.config/quietglass/quiet-hub-daemon.env && chmod 600 ~/.config/quietglass/quiet-hub-daemon.env
-$EDITOR ~/.config/quietglass/quiet-hub-daemon.env     # HUB_TAILSCALE_USERS = dein Login, HUB_TOKEN für Relays
+$EDITOR ~/.config/quietglass/quiet-hub-daemon.env     # HUB_TAILSCALE_USERS = your login, HUB_TOKEN for relays
 cp quiet-hub-daemon.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now quiet-hub-daemon
 loginctl enable-linger "$USER"
 systemctl --user is-active quiet-hub-daemon
-tailscale serve --bg --https=8443 http://127.0.0.1:8787      # nie "serve reset"
+tailscale serve --bg --https=8443 http://127.0.0.1:8787      # never "serve reset"
 tailscale serve status
 ```
 
-## Relay installieren (auf jedem Rechner mit Agenten, auch auf dem Daemon-Rechner selbst)
+## Install the relay (on every machine with agents, also on the daemon machine itself)
 
 ```bash
 mkdir -p ~/.config/quietglass ~/.config/quiet-hub ~/.config/systemd/user
-cp ~/quietglass-g2/apps/quiet-hub/examples/relay.example.json ~/.config/quiet-hub/relay.json   # Agenten eintragen
+cp ~/quietglass-g2/apps/quiet-hub/examples/relay.example.json ~/.config/quiet-hub/relay.json   # enter agents
 cp relay.env.example ~/.config/quietglass/quiet-hub-relay.env && chmod 600 ~/.config/quietglass/quiet-hub-relay.env
-$EDITOR ~/.config/quietglass/quiet-hub-relay.env     # QUIET_HUB_URL, HUB_TOKEN (= Token des Daemons)
+$EDITOR ~/.config/quietglass/quiet-hub-relay.env     # QUIET_HUB_URL, HUB_TOKEN (= the daemon's token)
 cp quiet-hub-relay.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now quiet-hub-relay
 ```
 
-Die Brille meldet sich mit deinem Tailscale-Login an (kein Token tippen); der Token gilt für Relays und als
-Alternative. Unter Windows/macOS läuft derselbe Node-Code ohne systemd (Aufgabenplanung / launchd).
-
-## English
-
-Daemon (the only thing the glasses talk to) plus one outbound relay per machine with agents. Code stays in
-`apps/quiet-hub/examples/`. Install the daemon unit with `daemon.env.example` (your login in `HUB_TAILSCALE_USERS`,
-`HUB_TOKEN` for relays), publish `127.0.0.1:8787` via `tailscale serve --bg --https=8443 http://127.0.0.1:8787`;
-on each agent machine install the relay unit with `relay.env.example` and `relay.json`.
+The glasses sign in with your Tailscale login (no token to type). The token is for relays and works as an
+alternative. On Windows/macOS, the same Node code runs without systemd (Task Scheduler / launchd).

@@ -1,44 +1,44 @@
-# byd-bridge — BYD-Telemetrie für BYD Glass (nur Tailnet)
+# byd-bridge — BYD telemetry for BYD Glass (tailnet only)
 
-> Inoffiziell, ohne Verbindung zu BYD. Die Bridge spricht **nie selbst** mit dem Auto oder der BYD-Cloud:
-> sie liest MQTT und reicht wenige, streng geprüfte Befehle an einen Steuerweg weiter, den du schon betreibst.
-> Fernbefehle können verspätet, gar nicht oder doppelt ankommen. Prüfe das Ergebnis im Auto bzw. in der BYD-App.
+> Unofficial, with no connection to BYD. The bridge **never talks to the car or the BYD cloud itself**.
+> It reads MQTT and passes a few strictly checked commands to a control path that you already run.
+> Remote commands can arrive late, not at all, or twice. Check the result in the car or in the BYD app.
 
 ```
- Auto (DiLink 3, Overdrive-App) ── MQTT overdrive/vehicle/telemetry/<feld> ──┐
+ Car (DiLink 3, Overdrive app) ── MQTT overdrive/vehicle/telemetry/<field> ──┐
                                                                              ▼
- BYD-Cloud ◄── pybyd-mqtt (cmd/heat|cool|climate_off …, klima_status) ◄── Mosquitto (127.0.0.1:1883)
+ BYD cloud ◄── pybyd-mqtt (cmd/heat|cool|climate_off …, klima_status) ◄── Mosquitto (127.0.0.1:1883)
                                                                              ▲
-              Brille ◄─ iPhone ◄─ tailscale serve :8471 ◄─ byd-bridge (127.0.0.1:8472)
+              Glasses ◄─ iPhone ◄─ tailscale serve :8471 ◄─ byd-bridge (127.0.0.1:8472)
 ```
 
-* **Daten:** die Overdrive-App am Auto meldet ~140 Werte, je Thema ein Wert (`soc`, `speed`, `power`,
-  `tyre_p_fl` …), etwa alle 5 s, solange die Head-Unit wach ist. Die Bridge hält den letzten Stand im Speicher,
-  wertet ihn aus (Modus, Warnungen) und liefert ihn kompakt an die Brille. **Standort und VIN** gibt sie nicht weiter.
-* **Befehle:** nur `climate_on` (16–28 °C), `climate_off`, `lock`, `unlock` (aus, siehe unten). Sie gehen als
-  MQTT-Befehl an die vorhandene **pybyd-mqtt**-Brücke (Cloud-Weg, geht auch im Schlaf) — die hat schon die
-  Sperre gegen Befehlsstürme, die Poll-Pause gegen BYD-Fehler 6024 und die Rückmeldung `klima_status`.
-* Freigegeben wird **nur die Bridge** per `tailscale serve`; Zugriff nur für Logins aus `BYD_TAILSCALE_USERS`.
+* **Data:** the Overdrive app on the car reports ~140 values, one value per topic (`soc`, `speed`, `power`,
+  `tyre_p_fl` ...), about every 5 s while the head unit is awake. The bridge keeps the latest state in memory,
+  analyzes it (mode, warnings) and delivers it compactly to the glasses. It does **not** pass on the location or the VIN.
+* **Commands:** only `climate_on` (16–28 °C), `climate_off`, `lock`, `unlock` (off by default, see below). They go
+  as an MQTT command to the existing **pybyd-mqtt** bridge (cloud path, also works while the car sleeps). That bridge
+  already has the lock against command storms, the poll pause against BYD error 6024 and the feedback `klima_status`.
+* Only **the bridge** is published with `tailscale serve`. Access is only for logins in `BYD_TAILSCALE_USERS`.
 
-| lokal | Tailscale-Port (Vorschlag) | App / Build |
+| Local | Tailscale port (suggestion) | App / build |
 |---|---|---|
-| byd-bridge `127.0.0.1:8472` | `8471` | `VITE_BYD_URL=https://<server>.<tailnet>.ts.net:8471` |
+| byd-bridge `127.0.0.1:8472` | `8471` | `VITE_BYD_URL=https://<your-machine>.<your-tailnet>.ts.net:8471` |
 
-## Schnittstelle
+## Interface
 
-| Anfrage | Anmeldung | |
+| Request | Sign-in | |
 |---|---|---|
-| `GET /health` | nein | `{ok, mqtt, age_s, rev}` — keine Fahrzeugdaten |
-| `GET /state` | ja | aktueller Zustand (JSON, siehe unten) |
-| `GET /state?since=<rev>&wait=25` | ja | Long-Poll: antwortet sofort bei neuer Revision, sonst nach ≤ 25 s mit dem gleichen Stand |
-| `POST /command` | ja | Rumpf `{"action":"climate_on","value":21}` als **text/plain** (einfache Anfrage, kein Preflight) → `202 {ok, command}`; das Ergebnis kommt danach im Zustand unter `command` |
-| `OPTIONS *` | – | `204` **ohne Body** (sonst verwirft iOS die Antwort) |
+| `GET /health` | no | `{ok, mqtt, age_s, rev}`. No vehicle data |
+| `GET /state` | yes | Current state (JSON, see below) |
+| `GET /state?since=<rev>&wait=25` | yes | Long poll: answers immediately on a new revision, otherwise after ≤ 25 s with the same state |
+| `POST /command` | yes | Body `{"action":"climate_on","value":21}` as **text/plain** (a simple request, no preflight) → `202 {ok, command}`; the result then appears in the state under `command` |
+| `OPTIONS *` | – | `204` **with no body** (otherwise iOS drops the answer) |
 
-Anmeldung wie bei den anderen Brillen-Diensten: `tailscale serve` verbindet von Loopback und setzt
-`Tailscale-User-Login`; dem Kopf wird **nur von Loopback** und **nur für Logins aus `BYD_TAILSCALE_USERS`** geglaubt.
-Alternativ `Authorization: Bearer <BYD_TOKEN>` (für curl). Ohne beides ist alles gesperrt (401).
+Sign-in works as with the other glasses services: `tailscale serve` connects from loopback and sets
+`Tailscale-User-Login`. The header is trusted **only from loopback** and **only for logins in `BYD_TAILSCALE_USERS`**.
+Alternatively, use `Authorization: Bearer <BYD_TOKEN>` (for curl). With neither, everything is blocked (401).
 
-### Zustand (`/state`)
+### State (`/state`)
 
 ```json
 {
@@ -56,46 +56,47 @@ Alternativ `Authorization: Bearer <BYD_TOKEN>` (für curl). Ohne beides ist alle
 }
 ```
 
-* `mode`: `driving` (Tempo > 3 km/h oder Gang D/R), sonst `charging` (`is_charging`), sonst `parked`.
-* `stale`: letzte Overdrive-Meldung älter als `BYD_STALE_S` (Head-Unit schläft) — Werte sind dann „letzter Stand“.
-* `power_kw` ist beim Laden und Rekuperieren **negativ**. Die Ladeleistung `charge.kw` kommt aus `-power`,
-  **nicht** aus `charge_power` (das Feld ist am Dolphin Surf um Faktor 2,5–3,6 daneben).
-* `body.locked`: Overdrive `locked` (1 = zu). Schläft das Auto (> 10 min keine Meldung), zählt der von der Cloud
-  bestätigte Schlosszustand (`<BYD_CLOUD_TOPIC>/state`, `lock_confirmed=ON`) — `lock_src` sagt, woher.
-* Warnungen (`code`, `level` = `crit|warn|info`): `tyre_leak` (Rad), `tyre_low` (Rad, < `BYD_TYRE_LOW_KPA`
-  oder Reifen-Status ≠ 0), `door_open` (beim Fahren `crit`), `v12_low` (< `BYD_12V_LOW`, wie der keepawake-guard),
-  `unlocked` (geparkt und seit ≥ `BYD_UNLOCKED_MIN` min offen), `soc_low`, `charge_done` (30 min nach Ladeende).
-  „Schlüssel weg“ lässt sich aus den Overdrive-Feldern (`key_*`) nicht sicher ablesen, daher die Zeitregel.
-* `command.status`: `sent` → `pending` (BYD arbeitet) → `ok` | `busy` (BYD gedrosselt, ~2 min warten) | `error` |
-  `timeout` (90 s ohne Rückmeldung). `note: "mapped_heat|mapped_cool"`: ohne Erweiterung wurde 26 °/19 ° gesendet.
+* `mode`: `driving` (speed > 3 km/h or gear D/R), otherwise `charging` (`is_charging`), otherwise `parked`.
+* `stale`: the last Overdrive message is older than `BYD_STALE_S` (the head unit is asleep). The values are then
+  the "last known state".
+* `power_kw` is **negative** while charging and recuperating. The charging power `charge.kw` comes from `-power`,
+  **not** from `charge_power` (that field is off by a factor of 2.5–3.6 on the Dolphin Surf).
+* `body.locked`: Overdrive `locked` (1 = locked). If the car sleeps (no message for > 10 min), the lock state
+  confirmed by the cloud counts (`<BYD_CLOUD_TOPIC>/state`, `lock_confirmed=ON`). `lock_src` tells you which one.
+* Warnings (`code`, `level` = `crit|warn|info`): `tyre_leak` (wheel), `tyre_low` (wheel, < `BYD_TYRE_LOW_KPA`
+  or tyre status ≠ 0), `door_open` (`crit` while driving), `v12_low` (< `BYD_12V_LOW`, like the keepawake guard),
+  `unlocked` (parked and unlocked for at least `BYD_UNLOCKED_MIN` min), `soc_low`, `charge_done` (30 min after
+  charging ended). "Key gone" cannot be read reliably from the Overdrive fields (`key_*`), hence the time rule.
+* `command.status`: `sent` → `pending` (BYD is working) → `ok` | `busy` (BYD throttled, wait ~2 min) | `error` |
+  `timeout` (90 s without feedback). `note: "mapped_heat|mapped_cool"`: without the extension, 26 °/19 ° was sent.
 
-### Befehle und Sicherheit
+### Commands and safety
 
-| Befehl | Weg | Bedingung |
+| Command | Path | Condition |
 |---|---|---|
-| `climate_on` `value` 16–28 | `cmd/climate_temp` (mit Erweiterung) sonst `cmd/heat` (≥ 22 → 26 °C) / `cmd/cool` (19 °C) | – |
+| `climate_on` `value` 16–28 | `cmd/climate_temp` (with the extension), otherwise `cmd/heat` (≥ 22 → 26 °C) / `cmd/cool` (19 °C) | – |
 | `climate_off` | `cmd/climate_off` | – |
-| `lock` | `cmd/lock` (Erweiterung, `BYD_LOCK_TOPICS=1`) oder `BYD_ACTION_URL` | ein Weg muss eingerichtet sein |
-| `unlock` | wie `lock` | `BYD_ALLOW_UNLOCK=1` **und** laut letzter Telemetrie geparkt (`is_parked=1`, Tempo 0, Gang nicht D/R/N) |
+| `lock` | `cmd/lock` (extension, `BYD_LOCK_TOPICS=1`) or `BYD_ACTION_URL` | one path must be set up |
+| `unlock` | like `lock` | `BYD_ALLOW_UNLOCK=1` **and** parked according to the latest telemetry (`is_parked=1`, speed 0, gear not D/R/N) |
 
-* Alles andere: 400/403. Ein Befehl gleichzeitig (409 `busy`), höchstens einer je 20 s (409 `too_fast`).
-* Jeder Befehl — auch abgelehnte — landet als JSON-Zeile in `BYD_LOG` und im Journal
-  (`time, id, action, value, status, text, who`). Keine Tokens, keine PIN.
-* `BYD_CONTROL=0` macht die Bridge rein lesend.
+* Everything else: 400/403. One command at a time (409 `busy`), at most one per 20 s (409 `too_fast`).
+* Every command, including rejected ones, ends up as a JSON line in `BYD_LOG` and in the journal
+  (`time, id, action, value, status, text, who`). No tokens, no PIN.
+* `BYD_CONTROL=0` makes the bridge read-only.
 
-## Erweiterung von pybyd-mqtt (optional: freie Temperatur, Zusperren)
+## Extension of pybyd-mqtt (optional: free temperature, locking)
 
-Ohne Erweiterung kennt die pybyd-mqtt-Brücke nur zwei feste Sollwerte (Heizen 26 °C, Kühlen 19 °C) und kein
-Schloss. Die folgenden Zeilen ergänzen sie, ohne das Bestehende zu ändern — gleicher Ablauf wie Heizen/Kühlen
-(eigener Thread, Sperre, 45-s-Poll-Pause, ein sanfter Retry bei 1008/6024, Rückmeldung über `klima_status`).
-**Vorher sichern** (`cp pybyd_mqtt.py pybyd_mqtt.py.bak-<datum>`), danach `systemctl --user restart pybyd-mqtt`
-und im Log `MQTT connected, subscribed cmds` prüfen.
+Without the extension, the pybyd-mqtt bridge only knows two fixed setpoints (heating 26 °C, cooling 19 °C) and no
+lock. The following lines add them without changing what exists. The flow is the same as for heating/cooling
+(own thread, lock, 45 s poll pause, one gentle retry on 1008/6024, feedback through `klima_status`).
+**Back up first** (`cp pybyd_mqtt.py pybyd_mqtt.py.bak-<date>`), then run `systemctl --user restart pybyd-mqtt`
+and check the log for `MQTT connected, subscribed cmds`.
 
 ```python
-# bei den anderen CMD_-Konstanten
-CMD_CLIMATE_TEMP = "bydcloud/%s/cmd/climate_temp" % NODE   # Payload: Grad C, 16..28
+# next to the other CMD_ constants
+CMD_CLIMATE_TEMP = "bydcloud/%s/cmd/climate_temp" % NODE   # Payload: degrees C, 16..28
 CMD_LOCK         = "bydcloud/%s/cmd/lock" % NODE
-# CMD_UNLOCK     = "bydcloud/%s/cmd/unlock" % NODE         # NUR mit Broker-ACL, siehe unten
+# CMD_UNLOCK     = "bydcloud/%s/cmd/unlock" % NODE         # ONLY with a broker ACL, see below
 
 def _temp(msg):
     try:
@@ -123,7 +124,7 @@ async def _do_lock(lock=True):
         raise last
 ```
 
-In `on_connect` die neuen Themen mit abonnieren:
+In `on_connect`, subscribe to the new topics as well:
 
 ```python
     for t in (CMD_HEAT, CMD_COOL, CMD_CLIMATE_OFF, CMD_CLIMATE, CMD_BATTERY, CMD_FINDCAR,
@@ -131,19 +132,19 @@ In `on_connect` die neuen Themen mit abonnieren:
         client.subscribe(t)
 ```
 
-In `on_msg` die Sperre auf die neuen Themen ausdehnen und den Modus nur für Klima setzen:
+In `on_msg`, extend the lock to the new topics and set the mode only for climate:
 
 ```python
     if t in (CMD_HEAT, CMD_COOL, CMD_CLIMATE_OFF, CMD_CLIMATE_TEMP, CMD_LOCK):
-        # … blocked-Prüfung wie bisher …
+        # … blocked check as before …
         _GATE["running"] = True
         if t != CMD_LOCK:
             if t == CMD_CLIMATE_TEMP:
                 _mode = "heat" if _temp(msg) >= 22 else "cool"
             else:
                 _mode = {CMD_HEAT: "heat", CMD_COOL: "cool", CMD_CLIMATE_OFF: "off"}[t]
-            # … _MODE / KLIMA_MODE wie bisher …
-    # … bestehende elif-Zweige …
+            # … _MODE / KLIMA_MODE as before …
+    # … existing elif branches …
     elif t == CMD_CLIMATE_TEMP:
         tt = _temp(msg)
         _spawn(lambda: _do_climate(temp=tt), "🌡️ Klima %d°" % tt, status=True)
@@ -151,55 +152,56 @@ In `on_msg` die Sperre auf die neuen Themen ausdehnen und den Modus nur für Kli
         _spawn(lambda: _do_lock(True), "🔒 Zusperren", status=True)
 ```
 
-Dann in der `.env` der Bridge `BYD_CLIMATE_TEMP_TOPIC=1` und `BYD_LOCK_TOPICS=1`.
+Then set `BYD_CLIMATE_TEMP_TOPIC=1` and `BYD_LOCK_TOPICS=1` in the bridge's `.env`.
 
-**Entriegeln über MQTT nur mit Broker-ACL:** Mosquitto nimmt anonyme Verbindungen an (auch aus LAN/Tailnet,
-weil Overdrive von außen meldet). Ein `cmd/unlock`-Thema wäre damit für jedes Gerät im Netz offen. Erst wenn der
-Broker Benutzer + ACL hat (`cmd/#` nur für pybyd-mqtt und die Bridge), `CMD_UNLOCK` analog zu `CMD_LOCK` ergänzen
-(`_do_lock(False)`) und `BYD_ALLOW_UNLOCK=1` setzen. Das gilt sinngemäß für jeden HTTP-Dienst ohne Anmeldung, der
-`/action unlock` kann — ihn **nicht** als `BYD_ACTION_URL` eintragen, solange er im LAN offen lauscht.
+**Unlocking over MQTT only with a broker ACL:** Mosquitto accepts anonymous connections (also from the LAN/tailnet,
+because Overdrive reports from outside). A `cmd/unlock` topic would therefore be open to every device on the
+network. Only when the broker has users + an ACL (`cmd/#` only for pybyd-mqtt and the bridge), add `CMD_UNLOCK`
+like `CMD_LOCK` (`_do_lock(False)`) and set `BYD_ALLOW_UNLOCK=1`. The same applies to any HTTP service without
+sign-in that can do `/action unlock`. Do **not** enter it as `BYD_ACTION_URL` while it listens openly on the LAN.
 
-## Einrichten (systemd --user, neben Broker und pybyd-mqtt)
+## Set-up (systemd --user, next to the broker and pybyd-mqtt)
 
 ```bash
-python3 -c "import paho.mqtt.client"            # paho 1.x oder 2.x muss da sein
+python3 -c "import paho.mqtt.client"            # paho 1.x or 2.x must be present
 mkdir -p ~/byd-bridge
 cp byd_bridge.py ~/byd-bridge/
-python3 ~/byd-bridge/byd_bridge.py --selftest    # muss "alles gruen" melden
-install -m 600 .env.example ~/byd-bridge/.env    # BYD_TAILSCALE_USERS = dein Login
+python3 ~/byd-bridge/byd_bridge.py --selftest    # must report "alles gruen" ("all green")
+install -m 600 .env.example ~/byd-bridge/.env    # BYD_TAILSCALE_USERS = your login
 cp byd-bridge.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now byd-bridge
 systemctl --user is-active byd-bridge
 curl -s http://127.0.0.1:8472/health                                            # {"ok":true,"mqtt":true,…}
-curl -s -H 'Tailscale-User-Login: <dein login>' http://127.0.0.1:8472/state | head -c 300
-tailscale serve --bg --https=8471 http://127.0.0.1:8472   # nie "serve reset"/"off"
-tailscale serve status                                    # 8471 -> 127.0.0.1:8472 zurücklesen
+curl -s -H 'Tailscale-User-Login: <your-login>' http://127.0.0.1:8472/state | head -c 300
+tailscale serve --bg --https=8471 http://127.0.0.1:8472   # never "serve reset"/"off"
+tailscale serve status                                    # read back 8471 -> 127.0.0.1:8472
 ```
 
-Prüfen ohne Auto: `GET /state?since=<rev>&wait=5` muss ~5 s warten und dann antworten; `curl -i -X OPTIONS …`
-muss `204` mit `Content-Length: 0` zeigen; ein `POST /command` mit `{"action":"honk"}` muss 400 liefern.
-Schlaf: Ohne Overdrive-Meldungen bleibt der letzte Stand stehen, `stale` wird `true`, `age_s` zählt hoch.
+Checks without the car: `GET /state?since=<rev>&wait=5` must wait ~5 s and then answer. `curl -i -X OPTIONS …`
+must show `204` with `Content-Length: 0`. A `POST /command` with `{"action":"honk"}` must return 400.
+Sleep: without Overdrive messages, the last state stays, `stale` becomes `true`, and `age_s` counts up.
 
-## Lizenz
+## License
 
 MIT
 
-## Signierter Befehlskanal (seit 13.10.2026)
+## Signed command channel (since 2026-10-13)
 
-Der Mosquitto-Broker ist anonym. Deshalb laufen **Zusperren, Aufsperren und Klima mit Temperatur** nur über
-`bydcloud/<node>/cmd/signed`, mit einer HMAC-SHA256-Unterschrift über `action|value|ts|nonce`. Die Nachricht ist
-höchstens 30 s gültig, und jeder Einmalwert wird nur einmal angenommen.
+The Mosquitto broker is anonymous. So **locking, unlocking and climate with a temperature** only run through
+`bydcloud/<node>/cmd/signed`, with an HMAC-SHA256 signature over `action|value|ts|nonce`. The message is valid for
+at most 30 s, and each one-time value is accepted only once.
 
-* Geheimnis: eine Datei, z. B. `~/byd-copilot/.cmd_secret` (`chmod 600`, 32 Zufallsbytes hex). Die Brücke findet sie
-  über `BYD_CMD_SECRET_FILE`. Das Geheimnis nie in Git, Logs oder die App.
-* pybyd-mqtt: [`pybyd_signed.py`](pybyd_signed.py) neben `pybyd_mqtt.py` legen. Dort an drei Stellen einhängen:
-  `import pybyd_signed`, in `on_connect` `client.subscribe(pybyd_signed.TOPIC % NODE)`, ganz oben in `on_msg`
-  `if pybyd_signed.handle(msg, NODE, _spawn_cmd): return`. `_spawn_cmd` führt `lock`/`unlock`/`climate_temp` aus.
-* **Sicherheitsregel:** Cloud-Befehle nur, wenn das Auto **aus** ist (Overdrive `power_level` 0; 2 = an). Am
-  13.10.2026 hat „Klima aus“ per Cloud das laufende Auto abgeschaltet, während der Fahrer drinsaß. Die Brücke lehnt
-  sonst mit `car_on` ab. Aufsperren zusätzlich nur in P bei 0 km/h.
+* Secret: one file, for example `~/byd-copilot/.cmd_secret` (`chmod 600`, 32 random bytes as hex). The bridge finds it
+  through `BYD_CMD_SECRET_FILE`. Never put the secret in Git, logs or the app.
+* pybyd-mqtt: put [`pybyd_signed.py`](pybyd_signed.py) next to `pybyd_mqtt.py`. Hook it in at three places:
+  `import pybyd_signed`, in `on_connect` `client.subscribe(pybyd_signed.TOPIC % NODE)`, and at the very top of `on_msg`
+  `if pybyd_signed.handle(msg, NODE, _spawn_cmd): return`. `_spawn_cmd` runs `lock`/`unlock`/`climate_temp`.
+* **Safety rule:** cloud commands only when the car is **off** (Overdrive `power_level` 0; 2 = on). On
+  2026-10-13, "climate off" through the cloud switched off the running car while the driver was sitting in it.
+  Otherwise the bridge rejects with `car_on`. Unlocking additionally only in P at 0 km/h.
 
-**Auch im pybyd-mqtt-Dienst selbst (13.10.2026):** Er abonniert `overdrive/vehicle/telemetry/power_level` (Overdrive
-speichert den Wert dauerhaft auf dem Broker) und lehnt `heat`/`cool`/`climate_off`/`climate`/`battery_heat` sowie
-alle signierten Befehle ab, solange das Auto an ist (Wert ≠ 0, jünger als 15 min). Das gilt damit auch für Cockpit
-und Home Assistant. Rückmeldung auf `klima_status`: „⛔ Auto ist an – bitte im Auto bedienen“.
+**Also in the pybyd-mqtt service itself (2026-10-13):** It subscribes to `overdrive/vehicle/telemetry/power_level`
+(Overdrive stores the value permanently on the broker) and rejects `heat`/`cool`/`climate_off`/`climate`/`battery_heat`
+and all signed commands while the car is on (value ≠ 0, younger than 15 min). So this also applies to the cockpit
+and Home Assistant. Feedback on `klima_status`: "⛔ Auto ist an – bitte im Auto bedienen" (the car is on; please
+operate it in the car).

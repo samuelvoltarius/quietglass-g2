@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, defaultsFor, parseSettings, validateUrl } from "../src/storage/persist";
+import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import { DEFAULT_SETTINGS, defaultsFor, load, parseSettings, save, validateUrl } from "../src/storage/persist";
 import { positionFromUrl } from "../src/main";
 import { boundingBox } from "../src/transit/motis";
 
@@ -122,5 +123,35 @@ describe("settings saved by an older version", async () => {
     const defaults = defaultsFor("https://proxy.example:8458/oebb");
     const own = JSON.stringify({ backend: "motis", oebbUrl: "http://192.168.1.20:8079/oebb" });
     expect(parseSettings(own, defaults)).toMatchObject({ backend: "motis", oebbUrl: "http://192.168.1.20:8079/oebb" });
+  });
+});
+
+describe("own map server (Overpass)", () => {
+  const memoryBridge = (): EvenAppBridge => {
+    const store = new Map<string, string>();
+    return {
+      getLocalStorage: async (key: string) => store.get(key) ?? "",
+      setLocalStorage: async (key: string, value: string) => { store.set(key, value); return true; },
+    } as unknown as EvenAppBridge;
+  };
+
+  it("is empty by default: the public servers", () => {
+    expect(DEFAULT_SETTINGS.overpassUrl).toBe("");
+    expect(parseSettings(JSON.stringify({ backend: "motis" })).overpassUrl).toBe("");
+  });
+
+  it("survives a save and load through the bridge, normalised", async () => {
+    const bridge = memoryBridge();
+    const settings = { ...DEFAULT_SETTINGS, overpassUrl: "https://map.home.test/api/interpreter" };
+    await save(bridge, settings);
+    expect(await load(bridge)).toEqual(settings);
+    // An address stored without the path (hand-made storage) comes back with it.
+    expect(parseSettings(JSON.stringify({ overpassUrl: "https://map.home.test/" })).overpassUrl).toBe("https://map.home.test/api/interpreter");
+  });
+
+  it("drops an address that could never answer", () => {
+    expect(parseSettings(JSON.stringify({ overpassUrl: "ftp://map.home.test" })).overpassUrl).toBe("");
+    expect(parseSettings(JSON.stringify({ overpassUrl: "map.home.test" })).overpassUrl).toBe("");
+    expect(parseSettings(JSON.stringify({ overpassUrl: 42 })).overpassUrl).toBe("");
   });
 });

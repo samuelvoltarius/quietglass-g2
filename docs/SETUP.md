@@ -1,772 +1,785 @@
-# Einrichtung – Schritt für Schritt
+Deutsche Fassung: [SETUP.de.md](SETUP.de.md)
 
-Diese Anleitung sagt dir pro App, **was du wo eintragen musst**, damit sie
-läuft. Die Feldnamen stehen genau so da, wie du sie am Handy in der App siehst
-(deutsche Oberfläche).
+# Setup – step by step
 
-## So kommt eine App auf die Brille
+This guide tells you, app by app, **what to enter where** so the app works.
+The field names are written exactly as you see them in the app on your phone
+(English interface).
 
-1. **Even-App** am Handy öffnen.
-2. **Me → Apps** öffnen.
-3. Die App in der **Store**-Liste suchen und installieren. Apps, die noch nicht
-   im Store sind, kommen über **Private Builds** (dort trägst du den Link oder
-   die `.ehpk`-Datei der App ein).
-4. App öffnen. Am Handy erscheint die **Handy-Seite** der App (dort trägst du
-   alles ein), auf der Brille erscheint die Anzeige.
+## How an app gets onto the glasses
 
-Die Sprache folgt dem Handy. Oben auf der Handy-Seite kannst du sie umstellen.
+1. Open the **Even app** on your phone.
+2. Open **Me → Apps**.
+3. Find the app in the **Store** list and install it. Apps that are not in the
+   store yet come in through **Private Builds** (enter the app's link or its
+   `.ehpk` file there).
+4. Open the app. The app's **phone page** appears on the phone (you enter
+   everything there), and the display appears on the glasses.
 
-## Wichtig bei eigenen Servern: Adressen müssen `https://` oder `wss://` sein
+The language follows the phone. You can change it at the top of the phone
+page.
 
-Die App wird am Handy über **HTTPS** geladen. Deshalb blockiert die Even-App
-alles, was nur `http://` oder `ws://` ist („Mixed Content“). Ein eigener Server
-im Heimnetz oder auf deinem Rechner braucht darum eine verschlüsselte Adresse.
-Der einfachste Weg ist **Tailscale**:
+## Important for your own servers: addresses must be `https://` or `wss://`
 
-1. Tailscale auf Handy **und** Server-Rechner installieren und am selben
-   Konto anmelden.
-2. Auf dem Server-Rechner eine Adresse für die App freischalten:
+The app is loaded over **HTTPS** on the phone. For that reason the Even app
+blocks everything that is only `http://` or `ws://` ("mixed content"). A
+server in your home network or on your own computer therefore needs an
+encrypted address. The easiest way is **Tailscale**:
+
+1. Install Tailscale on the phone **and** on the server machine, and sign in
+   to the same account.
+2. On the server machine, publish an address for the app:
 
    ```bash
    tailscale serve --bg --https=8445 8899
    ```
 
-   Das heißt: „Nimm den Server, der intern auf Port 8899 läuft, und biete ihn
-   unter `https://<dein-rechner>.<dein-tailnet>.ts.net:8445` an.“ Die Adresse
-   ist nur in deinem Tailscale-Netz erreichbar.
-3. Jede App bekommt ihre **eigene** `--https=`-Nummer (z. B. 8445, 8446 …).
-   Schau vorher mit `tailscale serve status`, was schon belegt ist.
-4. Läuft der Server nicht auf dem Rechner selbst, sondern auf einer anderen
-   Adresse, gib sie vollständig an, z. B.
+   This means: "Take the server that runs internally on port 8899 and offer
+   it at `https://<your-machine>.<your-tailnet>.ts.net:8445`." The address
+   can only be reached inside your Tailscale network.
+3. Every app gets its **own** `--https=` number (for example 8445, 8446 …).
+   First check with `tailscale serve status` what is already taken.
+4. If the server does not run on the machine itself but at another address,
+   give that address in full, for example
    `tailscale serve --bg --https=8446 http://127.0.0.1:8765`.
-5. Für WebSocket-Server (Sprach-/Agent-Server) gilt dasselbe: Die Adresse
-   beginnt in der App dann mit `wss://` statt `https://`.
+5. The same applies to WebSocket servers (speech/agent servers): in the app,
+   the address then starts with `wss://` instead of `https://`.
 
-> **Nie `tailscale serve reset` ausführen.** Das löscht **alle** freigegebenen
-> Adressen auf dem Rechner, auch die, die andere Dienste nutzen. Mit
-> `tailscale serve status` siehst du den aktuellen Stand, mit
-> `tailscale serve --https=<Nummer> off` entfernst du gezielt nur eine Adresse.
+> **Never run `tailscale serve reset`.** It deletes **all** published
+> addresses on the machine, including those used by other services. With
+> `tailscale serve status` you see the current state, and with
+> `tailscale serve --https=<number> off` you remove just one address.
 
-> **Alles selbst hosten?** Unter [`selfhost/`](../selfhost/README.md) liegen die Server-Dienste mit systemd-Units
-> und Konfig-Vorlagen sowie das Skript `build-private.mjs`, das aus deinen Tailscale-Adressen die **privaten Builds**
-> baut (auf der Brille sind nur **exakte Adressen** in der Netzwerk-Freigabe erlaubt, keine Platzhalter wie
-> `https://*`). Alles läuft auf deinen Rechnern und ist nur über dein Tailscale erreichbar; angemeldet wirst du
-> über den Tailscale-Login, ein Token musst du nicht eintippen.
+> **Host everything yourself?** In [`selfhost/`](../selfhost/README.md) you find the server services with systemd units
+> and config templates, plus the script `build-private.mjs`, which builds the **private builds** from your Tailscale
+> addresses (on the glasses only **exact addresses** are allowed in the network permission, no wildcards like
+> `https://*`). Everything runs on your own machines and can only be reached through your Tailscale; you sign in
+> through the Tailscale login, so you do not have to type a token.
 
-Wo im Text unten `<dein-rechner>.<dein-tailnet>.ts.net` steht, setzt du den
-Namen deines Servers im Tailscale-Netz ein.
+Wherever the text below says `<your-machine>.<your-tailnet>.ts.net`, insert
+the name of your server in the Tailscale network.
 
-## Übersicht
+## Overview
 
-| App | Einrichtung nötig? |
+| App | Setup needed? |
 |---|---|
-| [FlowList](#flowlist) | nein |
-| [PostureLens](#posturelens) | nein |
-| [DecibelGuard](#decibelguard) | nein |
-| [Cadence](#cadence) | nein |
-| [ShiftClock](#shiftclock) | nein |
-| [RainLens](#rainlens) | nein (Standort erlauben) |
-| [OpenGlance](#openglance) | nein (Standort erlauben) |
-| [NextStop](#nextstop) | nein (ÖBB-Echtzeit: optional, eigenes Zusatzprogramm) |
-| [FieldLog](#fieldlog) | nein (Sprechen: optional, eigener Sprachserver) |
-| [Babel Glass](#babel-glass) | **ja**: Sprachserver (und optional Übersetzer) |
-| [Agent Glass](#agent-glass) | **ja**: Server deines KI-Agenten |
-| [Quiet Hub](#quiet-hub) | **ja**: Hub-Daemon (+ Relay je Rechner mit Agenten) |
-| [Shoot Day](#shoot-day) | **ja**: eigener Server |
-| [Klipper Glance](#klipper-glance) | daheim **nein** (Drucker-Adresse eintragen); unterwegs: Bridge |
-| [Sugar Glass](#sugar-glass) | **ja**: dein Nightscout (+ empfohlen die Sugar-Glass-Bridge) |
-| [Star Glass](#star-glass) | **ja**: Bridge neben N.I.N.A. |
-| [Xaventra HUD](#xaventra-hud) | **ja**: dein Xaventra-Rechner (Even-G2-Dienst) |
-| [Status Glass](#status-glass) | **ja**: eine Statusquelle |
-| [Lumen Glass](#lumen-glass) | **ja**: dein LUMEN |
-| [PodCaption](#podcaption) | nein (Datei oder Text); Feed-Bridge optional – *noch nicht im Store* |
-| [Market Glance](#market-glance) | **ja**: lokale Bridge – *noch nicht im Store* |
-| [Endurance HUD](#endurance-hud) | **ja**: lokale Bridge – *noch nicht im Store* |
+| [FlowList](#flowlist) | no |
+| [PostureLens](#posturelens) | no |
+| [DecibelGuard](#decibelguard) | no |
+| [Cadence](#cadence) | no |
+| [ShiftClock](#shiftclock) | no |
+| [RainLens](#rainlens) | no (allow location) |
+| [OpenGlance](#openglance) | no (allow location) |
+| [NextStop](#nextstop) | no (ÖBB live times: optional, separate add-on program) |
+| [FieldLog](#fieldlog) | no (speaking notes: optional, own speech server) |
+| [Babel Glass](#babel-glass) | **yes**: speech server (and optionally a translator) |
+| [Agent Glass](#agent-glass) | **yes**: server of your AI agent |
+| [Quiet Hub](#quiet-hub) | **yes**: hub daemon (+ a relay on each machine with agents) |
+| [Shoot Day](#shoot-day) | **yes**: own server |
+| [Klipper Glance](#klipper-glance) | at home **no** (enter the printer address); on the go: bridge |
+| [Sugar Glass](#sugar-glass) | **yes**: your Nightscout (+ the Sugar Glass bridge is recommended) |
+| [Star Glass](#star-glass) | **yes**: bridge next to N.I.N.A. |
+| [Xaventra HUD](#xaventra-hud) | **yes**: your Xaventra machine (Even G2 service) |
+| [Status Glass](#status-glass) | **yes**: a status source |
+| [Lumen Glass](#lumen-glass) | **yes**: your LUMEN |
+| [PodCaption](#podcaption) | no (file or text); feed bridge optional – *not in the store yet* |
+| [Market Glance](#market-glance) | **yes**: local bridge – *not in the store yet* |
+| [Endurance HUD](#endurance-hud) | **yes**: local bridge – *not in the store yet* |
 
 ---
 
-## Ohne Einrichtung
+## No setup needed
 
 ### FlowList
 
-**Was du brauchst:** nichts.
+**What you need:** nothing.
 
-**Am Handy eintragen:** nur, wenn du eine eigene Checkliste willst.
+**Enter on the phone:** only if you want your own checklist.
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Ein Schritt pro Zeile, mit „- “ davor … | Name der Liste mit `#`, Schritte mit `-` | `# Einkaufen` + `- Milch` |
-| Button **Checkliste hinzufügen** | tippen | – |
+| One step per line, starting with "- " … | Name of the list with `#`, steps with `-` | `# Einkaufen` + `- Milch` |
+| Button **Add checklist** | tap | – |
 
-Die Beispiel-Listen „Haus verlassen“ und „Reise packen“ sind schon da.
-(`(!)` hinter einem Schritt = wichtig, wird zweimal bestätigt.)
+The example lists "Leaving the house" and "Packing for a trip" are already
+there. (`(!)` after a step = important, it is confirmed twice.)
 
-**So prüfst du, dass es läuft:** App öffnen, auf der Brille einmal tippen – der
-erste Schritt wird abgehakt.
+**How to check that it works:** Open the app and tap once on the glasses – the
+first step is ticked off.
 
 ### PostureLens
 
-**Was du brauchst:** nichts.
+**What you need:** nothing.
 
-**Am Handy eintragen:** nichts. Gerade hinsetzen, **einmal auf den Bügel
-tippen** – damit ist deine gerade Haltung gespeichert.
+**Enter on the phone:** nothing. Sit up straight and **tap the temple once** –
+that saves your upright posture.
 
-**So prüfst du, dass es läuft:** Auf der Handy-Seite steht unter „Deine gerade
-Haltung“ ein gespeicherter Wert.
+**How to check that it works:** On the phone page, a saved value appears under
+"Your upright posture".
 
 ### DecibelGuard
 
-**Was du brauchst:** nichts. Die App fragt einmal nach dem Mikrofon der Brille.
+**What you need:** nothing. The app asks once for the microphone of the
+glasses.
 
-**Am Handy eintragen:** nichts. Optional unter „Genauer messen (optional)“ den
-Wert „Abgleich“ einstellen, wenn du ein echtes Messgerät hast.
+**Enter on the phone:** nothing. Optionally, under "Measure more precisely
+(optional)", set the "Calibration offset" value if you have a real sound level
+meter.
 
-**So prüfst du, dass es läuft:** Auf der Brille einmal tippen – es steht
-**● MIKRO AN** und ein Pegel erscheint. Nochmal tippen stoppt.
+**How to check that it works:** Tap once on the glasses – it shows
+**● MIC** and a level appears. Tapping again stops it.
 
 ### Cadence
 
-**Was du brauchst:** nichts.
+**What you need:** nothing.
 
-**Am Handy eintragen:** optional.
+**Enter on the phone:** optional.
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Geschwindigkeit | Schläge pro Minute (Schieber) | 90 |
-| Taktart | Schläge pro Takt | 4/4 |
-| Neuer Eintrag | was du übst, dann **Hinzufügen** | Tonleitern |
+| Speed | Beats per minute (slider) | 90 |
+| Time signature | Beats per bar | 4/4 |
+| Add an item | What you are practising, then **Add** | Scales |
 
-**So prüfst du, dass es läuft:** Auf der Brille tippen – der Takt läuft.
+**How to check that it works:** Tap on the glasses – the beat runs.
 
 ### ShiftClock
 
-**Was du brauchst:** nichts.
+**What you need:** nothing.
 
-**Am Handy eintragen:** optional ein weiteres Projekt.
+**Enter on the phone:** optionally one more project.
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Neues Projekt | Kunde, Auftrag oder Tätigkeit, dann **Hinzufügen** | Kunde Huber |
+| Add a project | Client, job or task, then **Add** | Client Huber |
 
-Das Projekt „Arbeit“ gibt es schon.
+The project "Work" already exists.
 
-**So prüfst du, dass es läuft:** Auf der Brille tippen – die Zeit läuft.
-Nochmal tippen stoppt.
+**How to check that it works:** Tap on the glasses – the time runs.
+Tap again to stop.
 
 ### RainLens
 
-**Was du brauchst:** Internet am Handy. Kein Konto, kein Schlüssel.
+**What you need:** Internet on the phone. No account, no key.
 
-**Am Handy eintragen:** Standort in der Even-App erlauben – oder einen Ort
-eintippen.
+**Enter on the phone:** Allow location in the Even app – or type a place.
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Standort des Handys verwenden | Haken setzen (Standard) | – |
-| Oder einen Ort eingeben | Ortsname, dann **Ort suchen** und den Treffer antippen | Hallein |
-| Breitengrad / Längengrad (unter **Erweitert**) | nur wenn die Suche deinen Ort nicht kennt | 47.68 / 13.10 |
+| Use my phone's location | Tick the box (default) | – |
+| Or enter a place | Name of the place, then **Find place** and tap the result | Hallein |
+| Latitude / Longitude (under **Advanced**) | only if the search does not know your place | 47.68 / 13.10 |
 
-**So prüfst du, dass es läuft:** Auf der Handy-Seite steht „Gerade: …“ mit
-deinem Ort, auf der Brille das Wetter.
+**How to check that it works:** On the phone page, "Now: …" shows your place,
+and the glasses show the weather.
 
 ### OpenGlance
 
-**Was du brauchst:** Internet und GPS (Standort erlauben). Kein Konto.
+**What you need:** Internet and GPS (allow location). No account.
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Adresse oder Ort suchen | Ziel, dann **Suchen** und bei einem Treffer **Hierhin** | Mirabellplatz Salzburg |
-| Wie bist du unterwegs? | Zu Fuß / Fahrrad / Auto | Zu Fuß |
+| Search address or place | Destination, then **Search** and, on a result, **Go here** | Mirabellplatz Salzburg |
+| How do you travel? | On foot / Bike / Car | On foot |
 
-Die Felder „Routenserver (Valhalla)“ und „Server für die Ortssuche (Photon)“
-unter **Erweitert** bleiben leer – dann werden die freien öffentlichen Server
-benutzt.
+Leave the fields "Routing server (Valhalla)" and "Place search server
+(Photon)" under **Advanced** empty – then the free public servers are used.
 
-**So prüfst du, dass es läuft:** Auf der Brille tippen – der Pfeil mit der
-Entfernung zur nächsten Abbiegung erscheint. (Im Haus gibt es kein GPS.)
+**How to check that it works:** Tap on the glasses – the arrow with the
+distance to the next turn appears. (There is no GPS indoors.)
 
 ### NextStop
 
-**Was du brauchst:** Internet und Standort-Freigabe. Kein Konto.
+**What you need:** Internet and location permission. No account.
 
-**Am Handy eintragen:** nichts. „Woher kommen die Abfahrten?“ steht auf
-**Überall – Fahrplan** und funktioniert sofort.
+**Enter on the phone:** nothing. "Where do the departures come from?" is set
+to **Anywhere – timetable** and works right away.
 
-**Optional: ÖBB-Echtzeit (Verspätungen in Österreich)**
+**Optional: ÖBB live times (delays in Austria)**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Woher kommen die Abfahrten? | **ÖBB – Echtzeit in Österreich** | – |
-| Adresse des ÖBB-Zusatzprogramms (unter **Erweitert**) | https-Adresse des Zusatzprogramms **mit** `/oebb` am Ende | `https://<dein-rechner>.<dein-tailnet>.ts.net:8450/oebb` |
+| Where do the departures come from? | **ÖBB – live times in Austria** | – |
+| Address of the ÖBB add-on (under **Advanced**) | https address of the add-on program **with** `/oebb` at the end | `https://<your-machine>.<your-tailnet>.ts.net:8450/oebb` |
 
-**Server starten** (im Ordner `apps/nextstop`):
+**Start the server** (in the folder `apps/nextstop`):
 
 ```bash
-node examples/oebb-cors-proxy.mjs          # läuft auf 127.0.0.1:8079
-tailscale serve --bg --https=8450 8079     # macht es per https erreichbar
+node examples/oebb-cors-proxy.mjs          # runs on 127.0.0.1:8079
+tailscale serve --bg --https=8450 8079     # makes it reachable over https
 ```
 
-**So prüfst du, dass es läuft:** Auf der Brille steht neben den Abfahrten `●`
-(Echtzeit). Steht dort „ÖBB nicht erreichbar“, stimmt die Adresse nicht oder
-das Zusatzprogramm läuft nicht.
+**How to check that it works:** On the glasses, `●` (live) appears next to the
+departures. If it says "ÖBB not reachable", the address is wrong or the add-on
+program is not running.
+
+**Optional: your own map server.** If the walking map shows only the route
+without streets, the public Overpass servers are overloaded. Under
+**Advanced** → **Own map server (Overpass)**, enter the https address of your
+own Overpass server (the app adds `/api/interpreter`). It is asked first; if
+it is not reachable, the app uses the public ones. Leave empty = public
+servers.
 
 ### FieldLog
 
-**Was du brauchst:** nichts. Notizen wählst du mit Tippen/Wischen, Fotos macht
-das Handy.
+**What you need:** nothing. You choose notes by tapping/swiping, and the
+phone takes the photos.
 
-**Am Handy eintragen:** optional einen Namen für den Rundgang.
+**Enter on the phone:** optionally a name for the walk-through.
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Name (optional) | Name des Rundgangs, dann **Rundgang starten** | Wohnungsübergabe Top 3 |
-| Bereich (optional) | Raum oder Ort | Küche |
+| Name (optional) | Name of the walk-through, then **Start inspection** | Handover flat 3 |
+| Area (optional) | Room or place | Kitchen |
 
-**Optional: Notizen sprechen.** Dazu brauchst du einen Whisper-Sprachserver –
-derselbe wie bei [Babel Glass](#babel-glass) (Anleitung dort). Dann unter
-**Erweitert: Notizen sprechen (optional)**:
+**Optional: speaking notes.** For this you need a Whisper speech server with an
+OpenAI-compatible `/v1/audio/transcriptions` endpoint (e.g. faster-whisper-server
+or speaches), reachable over https. Then, under **Advanced: dictate notes (optional)**:
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Server (WebSocket) | `wss://`-Adresse des Sprachservers | `wss://<dein-rechner>.<dein-tailnet>.ts.net:8447` |
-| Token (optional) | nur wenn der Server einen hat | – |
-| Sprache der Aufnahme | Sprache, in der du sprichst | Deutsch |
+| Whisper server (https) | https address of the speech server (the app adds `/v1/audio/transcriptions`) | `https://<your-machine>.<your-tailnet>.ts.net:8447` |
+| Token (optional) | only if the server has one | – |
+| Spoken language | Language you speak | German |
 
-Dann **Speichern**.
+Then **Save**.
 
-**So prüfst du, dass es läuft:** Unter dem Feld steht „Gerade aktiv: Sprechen
-über deinen Server.“ (statt „Schnellnotizen“).
+**How to check that it works:** Under the field it says "Active now:
+dictation through your server." (instead of "quick notes").
 
 ---
 
-## Mit eigenem Server
+## With your own server
 
 ### Babel Glass
 
-Untertitel und Übersetzung auf der Brille. Ohne Server zeigt die App feste
-Demo-Sätze und `MOCK` – das ist nur zum Ausprobieren.
+Captions and translation on the glasses. Without a server, the app shows fixed
+demo sentences and `MOCK` – that is only for trying it out.
 
-**Was du brauchst:**
+**What you need:**
 
-- einen **Sprachserver** (Whisper) – Pflicht für echte Untertitel,
-- optional einen **Übersetzer** (LibreTranslate-kompatibel oder ein
-  OpenAI-kompatibles Sprachmodell wie vLLM/Ollama).
+- a **speech server** (Whisper) – required for real captions,
+- optionally a **translator** (LibreTranslate-compatible, or an
+  OpenAI-compatible language model such as vLLM/Ollama).
 
-**Server starten – Sprachserver** (im Ordner `apps/babel-glass`):
+**Start the server – speech server** (in the folder `apps/babel-glass`):
 
 ```bash
 pip install faster-whisper websockets
 MODEL=large-v3 DEVICE=cuda COMPUTE=float16 python examples/whisper-server.py
-# nur CPU (langsam): MODEL=small COMPUTE=int8 python examples/whisper-server.py
+# CPU only (slow): MODEL=small COMPUTE=int8 python examples/whisper-server.py
 ```
 
-Er läuft auf Port 9000 (`PORT=…` ändert das; `TOKEN=geheim` schützt ihn).
-Dann per https/wss erreichbar machen:
+It runs on port 9000 (`PORT=…` changes that; `TOKEN=secret` protects it).
+Then make it reachable over https/wss:
 
 ```bash
 tailscale serve --bg --https=8447 http://127.0.0.1:9000
 ```
 
-**Server starten – Übersetzer** (nur wenn du keinen LLM-Server hast):
+**Start the server – translator** (only if you do not have an LLM server):
 
 ```bash
 pip install transformers torch sentencepiece
-python examples/translate-server.py        # Port 5000, Pfad /translate
+python examples/translate-server.py        # port 5000, path /translate
 tailscale serve --bg --https=8448 5000
 ```
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Gesprochene Sprache | Sprache, die gesprochen wird. Für Belarussisch/Russisch **fest wählen**, nicht „Automatisch erkennen“ | Russisch |
-| Server (WebSocket) (unter **Erweitert: Server**) | `wss://`-Adresse des Sprachservers | `wss://<dein-rechner>.<dein-tailnet>.ts.net:8447` |
-| Token (optional) | nur wenn du `TOKEN=` gesetzt hast | – |
-| Übersetzen in | Zielsprache | Deutsch |
-| Übersetzungsdienst | *LibreTranslate-kompatibel* **oder** *OpenAI-kompatibles LLM* | – |
-| Endpoint (bei LibreTranslate) | volle Adresse inkl. `/translate` | `https://<dein-rechner>.<dein-tailnet>.ts.net:8448/translate` |
-| API-Schlüssel (optional) | nur wenn der Übersetzer einen verlangt | – |
-| Basis-URL des Servers (bei LLM) | Adresse bis `/v1` | `https://<dein-rechner>.<dein-tailnet>.ts.net:8451/v1` |
-| Modell (bei LLM) | Name des Modells am Server | `qwen` |
-| Bearer-Token (optional) (bei LLM) | nur wenn nötig | – |
-| Modus | Gespräch / Vortrag / Reise / Nur Untertitel | Gespräch |
+| Spoken language | The language being spoken. For Belarusian/Russian, **choose it explicitly**, not "Detect automatically" | Russian |
+| Server (WebSocket) (under **Advanced: Server**) | `wss://` address of the speech server | `wss://<your-machine>.<your-tailnet>.ts.net:8447` |
+| Token (optional) | only if you set `TOKEN=` | – |
+| Translate into | Target language | German |
+| Translation server | *LibreTranslate-compatible* **or** *OpenAI-compatible LLM* | – |
+| Endpoint (for LibreTranslate) | full address including `/translate` | `https://<your-machine>.<your-tailnet>.ts.net:8448/translate` |
+| API key (optional) | only if the translator requires one | – |
+| Server base URL (for LLM) | address up to `/v1` | `https://<your-machine>.<your-tailnet>.ts.net:8451/v1` |
+| Model (for LLM) | Name of the model on the server | `qwen` |
+| Bearer token (optional) (for LLM) | only if needed | – |
+| Mode | Conversation / Lecture / Travel / Caption only | Conversation |
 
-Dann **Speichern**.
+Then **Save**.
 
-Der Übersetzungs-Server muss Zugriffe aus der App erlauben („CORS“). Der
-mitgelieferte `translate-server.py` tut das selbst; bei Ollama startest du mit
-`OLLAMA_ORIGINS="*"`, bei LM Studio schaltest du CORS ein.
+The translation server must allow requests from the app ("CORS"). The
+supplied `translate-server.py` does this itself; with Ollama you start with
+`OLLAMA_ORIGINS="*"`, and in LM Studio you switch CORS on.
 
-**So prüfst du, dass es läuft:** Auf der Handy-Seite verschwindet der gelbe
-Kasten „Demo-Modus“. Auf der Brille einmal tippen: **● MIKRO** erscheint, und
-beim Sprechen kommen Untertitel – nicht `MOCK`.
+**How to check that it works:** On the phone page, the yellow "Demo mode" box
+disappears. Tap once on the glasses: **● MIC** appears, and captions arrive
+while you speak – not `MOCK`.
 
 ### Agent Glass
 
-Zeigt, was dein KI-Agent gerade tut, und lässt dich Freigaben erteilen.
+Shows what your AI agent is doing right now and lets you give approvals.
 
-**Was du brauchst:** einen der drei Agenten-Server – **Claude/Codex** (über
-Even Terminal), **Hermes** (hermes-evenhub-bridge) oder **OpenClaw**.
+**What you need:** one of the three agent servers – **Claude/Codex** (through
+Even Terminal), **Hermes** (hermes-evenhub-bridge) or **OpenClaw**.
 
-**Server starten:**
+**Start the server:**
 
-| Dienst | Befehl / Voraussetzung |
+| Service | Command / requirement |
 |---|---|
-| Claude / Codex · Even Terminal | `even-terminal start --tailscale --allow-cors` (das Gerät bleibt in deinem Tailscale-Netz) |
-| Hermes · EvenHub Bridge | Die Bridge läuft schon in deinem Hermes-Setup; mach sie per `wss://` erreichbar (`tailscale serve`, siehe oben). Der Token heißt `EVENHUB_BRIDGE_TOKEN`. |
-| OpenClaw · Gateway | im Gateway `gateway.http.endpoints.chatCompletions.enabled=true` setzen; Adresse meist Port 18789 |
+| Claude / Codex · Even Terminal | `even-terminal start --tailscale --allow-cors` (the device stays inside your Tailscale network) |
+| Hermes · EvenHub Bridge | The bridge already runs in your Hermes setup; make it reachable over `wss://` (`tailscale serve`, see above). The token is called `EVENHUB_BRIDGE_TOKEN`. |
+| OpenClaw · Gateway | in the gateway, set `gateway.http.endpoints.chatCompletions.enabled=true`; the address is usually port 18789 |
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Dienst | *Claude / Codex · Even Terminal*, *Hermes · EvenHub Bridge* oder *OpenClaw · Gateway* | Hermes · EvenHub Bridge |
-| Serveradresse | Even Terminal: die **komplette Kopplungs-URL**, die Even Terminal beim Start ausgibt (Adresse und Token werden automatisch getrennt). Hermes: `wss://`-Adresse. OpenClaw: `https://`-Adresse | `wss://<dein-rechner>.<dein-tailnet>.ts.net:8446` |
-| Token (Bearer / Bridge) | bei Hermes der `EVENHUB_BRIDGE_TOKEN`, bei OpenClaw das Gateway-Token; bei Even Terminal leer lassen, wenn du die Kopplungs-URL benutzt hast | – |
+| Provider | *Claude / Codex · Even Terminal*, *Hermes · EvenHub Bridge* or *OpenClaw · Gateway* | Hermes · EvenHub Bridge |
+| Server address | Even Terminal: the **complete pairing URL** that Even Terminal prints at start (address and token are separated automatically). Hermes: `wss://` address. OpenClaw: `https://` address | `wss://<your-machine>.<your-tailnet>.ts.net:8446` |
+| Bearer / bridge token | for Hermes the `EVENHUB_BRIDGE_TOKEN`, for OpenClaw the gateway token; for Even Terminal leave empty if you used the pairing URL | – |
 
-Dann **Speichern und verbinden**. Optional unter „Vorlesen“: **Vorlesen
-einschalten**, Vorlese-Sprache, Stimme, Tempo.
+Then **Save and connect**. Optionally, under "Spoken output": **Enable spoken
+output**, speech language, voice, speed.
 
-**So prüfst du, dass es läuft:** Unter „Aktueller Status“ steht
-„… Sitzungen · aktiv: …“ statt „Keine Sitzungen geladen“ oder „Fehler: …“.
-Auf der Brille erscheint die aktive Sitzung.
+**How to check that it works:** Under "Live status" it says
+"… sessions · active: …" instead of "No sessions loaded" or "Error: …".
+The active session appears on the glasses.
 
 ### Quiet Hub
 
-Ein Hub für alle deine Agenten (Hermes, OpenClaw, Codex, Claude Code – auch auf
-anderen Rechnern), dein Zuhause (Home Assistant) und deinen Drucker (Moonraker).
-Freigaben („darf Claude das ausführen?“) und Sprachfragen laufen direkt über die
-Brille.
+One hub for all your agents (Hermes, OpenClaw, Codex, Claude Code – also on
+other machines), your home (Home Assistant) and your printer (Moonraker).
+Approvals ("may Claude run this?") and voice questions go straight through the
+glasses.
 
-**Was du brauchst:** einen kleinen Dauer-Rechner (z. B. Raspberry Pi) für den
-Daemon. Auf jedem weiteren Rechner mit Agenten läuft ein **Relay**.
+**What you need:** a small always-on machine (for example a Raspberry Pi) for
+the daemon. On every further machine with agents, a **relay** runs.
 
-**Daemon starten** (im Ordner `apps/quiet-hub`, Einzelheiten im README dort):
+**Start the daemon** (in the folder `apps/quiet-hub`, details in the README
+there):
 
 ```bash
-npm run pi:start          # legt .env-hub mit zufälligem Token an, startet alles, zeigt einen QR-Code
+npm run pi:start          # creates .env-hub with a random token, starts everything, shows a QR code
 ```
 
-Per https erreichbar machen (eigene Nummer, nie `reset`):
+Make it reachable over https (own number, never `reset`):
 
 ```bash
 tailscale serve --bg --https=8453 8787
 ```
 
-**Am Handy eintragen:** QR-Code scannen, oder
+**Enter on the phone:** scan the QR code, or
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Server-Adresse | die https-Adresse | `https://<dein-rechner>.<dein-tailnet>.ts.net:8453` |
-| Zugangs-Token | `HUB_TOKEN` aus `.env-hub` | – |
+| Server address | the https address | `https://<your-machine>.<your-tailnet>.ts.net:8453` |
+| Access token | `HUB_TOKEN` from `.env-hub` | – |
 
-**Weiteren Rechner/Agenten anbinden:** `relay.json` anlegen (Vorlage
-`apps/quiet-hub/examples/relay.example.json`) und starten:
+**Connect another machine/agent:** create `relay.json` (template
+`apps/quiet-hub/examples/relay.example.json`) and start:
 
 ```bash
-HUB_TOKEN=<token> node quiet-hub-relay.mjs --hub https://<dein-rechner>.<dein-tailnet>.ts.net:8453 --config relay.json
+HUB_TOKEN=<token> node quiet-hub-relay.mjs --hub https://<your-machine>.<your-tailnet>.ts.net:8453 --config relay.json
 ```
 
-Der Agent erscheint auf der Brille unter „Agent“ mit grünem Punkt. Modus `ask`
-fragt bei jeder Aktion auf der Brille nach, `auto` fragt nie.
+The agent appears on the glasses under "Agent" with a green dot. Mode `ask`
+asks on the glasses for every action, `auto` never asks.
 
 **Optional in `.env-hub`:**
 
-| Variable | Bedeutung |
+| Variable | Meaning |
 |---|---|
-| `WHISPER_URL` | Sprache-zu-Text (OpenAI-kompatibel, `/v1/audio/transcriptions`) |
-| `HA_URL`, `HA_TOKEN`, `HA_DEVICES` | Home Assistant (Token: Profil → Sicherheit → Langlebiges Zugriffstoken); `HA_DEVICES` ist die Erlaubnisliste |
-| `MOONRAKER_URL` | Drucker, z. B. `http://<drucker>:7125` (`node scripts/find-moonraker.mjs` sucht ihn) |
+| `WHISPER_URL` | Speech-to-text (OpenAI-compatible, `/v1/audio/transcriptions`) |
+| `HA_URL`, `HA_TOKEN`, `HA_DEVICES` | Home Assistant (token: profile → security → long-lived access token); `HA_DEVICES` is the allow list |
+| `MOONRAKER_URL` | Printer, for example `http://<drucker>:7125` (`node scripts/find-moonraker.mjs` finds it) |
 
-Ohne HA/Moonraker zeigen „Zuhause“ und „Drucker“ klar gekennzeichnete DEMO-Daten.
+Without HA/Moonraker, "Home" and "Printer" show clearly marked DEMO data.
 
-**So prüfst du, dass es läuft:** Unter „Agent“ steht jeder Agent mit Punkt
-(an = online). Halten auf der Brille nimmt eine Sprachfrage auf.
+**How to check that it works:** Under "Agent", every agent is listed with a
+dot (on = online). Holding on the glasses records a voice question.
 
 ### Shoot Day
 
-Take-Protokoll, Teleprompter, Tagesplan und Packliste für den Drehtag.
+Take log, teleprompter, day schedule and packing list for the shooting day.
 
-**Was du brauchst:** den Shoot-Day-Server (Node.js).
+**What you need:** the Shoot Day server (Node.js).
 
-**Server starten** (im Ordner `apps/shoot-day`):
+**Start the server** (in the folder `apps/shoot-day`):
 
 ```bash
 PORT=8899 HOST=127.0.0.1 PRESET_LANG=de node examples/shoot-day-server.mjs
 ```
 
-| Variable | Bedeutung |
+| Variable | Meaning |
 |---|---|
-| `PORT` | Port (Standard 8899) |
-| `HOST` | `127.0.0.1` = nur dieser Rechner. Alles andere **verlangt** `TOKEN` |
-| `TOKEN` | Passwort für App und Web-Terminal (optional bei `127.0.0.1`) |
-| `DATA_FILE` | wo die Projekte gespeichert werden |
-| `WHISPER_URL` | Spracherkennung (OpenAI-kompatibel, `…/v1/audio/transcriptions`); ohne sie gibt es keine Sprachbefehle |
-| `PRESET_LANG` | `de` = deutsche Packlisten-Vorlage |
+| `PORT` | Port (default 8899) |
+| `HOST` | `127.0.0.1` = this machine only. Anything else **requires** `TOKEN` |
+| `TOKEN` | Password for the app and the web terminal (optional with `127.0.0.1`) |
+| `DATA_FILE` | where the projects are stored |
+| `WHISPER_URL` | Speech recognition (OpenAI-compatible, `…/v1/audio/transcriptions`); without it there are no voice commands |
+| `PRESET_LANG` | `de` = German packing-list template |
 
-Dann per https erreichbar machen:
+Then make it reachable over https:
 
 ```bash
 tailscale serve --bg --https=8445 8899
 ```
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Server-Adresse | die https-Adresse | `https://<dein-rechner>.<dein-tailnet>.ts.net:8445` |
-| Token (optional) | nur wenn du `TOKEN=` gesetzt hast | – |
+| Server address | the https address | `https://<your-machine>.<your-tailnet>.ts.net:8445` |
+| Token (optional) | only if you set `TOKEN=` | – |
 
-Dann **Speichern und verbinden**. Shotlist, Sprechtext, Tagesplan und Packliste
-pflegst du im **Web-Terminal**: dieselbe Adresse im Browser öffnen.
+Then **Save and connect**. You manage the shot list, spoken text, day
+schedule and packing list in the **web terminal**: open the same address in a
+browser.
 
-**So prüfst du, dass es läuft:** Unter „Verbindung“ steht „Verbunden – Projekt:
-…“. Die Adresse im Handy-Browser zeigt das Web-Terminal.
+**How to check that it works:** Under "Connection" it says "Connected –
+project: …". The address in the phone's browser shows the web terminal.
 
 ### Klipper Glance
 
-Druckstatus deines Klipper-/Moonraker-Druckers.
+Print status of your Klipper/Moonraker printer.
 
-**Daheim (gleiches WLAN wie der Drucker): ohne Bridge.** Am Handy unter
-„Drucker“ einfach die Adresse des Druckers eintragen (z. B. `192.168.1.50`,
-Port 7125 wird ergänzt) oder **Drucker suchen** tippen. Die App spricht dann
-direkt mit Moonraker – auch die 3D-Ansicht.
+**At home (same Wi-Fi as the printer): no bridge.** On the phone, under
+"Printer", simply enter the printer's address (for example `192.168.1.50`,
+port 7125 is added) or tap **Find printer**. The app then talks to Moonraker
+directly – including the 3D view.
 
-**Unterwegs** brauchst du die Bridge: einen Rechner im Drucker-Netz, der sie
-laufen lässt und per Tailscale erreichbar macht. Anleitung im Detail:
+**On the go** you need the bridge: a machine in the printer's network that
+runs it and makes it reachable through Tailscale. Detailed instructions:
 [`apps/klipper-glance/docs/SETUP.md`](../apps/klipper-glance/docs/SETUP.md).
 
-**Server starten** (im Ordner `apps/klipper-glance`):
+**Start the server** (in the folder `apps/klipper-glance`):
 
 ```bash
-node examples/klipper-bridge.mjs                                   # sucht den Drucker selbst
-KL_MOONRAKER=http://<drucker-adresse>:7125 node examples/klipper-bridge.mjs
+node examples/klipper-bridge.mjs                                   # finds the printer by itself
+KL_MOONRAKER=http://<printer-address>:7125 node examples/klipper-bridge.mjs
 ```
 
-| Variable | Bedeutung |
+| Variable | Meaning |
 |---|---|
-| `PORT` | Port (Standard 8898) |
-| `HOST` | Bind-Adresse (Standard `127.0.0.1`) |
-| `TOKEN` | Passwort für die Bridge (nötig, wenn du Steuern erlauben willst) |
-| `KL_MOONRAKER` | feste Moonraker-Adresse; ohne sie wird gesucht |
-| `KL_ALLOW_CONTROL=1` | erlaubt Pause/Weiter/Abbrechen – **nur zusammen mit `TOKEN`** |
+| `PORT` | Port (default 8898) |
+| `HOST` | Bind address (default `127.0.0.1`) |
+| `TOKEN` | Password for the bridge (needed if you want to allow control) |
+| `KL_MOONRAKER` | fixed Moonraker address; without it the bridge searches |
+| `KL_ALLOW_CONTROL=1` | allows pause/resume/cancel – **only together with `TOKEN`** |
 
-Ohne Drucker zum Üben: `node examples/mock-moonraker.mjs` startet einen
-Schein-Drucker.
+To practise without a printer: `node examples/mock-moonraker.mjs` starts a
+fake printer.
 
-Per https erreichbar machen:
+Make it reachable over https:
 
 ```bash
 tailscale serve --bg --https=8452 8898
 ```
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Bridge-Adresse | die https-Adresse | `https://<dein-rechner>.<dein-tailnet>.ts.net:8452` |
-| Token (optional) | dein `TOKEN`, falls gesetzt | – |
+| Printer IP or bridge address | the https address | `https://<your-machine>.<your-tailnet>.ts.net:8452` |
+| API key / token (optional) | your `TOKEN`, if set | – |
 
-Dann **Speichern und verbinden**.
+Then **Save and connect**.
 
-**So prüfst du, dass es läuft:** Unter „Drucker“ steht Zustand, Prozent und
-Dateiname; darunter, ob Steuern erlaubt ist. „Bridge erreichbar, Drucker
-offline“ heißt: Die Bridge läuft, der Drucker ist aus.
+**How to check that it works:** Under "Printer" you see the state, percent
+and file name; below that, whether control is allowed. "Bridge reachable,
+printer offline" means: the bridge is running, the printer is switched off.
 
 ### Star Glass
 
-Deine Astrofotografie-Nacht mit N.I.N.A. auf der Brille: Belichtung, Bild n/m,
-Guiding, HFR, Kühlung, Meridian-Flip und eine Vorschau des neuesten Bildes.
+Your astrophotography night with N.I.N.A. on the glasses: exposure, image
+n/m, guiding, HFR, cooling, meridian flip and a preview of the newest image.
 
-**Was du brauchst:** N.I.N.A. mit dem Plugin **Advanced API** (Standard-Port
-1888) und Node.js auf demselben Rechner.
+**What you need:** N.I.N.A. with the **Advanced API** plugin (default port
+1888) and Node.js on the same machine.
 
-**Server starten** (im Ordner `apps/star-glass`):
+**Start the server** (in the folder `apps/star-glass`):
 
 ```bash
-node examples/star-bridge.mjs                                      # fragt http://127.0.0.1:1888
-STAR_TAILSCALE_USERS=dein-login@example.com node examples/star-bridge.mjs
+node examples/star-bridge.mjs                                      # queries http://127.0.0.1:1888
+STAR_TAILSCALE_USERS=your-login@example.com node examples/star-bridge.mjs
 ```
 
-| Variable | Bedeutung |
+| Variable | Meaning |
 |---|---|
-| `PORT` / `HOST` | Port (Standard 8893) / Bind-Adresse (Standard `127.0.0.1`) |
-| `STAR_TAILSCALE_USERS` | Tailscale-Logins, die ohne Token dürfen |
-| `TOKEN` | Passwort als Alternative zu Tailscale |
-| `STAR_ALLOW_CONTROL=1` | erlaubt Sequenz anhalten/fortsetzen – **nur mit Login oder `TOKEN`** |
+| `PORT` / `HOST` | Port (default 8893) / bind address (default `127.0.0.1`) |
+| `STAR_TAILSCALE_USERS` | Tailscale logins that are allowed without a token |
+| `TOKEN` | Password as an alternative to Tailscale |
+| `STAR_ALLOW_CONTROL=1` | allows pausing/resuming the sequence – **only with a login or `TOKEN`** |
 
-Ohne Teleskop zum Üben: `node examples/mock-nina.mjs` und
-`STAR_NINA=http://127.0.0.1:1889`. Autostart unter Windows:
+To practise without a telescope: `node examples/mock-nina.mjs` and
+`STAR_NINA=http://127.0.0.1:1889`. Autostart on Windows:
 [`selfhost/services/star-bridge`](../selfhost/services/star-bridge).
 
-Per https erreichbar machen (vorher `tailscale serve status` lesen):
+Make it reachable over https (read `tailscale serve status` first):
 
 ```bash
 tailscale serve --bg --https=8460 http://127.0.0.1:8893
 ```
 
-**Am Handy eintragen:** Bridge-Adresse `https://<dein-rechner>.<dein-tailnet>.ts.net:8460`
-(ein Privat-Build mit `VITE_STAR_URL` bringt sie schon mit), dann **Speichern und verbinden**.
+**Enter on the phone:** Bridge address `https://<your-machine>.<your-tailnet>.ts.net:8460`
+(a private build with `VITE_STAR_URL` already includes it), then **Save and connect**.
 
-**So prüfst du, dass es läuft:** Unter „Aufnahme“ steht Zustand, Ziel und Bild n/m.
-„Bridge erreichbar, N.I.N.A. nicht“ heißt: N.I.N.A. oder das Plugin läuft nicht.
+**How to check that it works:** Under "Imaging" you see the state, target and
+image n/m. "Bridge reachable, N.I.N.A. is not" means: N.I.N.A. or the plugin
+is not running.
 
 ### Sugar Glass
 
-Deine Glukosewerte aus deinem eigenen **Nightscout** auf der Brille: Wert mit
-Trendpfeil, Kurve der letzten 3 Stunden, Warnungen und Pumpenstatus.
+Your glucose values from your own **Nightscout** on the glasses: value with
+trend arrow, curve of the last 3 hours, alerts and pump status.
 
-> Nur zur Information, keine Therapieentscheidungen – maßgeblich sind Pumpe
-> und Sensor. Kein Medizinprodukt, keine Alarmfunktion.
+> For information only, not for therapy decisions – the pump and the sensor
+> are what counts. Not a medical device, no alarm function.
 
-**Was du brauchst:** ein eigenes Nightscout (z. B. per Docker), das dein
-Uploader füllt (CareLink-Brücke für MiniMed 780G, xDrip+, Dexcom-Share …).
-Empfohlen: `AUTH_DEFAULT_ROLES=denied`, damit Nightscout nicht offen liest.
+**What you need:** your own Nightscout (for example via Docker) that your
+uploader fills (CareLink bridge for MiniMed 780G, xDrip+, Dexcom Share …).
+Recommended: `AUTH_DEFAULT_ROLES=denied`, so Nightscout does not read openly.
 
-**Weg 1 – empfohlen: mit der Sugar-Glass-Bridge** (dann liegt kein Token in der App)
+**Way 1 – recommended: with the Sugar Glass bridge** (then no token is stored in the app)
 
-1. In Nightscout unter *Admin-Werkzeuge* einen Zugang mit Rolle **`readable`**
-   anlegen und dessen Token kopieren.
-2. Die Bridge neben Nightscout starten (im Ordner `apps/sugar-glass`):
+1. In Nightscout, under *Admin Tools*, create a subject with the role
+   **`readable`** and copy its token.
+2. Start the bridge next to Nightscout (in the folder `apps/sugar-glass`):
 
    ```bash
-   NS_URL=http://127.0.0.1:1337 NS_TOKEN=<readable-token>    SUGAR_TAILSCALE_USERS=dein-login@example.com node examples/sugar-bridge.mjs
+   NS_URL=http://127.0.0.1:1337 NS_TOKEN=<readable-token>    SUGAR_TAILSCALE_USERS=your-login@example.com node examples/sugar-bridge.mjs
    ```
 
-   | Variable | Bedeutung |
+   | Variable | Meaning |
    |---|---|
-   | `NS_URL` | dein Nightscout (Standard `http://127.0.0.1:1337`) |
-   | `NS_TOKEN` | Token mit Rolle `readable` (wird nie geloggt) |
-   | `SUGAR_TAILSCALE_USERS` | Tailscale-Logins, die lesen dürfen |
-   | `TOKEN` | Passwort als Alternative zu Tailscale |
+   | `NS_URL` | your Nightscout (default `http://127.0.0.1:1337`) |
+   | `NS_TOKEN` | token with the role `readable` (never logged) |
+   | `SUGAR_TAILSCALE_USERS` | Tailscale logins that may read |
+   | `TOKEN` | Password as an alternative to Tailscale |
 
-   Ohne `SUGAR_TAILSCALE_USERS` und ohne `TOKEN` lehnt die Bridge alles ab.
-   Dienst-Datei für Linux: [`selfhost/services/sugar-bridge`](../selfhost/services/sugar-bridge).
-3. Per https erreichbar machen (vorher `tailscale serve status` lesen):
+   Without `SUGAR_TAILSCALE_USERS` and without `TOKEN`, the bridge rejects
+   everything. Service file for Linux: [`selfhost/services/sugar-bridge`](../selfhost/services/sugar-bridge).
+3. Make it reachable over https (read `tailscale serve status` first):
 
    ```bash
    tailscale serve --bg --https=8462 http://127.0.0.1:8466
    ```
 
-4. **Am Handy eintragen:** Adresse `https://<dein-rechner>.<dein-tailnet>.ts.net:8462`,
-   Token-Feld leer lassen, **Speichern**.
+4. **Enter on the phone:** Address `https://<your-machine>.<your-tailnet>.ts.net:8462`,
+   leave the token field empty, **Save**.
 
-**Weg 2 – ohne Bridge:** die https-Adresse deines Nightscout und den
-`readable`-Token direkt am Handy eintragen. Der Token liegt dann in der App
-und geht als `?token=` mit (Nightscouts eigener Weg).
+**Way 2 – without the bridge:** enter the https address of your Nightscout and
+the `readable` token directly on the phone. The token is then stored in the
+app and is sent as `?token=` (Nightscout's own way).
 
-**So prüfst du, dass es läuft:** Auf der Brille steht dein aktueller Wert mit
-Trendpfeil und „vor n min“. Ohne Server zeigt die App eine Demo (mit `DEMO`
-gekennzeichnet). Einheit (mg/dL oder mmol/L), Zielbereich und Warngrenzen
-stellst du auf der Handy-Seite ein.
+**How to check that it works:** On the glasses you see your current value with
+trend arrow and "n min ago". Without a server, the app shows a demo (marked
+`DEMO`). You set the unit (mg/dL or mmol/L), target range and alert limits on
+the phone page.
 
-Mehr Details (Seiten, Gesten, Warnungen): [`apps/sugar-glass`](../apps/sugar-glass).
+More details (pages, gestures, alerts): [`apps/sugar-glass`](../apps/sugar-glass).
 
 ### Xaventra HUD
 
-Zeigt auf der Brille, woran dein eigener Xaventra-Agent arbeitet, und beantwortet
-seine Rückfragen: **Tippen = Ja**, **Doppeltippen = Nein**, **Wischen = nächste
-Frage**. Aktionen, die nach außen wirken (drucken, schalten, senden), brauchen
-einen **zweiten Tap**. **Halten = sprechen**: die Aufnahme geht an deinen
-Xaventra-Rechner, der sie mit seiner eigenen Spracherkennung versteht.
+Shows on the glasses what your own Xaventra agent is working on, and answers
+its follow-up questions: **tap = yes**, **double tap = no**, **swipe = next
+question**. Actions that act on the outside world (print, switch, send) need a
+**second tap**. **Hold = speak**: the recording goes to your Xaventra machine,
+which understands it with its own speech recognition.
 
-**Was du brauchst:** eine Xaventra-Installation mit eingeschaltetem
-Even-G2-Dienst (`channels.evenG2.enabled`, Token `NOVA_EVEN_G2_TOKEN`, Standard-Port
-`18790`, hört nur auf `127.0.0.1`). Für Sprache muss dein Xaventra den Sprach-Endpunkt
-`POST /hud/voice` haben. Die Einrichtung auf der Xaventra-Seite steht in dessen
-`docs/EVEN_G2.md`.
+**What you need:** a Xaventra installation with the Even G2 service switched
+on (`channels.evenG2.enabled`, token `NOVA_EVEN_G2_TOKEN`, default port
+`18790`, listens on `127.0.0.1` only). For speech, your Xaventra must have the
+voice endpoint `POST /hud/voice`. The setup on the Xaventra side is described
+in its `docs/EVEN_G2.md`.
 
-Per https im Tailnet erreichbar machen:
+Make it reachable over https in the tailnet:
 
 ```bash
 tailscale serve --bg --https=8790 http://127.0.0.1:18790
 ```
 
-(Nimm einen Port, der bei dir frei ist. **Niemals** `tailscale serve reset` –
-das löscht alle deine anderen Freigaben.)
+(Use a port that is free on your machine. **Never** `tailscale serve reset` –
+it deletes all your other published addresses.)
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Adresse des Xaventra-Endpunkts | die https-Adresse | `https://<dein-rechner>.<dein-tailnet>.ts.net:8790` |
-| Token (NOVA_EVEN_G2_TOKEN) | der Token deines Xaventra-Dienstes | – |
+| Xaventra endpoint address | the https address | `https://<your-machine>.<your-tailnet>.ts.net:8790` |
+| Token (NOVA_EVEN_G2_TOKEN) | the token of your Xaventra service | – |
 
-Dann **Speichern und verbinden**.
+Then **Save and connect**.
 
-**So prüfst du, dass es läuft:** Unter „Verbindung“ steht „Verbunden.“, auf der
-Brille steht oben „Xaventra · Uhrzeit“ (bei Problemen „(offline)“). „Token
-abgelehnt (401)“ heißt: Der Token stimmt nicht mit `NOVA_EVEN_G2_TOKEN` überein.
+**How to check that it works:** Under "Connection" it says "Connected.", and
+on the glasses the top line reads "Xaventra · time" (with "(offline)" if
+there are problems). "Token rejected (401)" means: the token does not match
+`NOVA_EVEN_G2_TOKEN`.
 
 ### Status Glass
 
-Zeigt, ob NAS, Server oder Home Assistant in Ordnung sind.
+Shows whether your NAS, server or Home Assistant are fine.
 
-**Was du brauchst:** eine **Quelle** – das ist eine Adresse, die ein kleines
-JSON liefert (Format: `docs/PROTOCOL.md` in der App). Zwei fertige Beispiele
-liegen bei.
+**What you need:** a **source** – an address that returns a small JSON
+(format: `docs/PROTOCOL.md` in the app). Two ready-made examples are included.
 
-**Server starten** (im Ordner `apps/status-glass`):
-
-```bash
-node examples/reference-server.mjs                  # Beispiel, http://127.0.0.1:8099/status
-```
-
-Für Home Assistant:
+**Start the server** (in the folder `apps/status-glass`):
 
 ```bash
-HA_URL=http://homeassistant.local:8123 HA_TOKEN=<langlebiges-Token> TOKEN=<dein-geheimes-Token> node examples/home-assistant-adapter.mjs
+node examples/reference-server.mjs                  # example, http://127.0.0.1:8099/status
 ```
 
-(Läuft auf Port 8100. Ohne `TOKEN` ist der Adapter nur lesend. Oben in der
-Datei stellst du ein, was angezeigt und was geschaltet werden darf.)
+For Home Assistant:
 
-Per https erreichbar machen, z. B. für das Beispiel:
+```bash
+HA_URL=http://homeassistant.local:8123 HA_TOKEN=<long-lived-token> TOKEN=<your-secret-token> node examples/home-assistant-adapter.mjs
+```
+
+(Runs on port 8100. Without `TOKEN` the adapter is read-only. At the top of
+the file you set what may be shown and what may be switched.)
+
+Make it reachable over https, for example for the example server:
 
 ```bash
 tailscale serve --bg --https=8449 8099
 ```
 
-**Am Handy eintragen** (Bereich „Quelle hinzufügen“):
+**Enter on the phone** (section "Add a source"):
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Name | frei wählbar | NAS |
-| Adresse (URL) | https-Adresse **inklusive `/status`** | `https://<dein-rechner>.<dein-tailnet>.ts.net:8449/status` |
-| Bearer-Token (optional) (unter **Erweitert**) | dein `TOKEN`, falls gesetzt | – |
+| Name | your choice | NAS |
+| URL | https address **including `/status`** | `https://<your-machine>.<your-tailnet>.ts.net:8449/status` |
+| Bearer token (optional) (under **Advanced**) | your `TOKEN`, if set | – |
 
-Dann **Quelle hinzufügen**.
+Then **Add source**.
 
-**So prüfst du, dass es läuft:** Unter „Quellen“ erscheint die Quelle; auf der
-Brille steht „… of … ok“ oder die Problemliste. Eine Quelle, die nicht
-antwortet, gilt als Problem (nie als „ok“).
+**How to check that it works:** Under "Sources" the source appears; on the
+glasses it says "… of … ok" or shows the problem list. A source that does not
+answer counts as a problem (never as "ok").
 
 ### Lumen Glass
 
-Zeigt die Motte aus deinem selbst gehosteten LUMEN.
+Shows the moth from your self-hosted LUMEN.
 
-**Was du brauchst:** ein laufendes LUMEN (Standard `127.0.0.1:8077`) und
-Zugriffserlaubnis („CORS“) in LUMEN – drei Zeilen, siehe
-`apps/lumen-glass/examples/PATCH.md`. Alternativ der mitgelieferte Proxy:
-
-```bash
-node examples/lumen-cors-proxy.mjs          # Port 8078, leitet an LUMEN weiter
-```
-
-Per https erreichbar machen:
+**What you need:** a running LUMEN (default `127.0.0.1:8077`) and access
+permission ("CORS") in LUMEN – three lines, see
+`apps/lumen-glass/examples/PATCH.md`. Alternatively, the supplied proxy:
 
 ```bash
-tailscale serve --bg --https=8454 8077       # oder 8078, wenn du den Proxy nutzt
+node examples/lumen-cors-proxy.mjs          # port 8078, forwards to LUMEN
 ```
 
-**Am Handy eintragen:**
+Make it reachable over https:
 
-| Feld in der App | Was rein | Beispiel |
+```bash
+tailscale serve --bg --https=8454 8077       # or 8078 if you use the proxy
+```
+
+**Enter on the phone:**
+
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Adresse | https-Adresse deines LUMEN (bzw. des Proxys) | `https://<dein-rechner>.<dein-tailnet>.ts.net:8454` |
-| Sitzungs-Cookie (unter **Erweitert**) | nur nötig, wenn LUMEN im geschlossenen Modus läuft | – |
+| Address | https address of your LUMEN (or of the proxy) | `https://<your-machine>.<your-tailnet>.ts.net:8454` |
+| Sign-in (name + password) | only needed if your LUMEN asks you to sign in; the password is sent once, the app keeps only the session key | – |
 
-Dann **Speichern**.
+Then **Save**.
 
-**So prüfst du, dass es läuft:** Statt „Nicht verbunden“ erscheint „Deine
-Motte“. Zeigt die Brille „LUMEN unreachable“, fehlt CORS.
+**How to check that it works:** The phone page shows your moth instead of a
+connection error. If the glasses show "LUMEN unreachable", CORS is missing.
 
 ---
 
-## Noch nicht im Even-Hub-Store
+## Not in the Even Hub store yet
 
-Diese drei Apps liegen fertig im Repository, sind aber noch nicht im Store.
-Installieren geht über **Private Builds**.
+These three apps are finished in the repository but not in the store yet.
+Install them through **Private Builds**.
 
-> **Wichtig:** Bei PodCaption (Feed-Bridge), Market Glance und Endurance HUD
-> ist in der App fest hinterlegt, dass sie nur mit einer Bridge auf
-> `127.0.0.1` / `localhost` sprechen dürfen. Eine Bridge auf einem *anderen*
-> Rechner erreicht die App deshalb nicht – das klappt derzeit nur im Simulator
-> oder auf dem Rechner selbst. Für ein echtes Handy müsste man in der
-> `app.json` der App die erlaubte Adresse ändern und die App neu bauen.
+> **Important:** In PodCaption (feed bridge), Market Glance and Endurance HUD,
+> the app is hard-wired to talk only to a bridge on `127.0.0.1` /
+> `localhost`. A bridge on a *different* machine is therefore not reachable
+> for the app – at the moment that only works in the simulator or on the
+> machine itself. For a real phone you would have to change the allowed
+> address in the app's `app.json` and rebuild the app.
 
 ### PodCaption
 
-**Was du brauchst:** nichts – eine Untertitel-Datei (VTT, SRT, JSON oder Text)
-genügt.
+**What you need:** nothing – a caption file (VTT, SRT, JSON or text) is
+enough.
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Datei vom Handy wählen (VTT, SRT, JSON oder Text) | Datei auswählen | `folge12.vtt` |
-| Name der Folge (optional) | frei | Folge 12 |
-| Oder Text einfügen | Transkript kopieren und einfügen, dann **Text übernehmen** | – |
+| Pick a file on your phone (VTT, SRT, JSON or text) | Choose a file | `folge12.vtt` |
+| Episode name (optional) | your choice | Episode 12 |
+| Or paste text | Copy the transcript and paste it, then **Use this text** | – |
 
-**Optional (Erweitert):** Untertitel aus einem RSS-Feed.
+**Optional (Advanced):** captions from an RSS feed.
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Bridge-Adresse | Adresse der Bridge (Standard schon eingetragen), dann **Feed laden** | `http://127.0.0.1:8789` |
+| Bridge address | Address of the bridge (default already filled in), then **Load feed** | `http://127.0.0.1:8789` |
 
-**Server starten:**
+**Start the server:**
 
 ```bash
 PODCAST_FEED_URL=https://example.org/podcast.xml node examples/podcast-bridge.mjs
 ```
 
-**So prüfst du, dass es läuft:** „Untertitel geladen“ erscheint statt
-„Beispiel – noch keine Datei geöffnet“. Auf der Brille tippen = abspielen.
+**How to check that it works:** "Captions loaded" appears instead of "Sample –
+no file opened yet". Tap on the glasses = play.
 
 ### Market Glance
 
-Nur-Lesen-Anzeige deiner Polymarket-/Kalshi-Positionen (keine Orders). Keine
-Finanzberatung.
+Read-only display of your Polymarket/Kalshi positions (no orders). Not
+financial advice.
 
-**Was du brauchst:** die Bridge. Ohne Einstellungen läuft sie im Demo-Modus.
+**What you need:** the bridge. Without settings it runs in demo mode.
 
-**Server starten:**
+**Start the server:**
 
 ```bash
 POLYMARKET_WALLET=0x… node examples/market-bridge.mjs
-# optional Kalshi: KALSHI_KEY_ID=… KALSHI_PRIVATE_KEY_PATH=/pfad/zum/key.pem
+# optional Kalshi: KALSHI_KEY_ID=… KALSHI_PRIVATE_KEY_PATH=/path/to/key.pem
 ```
 
-Zugangsdaten bleiben in der Bridge und kommen nie auf die Brille. Hinweis zur
-Adresse: siehe Kasten oben.
+Credentials stay in the bridge and never reach the glasses. Note on the
+address: see the box above.
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Lokale Markt-Bridge | Adresse der Bridge (Standard schon eingetragen), dann **Speichern** | `http://127.0.0.1:8793/positions` |
+| Local market bridge | Address of the bridge (default already filled in), then **Save** | `http://127.0.0.1:8793/positions` |
 
-**So prüfst du, dass es läuft:** Statt `DEMO` steht `LIVE`; die Positionen
-erscheinen in der Liste.
+**How to check that it works:** `LIVE` appears instead of `DEMO`; the
+positions appear in the list.
 
 ### Endurance HUD
 
-Live-Werte (Tempo/Pace, Leistung, Puls, Kadenz) von Garmin, Radcomputer oder
-einer JSON-Quelle.
+Live values (speed/pace, power, heart rate, cadence) from Garmin, a bike
+computer or a JSON source.
 
-**Was du brauchst:** die Bridge und etwas, das Werte an sie schickt.
+**What you need:** the bridge and something that sends values to it.
 
-**Server starten:**
+**Start the server:**
 
 ```bash
-node examples/telemetry-bridge.mjs          # Port 8792; ENDURANCE_TOKEN=… schützt den Eingang
+node examples/telemetry-bridge.mjs          # port 8792; ENDURANCE_TOKEN=… protects the input
 ```
 
-Testwerte senden:
+Send test values:
 
 ```bash
 curl -X POST http://127.0.0.1:8792/live -H "Content-Type: application/json" \
   -d '{"sport":"bike","speedKph":32.1,"powerWatts":245,"heartRate":151,"cadence":92,"distanceKm":18.4,"elapsedSeconds":2200,"source":"garmin"}'
 ```
 
-**Am Handy eintragen:**
+**Enter on the phone:**
 
-| Feld in der App | Was rein | Beispiel |
+| Field in the app | What to enter | Example |
 |---|---|---|
-| Sportart | Automatisch (Bridge) / Rad / Laufen | Automatisch (Bridge) |
-| Telemetrie-Bridge | Adresse der Bridge (Standard schon eingetragen), dann **Speichern** | `http://127.0.0.1:8792/live` |
+| Sport | Automatic (bridge) / Bike / Run | Automatic (bridge) |
+| Telemetry bridge | Address of the bridge (default already filled in), then **Save** | `http://127.0.0.1:8792/live` |
 
-**So prüfst du, dass es läuft:** Statt `DEMO` steht `LIVE-TRAINING`. Kommen
-länger als 10 Sekunden keine Werte, zeigt die Brille `STALE`.
+**How to check that it works:** `LIVE WORKOUT` appears instead of `DEMO`. If
+no values arrive for more than 10 seconds, the glasses show `STALE`.

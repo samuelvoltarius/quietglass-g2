@@ -8,7 +8,8 @@ import {
   type MapView,
 } from "../src/map/camera";
 import {
-  OVERPASS_ORIGINS, OVERPASS_URLS, buildOverpassQuery, classesFor, createStreetSource, legBox, parseOverpass, prepareStreets,
+  OVERPASS_ORIGINS, OVERPASS_URLS, PUBLIC_OVERPASS_URLS, buildOverpassQuery, classesFor, createStreetSource, legBox, normalizeOverpassUrl,
+  overpassUrlsFor, parseOverpass, prepareStreets,
 } from "../src/map/streets";
 import { LABEL_CHARS, LABEL_HEIGHT, LABEL_PAD_X, MAX_LABELS, overlaps, placeLabels, shortenName } from "../src/map/labels";
 import { MAP_LEVELS, drawWalkMap, edgePoint, scaleBar, type WalkMapInput } from "../src/map/draw";
@@ -152,6 +153,60 @@ describe("the streets", () => {
       expect(outcome.streets).toEqual([]);
       expect(outcome.error).not.toBeNull();
     }
+  });
+
+  it("asks the own server from the phone first, then the build's, then the public ones", () => {
+    const user = "https://map.home.test/api/interpreter";
+    const build = "https://map.build.test/api/interpreter";
+    expect(overpassUrlsFor("https://map.home.test", "https://map.build.test/")).toEqual([user, build, ...PUBLIC_OVERPASS_URLS]);
+    expect(overpassUrlsFor("", "https://map.build.test")).toEqual([build, ...PUBLIC_OVERPASS_URLS]);
+    expect(overpassUrlsFor("https://map.home.test", "")).toEqual([user, ...PUBLIC_OVERPASS_URLS]);
+    expect(overpassUrlsFor("", "")).toEqual([...PUBLIC_OVERPASS_URLS]);
+    // The same server twice is asked once; junk is ignored.
+    expect(overpassUrlsFor(build, "https://map.build.test")).toEqual([build, ...PUBLIC_OVERPASS_URLS]);
+    expect(overpassUrlsFor("ftp://x", "map.build.test")).toEqual([...PUBLIC_OVERPASS_URLS]);
+  });
+
+  it("normalises an Overpass address to …/api/interpreter", () => {
+    expect(normalizeOverpassUrl(" https://map.home.test/ ")).toBe("https://map.home.test/api/interpreter");
+    expect(normalizeOverpassUrl("http://192.168.1.5:12345/api/interpreter")).toBe("http://192.168.1.5:12345/api/interpreter");
+    expect(normalizeOverpassUrl("https://map.home.test/osm")).toBe("https://map.home.test/osm/api/interpreter");
+    expect(normalizeOverpassUrl("map.home.test")).toBe("");
+    expect(normalizeOverpassUrl("https://map.home.test/?data=x")).toBe("");
+    expect(normalizeOverpassUrl(undefined)).toBe("");
+  });
+
+  it("picks up a changed server on the next load, without a new source", async () => {
+    const calls: string[] = [];
+    let own = "";
+    const fetchImpl = (async (url: string) => { calls.push(url); return okResponse(walkStreetsAnswer()); }) as unknown as typeof fetch;
+    const source = createStreetSource({ fetchImpl, urls: () => overpassUrlsFor(own, "") });
+    await source.load(box, ["major"]);
+    own = "https://map.home.test";
+    const farAway = legBox([{ lat: 48.2, lon: 16.37 }, { lat: 48.201, lon: 16.371 }])!;
+    await source.load(farAway, ["major"]);
+    expect(calls).toEqual([PUBLIC_OVERPASS_URLS[0], "https://map.home.test/api/interpreter"]);
+  });
+
+  it("falls back to the public servers when the own one is offline, but stops when a public one is", async () => {
+    const own = "https://map.home.test/api/interpreter";
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      calls.push(url);
+      if (url === own) throw new TypeError("Failed to fetch");
+      return okResponse(walkStreetsAnswer());
+    }) as unknown as typeof fetch;
+    const outcome = await createStreetSource({ fetchImpl, urls: () => overpassUrlsFor(own, "") }).load(box, ["major", "minor", "path"]);
+    expect(outcome.error).toBeNull();
+    expect(outcome.streets.length).toBeGreaterThan(10);
+    expect(calls).toEqual([own, PUBLIC_OVERPASS_URLS[0]]);
+
+    // Truly offline: the own server and the first public one fail, the second public one is not tried in vain.
+    const offlineCalls: string[] = [];
+    const offline = (async (url: string) => { offlineCalls.push(url); throw new TypeError("Failed to fetch"); }) as unknown as typeof fetch;
+    const none = await createStreetSource({ fetchImpl: offline, urls: () => overpassUrlsFor(own, "") }).load(box, ["major"]);
+    expect(none).toEqual({ streets: [], error: "offline" });
+    expect(offlineCalls).toEqual([own, PUBLIC_OVERPASS_URLS[0]]);
   });
 
   it("gives up after the total time even when the request never answers or ignores the abort", async () => {

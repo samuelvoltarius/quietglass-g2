@@ -2,6 +2,7 @@ import type { Stop } from "../transit/types";
 import type { Position } from "../ride/tracker";
 import { DEFAULT_SETTINGS, validateUrl, type Settings } from "../storage/persist";
 import { nextStep } from "../text";
+import { normalizeOverpassUrl } from "../map/streets";
 import { languageSelect, type Locale } from "../i18n";
 import { t } from "../messages";
 import type { GeoResult } from "../route/geocode";
@@ -400,6 +401,12 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
             <p class="hint">${x("p.sttUrlHint")}</p>
           </div>
 
+          <div id="overpass-card">
+            <label for="overpass-url">${x("p.overpassUrl")}</label>
+            <input id="overpass-url" type="url" inputmode="url" spellcheck="false" placeholder="${x("p.overpassPlaceholder")}" />
+            <p class="hint">${x("p.overpassUrlHint")}</p>
+          </div>
+
           <label for="refresh">${x("p.refreshEvery", { value: '<span id="refresh-value"></span>' })}</label>
           <input id="refresh" type="range" min="10" max="120" step="5" />
           <p class="hint">${x("p.refreshHint")}</p>
@@ -443,6 +450,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     const motisUrl = root.querySelector<HTMLInputElement>("#motis-url");
     const refresh = root.querySelector<HTMLInputElement>("#refresh");
     const sttUrl = root.querySelector<HTMLInputElement>("#stt-url");
+    const overpassUrl = root.querySelector<HTMLInputElement>("#overpass-url");
     const refreshValue = root.querySelector<HTMLElement>("#refresh-value");
     const backendHint = root.querySelector<HTMLElement>("#backend-hint");
     const oebbCard = root.querySelector<HTMLElement>("#oebb-card");
@@ -454,6 +462,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
     motisUrl.value = settings.motisUrl;
     refresh.value = String(settings.refreshSeconds);
     if (sttUrl) sttUrl.value = settings.sttUrl;
+    if (overpassUrl) overpassUrl.value = settings.overpassUrl;
     if (refreshValue) refreshValue.textContent = String(settings.refreshSeconds);
 
     // Only the relevant address is shown; two URL fields at once invites
@@ -533,6 +542,25 @@ export function mountPhoneUi(ports: PhoneUiPorts): void {
       }
       sttUrl.setCustomValidity("");
       commit({ sttUrl: text });
+    });
+
+    // Empty is allowed: it means the public servers (and a private build's own one). Stored with /api/interpreter.
+    overpassUrl?.addEventListener("change", () => {
+      const text = overpassUrl.value.trim();
+      let stored = "";
+      if (text !== "") {
+        const check = validateUrl(text, lang);
+        stored = check.valid ? normalizeOverpassUrl(text) : "";
+        if (!stored) {
+          overpassUrl.setCustomValidity(check.error ?? x("p.urlInvalid"));
+          overpassUrl.reportValidity();
+          overpassUrl.value = ports.getSettings().overpassUrl;
+          return;
+        }
+      }
+      overpassUrl.setCustomValidity("");
+      overpassUrl.value = stored;
+      commit({ overpassUrl: stored });
     });
 
     // The language applies to the glasses too: the port redraws them at once.

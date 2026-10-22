@@ -1,29 +1,29 @@
-# glass-traffic — Stau, Sperren und Baustellen entlang der Route (nur Tailnet)
+# glass-traffic — traffic jams, closures and roadworks along the route (tailnet only)
 
-Ein kleiner Dienst für OpenGlance: die App schickt die **Routenlinie** (nicht die Position), der Dienst fragt die
-Verkehrsquellen und antwortet mit den Meldungen **auf der Route**, mit Abstand entlang der Route und einer Summe der
-Verzögerung. Die Schlüssel bleiben auf dem Server.
+A small service for OpenGlance. The app sends the **route line** (not the position). The service asks the traffic
+sources and answers with the reports **on the route**, with the distance along the route and a sum of the
+delay. The keys stay on the server.
 
 ```
- Brille/iPhone ──► tailscale serve :8474 ──► glass_traffic.py (127.0.0.1:8475) ──► TomTom (bbox + wenige Routenpunkte)
-   (Routenlinie)                                                               └─► ASFINAG DATEX II (ganzer Strom, alle 2 min)
+ Glasses/iPhone ──► tailscale serve :8474 ──► glass_traffic.py (127.0.0.1:8475) ──► TomTom (bbox + a few route points)
+   (route line)                                                                  └─► ASFINAG DATEX II (whole feed, every 2 min)
 ```
 
-| lokal | Tailscale-Port (Vorschlag) | Build-Variable (`config.json`) |
+| Local | Tailscale port (suggestion) | Build variable (`config.json`) |
 |---|---|---|
 | `glass_traffic.py` `127.0.0.1:8475` | `8474` | `VITE_TRAFFIC_URL` (`services.traffic`) |
 
-Vorschlag Host: **ns1**, neben `glass-routes` (gleiches Muster: systemd-User-Dienst + `tailscale serve`).
+Suggested host: **ns1**, next to `glass-routes` (same pattern: systemd user service + `tailscale serve`).
 
-## Schnittstelle
+## Interface
 
 ```
-POST /traffic/route   Body (text/plain, kein Preflight):
-                      {"shape": "<polyline, 6 Nachkommastellen>" | [[lat,lon],...], "buffer_m": 60, "precision": 6}
-GET  /health          Zähler, welche Quellen eingerichtet sind; ohne Anmeldung, ohne Geheimnisse
+POST /traffic/route   Body (text/plain, no preflight):
+                      {"shape": "<polyline, 6 decimal places>" | [[lat,lon],...], "buffer_m": 60, "precision": 6}
+GET  /health          Counters, which sources are set up; without sign-in, without secrets
 ```
 
-Antwort:
+Answer:
 
 ```json
 {"incidents": [{"id": "tt:…", "type": "jam", "delayMin": 9, "lengthKm": 1.5, "from": "…", "to": "…", "text": "Stau",
@@ -32,144 +32,145 @@ Antwort:
  "delayMin": 9, "routeM": 15000, "sources": {"tomtom": "ok", "asfinag": "off"}, "at": 1760000000000, "cached": false}
 ```
 
-- `type`: `jam | closure | roadwork | accident | other`. `alongM` = Meter ab Anfang der geschickten Linie bis zum
-  Beginn der Meldung (in Fahrtrichtung), `offM` = Abstand zur Linie.
-- **Auf der Route** heißt: die Meldung läuft wirklich *entlang* der Route und in Fahrtrichtung – siehe
-  [Zuordnung](#zuordnung-meldung--route). Querstraßen, Parallelstraßen und die Gegenfahrbahn fallen weg.
-- **Zusammenführen**: gleiche Art an fast derselben Stelle (≤ 600 m) aus TomTom und ASFINAG wird eine Meldung
-  (`source: "asfinag+tomtom"`, die größere Verzögerung gilt); ein Flow-Stau innerhalb von 2 km einer gemeldeten
-  Stau-/Sperr-/Unfallmeldung zählt nicht doppelt.
-- **Cache**: dieselbe (ausgedünnte) Linie 2 min; TomTom je Rechteck/Punkt 2 min; der ASFINAG-Strom höchstens alle
-  2 min (auch ein Fehler wird 2 min gemerkt – kein Sturm auf die Quelle).
-- `sources.*`: `off` (nicht eingerichtet), `ok`, `error` (Quelle nicht erreichbar; die App zeigt dann einfach weniger).
+- `type`: `jam | closure | roadwork | accident | other`. `alongM` = meters from the start of the sent line to the
+  start of the report (in driving direction), `offM` = distance to the line.
+- **On the route** means: the report really runs *along* the route and in the driving direction (see
+  [Matching](#matching-report--route)). Cross streets, parallel streets and the opposite carriageway are dropped.
+- **Merging**: the same kind at almost the same place (≤ 600 m) from TomTom and ASFINAG becomes one report
+  (`source: "asfinag+tomtom"`, the larger delay counts). A flow jam within 2 km of a reported
+  jam/closure/accident report is not counted twice.
+- **Cache**: the same (thinned) line for 2 min; TomTom per box/point for 2 min; the ASFINAG feed at most every
+  2 min (an error is also remembered for 2 min, so there is no storm on the source).
+- `sources.*`: `off` (not set up), `ok`, `error` (source not reachable; the app then simply shows less).
 
-### Zuordnung Meldung → Route
+### Matching: report → route
 
-Früher reichte ein einziger Meldungspunkt innerhalb von `buffer_m` – dadurch kamen in der Stadt Sperren auf
-**Seitenstraßen** durch, die die Route nur kreuzen oder daneben liegen. Jetzt wird die Geometrie der Meldung geprüft
-(Werte als Konstanten oben in `glass_traffic.py`):
+Before, a single report point within `buffer_m` was enough. Because of that, closures on **side streets** that only
+cross the route or lie next to it got through in the city. Now the geometry of the report is checked
+(values are constants at the top of `glass_traffic.py`):
 
-| Fall | Regel |
+| Case | Rule |
 |---|---|
-| **Linie** (TomTom LineString, Flow-Segment) | in Proben alle ~10 m zerlegt. Eine Probe zählt, wenn sie im **Korridor** liegt *und* ihre Richtung zur Route passt (cos(Winkel) ≥ 0,7; bei Meldungen für **beide Richtungen** auch entgegen). Die zählenden Proben müssen zusammen ≥ **max(60 % der Meldungslänge, 80 m)** lang sein. |
-| **kurze Linie** (< 80 m) | muss zu ≥ 80 % eng (≤ 25 m) und in Fahrtrichtung an der Route liegen. |
-| **Querung** | wandert die Meldung innerhalb des Korridors seitlich um mehr als 30 m (schräg über die Route), fällt sie weg – auch wenn ein Punkt direkt auf der Route liegt. |
-| **nur Start/Ende** (ASFINAG linear, TPEG from/to, 2 Punkte > 200 m auseinander) | beide Enden im Korridor, Ende in Fahrtrichtung *nach* dem Start, Strecke entlang der Route ≥ max(60 % der Luftlinie, 80 m) und ≤ 3 × Luftlinie + 500 m. |
-| **Punkt** (keine Linie) | höchstens **25 m** neben der Route. |
-| **schon drin** | reicht eine Meldung über den Anfang (oder das Ende) der geschickten Linie hinaus, zählt nur der Teil auf der Linie, mindestens 80 m; `alongM` ist dann 0. Bei Start/Ende-Meldungen muss das fehlende Ende auf der Verlängerung des ersten/letzten Routensegments liegen. |
+| **Line** (TomTom LineString, flow segment) | Split into samples every ~10 m. A sample counts if it lies in the **corridor** *and* its direction fits the route (cos(angle) ≥ 0.7; for reports for **both directions**, also against it). The counting samples together must be ≥ **max(60 % of the report length, 80 m)** long. |
+| **Short line** (< 80 m) | Must lie ≥ 80 % close (≤ 25 m) to the route and in the driving direction. |
+| **Crossing** | If the report moves sideways by more than 30 m within the corridor (diagonally across the route), it is dropped, even if one point lies directly on the route. |
+| **Start/end only** (ASFINAG linear, TPEG from/to, 2 points > 200 m apart) | Both ends in the corridor, the end *after* the start in the driving direction, distance along the route ≥ max(60 % of the straight-line distance, 80 m) and ≤ 3 × the straight-line distance + 500 m. |
+| **Point** (no line) | At most **25 m** next to the route. |
+| **Already inside** | If a report extends beyond the start (or the end) of the sent line, only the part on the line counts, at least 80 m; `alongM` is then 0. For start/end reports, the missing end must lie on the extension of the first/last route segment. |
 
-**Korridor** je Routensegment: **25 m** in der Stadt / auf Landstraßen, **60 m** auf Autobahnen (die
-Richtungsfahrbahnen liegen bis ~45 m auseinander) – nie mehr als das `buffer_m` des Clients (Obergrenze). Entschieden
-wird in dieser Reihenfolge:
+**Corridor** per route segment: **25 m** in the city / on country roads, **60 m** on motorways (the
+carriageways of the two directions are up to ~45 m apart). It is never more than the client's `buffer_m` (upper
+limit). The decision is made in this order:
 
-1. Straßenkategorie der Meldung: TomTom-`roadNumbers` (A…/S… = Autobahn/Schnellstraße, andere Nummern = keine),
-   TomTom-Flow `frc` (FRC0/FRC1 = Autobahn), ASFINAG (betreibt nur Autobahnen/Schnellstraßen) = immer Autobahn.
-2. Ohne Kategorie die Form der Route: ein Segment ist autobahnartig, wenn ±1 km um es herum keine scharfe Kurve liegt
-   (> 35° Richtungswechsel innerhalb 60 m – Abbiegen an Kreuzungen, Kreisverkehr). Die App schickt keine Straßenklassen
-   und keine Geschwindigkeiten mit.
+1. Road category of the report: TomTom `roadNumbers` (A…/S… = motorway/expressway, other numbers = neither),
+   TomTom flow `frc` (FRC0/FRC1 = motorway), ASFINAG (only runs motorways/expressways) = always motorway.
+2. Without a category, the shape of the route: a segment is motorway-like if there is no sharp bend within ±1 km
+   around it (> 35° change of direction within 60 m, such as turning at junctions or a roundabout). The app does
+   not send road classes or speeds.
 
-Grenze der Schätzung: eine schnurgerade Stadtstraße über mehr als 2 km ohne Abbiegen gilt als autobahnartig; eine
-Parallelstraße mit gleicher Richtung im Abstand 25–60 m, die ≥ 80 m mitläuft, käme dort durch – Querstraßen und
-kurze Stücke nicht.
+Limit of the estimate: a dead-straight city street over more than 2 km without turning counts as motorway-like. A
+parallel street in the same direction at a distance of 25–60 m that runs along for ≥ 80 m would get through there.
+Cross streets and short pieces would not.
 
-`alongM` = Meter entlang der Route bis zum **Beginn der Überlappung**, `offM` = kleinster Abstand dort. Die
-Antwortform ist unverändert; interne Hinweise (`_autobahn`, `_beide`) gehen nie hinaus.
+`alongM` = meters along the route to the **start of the overlap**, `offM` = smallest distance there. The
+shape of the answer is unchanged. Internal hints (`_autobahn`, `_beide`) never go out.
 
-### Dubletten und Rampen am Knoten
+### Duplicates and ramps at the junction
 
-Nach der Zuordnung (und vor dem Ausliefern) laufen zwei Filter:
+After matching (and before delivery), two filters run:
 
-- **Rampen/Querautobahn** (`_ohne_rampen`): Die App schickt nur Geometrie, die Straße der Route ist unbekannt – sie
-  wird aus den Nachbarn abgeleitet. Meldungen tragen intern Straßennummern (`_strassen`: TomTom-`roadNumbers`, nur
-  wenn es keine gibt die Nummern aus dem Von/Nach-Text wie „(A8)“). Je Nummer zählt die Überlappung aller *anderen*
-  Meldungen mit Nummer innerhalb **1,5 km** entlang der Route (Abstand der Überlappungen); die Nummer mit der längsten Überlappung ist die
-  Hauptstraße. Trägt eine Meldung diese Nummer nicht **und** liegt weniger als **200 m** auf der Route, fällt sie weg
-  (Rampe oder andere Autobahn am Knoten). Bleibt drin: ≥ 200 m Überlappung (Route wechselt die Autobahn), keine Nummer,
-  oder keine Nachbarmeldung mit Nummer. Grenze: eine einzelne Rampensperre ganz ohne Nachbarn lässt sich aus
-  Geometrie allein nicht erkennen.
-- **Dubletten** (`zusammenfuehren`): gleiche Art innerhalb **300 m** entlang der Route und ähnlicher Von/Nach-Text
-  (klein, ohne Satzzeichen, Wortmengen-Jaccard ≥ 0,6) gelten als eine Meldung – auch aus derselben Quelle (zwei
-  TomTom-Einträge, Incidents + Flow). Behalten wird die mit `delayMin`, Verzögerung = Maximum. Zwei Quellen
-  (z. B. ASFINAG + TomTom) verschmelzen weiter ohne Textvergleich innerhalb 600 m.
+- **Ramps / crossing motorway** (`_ohne_rampen`): the app only sends geometry, so the road of the route is unknown.
+  It is derived from the neighbors. Reports carry road numbers internally (`_strassen`: TomTom `roadNumbers`, and
+  only if there are none, the numbers from the from/to text such as "(A8)"). For each number, the overlap of all
+  *other* reports with a number within **1.5 km** along the route counts (distance between the overlaps). The
+  number with the longest overlap is the main road. If a report does not carry this number **and** lies less than
+  **200 m** on the route, it is dropped (a ramp or another motorway at the junction). It stays in if the overlap is
+  ≥ 200 m (the route changes motorway), if it has no number, or if there is no neighboring report with a number.
+  Limit: a single ramp closure with no neighbors at all cannot be recognized from geometry alone.
+- **Duplicates** (`zusammenfuehren`): the same kind within **300 m** along the route and a similar from/to text
+  (lowercase, no punctuation, word-set Jaccard ≥ 0.6) count as one report, also from the same source (two
+  TomTom entries, incidents + flow). The one with `delayMin` is kept, delay = maximum. Two sources
+  (for example ASFINAG + TomTom) still merge within 600 m without a text comparison.
 
-**Anmeldung** wie bei den anderen Diensten: `Tailscale-User-Login` nur von Loopback und nur für Logins aus
-`TRAFFIC_TAILSCALE_USERS`, alternativ `Authorization: Bearer <TRAFFIC_TOKEN>`. Ohne beides ist alles außer
-`/health` gesperrt. CORS: Antwort mit der Origin der Anfrage; OPTIONS → 204.
+**Sign-in** works as with the other services: `Tailscale-User-Login` only from loopback and only for logins in
+`TRAFFIC_TAILSCALE_USERS`, alternatively `Authorization: Bearer <TRAFFIC_TOKEN>`. With neither, everything except
+`/health` is blocked. CORS: the answer carries the origin of the request; OPTIONS → 204.
 
-**Log**: nur Methode, Pfad, Code, Anmeldeform und Dauer – keine Koordinaten, keine Schlüssel (URLs mit `key=` werden
-nie ausgegeben, Fehler nur als Typname).
+**Log**: only method, path, code, sign-in kind and duration. No coordinates, no keys (URLs with `key=` are
+never printed, errors only as the type name).
 
-## Quellen
+## Sources
 
 ### (a) TomTom (optional, `TOMTOM_KEY`)
 
-- **Traffic Incidents API v5** (`/traffic/services/5/incidentDetails`): je Rechteck um die Route (höchstens
-  `TOMTOM_MAX_BOXES`, je < 10 000 km², wie TomTom verlangt), Kategorien Unfall, Stau, Spur gesperrt, Straße gesperrt,
-  Baustelle, Pannenfahrzeug, nur aktuelle Meldungen. Verzögerung (`delay`, s) und Länge werden übernommen.
-- **Flow Segment Data v4**: an `TOMTOM_FLOW_SAMPLES` Punkten gleichmäßig entlang der Route (Standard 6, 0 = aus);
-  deutlich langsamer als frei (≤ 60 % der freien Geschwindigkeit, ≥ 1 min länger, Vertrauen ≥ 0,5) wird ein Stau,
-  `roadClosure` eine Sperre.
-- Kosten: TomTom zählt Anfragen (Free-Tier, Stand der Doku: 2 500 pro Tag – **bitte bei TomTom prüfen**).
-  Pro Routen-Anfrage höchstens `TOMTOM_MAX_BOXES + TOMTOM_FLOW_SAMPLES` Aufrufe, meist weniger dank Cache. Die App
-  fragt beim Fahren alle 2 min, vor dem Start je Weg einmal, bei einer Umfahrungsprüfung je Weg einmal.
-- TomTom bekommt Rechtecke um die Route und einzelne Punkte **auf** der Route, nie die Position der Brille als solche.
+- **Traffic Incidents API v5** (`/traffic/services/5/incidentDetails`): per box around the route (at most
+  `TOMTOM_MAX_BOXES`, each < 10,000 km², as TomTom requires), categories accident, jam, lane closed, road closed,
+  roadworks, broken-down vehicle, current reports only. The delay (`delay`, s) and length are taken over.
+- **Flow Segment Data v4**: at `TOMTOM_FLOW_SAMPLES` points spread evenly along the route (default 6, 0 = off).
+  If it is clearly slower than free flow (≤ 60 % of the free speed, ≥ 1 min longer, confidence ≥ 0.5), it becomes a
+  jam; `roadClosure` becomes a closure.
+- Cost: TomTom counts requests (free tier, as of the docs: 2,500 per day; **please check with TomTom**).
+  At most `TOMTOM_MAX_BOXES + TOMTOM_FLOW_SAMPLES` calls per route request, usually fewer thanks to the cache. The app
+  asks every 2 min while driving, once per way before the start, and once per way for a detour check.
+- TomTom gets boxes around the route and single points **on** the route, never the glasses' position as such.
 
 ### (b) ASFINAG DATEX II (optional, `ASFINAG_DATEX_URL`)
 
-Recherche (14.10.2026): ASFINAG liefert Verkehrsdaten für alle österreichischen Autobahnen und Schnellstraßen als
-**DATEX II**-Ströme (Ereignisse/Verkehrsmeldungen, Baustellen, Netzmanagement, Reisezeiten …). Sie sind **nicht frei
-herunterladbar**: Zugang gibt es nach **Registrierung und Vertrag im ASFINAG Content-Portal**
-<https://contentportal.asfinag.at/> (früher `services2.asfinag.at/web/trafficdata/`); die Profile sind im
-DATEX-II-Verzeichnis beschrieben (repo.datex2.eu, Knoten „ASFINAG – Austria“, z. B. „D2 ASFINAG profile Traffic
-Messages / Network Management (uses Ext. LinearByCoordinates)“). Auf data.gv.at und im nationalen Zugangspunkt
-mobilitydata.gv.at war kein frei nutzbarer ASFINAG-Meldungsstrom zu finden. Ob der Zugang für Privatpersonen
-kostenlos ist, war öffentlich nicht zu klären – das sagt das Portal bei der Registrierung.
+Research (2026-10-14): ASFINAG delivers traffic data for all Austrian motorways and expressways as
+**DATEX II** feeds (events/traffic messages, roadworks, network management, travel times ...). They are **not freely
+downloadable**: access is given after **registration and a contract in the ASFINAG Content Portal**
+<https://contentportal.asfinag.at/> (formerly `services2.asfinag.at/web/trafficdata/`). The profiles are described in
+the DATEX II directory (repo.datex2.eu, node "ASFINAG – Austria", for example "D2 ASFINAG profile Traffic
+Messages / Network Management (uses Ext. LinearByCoordinates)"). On data.gv.at and at the national access point
+mobilitydata.gv.at, no freely usable ASFINAG message feed could be found. Whether access is free of charge for
+private persons could not be clarified publicly. The portal tells you during registration.
 
-**Was du tun musst:**
+**What you have to do:**
 
-1. Im Content-Portal registrieren, den Strom mit **Verkehrsmeldungen / ungeplanten Ereignissen**
-   (SituationPublication, möglichst mit Koordinaten bzw. LinearByCoordinates) beantragen und den Vertrag abschließen.
-2. Die dort genannte **Abruf-URL** (Pull) als `ASFINAG_DATEX_URL` eintragen, Benutzer und Passwort (HTTP-Basic) als
-   `ASFINAG_USER` / `ASFINAG_PASSWORD`. Bietet das Portal eine andere Anmeldung an (z. B. Zertifikat), bitte melden –
-   der Dienst kann bisher nur Basic oder offen.
-3. Neustarten und `GET /health` prüfen (`"asfinag": true`), dann eine Route über eine Autobahn schicken und in
-   `sources.asfinag` auf `ok` achten.
+1. Register in the Content Portal, request the feed with **traffic messages / unplanned events**
+   (SituationPublication, preferably with coordinates or LinearByCoordinates) and conclude the contract.
+2. Enter the **retrieval URL** (pull) named there as `ASFINAG_DATEX_URL`, and the user and password (HTTP Basic) as
+   `ASFINAG_USER` / `ASFINAG_PASSWORD`. If the portal offers a different sign-in (for example a certificate), please
+   report it. So far the service can only do Basic or open.
+3. Restart and check `GET /health` (`"asfinag": true`), then send a route over a motorway and look for
+   `ok` in `sources.asfinag`.
 
-Gelesen wird DATEX II **v2 und v3** (`situationRecord`, Namensräume egal): Art aus `xsi:type`
-(`AbnormalTraffic` → Stau, `Accident` → Unfall, `MaintenanceWorks`/`ConstructionWorks`/`Roadworks` → Baustelle,
-`RoadOrCarriagewayOrLaneManagement` mit `roadClosed`/`carriagewayClosures` → Sperre), Verzögerung
-`delayTimeValue`, Länge `queueLength`/`lengthAffected`, Text aus `generalPublicComment` (Deutsch bevorzugt),
-Koordinaten aus `from`/`to` (TPEG, richtig geordnet), `linearCoordinatesStartPoint`/`EndPoint`, sonst
-`pointCoordinates`, sonst `locationForDisplay`. `suspended` und abgelaufene (`overallEndTime`) fallen weg. Komprimierte
-Antworten (gzip) werden entpackt. Die Testdaten in `fixtures/` sind **erfunden** und nur im Format eines solchen
-Stroms – mit dem echten Strom ist der Parser noch **nicht** geprüft.
+DATEX II **v2 and v3** are read (`situationRecord`, namespaces do not matter): the kind from `xsi:type`
+(`AbnormalTraffic` → jam, `Accident` → accident, `MaintenanceWorks`/`ConstructionWorks`/`Roadworks` → roadworks,
+`RoadOrCarriagewayOrLaneManagement` with `roadClosed`/`carriagewayClosures` → closure), the delay from
+`delayTimeValue`, the length from `queueLength`/`lengthAffected`, the text from `generalPublicComment` (German
+preferred), the coordinates from `from`/`to` (TPEG, correctly ordered), `linearCoordinatesStartPoint`/`EndPoint`,
+otherwise `pointCoordinates`, otherwise `locationForDisplay`. `suspended` and expired (`overallEndTime`) records are
+dropped. Compressed (gzip) answers are unpacked. The test data in `fixtures/` is **made up** and only in the format
+of such a feed. The parser has **not** yet been checked against the real feed.
 
-## Einrichten (ns1)
+## Set-up (ns1)
 
 ```bash
 mkdir -p ~/glass-traffic
 cp glass_traffic.py ~/glass-traffic/
-install -m 600 glass-traffic.env.example ~/glass-traffic/.env    # ausfüllen: Logins, ggf. TOMTOM_KEY, ASFINAG_*
+install -m 600 glass-traffic.env.example ~/glass-traffic/.env    # fill in: logins, optionally TOMTOM_KEY, ASFINAG_*
 cp glass-traffic.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now glass-traffic
-tailscale serve --bg --https=8474 http://127.0.0.1:8475           # nie "serve reset"
-curl -s https://<ns1>.<tailnet>.ts.net:8474/health
+tailscale serve --bg --https=8474 http://127.0.0.1:8475           # never "serve reset"
+curl -s https://<your-machine>.<your-tailnet>.ts.net:8474/health
 ```
 
-Dann `services.traffic` in `selfhost/config.json` setzen (`https://<ns1>.<tailnet>.ts.net:8474`) und OpenGlance mit
-`node selfhost/build-private.mjs` neu bauen; das trägt `VITE_TRAFFIC_URL` und die Origin in die Whitelist der
-`app.private.json` ein. Ohne TomTom-Schlüssel und ohne ASFINAG antwortet der Dienst mit leeren Listen
-(`sources: off`) – die App zeigt dann einfach keinen Verkehr.
+Then set `services.traffic` in `selfhost/config.json` (`https://<your-machine>.<your-tailnet>.ts.net:8474`) and rebuild OpenGlance with
+`node selfhost/build-private.mjs`. This puts `VITE_TRAFFIC_URL` and the origin into the whitelist of
+`app.private.json`. Without a TomTom key and without ASFINAG, the service answers with empty lists
+(`sources: off`), and the app then simply shows no traffic.
 
 ## Tests
 
 ```bash
-python3 -m unittest test_glass_traffic      # oder: python3 -m pytest test_glass_traffic.py
+python3 -m unittest test_glass_traffic      # or: python3 -m pytest test_glass_traffic.py
 ```
 
-Nur Standardbibliothek, kein Netz außer 127.0.0.1; TomTom- und ASFINAG-Antworten kommen aus `fixtures/`
-(erfunden, keine echten Schlüssel oder Daten). Geprüft: Lesen beider Quellen, Gegenfahrbahn, Abstand entlang der
-Route, Zuordnung (Querstraße, Parallelstraße 40 m in der Stadt, Meldung entlang der Route, Gegenrichtung auf der
-Autobahn, Sperre beider Richtungen, Punkt 20 m/60 m, Richtungsfahrbahn 45 m daneben, schräge Querung, Start/Ende-Linien,
-„schon im Stau“, Nachbau der Form eines Live-Falls mit kurzen Quersperren am Routenanfang), Zusammenführen, Flow, Rechtecke unter der TomTom-Flächengrenze, Cache (auch: ASFINAG nur einmal je 2 min),
-Quellen aus, Quellenfehler, Anmeldung/CORS/HTTP, `/health` ohne Geheimnisse.
+Standard library only, no network except 127.0.0.1. The TomTom and ASFINAG answers come from `fixtures/`
+(made up, no real keys or data). What is checked: reading both sources, the opposite carriageway, distance along the
+route, matching (cross street, a parallel street 40 m away in the city, a report along the route, the opposite
+direction on the motorway, a closure in both directions, a point 20 m/60 m away, a carriageway 45 m next to it, a
+diagonal crossing, start/end lines, "already in the jam", a rebuild of the shape of a live case with short cross
+closures at the start of the route), merging, flow, boxes under the TomTom area limit, the cache (also: ASFINAG only
+once per 2 min), sources off, source errors, sign-in/CORS/HTTP, and `/health` without secrets.

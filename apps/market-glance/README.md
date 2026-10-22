@@ -1,12 +1,14 @@
 # Market Glance
 
-**Quietglass** · Read-only Prediction-Market-Positionen für die Even Realities G2.
+**Quietglass** · Read-only prediction market positions for the Even Realities G2.
 
-Market Glance zeigt offene Polymarket- und Kalshi-Positionen, Preis und P/L. Es gibt absichtlich keine Order-, Kauf- oder Verkaufsgeste. Polymarket nutzt nur eine öffentliche Wallet-Adresse. Kalshi-Anmeldedaten und Private Key bleiben in der lokalen Bridge und gelangen nie auf die Brille.
+> **Auf Deutsch, kurz:** Market Glance zeigt offene Polymarket- und Kalshi-Positionen mit Preis und P/L auf der Even G2. Es gibt absichtlich keine Order-, Kauf- oder Verkaufsgeste. Kalshi-Zugangsdaten bleiben in der lokalen Bridge. Nur Informationsanzeige, keine Finanzberatung.
 
-![Market Glance im Even-Hub-Simulator](docs/screenshot.png)
+Market Glance shows open Polymarket and Kalshi positions, price and P/L. There is deliberately no order, buy or sell gesture. Polymarket only uses a public wallet address. Kalshi credentials and the private key stay in the local bridge and never reach the glasses.
 
-## Start
+![Market Glance in the Even Hub simulator](docs/screenshot.png)
+
+## Getting started
 
 ```powershell
 $env:POLYMARKET_WALLET = "0x..."
@@ -21,8 +23,8 @@ npm run dev
 npm run sim
 ```
 
-Ohne Konfiguration läuft ein deutlich markierter Demo-Modus. Antwortet die Bridge nicht mehr oder sind die Daten älter als 45 s, zeigt die Brille `STALE 3m` statt `LIVE`; fällt nur ein Anbieter aus, liefert die Bridge die übrigen Positionen plus `errors` (Brille: `LIVE  P ERR`, Fehlertext auf der Handy-Seite). Kalshi-Preise sind das aktuelle Geld-Gebot der gehaltenen Seite (Fallback: letzter Handelspreis), P/L ist offen = Wert − Einstand; realisierter P/L steht separat auf der Handy-Seite. Unterstützt Deutsch, Englisch, Französisch, Spanisch und Italienisch. Nur Informationsanzeige, keine Finanzberatung. Noch nicht auf echter G2-Hardware geprüft.
+Without configuration, a clearly marked demo mode runs. If the bridge stops answering or the data is older than 45 s, the glasses show `STALE 3m` instead of `LIVE`. If only one provider fails, the bridge returns the remaining positions plus `errors` (glasses: `LIVE  P ERR`, error text on the phone page). Kalshi prices are the current bid of the side you hold (fallback: last trade price). Open P/L = value − cost basis; realized P/L is shown separately on the phone page. German, English, French, Spanish and Italian are supported. Information display only, not financial advice. Not yet tested on real G2 hardware.
 
-## Datenschutz
+## Privacy
 
-Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).
+Which data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).

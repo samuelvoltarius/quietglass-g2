@@ -88,4 +88,25 @@ describe("the phone settings page", () => {
     expect(settings.oebbUrl).toBe("http://192.168.1.20:8079/oebb");
     expect(settings.refreshSeconds).toBe(60);
   });
+
+  it("stores an own map server normalised, refuses junk and clears on empty", () => {
+    expect(root.innerHTML).toContain("Eigener Kartenserver (Overpass)");
+    // Store reviewers reject URL literals: the placeholder names the thing, it shows no address.
+    const placeholder = /id="overpass-url"[^>]*placeholder="([^"]*)"/.exec(root.innerHTML)?.[1] ?? "";
+    expect(placeholder).not.toBe("");
+    expect(placeholder).not.toMatch(/:\/\/|https?/i);
+
+    const field = root.querySelector("#overpass-url");
+    field.value = "https://map.home.test/";
+    field.fire("change");
+    expect(settings.overpassUrl).toBe("https://map.home.test/api/interpreter");
+
+    field.value = "map ohne schema";
+    field.fire("change");
+    expect(settings.overpassUrl).toBe("https://map.home.test/api/interpreter");
+
+    field.value = " ";
+    field.fire("change");
+    expect(settings.overpassUrl).toBe("");
+  });
 });

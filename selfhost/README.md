@@ -1,202 +1,149 @@
-# Selbst hosten — alles auf deinen Rechnern, Zugriff nur über dein Tailscale
+# Self-hosting: everything on your own machines, reachable only through your Tailscale
 
-*[English version below](#english)*
+Most Quietglass apps need no server. For the others (voice input, translation, your own routing,
+agents, printers, status tiles ...) this folder gives you **everything that goes with them**: the server services
+with systemd units and config templates, a config file for your addresses, and a script that builds the apps'
+**private builds** from it.
 
-Die meisten Quietglass-Apps brauchen keinen Server. Für die anderen (Spracheingabe, Übersetzung, eigenes Routing,
-Agenten, Drucker, Statusanzeigen …) bekommst du hier **alles, was dazugehört**: die Server-Dienste samt
-systemd-Units und Konfig-Vorlagen, eine Konfigurationsdatei für deine Adressen und ein Skript, das daraus die
-**privaten Builds** der Apps baut.
-
-## Das Prinzip
+## The principle
 
 ```
- Brille ── Bluetooth ── iPhone (Even-App, Tailscale) ──► dein Tailnet ──► Server (Tailscale)
-                                                                           └─ 127.0.0.1:<Port>  ← Dienst
-                                                                              tailscale serve --https=<Port>
+ Glasses ── Bluetooth ── iPhone (Even app, Tailscale) ──► your tailnet ──► Server (Tailscale)
+                                                                           └─ 127.0.0.1:<port>  ← service
+                                                                              tailscale serve --https=<port>
 ```
 
-1. **Alles läuft auf deinen eigenen Rechnern** (PC, Mini-Server, Raspberry Pi, NAS). Nichts liegt bei uns oder in
-   einer fremden Cloud.
-2. **Zugriff nur im eigenen Tailnet.** Jeder Dienst lauscht nur auf `127.0.0.1`. Mit `tailscale serve` wird er als
-   `https://<rechner>.<tailnet>.ts.net:<port>` **nur für deine Tailscale-Geräte** erreichbar — mit gültigem
-   Zertifikat (die Even-App lädt die App über HTTPS und blockiert Klartext-`http://`/`ws://`). Tailscale auf dem
-   iPhone und auf jedem Server, gleiches Konto, fertig. Kein Port-Forwarding, keine öffentliche Adresse.
-3. **Anmeldung über deinen Tailscale-Login statt Token.** `tailscale serve` verbindet vom Rechner selbst
-   (Loopback) und setzt den Header `Tailscale-User-Login`. Die Dienste vertrauen dem Header **nur von Loopback** und
-   **nur für Logins aus einer Allowlist** (Umgebungsvariable). Aus dem LAN lässt er sich nicht fälschen. Ergebnis:
-   Nichts eintippen, kein Token am Handy. Ein Token bleibt als Alternative.
+1. **Everything runs on your own machines** (PC, mini server, Raspberry Pi, NAS). Nothing is stored with us or in
+   someone else's cloud.
+2. **Access only inside your own tailnet.** Every service listens on `127.0.0.1` only. `tailscale serve` makes it
+   available as `https://<your-machine>.<your-tailnet>.ts.net:<port>` **to your Tailscale devices only**, with a
+   valid certificate. (The Even app loads the app over HTTPS and blocks plain `http://`/`ws://`.) Install
+   Tailscale on the iPhone and on every server, with the same account, and you are done. No port forwarding, no
+   public address.
+3. **Sign-in with your Tailscale login instead of a token.** `tailscale serve` connects from the machine itself
+   (loopback) and sets the header `Tailscale-User-Login`. The services trust this header **only from loopback**
+   and **only for logins on an allow-list** (an environment variable). It cannot be forged from the LAN. The
+   result: nothing to type, no token on the phone. A token stays available as an alternative.
 
-| Dienst | Allowlist-Variable |
+| Service | Allow-list variable |
 |---|---|
-| quiet-hub (Daemon) | `HUB_TAILSCALE_USERS` |
+| quiet-hub (daemon) | `HUB_TAILSCALE_USERS` |
 | status-server | `STATUS_TAILSCALE_USERS` |
 | shoot-day | `SD_TAILSCALE_USERS` |
 | klipper-bridge | `KL_TAILSCALE_USERS` |
 | star-bridge | `STAR_TAILSCALE_USERS` |
-| sugar-bridge | `SUGAR_TAILSCALE_USERS` (ohne Allowlist und ohne `TOKEN`: alles gesperrt) |
-| chargers | `GLANCE_TAILSCALE_USERS` (ohne Allowlist und ohne `GLANCE_TOKEN`: alles gesperrt) |
-| routes | `ROUTES_TAILSCALE_USERS` (ohne Allowlist und ohne `ROUTES_TOKEN`: alles gesperrt) |
-| glass-traffic | `TRAFFIC_TAILSCALE_USERS` (ohne Allowlist und ohne `TRAFFIC_TOKEN`: alles gesperrt) |
-| whisper (WebSocket), babel-llm-proxy | `TAILSCALE_USERS` (wirkt, sobald auch `TOKEN` gesetzt ist) |
-| whisper (HTTP), oebb-proxy, valhalla | keine Anmeldung — nur im Tailnet erreichbar, Zugriff per Tailscale-ACL einschränkbar |
+| sugar-bridge | `SUGAR_TAILSCALE_USERS` (without an allow-list and without `TOKEN`: everything is blocked) |
+| chargers | `GLANCE_TAILSCALE_USERS` (without an allow-list and without `GLANCE_TOKEN`: everything is blocked) |
+| routes | `ROUTES_TAILSCALE_USERS` (without an allow-list and without `ROUTES_TOKEN`: everything is blocked) |
+| glass-traffic | `TRAFFIC_TAILSCALE_USERS` (without an allow-list and without `TRAFFIC_TOKEN`: everything is blocked) |
+| whisper (WebSocket), babel-llm-proxy | `TAILSCALE_USERS` (takes effect as soon as `TOKEN` is also set) |
+| whisper (HTTP), oebb-proxy, valhalla | no sign-in; reachable only inside the tailnet, access can be restricted with a Tailscale ACL |
 
-### `tailscale serve` — die Regeln
+### `tailscale serve`: the rules
 
 ```bash
-tailscale serve --bg --https=<port> http://127.0.0.1:<port>     # einen Dienst freigeben
-tailscale serve status                                           # IMMER zurücklesen
-tailscale serve --https=<port> off                               # genau einen wieder entfernen
+tailscale serve --bg --https=<port> http://127.0.0.1:<port>     # publish one service
+tailscale serve status                                           # ALWAYS read it back
+tailscale serve --https=<port> off                               # remove exactly one
 ```
 
-**Niemals `tailscale serve reset`** — das löscht *alle* Freigaben des Rechners, auch die anderer Dienste.
-Jeder Dienst bekommt seine eigene `--https`-Nummer; prüfe vorher mit `tailscale serve status`, was belegt ist.
+**Never run `tailscale serve reset`.** It deletes *all* shares on the machine, including those of other services.
+Every service gets its own `--https` number. Check what is already in use with `tailscale serve status` first.
 
-## Übersicht: App → Dienste → Port
+## Overview: app, services, port
 
-Die Ports sind Vorschläge (frei wählbar, sie müssen nur zu deiner `config.json` passen). „Lokal“ = wo der Dienst
-auf dem Rechner lauscht, „Tailscale“ = die HTTPS-Nummer für `tailscale serve`.
+The ports are suggestions. You can choose others, as long as they match your `config.json`. "Local" is where the
+service listens on the machine. "Tailscale" is the HTTPS number for `tailscale serve`.
 
-| Dienst (Ordner in `services/`) | lokal | Tailscale | App(s) |
+| Service (folder in `services/`) | Local | Tailscale | App(s) |
 |---|---|---|---|
-| [`quiet-hub`](services/quiet-hub) (Daemon + Relay) | 8787 | **8443** | Quiet Hub |
-| [`whisper`](services/whisper) — HTTP | 8017 | **8457** | NextStop (Sprache), Shoot Day, Quiet Hub, FieldLog |
-| [`whisper`](services/whisper) — Babel-WebSocket | 8120 | **8449** | Babel Glass |
-| [`babel-llm-proxy`](services/babel-llm-proxy) | 8121 | **8448** | Babel Glass (Übersetzung) |
-| [`oebb-proxy`](services/oebb-proxy) | 8079 | **8458** | NextStop (ÖBB-Echtzeit) |
-| [`status-server`](services/status-server) (je Rechner) | 8199 | **8451** | Status Glass |
+| [`quiet-hub`](services/quiet-hub) (daemon + relay) | 8787 | **8443** | Quiet Hub |
+| [`whisper`](services/whisper) (HTTP) | 8017 | **8457** | NextStop (speech), Shoot Day, Quiet Hub, FieldLog |
+| [`whisper`](services/whisper) (Babel WebSocket) | 8120 | **8449** | Babel Glass |
+| [`babel-llm-proxy`](services/babel-llm-proxy) | 8121 | **8448** | Babel Glass (translation) |
+| [`oebb-proxy`](services/oebb-proxy) | 8079 | **8458** | NextStop (ÖBB real-time data) |
+| [`status-server`](services/status-server) (one per machine) | 8199 | **8451** | Status Glass |
 | [`shoot-day`](services/shoot-day) | 8896 | **8445** | Shoot Day |
 | [`klipper-bridge`](services/klipper-bridge) | 8898 | **8447** | Klipper Glance |
-| [`star-bridge`](services/star-bridge) (auf dem N.I.N.A.-Rechner, Windows) | 8893 | **8460** | Star Glass |
-| [`sugar-bridge`](services/sugar-bridge) (neben Nightscout; Nightscout selbst nur lokal) | 8466 | **8462** | Sugar Glass |
-| [`valhalla`](services/valhalla) (Docker) | 8112 | **8455** | OpenGlance Nav (Routing + Straßennamen), NextStop (Fußwege) |
-| [`chargers`](services/chargers) (Ladestationen aus amtlichen Verzeichnissen) | 8467 | **8464** | OpenGlance Nav (Ladestationen; ohne = öffentliches Overpass) |
-| [`routes`](services/routes) (gespeicherte Routen + PC-Planungsseite) | 8468 | **8465** | OpenGlance Nav (Routen gleich auf Handy und PC) |
-| [`glass-traffic`](services/glass-traffic) (Stau/Sperren entlang der Route: TomTom, ASFINAG DATEX II) | 8475 | **8474** | OpenGlance Nav (Verkehr, Umfahrung; ohne = kein Verkehr) |
-| Sprachausgabe: Piper-TTS-Server mit OpenAI-kompatiblem `POST /v1/audio/speech` und CORS (extern) | 8014 | **8459** | NextStop (Ansagen; ohne = Handy-Stimme) |
-| Agent-Endpunkt (Even Terminal / Hermes-Bridge / OpenClaw, extern) | 8765 | **8446** | Agent Glass |
-| LUMEN (eigenes Projekt, **nicht** Teil dieses Repos) | – | **8454** | Lumen Glass |
-| Xaventra (eigenes Projekt: github.com/samuelvoltarius/xaventra) | – | **8790** | Xaventra HUD |
+| [`star-bridge`](services/star-bridge) (on the N.I.N.A. machine, Windows) | 8893 | **8460** | Star Glass |
+| [`sugar-bridge`](services/sugar-bridge) (next to Nightscout; Nightscout itself stays local only) | 8466 | **8462** | Sugar Glass |
+| [`valhalla`](services/valhalla) (Docker) | 8112 | **8455** | OpenGlance Nav (routing + street names), NextStop (walking routes) |
+| [`chargers`](services/chargers) (charging stations from official registers) | 8467 | **8464** | OpenGlance Nav (charging stations; without it, the public Overpass is used) |
+| [`routes`](services/routes) (saved routes + PC planning page) | 8468 | **8465** | OpenGlance Nav (same routes on phone and PC) |
+| [`glass-traffic`](services/glass-traffic) (traffic jams and closures along the route: TomTom, ASFINAG DATEX II) | 8475 | **8474** | OpenGlance Nav (traffic, detours; without it, no traffic) |
+| Speech output: Piper TTS server with OpenAI-compatible `POST /v1/audio/speech` and CORS (external) | 8014 | **8459** | NextStop (announcements; without it, the phone voice is used) |
+| Agent endpoint (Even Terminal / Hermes bridge / OpenClaw, external) | 8765 | **8446** | Agent Glass |
+| LUMEN (separate project, **not** part of this repo) | – | **8454** | Lumen Glass |
+| Xaventra (separate project: github.com/samuelvoltarius/xaventra) | – | **8790** | Xaventra HUD |
 
-| App | benötigt | Bemerkung |
+| App | Needs | Note |
 |---|---|---|
-| NextStop | optional `oebb-proxy`, `whisper`, `valhalla`, `tts` | ohne alles läuft es mit Transitous und dem öffentlichen FOSSGIS-Routing |
-| OpenGlance Nav | `valhalla`, optional `chargers`, `whisper`, `tts`, `routes`, `traffic` | sonst öffentlicher FOSSGIS-Server und öffentliches Overpass (braucht keinen Privat-Build) |
-| Babel Glass | `whisper` (WebSocket) + `babel-llm-proxy` (+ ein LLM-Server) | |
-| FieldLog | `whisper` (HTTP) | Adresse trägst du in der App ein; der Privat-Build erlaubt nur den Ursprung |
-| Quiet Hub | `quiet-hub` (+ Relay je Rechner mit Agenten) | optional `whisper`, LLM, Home Assistant |
-| Agent Glass | ein Agenten-Endpunkt | siehe `apps/agent-glass` |
-| Status Glass | `status-server` (≥ 1) | beliebig viele Quellen |
-| Shoot Day | `shoot-day` (+ `whisper` für Sprache) | |
+| NextStop | optional `oebb-proxy`, `whisper`, `valhalla`, `tts` | Without any of them, it uses Transitous and the public FOSSGIS routing |
+| OpenGlance Nav | `valhalla`, optional `chargers`, `whisper`, `tts`, `routes`, `traffic` | Otherwise it uses the public FOSSGIS server and the public Overpass (no private build needed) |
+| Babel Glass | `whisper` (WebSocket) + `babel-llm-proxy` (+ an LLM server) | |
+| FieldLog | `whisper` (HTTP) | You enter the address in the app. The private build allows only that origin |
+| Quiet Hub | `quiet-hub` (+ a relay on each machine with agents) | optional `whisper`, LLM, Home Assistant |
+| Agent Glass | an agent endpoint | see `apps/agent-glass` |
+| Status Glass | `status-server` (at least 1) | any number of sources |
+| Shoot Day | `shoot-day` (+ `whisper` for speech) | |
 | Klipper Glance | `klipper-bridge` | |
-| Star Glass | `star-bridge` | läuft neben N.I.N.A. (Plugin „Advanced API“); Steuern nur mit `STAR_ALLOW_CONTROL=1` |
-| Sugar Glass | `sugar-bridge` + eigenes Nightscout | nur Lesen; Lese-Token bleibt am Server. Nur zur Information – maßgeblich sind Pumpe und Sensor |
-| Lumen Glass | LUMEN | separates Projekt |
-| Xaventra HUD | Xaventra-Daemon | separates Projekt |
-| Rain Lens | – | Radar-Seite nur mit `options.rainRadar` (RainViewer: nur private Nutzung) |
-| FlowList, PostureLens, DecibelGuard, Cadence, ShiftClock, PodCaption, Market Glance, Endurance HUD | – | brauchen keinen Tailscale-Dienst aus diesem Ordner (Market Glance / Endurance HUD / PodCaption: Bridges laufen lokal, siehe deren README) |
+| Star Glass | `star-bridge` | Runs next to N.I.N.A. (plugin "Advanced API"). Control only works with `STAR_ALLOW_CONTROL=1` |
+| Sugar Glass | `sugar-bridge` + your own Nightscout | Read-only. The read token stays on the server. For information only: the pump and the sensor are what counts |
+| Lumen Glass | LUMEN | separate project |
+| Xaventra HUD | Xaventra daemon | separate project |
+| Rain Lens | – | The radar page needs `options.rainRadar` (RainViewer: private use only) |
+| FlowList, PostureLens, DecibelGuard, Cadence, ShiftClock, PodCaption, Market Glance, Endurance HUD | – | They need no Tailscale service from this folder (Market Glance / Endurance HUD / PodCaption: the bridges run locally, see their READMEs) |
 
-## Schritt für Schritt
+## Step by step
 
-1. **Tailscale** auf dem iPhone und auf jedem Server installieren, überall dasselbe Konto. In der
-   Tailscale-Admin-Konsole **MagicDNS** und **HTTPS-Zertifikate** einschalten (einmalig).
-2. **Repo klonen** (auf jedem Server, der Dienste betreibt): `git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2`
-   — die Unit-Vorlagen erwarten es dort; sonst Pfade in den `.service`-Dateien anpassen.
-3. **Dienste installieren** — pro Ordner in [`services/`](services) steht die Anleitung (`README.md`), die
-   Konfigvorlage (`.env.example`), die systemd-Unit und der `tailscale serve`-Befehl. Danach
-   `systemctl --user is-active <dienst>` und `tailscale serve status` prüfen.
-4. **Adressen eintragen:** `cp config.example.json config.json`, die Platzhalter durch deine echten
-   `https://<rechner>.<tailnet>.ts.net:<port>` ersetzen, nicht genutzte Dienste löschen. `config.json` ist in
-   `.gitignore` und wird nie committet.
-5. **Private Builds bauen:**
+1. **Install Tailscale** on the iPhone and on every server, with the same account everywhere. In the Tailscale
+   admin console, turn on **MagicDNS** and **HTTPS certificates** (one time only).
+2. **Clone the repo** (on every server that runs services): `git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2`
+   The unit templates expect it there. Otherwise, adjust the paths in the `.service` files.
+3. **Install the services.** Each folder in [`services/`](services) has its instructions (`README.md`), the
+   config template (`.env.example`), the systemd unit and the `tailscale serve` command. Afterwards, check
+   `systemctl --user is-active <service>` and `tailscale serve status`.
+4. **Enter your addresses:** `cp config.example.json config.json`. Replace the placeholders with your real
+   `https://<your-machine>.<your-tailnet>.ts.net:<port>` addresses, and delete the services you do not use.
+   `config.json` is in `.gitignore` and is never committed.
+5. **Build the private builds:**
    ```bash
-   node selfhost/build-private.mjs --list                         # was geht
-   node selfhost/build-private.mjs --app nextstop --dry-run       # nur anzeigen, nichts bauen
-   node selfhost/build-private.mjs --app nextstop                 # eine App
-   node selfhost/build-private.mjs                                # alle Apps, deren Dienste in config.json stehen
+   node selfhost/build-private.mjs --list                         # what is possible
+   node selfhost/build-private.mjs --app nextstop --dry-run       # preview only, build nothing
+   node selfhost/build-private.mjs --app nextstop                 # one app
+   node selfhost/build-private.mjs                                # all apps whose services are listed in config.json
    ```
-   Ergebnis: `release/<app>/<app>-<version>.ehpk` (nicht im Git). Das Skript braucht nur Node 18+ und je App
-   `npm ci` (macht es bei Bedarf selbst).
-6. **Als privaten Build in den Even Hub laden** und in der Even-App unter *Me → Apps → Private Builds* installieren
-   (Details: [`docs/SETUP.md`](../docs/SETUP.md)). Die Server-Adressen sind schon als Vorgabe im Build — am Handy
-   muss nichts eingetragen werden.
+   Result: `release/<app>/<app>-<version>.ehpk` (not in Git). The script only needs Node 18+ and, for each app,
+   `npm ci` (it runs this itself when needed).
+6. **Upload it to the Even Hub as a private build** and install it in the Even app under *Me → Apps → Private Builds*
+   (details: [`docs/SETUP.md`](../docs/SETUP.md)). The server addresses are already built in as defaults, so you do
+   not have to enter anything on the phone.
 
-## Warum Privat-Builds? (die drei Fallen)
+## Why private builds? (the three traps)
 
-1. **Exakte Origins in `app.json`.** Die Whitelist der Netzwerk-Berechtigung muss die genauen Ursprünge
-   (`https://host:port`) enthalten. **Wildcards wie `https://*` werden auf der echten Brille blockiert** — im
-   Simulator laufen sie, auf der Brille nicht. Das öffentliche `app.json` kennt deine Hosts nicht (und soll sie
-   nicht kennen). Darum erzeugt `build-private.mjs` pro App eine **`app.private.json`** (gitignored) mit deinen
-   exakten Origins und packt damit. Eine vorhandene `app.private.json` wird einmalig als `.bak` gesichert.
-2. **CORS-Preflight: `204` ohne Body.** Die App läuft in einer WebView mit fremdem Ursprung; der Browser schickt
-   vorab `OPTIONS`. Die Antwort muss **Status 204 ohne Body** sein, mit `Access-Control-Allow-Origin` = Ursprung
-   und `Access-Control-Allow-Headers` inkl. `Authorization, Content-Type`. Ein Body im 204 lässt iOS/WebKit die
-   Antwort verwerfen — die Brille meldet „nicht erreichbar“, obwohl `curl` geht. Alle Dienste hier machen das
-   richtig. Baust du einen eigenen: dieselbe Regel. (Valhalla und manche Fremddienste können OPTIONS nicht — die
-   Apps nutzen dort `GET` mit Query, das braucht keinen Preflight.)
-3. **Kein Token-Eintippen.** Siehe oben: Anmeldung über den Tailscale-Login.
+1. **Exact origins in `app.json`.** The whitelist for the network permission must contain the exact origins
+   (`https://host:port`). **Wildcards such as `https://*` are blocked on the real glasses.** They work in the
+   simulator, but not on the glasses. The public `app.json` does not know your hosts (and should not).
+   So `build-private.mjs` creates an **`app.private.json`** (gitignored) for each app, with your exact origins, and
+   packs the app with it. An existing `app.private.json` is backed up once as `.bak`.
+2. **CORS preflight: `204` with no body.** The app runs in a WebView with a foreign origin. The browser first sends
+   `OPTIONS`. The answer must be **status 204 with no body**, with `Access-Control-Allow-Origin` set to the origin
+   and `Access-Control-Allow-Headers` including `Authorization, Content-Type`. A body in the 204 makes iOS/WebKit
+   drop the answer. The glasses then report "not reachable", even though `curl` works. All services here do this
+   correctly. If you build your own, follow the same rule. (Valhalla and some third-party services cannot handle
+   OPTIONS. The apps use `GET` with a query string there, which needs no preflight.)
+3. **No typing of tokens.** See above: sign-in with the Tailscale login.
 
-Dazu: Server-Adressen sind als `VITE_*`-Build-Variablen eingebaut (`VITE_STT_URL`, `VITE_OEBB_URL`,
-`VITE_ROUTER_URL`, `VITE_BABEL_STT`, `VITE_BABEL_LLM`, `VITE_BABEL_MODEL`, `VITE_STATUS_SOURCES`, `VITE_RADAR`);
-ein leeres Feld in der App heißt „Vorgabe des Builds“.
+Also: the server addresses are built in as `VITE_*` build variables (`VITE_STT_URL`, `VITE_OEBB_URL`,
+`VITE_ROUTER_URL`, `VITE_BABEL_STT`, `VITE_BABEL_LLM`, `VITE_BABEL_MODEL`, `VITE_STATUS_SOURCES`, `VITE_RADAR`).
+An empty field in the app means "use the build's default".
 
-## Wenn etwas nicht geht
+## If something does not work
 
-| Symptom | Ursache / Prüfung |
+| Symptom | Cause / check |
 |---|---|
-| Brille: „nicht erreichbar“, im Simulator geht’s | Wildcard in der Whitelist → Privat-Build verwenden; Origin exakt (Port!) |
-| Brille: „nicht erreichbar“, `curl` geht | Preflight mit Body oder ohne `Access-Control-Allow-Origin` |
-| 401 | Dein Login fehlt in der Allowlist-Variable des Dienstes (Schreibweise = Tailscale-Login) |
-| Handy erreicht den Server nicht | Tailscale auf dem iPhone an? `tailscale serve status` auf dem Server; Port in `config.json` richtig? |
-| `serve` zeigt die Adresse nicht | HTTPS-Zertifikate in der Tailscale-Admin-Konsole einschalten |
-
----
-
-## English
-
-Most Quietglass apps need no server. For the rest (voice input, translation, own routing, agents, printer, status
-tiles …) this folder holds **everything that goes with them**: the server services with systemd units and config
-templates, a config file for your addresses, and a script that builds the apps' **private builds** from it.
-
-### Principle
-
-1. **Everything runs on your own machines** (PC, mini server, Raspberry Pi, NAS) — nothing on someone else's cloud.
-2. **Access only inside your own tailnet.** Each service listens on `127.0.0.1` only. `tailscale serve` publishes
-   it as `https://<machine>.<tailnet>.ts.net:<port>` **to your Tailscale devices only**, with a valid certificate
-   (the Even app loads the app over HTTPS and blocks plain `http://`/`ws://`). Install Tailscale on the iPhone and
-   on each server, same account, done. No port forwarding, no public address.
-3. **Sign-in through your Tailscale login instead of a token.** `tailscale serve` connects from loopback and sets
-   `Tailscale-User-Login`. The services trust that header **only from loopback** and **only for logins on an
-   allow-list** (environment variable, see the table above), so it cannot be spoofed from the LAN. Nothing to type
-   on the phone; a token stays available as an alternative.
-
-`tailscale serve --bg --https=<port> http://127.0.0.1:<port>` publishes one service; read back with
-`tailscale serve status`; remove one with `tailscale serve --https=<port> off`. **Never `tailscale serve reset`**
-(it wipes every share on the machine).
-
-### Why private builds
-
-- **Exact origins in `app.json`.** The network whitelist must list exact origins (`https://host:port`); wildcards
-  such as `https://*` are blocked on real glasses (they work in the simulator). The public `app.json` must not
-  contain your hosts, so `build-private.mjs` writes a git-ignored `app.private.json` per app with your exact
-  origins and packs that.
-- **CORS preflight: `204` with no body**, `Access-Control-Allow-Origin` = the request origin, allowed headers
-  including `Authorization, Content-Type`. A body in the 204 makes iOS/WebKit drop the answer ("unreachable" on the
-  glasses while `curl` works). Services that cannot answer OPTIONS (e.g. Valhalla) are called with plain `GET` and
-  a query string, which needs no preflight.
-- **Server addresses are baked in** as `VITE_*` build variables, so nothing has to be typed on the phone.
-
-### Steps
-
-1. Tailscale on iPhone and servers (same account; MagicDNS + HTTPS certificates enabled in the admin console).
-2. `git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2` on each server.
-3. Install the services you want — each folder in [`services/`](services) has its README, `.env.example`, systemd
-   unit and `tailscale serve` command.
-4. `cp config.example.json config.json`, put in your real `https://<machine>.<tailnet>.ts.net:<port>` addresses
-   (`config.json` is git-ignored).
-5. `node selfhost/build-private.mjs --list`, then `--app <name> --dry-run` to preview, then without `--dry-run`
-   (or without `--app` for every configured app). Output: `release/<app>/<app>-<version>.ehpk`.
-6. Upload the `.ehpk` as a private build in the Even Hub and install it from *Me → Apps → Private Builds* in the
-   Even app (see [`docs/SETUP.md`](../docs/SETUP.md)).
-
-The port table above is a suggestion; use any ports as long as `config.json` matches. LUMEN and Xaventra are
-separate projects and not part of this repository.
+| Glasses: "not reachable", but it works in the simulator | A wildcard in the whitelist. Use a private build. The origin must be exact (port included!) |
+| Glasses: "not reachable", but `curl` works | The preflight has a body, or it has no `Access-Control-Allow-Origin` |
+| 401 | Your login is missing from the service's allow-list variable (spelling = Tailscale login) |
+| The phone cannot reach the server | Is Tailscale on at the iPhone? Check `tailscale serve status` on the server. Is the port in `config.json` correct? |
+| `serve` does not show the address | Turn on HTTPS certificates in the Tailscale admin console |

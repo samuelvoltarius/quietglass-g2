@@ -1,38 +1,38 @@
-# chargers — Ladestationen für OpenGlance aus amtlichen Verzeichnissen (nur Lesen, nur Tailnet)
+# chargers — charging stations for OpenGlance from official registers (read-only, tailnet only)
 
-Ohne diesen Dienst fragt OpenGlance die **öffentlichen Overpass-Server** (OpenStreetMap). Die sind kostenlos, aber
-oft ausgelastet (406/429/504, Timeouts) – dann gibt es keine Ladestationen. Mit dem Dienst kommen sie von deinem
-eigenen Rechner, aus einer Tabelle, die einmal täglich aus den **amtlichen Verzeichnissen** gefüllt wird:
+Without this service, OpenGlance asks the **public Overpass servers** (OpenStreetMap). They are free, but often
+overloaded (406/429/504, timeouts), and then there are no charging stations. With this service, the stations come
+from your own machine, from a table that is filled once a day from the **official registers**:
 
-| Land | Quelle | Preise |
+| Country | Source | Prices |
 |---|---|---|
-| Österreich | E-Control Ladestellenverzeichnis (API-Schlüssel bei E-Control beantragen) | Ad-hoc-Preis je Ladepunkt |
-| Deutschland | Ladesäulenregister der Bundesnetzagentur (CSV, monatlich) | keine (das Register enthält keine) |
+| Austria | E-Control charging point register (request an API key from E-Control) | Ad-hoc price per charging point |
+| Germany | Charging station register of the Bundesnetzagentur (CSV, monthly) | None (the register has none) |
 
 ```
- Brille ◄─ iPhone ◄─ tailscale serve :8464 ◄─ glance_server.py (127.0.0.1:8467) ◄─ SQLite (Tabelle station)
+ Glasses ◄─ iPhone ◄─ tailscale serve :8464 ◄─ glance_server.py (127.0.0.1:8467) ◄─ SQLite (table station)
                                                                                     ▲
-                                                       täglicher Sammler (E-Control / BNetzA) schreibt
+                                                       daily collector (E-Control / BNetzA) writes
 ```
 
-| lokal | Tailscale-Port (Vorschlag) | Build-Variable (`config.json`) |
+| Local | Tailscale port (suggestion) | Build variable (`config.json`) |
 |---|---|---|
 | `glance_server.py` `127.0.0.1:8467` | `8464` | `VITE_CHARGERS_URL` (`services.chargers`) |
 
-**Straßennamen** brauchen keinen eigenen Dienst: Der private Build holt sie mit `VITE_STREETS_URL` vom eigenen
-Valhalla ([`../valhalla`](../valhalla), `trace_attributes` mit der Routenform, ein GET ohne Preflight). Das macht
-`build-private.mjs` automatisch, sobald `services.valhalla` gesetzt ist. Die Straßen *rund um* die Route kommen
-weiter von Overpass, wenn es antwortet.
+**Street names** need no service of their own. The private build gets them with `VITE_STREETS_URL` from your own
+Valhalla ([`../valhalla`](../valhalla), `trace_attributes` with the route shape, a GET without preflight).
+`build-private.mjs` does this automatically as soon as `services.valhalla` is set. The streets *around* the route
+still come from Overpass, when it answers.
 
-## Schnittstelle (falls du einen eigenen Server dafür schreibst)
+## Interface (in case you write your own server for it)
 
 ```
-GET /chargers?lat=47.8095&lon=13.0550&radius=15000     # Umkreis in Metern, max. 50 km
-GET /chargers?boxes=s,w,n,e;s,w,n,e;…                  # Kästen entlang der Route, max. 40, je ≤ 1°
-GET /health                                            # Zähler, ohne Anmeldung
+GET /chargers?lat=47.8095&lon=13.0550&radius=15000     # radius in meters, max. 50 km
+GET /chargers?boxes=s,w,n,e;s,w,n,e;…                  # boxes along the route, max. 40, each ≤ 1°
+GET /health                                            # counters, without sign-in
 ```
 
-Antwort = Format einer Overpass-Abfrage `out center tags`, damit die App ihren Parser behält:
+The answer uses the format of an Overpass query `out center tags`, so the app keeps its parser:
 
 ```json
 {"elements":[{"type":"node","id":"AT*ABC*E1","lat":47.80,"lon":13.05,
@@ -41,38 +41,39 @@ Antwort = Format einer Overpass-Abfrage `out center tags`, damit die App ihren P
           "x:price_eur_kwh":"0.59"}}]}
 ```
 
-* Mehrere Ladepunkte am selben Ort vom selben Betreiber = **ein** Element (Leistung = stärkster Punkt, Preis = Preis
-  des stärksten Punkts). Preise unter 0,10 € oder über 3 € je kWh werden weggelassen (fast immer Meldefehler).
-* **Anmeldung:** `tailscale serve` verbindet von Loopback und setzt `Tailscale-User-Login`; vertraut wird dem Kopf
-  nur von Loopback und nur für Logins aus `GLANCE_TAILSCALE_USERS`. Alternativ `Authorization: Bearer <GLANCE_TOKEN>`.
-  Ohne beides: alles 401.
-* **CORS:** Die App fragt mit einfachem GET ohne eigene Kopfzeilen (kein Preflight). `Access-Control-Allow-Origin`
-  kommt bei jeder Antwort, auch bei 401. `OPTIONS` antwortet 204 **ohne Body**.
+* Several charging points at the same place from the same operator = **one** element (power = the strongest point,
+  price = the price of the strongest point). Prices below €0.10 or above €3 per kWh are left out (almost always a
+  reporting error).
+* **Sign-in:** `tailscale serve` connects from loopback and sets `Tailscale-User-Login`. The header is trusted only
+  from loopback and only for logins in `GLANCE_TAILSCALE_USERS`. Alternatively, use `Authorization: Bearer <GLANCE_TOKEN>`.
+  With neither: everything gets 401.
+* **CORS:** the app asks with a simple GET and no custom headers (no preflight). `Access-Control-Allow-Origin`
+  is sent with every answer, also with 401. `OPTIONS` answers 204 **with no body**.
 
-## Referenz-Implementierung
+## Reference implementation
 
-[`glance.py`](glance.py) (Abfrage, Zusammenfassen, Format) und [`glance_server.py`](glance_server.py) (HTTP, Anmeldung,
-CORS) – Python 3.10+, nur Standardbibliothek. Sie lesen eine SQLite-Datei (`TARIF_DB`) mit dieser Tabelle:
+[`glance.py`](glance.py) (query, merge, format) and [`glance_server.py`](glance_server.py) (HTTP, sign-in,
+CORS). Python 3.10+, standard library only. They read a SQLite file (`TARIF_DB`) with this table:
 
 ```sql
 CREATE TABLE station (
   evse_id TEXT PRIMARY KEY, land TEXT, lat REAL NOT NULL, lon REAL NOT NULL,
   name TEXT, betreiber TEXT, kw REAL, ladepunkte INTEGER,
-  stecker TEXT,          -- z. B. "CCS_2;TYPE_2_AC" oder "DC Fahrzeugkupplung Typ Combo 2 (CCS)"
-  status TEXT,           -- leer, "ACTIVE" oder "In Betrieb" = anzeigen; alles andere nicht
+  stecker TEXT,          -- e.g. "CCS_2;TYPE_2_AC" or "DC Fahrzeugkupplung Typ Combo 2 (CCS)"
+  status TEXT,           -- empty, "ACTIVE" or "In Betrieb" = show; everything else is not shown
   quelle TEXT, stand TEXT);
 CREATE INDEX idx_station_geo ON station(lat, lon);
 ```
 
-Preise sind optional: gibt es zusätzlich die Tabellen `tarif`/`regel` (Ad-hoc-Tarif, `quelle_typ='amtlich'`,
-`station_id` = EVSE-ID), werden sie dazugelesen; sonst kommen die Stationen ohne Preis. Füllen musst du die Tabelle
-selbst (z. B. täglich aus der E-Control-API `GET /charge/1.0/search?latitude=…&longitude=…&radius=<km>`, Kopfzeile
-`Apikey`; **höchstens 100 Stationen je Abfrage** – in Städten Zellen vierteln, bis eine Abfrage < 100 liefert, sonst
-fehlen Stationen still).
+Prices are optional. If the tables `tarif`/`regel` also exist (ad-hoc tariff, `quelle_typ='amtlich'`,
+`station_id` = EVSE ID), they are read in as well. Otherwise the stations come without a price. You have to fill the
+table yourself (for example daily from the E-Control API `GET /charge/1.0/search?latitude=…&longitude=…&radius=<km>`,
+header `Apikey`; **at most 100 stations per query**. In cities, split cells into quarters until a query returns
+< 100, otherwise stations are silently missing).
 
 ```bash
 sudo install -d /opt/ev-glance && sudo cp glance.py glance_server.py /opt/ev-glance/
-# systemd (Vorlage):
+# systemd (template):
 cat <<'EOF' | sudo tee /etc/systemd/system/ev-glance.service
 [Unit]
 Description=Ladestationen fuer OpenGlance (nur lesen)
@@ -96,21 +97,9 @@ ReadWritePaths=/opt/ev-glance
 WantedBy=multi-user.target
 EOF
 sudo systemctl daemon-reload && sudo systemctl enable --now ev-glance
-sudo tailscale serve --bg --https=8464 http://127.0.0.1:8467    # nie "serve reset"
-tailscale serve status                                         # zurücklesen
+sudo tailscale serve --bg --https=8464 http://127.0.0.1:8467    # never "serve reset"
+tailscale serve status                                         # read it back
 ```
 
-Prüfen (vom Handy/PC im Tailnet, angemeldet): `https://<server>.<tailnet>.ts.net:8464/chargers?lat=47.8095&lon=13.055&radius=15000`
-→ 200 mit `elements`. Direkt auf dem Server ohne Kopf: `curl http://127.0.0.1:8467/chargers?lat=47.8&lon=13&radius=1000` → 401.
-
----
-
-<a name="english"></a>
-## English (short)
-
-Charging stations for OpenGlance from official registers (Austria: E-Control incl. ad-hoc prices; Germany:
-Bundesnetzagentur), served read-only from your own machine instead of the often overloaded public Overpass servers.
-`GET /chargers?lat&lon&radius` or `?boxes=s,w,n,e;…`, answered in Overpass element format plus `x:price_eur_kwh`.
-Auth via `Tailscale-User-Login` from loopback (`GLANCE_TAILSCALE_USERS`) or `GLANCE_TOKEN`; simple GETs, no
-preflight; 204 without body for OPTIONS. Put the address in `config.json` as `services.chargers`; street names come
-from your own Valhalla automatically (`VITE_STREETS_URL`).
+Check (from the phone/PC in the tailnet, signed in): `https://<your-machine>.<your-tailnet>.ts.net:8464/chargers?lat=47.8095&lon=13.055&radius=15000`
+→ 200 with `elements`. Directly on the server without the header: `curl http://127.0.0.1:8467/chargers?lat=47.8&lon=13&radius=1000` → 401.

@@ -2,6 +2,7 @@ import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { buildTtsUrl } from "../speech/server-tts";
+import { normalizeOverpassUrl } from "../map/streets";
 
 /**
  * Which backend to ask, and where it lives. Nothing else is kept.
@@ -27,6 +28,13 @@ export interface Settings {
    * one the voice input says it needs a server of your own.
    */
   readonly sttUrl: string;
+  /**
+   * The user's own Overpass server for the streets of the walking map, stored
+   * normalised (`…/api/interpreter`). Empty means the build's own one (private
+   * build) and the public servers; when this one cannot be reached they are
+   * asked next.
+   */
+  readonly overpassUrl: string;
   /** Seconds between refreshes while a board is on screen. */
   readonly refreshSeconds: number;
   /** Spoken guidance on a journey ("In 60 metres turn left", "Bus 3 in 2 minutes"). */
@@ -60,6 +68,7 @@ export function defaultsFor(buildOebbUrl: string | undefined): Settings {
     oebbUrl: usable ? built : "http://127.0.0.1:8079/oebb",
     motisUrl: "https://api.transitous.org",
     sttUrl: "",
+    overpassUrl: "",
     refreshSeconds: 30,
     // On by default when the build brings a voice server (private build).
     announce: buildTtsUrl() !== "",
@@ -121,6 +130,7 @@ export function parseSettings(raw: string, defaults: Settings = DEFAULT_SETTINGS
       motisUrl: validateUrl(String(value.motisUrl ?? "")).valid
         ? String(value.motisUrl).trim() : defaults.motisUrl,
       sttUrl: validateUrl(String(value.sttUrl ?? "")).valid ? String(value.sttUrl).trim() : "",
+      overpassUrl: validateUrl(String(value.overpassUrl ?? "")).valid ? normalizeOverpassUrl(String(value.overpassUrl)) : "",
       // A refresh faster than ten seconds hammers a service run by
       // volunteers without telling the user anything new — most feeds do not
       // update that often anyway.

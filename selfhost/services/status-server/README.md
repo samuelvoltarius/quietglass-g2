@@ -1,23 +1,23 @@
-# status-server — Statusquelle für Status Glass
+# status-server — status source for Status Glass
 
-Status Glass zeigt Kacheln aus beliebig vielen **Quellen** (`GET …/status`). Diese Referenzquelle liefert CPU,
-RAM, Last und Laufzeit des Rechners, auf dem sie läuft – eine Instanz pro Rechner (Server, Pi, NAS …).
-**Der Code liegt im Repo und wird nicht kopiert:**
+Status Glass shows tiles from any number of **sources** (`GET …/status`). This reference source delivers the CPU,
+RAM, load and uptime of the machine it runs on. Run one instance per machine (server, Pi, NAS ...).
+**The code is in the repo and is not copied:**
 [`apps/status-glass/examples/reference-server.mjs`](../../../apps/status-glass/examples/reference-server.mjs)
-(Node ≥ 18, keine Abhängigkeiten). Eigene Messwerte: `collect()` in der Datei ersetzen. Home Assistant:
-[`home-assistant-adapter.mjs`](../../../apps/status-glass/examples/home-assistant-adapter.mjs) (eigene Unit
-analog, `HA_URL`/`HA_TOKEN` nur in der Env-Datei).
+(Node ≥ 18, no dependencies). For your own measurements, replace `collect()` in the file. Home Assistant:
+[`home-assistant-adapter.mjs`](../../../apps/status-glass/examples/home-assistant-adapter.mjs) (its own unit,
+set up the same way; `HA_URL`/`HA_TOKEN` only in the env file).
 
-| lokal | Tailscale-Port (Vorschlag) | App / Build-Variable |
+| Local | Tailscale port (suggestion) | App / build variable |
 |---|---|---|
-| `127.0.0.1:8199` | `8451` | Quelle `https://<server>.<tailnet>.ts.net:8451/status` · `VITE_STATUS_SOURCES="Name|https://…:8451/status;Name2|…"` |
+| `127.0.0.1:8199` | `8451` | Source `https://<your-machine>.<your-tailnet>.ts.net:8451/status` · `VITE_STATUS_SOURCES="Name|https://…:8451/status;Name2|…"` |
 
-Anmeldung: `STATUS_TAILSCALE_USERS` = dein Tailscale-Login → kein Token am Handy nötig.
+Sign-in: `STATUS_TAILSCALE_USERS` = your Tailscale login → no token needed on the phone.
 
-## Installieren (je Rechner)
+## Install (on each machine)
 
 ```bash
-git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2     # falls noch nicht da
+git clone https://github.com/samuelvoltarius/quietglass-g2 ~/quietglass-g2     # if not there yet
 mkdir -p ~/.config/quietglass ~/.config/systemd/user
 cp .env.example ~/.config/quietglass/status-server.env && chmod 600 ~/.config/quietglass/status-server.env
 $EDITOR ~/.config/quietglass/status-server.env          # NAME, STATUS_TAILSCALE_USERS
@@ -25,13 +25,6 @@ cp status-server.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now status-server
 loginctl enable-linger "$USER"
 curl -s http://127.0.0.1:8199/status | head -c 300
-tailscale serve --bg --https=8451 http://127.0.0.1:8199      # nie "serve reset"
+tailscale serve --bg --https=8451 http://127.0.0.1:8199      # never "serve reset"
 tailscale serve status
 ```
-
-## English
-
-One instance per machine. Code: `apps/status-glass/examples/reference-server.mjs` (not copied). Env file with
-`NAME` and your Tailscale login in `STATUS_TAILSCALE_USERS`, install the user unit, publish with
-`tailscale serve --bg --https=8451 http://127.0.0.1:8199`, add `https://<host>.<tailnet>.ts.net:8451/status` as a
-source (or bake several into a private build via `VITE_STATUS_SOURCES`).

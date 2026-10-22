@@ -70,8 +70,9 @@ describe("app.json", () => {
   it("asks for location and lets the keyless default through", () => {
     // Without the location permission the app could never get past "waiting for location".
     expect(manifest.permissions.map((permission) => permission.name).sort()).toEqual(["g2-microphone", "location", "network"]);
-    // A wildcard origin is blocked on the real glasses: the public manifest lists exact origins only.
-    expect(manifest.permissions.find((permission) => permission.name === "network")?.whitelist).toEqual(["https://api.transitous.org", "https://valhalla1.openstreetmap.de", "https://overpass-api.de", "https://overpass.private.coffee"]);
+    // A wildcard origin is blocked on the real glasses, so every built-in server is listed exactly; the wildcard
+    // (as in Klipper Glance / Sugar Glass) only covers the own Overpass server entered on the phone page.
+    expect(manifest.permissions.find((permission) => permission.name === "network")?.whitelist).toEqual(["https://api.transitous.org", "https://valhalla1.openstreetmap.de", "https://overpass-api.de", "https://overpass.private.coffee", "https://*"]);
     expect(manifest.permissions.find((permission) => permission.name === "network")?.whitelist).toContain("https://api.transitous.org");
   });
   it("declares the languages the app actually speaks", () => {

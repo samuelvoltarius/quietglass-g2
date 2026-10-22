@@ -1,106 +1,107 @@
-# Brillen-Agent (glass-agent)
+# Glasses agent (glass-agent)
 
-Macht einen eigenen KI-Agenten — z. B. [Hermes](https://github.com/NousResearch/hermes-agent) mit seinem
-OpenAI-kompatiblen API-Server — zum „Even AI“ der Even Realities G2.
+Turns your own AI agent, for example [Hermes](https://github.com/NousResearch/hermes-agent) with its
+OpenAI-compatible API server, into the "Even AI" of the Even Realities G2.
 
-Die Even-App kann unter **Einstellungen → Agent hinzufügen** (Name, URL, Schlüssel) einen eigenen
-Agenten eintragen. Sie schickt dann jede Frage als OpenAI-Chat-Request: `"model":"openclaw"`, nur der
-letzte Satz, kein Verlauf, kein Systemtext, kein Streaming; die Brille zeigt etwa 400–500 Zeichen.
-Dieser kleine Dienst sitzt dazwischen und
+In the Even app, under **Settings → Add agent** (name, URL, key), you can enter your own
+agent. The app then sends every question as an OpenAI chat request: `"model":"openclaw"`, only the
+last sentence, no history, no system text, no streaming. The glasses show about 400–500 characters.
+This small service sits in between and
 
-- merkt sich das laufende Gespräch ein paar Minuten (Rückfragen wie „und morgen?“ funktionieren;
-  „Neues Gespräch“ beginnt von vorn),
-- sagt dem Agenten, dass die Antwort auf eine Brille geht (kurz, ohne Emojis/Formatierung),
-- räumt die Antwort auf und kürzt sie am Satzende (Standard 350 Zeichen),
-- hält den Schlüssel des Agenten vom Handy fern (die Even-App kennt nur `GLASS_AGENT_TOKEN`),
-- protokolliert keine Inhalte, nur Länge und Dauer,
-- weicht automatisch aus, wenn ein Modell scheitert oder sein Kontingent leer ist
-  (`GLASS_AGENT_FALLBACKS`, z. B. erst ein Abo-Modell, dann ein anderes, zuletzt das eigene vLLM);
-  ein Weg mit leerem Kontingent wird 15 Minuten übersprungen. Ausgewichen wird **nur bei echten
-  Fehlern** (HTTP-Fehler, Verbindung abgelehnt, Kontingent/429) — nicht, weil der Agent langsam ist,
-- lässt einen langsamen Agenten im Hintergrund weiterarbeiten (siehe unten),
-- kann Hermes-Aktionen vorher auf der Brille bestätigen lassen (Freigabe-Stufen, siehe unten).
+- remembers the running conversation for a few minutes (follow-up questions such as "und morgen?" ("and tomorrow?")
+  work; "Neues Gespräch" ("new conversation") starts from scratch),
+- tells the agent that the answer goes to glasses (short, no emojis/formatting),
+- cleans up the answer and shortens it at the end of a sentence (default 350 characters),
+- keeps the agent's key away from the phone (the Even app only knows `GLASS_AGENT_TOKEN`),
+- does not log any content, only length and duration,
+- switches automatically when a model fails or its quota is empty
+  (`GLASS_AGENT_FALLBACKS`, for example first a subscription model, then another, and last your own vLLM).
+  A route with an empty quota is skipped for 15 minutes. It switches **only on real errors**
+  (HTTP errors, connection refused, quota/429), not because the agent is slow,
+- lets a slow agent keep working in the background (see below),
+- can ask you on the glasses to confirm Hermes actions beforehand (approval levels, see below).
 
-Nur Python-Standardbibliothek. Selbsttest: `python3 glass_agent.py --selftest`.
+Python standard library only. Self-test: `python3 glass_agent.py --selftest`.
 
-## Einrichten
+## Set-up
 
 ```bash
 mkdir -p ~/glass-agent && cp glass_agent.py ~/glass-agent/
 cat > ~/glass-agent/.env <<'EOF'
-GLASS_AGENT_TOKEN=<langes Zufalls-Token>
+GLASS_AGENT_TOKEN=<long-random-token>
 GLASS_AGENT_UPSTREAM_URL=http://<agent-host>:8642/v1/chat/completions
-GLASS_AGENT_UPSTREAM_KEY=<API_SERVER_KEY des Agenten>
+GLASS_AGENT_UPSTREAM_KEY=<API_SERVER_KEY of the agent>
 EOF
 chmod 600 ~/glass-agent/.env
 cp glass-agent.service ~/.config/systemd/user/ && systemctl --user enable --now glass-agent
 tailscale serve --bg --https=8657 http://127.0.0.1:8657
 ```
 
-In der Even-App: **URL** `https://<rechner>.<tailnet>.ts.net:8657/v1/chat/completions` (vollständig —
-die App hängt nichts an), **Schlüssel** = `GLASS_AGENT_TOKEN`. Das Handy muss im Tailnet sein.
+In the Even app: **URL** `https://<your-machine>.<your-tailnet>.ts.net:8657/v1/chat/completions` (complete, because
+the app appends nothing), **Key** = `GLASS_AGENT_TOKEN`. The phone must be in the tailnet.
 
-Weitere Einstellungen (Zeichenbudget, Verlaufsdauer, Zusatz-Systemtext, Modellname) stehen oben in
+Further settings (character budget, history duration, extra system text, model name) are at the top of
 `glass_agent.py`.
 
-## Langsame Antworten
+## Slow answers
 
-Die Even-App wartet nur ~30 s. Der Dienst wartet `GLASS_AGENT_BUDGET` Sekunden (Standard 24) auf den
-Agenten. Braucht er länger (z. B. weil er Werkzeuge benutzt), arbeitet er im Hintergrund weiter, und die
-Brille zeigt „Ich bin noch dran – frag gleich mit „und?“ nach.“ Das Ergebnis wird gemerkt
-(`GLASS_AGENT_STATE`, 10 Minuten) und mit der nächsten Äußerung geliefert:
+The Even app waits only ~30 s. The service waits `GLASS_AGENT_BUDGET` seconds (default 24) for the
+agent. If it takes longer (for example because it uses tools), it keeps working in the background, and the
+glasses show "Ich bin noch dran – frag gleich mit „und?“ nach." ("I'm still on it; ask again in a moment with
+"und?" ("and?")."). The result is remembered
+(`GLASS_AGENT_STATE`, 10 minutes) and delivered with your next utterance:
 
-| Nächste Äußerung | Brille zeigt |
+| Next utterance | Glasses show |
 |---|---|
-| „und?“, „Ergebnis?“, „fertig?“, „weiter“ | nur das Ergebnis (ist es noch nicht da, wird nochmal bis zum Budget gewartet) |
-| eine andere Frage | „Vorhin: ‹Ergebnis kurz› Jetzt: ‹Antwort auf die neue Frage›“ |
+| "und?", "Ergebnis?", "fertig?", "weiter" ("and?", "result?", "done?", "continue") | only the result (if it is not there yet, it waits again up to the budget) |
+| any other question | "Vorhin: ‹short result› Jetzt: ‹answer to the new question›" ("Earlier: ... Now: ...") |
 
-Die erledigte Frage/Antwort kommt in den Verlauf. Es gibt nur einen offenen Vorgang: geht auch die neue
-Frage in den Hintergrund, verfällt das ältere, noch nicht fertige Ergebnis. Ein hängender Weg gilt erst
-nach `GLASS_AGENT_TIMEOUT` (Standard 120 s) als Fehler. Direkte Wege (z. B. eigenes vLLM) bekommen den
-Hinweis, dass sie keine Werkzeuge und Live-Daten haben, und sollen das ehrlich sagen.
+The finished question/answer goes into the history. There is only one open job. If the new question also goes
+to the background, the older, not yet finished result is dropped. A hanging route counts as failed only
+after `GLASS_AGENT_TIMEOUT` (default 120 s). Direct routes (for example your own vLLM) are told
+that they have no tools and no live data, and are supposed to say so honestly.
 
-## Freigabe-Stufen (`GLASS_AGENT_APPROVAL`)
+## Approval levels (`GLASS_AGENT_APPROVAL`)
 
-| Stufe | Weg zu Hermes | Verhalten |
+| Level | Route to Hermes | Behavior |
 |---|---|---|
-| `auto` (Standard) | `/v1/chat/completions` | wie bisher, keine Rückfrage auf der Brille |
-| `mixed` | `/v1/runs` | Freigaben für erkennbar **nur lesende** Aktionen gibt der Dienst selbst, alles andere fragt er |
-| `ask` | `/v1/runs` | jede Hermes-Freigabe wird auf der Brille gefragt |
+| `auto` (default) | `/v1/chat/completions` | As before, no question on the glasses |
+| `mixed` | `/v1/runs` | The service itself approves actions that are recognizably **read-only**, and asks about everything else |
+| `ask` | `/v1/runs` | Every Hermes approval is asked on the glasses |
 
-Umschalten per Sprache (bleibt gespeichert): „Freigabe auf auto“, „Freigabe gemischt“,
-„Freigabe immer fragen“.
+Switch by voice (it is saved): "Freigabe auf auto", "Freigabe gemischt",
+"Freigabe immer fragen" ("approval to auto", "approval mixed", "always ask for approval").
 
-Ablauf bei `mixed`/`ask`: Der Dienst startet einen Run (`POST /v1/runs`) und fragt den Status ab
-(`GET /v1/runs/{id}`). Hält Hermes an (`waiting_for_approval`), zeigt die Brille z. B.
-„Hermes will an Maria schreiben: 'Komme 10 min später.' Sag ja oder nein.“ Die offene Rückfrage gilt
-`GLASS_AGENT_APPROVAL_TTL` Sekunden (Standard 90) und übersteht einen Neustart.
+Flow with `mixed`/`ask`: the service starts a run (`POST /v1/runs`) and polls the status
+(`GET /v1/runs/{id}`). When Hermes stops (`waiting_for_approval`), the glasses show, for example,
+"Hermes will an Maria schreiben: 'Komme 10 min später.' Sag ja oder nein." ("Hermes wants to write to Maria: 'I'll be
+10 min late.' Say yes or no."). The open question is valid for
+`GLASS_AGENT_APPROVAL_TTL` seconds (default 90) and survives a restart.
 
-- „ja“, „ok“, „mach“, „bestätigt“, „yes“ → `POST /v1/runs/{id}/approval {"choice":"once"}`, dann wird auf
-  das Ergebnis gewartet (sonst „noch dran“ wie oben).
-- „nein“, „stopp“, „abbrechen“, „no“ → `choice: "deny"` und `POST /v1/runs/{id}/stop`.
-- jede andere Äußerung ist eine neue Frage; die offene Freigabe wird abgelehnt und der Run gestoppt
-  (Schweigen ist keine Zustimmung). Das gilt auch nach Ablauf der 90 s.
+- "ja", "ok", "mach", "bestätigt", "yes" ("yes", "ok", "do it", "confirmed", "yes") → `POST /v1/runs/{id}/approval {"choice":"once"}`, then it waits for
+  the result (otherwise "noch dran" (still on it) as above).
+- "nein", "stopp", "abbrechen", "no" ("no", "stop", "cancel", "no") → `choice: "deny"` and `POST /v1/runs/{id}/stop`.
+- Any other utterance is a new question. The open approval is denied and the run is stopped
+  (silence is not consent). This also applies after the 90 s have passed.
 
-Kennt der Agent `/v1/runs` nicht (404), läuft die Anfrage über Chat-Completions ohne Rückfrage.
-Direkte Ausweichwege (vLLM) haben keine Werkzeuge und damit keine Freigaben.
+If the agent does not know `/v1/runs` (404), the request goes through chat completions without a question.
+Direct fallback routes (vLLM) have no tools and therefore no approvals.
 
-**Wichtig:** Hermes hält nur an, wenn bei Hermes `approvals.mode` nicht `off` ist (`manual` oder
-`smart`). Hermes fragt nicht vor jedem Werkzeug, sondern bei gefährlichen Shell-Befehlen,
-`execute_code` und bei Werkzeugen, für die ein Plugin eine Freigaberegel setzt (z. B. Nachrichten
-senden). Mehr als Hermes fragt, kann auch `ask` nicht fragen.
+**Important:** Hermes only stops if `approvals.mode` is not `off` in Hermes (`manual` or
+`smart`). Hermes does not ask before every tool. It asks for dangerous shell commands,
+`execute_code` and tools for which a plugin sets an approval rule (for example sending
+messages). `ask` cannot ask for more than Hermes asks.
 
-**Einstufung bei `mixed`** (konservativ, Unbekanntes wird gefragt), aus den Feldern des
-Freigabe-Ereignisses (`command`, `description`, `pattern_key`, `smart_denied`):
+**Classification with `mixed`** (conservative, anything unknown is asked), from the fields of the
+approval event (`command`, `description`, `pattern_key`, `smart_denied`):
 
-- immer fragen: `smart_denied`; Beschreibung mit Risiko-Wörtern (löschen, schreiben, senden, kill,
-  install, sudo, secret, token …); Code-Ausführung (`execute_code`/Skripte); unbekannte Werkzeuge.
-- automatisch frei (`once`): Plugin-Werkzeuge aus einer festen Leseliste (`read_file`, `search_files`,
+- Always ask: `smart_denied`; a description with risk words (delete, write, send, kill,
+  install, sudo, secret, token ...); code execution (`execute_code`/scripts); unknown tools.
+- Approved automatically (`once`): plugin tools from a fixed read list (`read_file`, `search_files`,
   `web_search`, `web_extract`, `session_search`, `vision_analyze`, `browser_snapshot`, `skills_list`,
-  `skill_view`); Shell-Befehle, deren sämtliche Teile (getrennt an `|`, `&&`, `;`) mit einem reinen
-  Lesebefehl beginnen (`ls`, `cat`, `grep`, `df`, `ps`, `find`, `git status/log/diff/show` …) und die
-  keine Umleitung `>`, keine Befehlsersetzung, kein `sudo`/`tee`/`xargs`, kein `-delete`/`-exec`/`-o`
-  enthalten.
+  `skill_view`); shell commands where every part (separated at `|`, `&&`, `;`) starts with a pure
+  read command (`ls`, `cat`, `grep`, `df`, `ps`, `find`, `git status/log/diff/show` ...) and which
+  contain no redirect `>`, no command substitution, no `sudo`/`tee`/`xargs`, and no `-delete`/`-exec`/`-o`.
 
-Werkzeug-Einschränkung je Anfrage: Hermes' API kennt kein Feld dafür (die Werkzeuge kommen aus der
-Hermes-Konfiguration für die Plattform `api_server`); deshalb gibt es hier keine Einstellung dafür.
+Tool restriction per request: Hermes' API has no field for it (the tools come from the
+Hermes configuration for the platform `api_server`), so there is no setting for it here.

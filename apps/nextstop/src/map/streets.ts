@@ -11,7 +11,8 @@ import type { LatLon } from "../route/walk";
  * for this and never fails because of it.
  *
  * The only network targets are the Overpass endpoints listed here (and in
- * app.json's network whitelist). Overpass answers a WebView with
+ * app.json's network whitelist), plus the user's own Overpass server when one
+ * is entered on the phone page. Overpass answers a WebView with
  * `Access-Control-Allow-Origin: *`; a POST with a form body keeps the call a
  * "simple" request, so no preflight round trip is needed.
  */
@@ -30,7 +31,47 @@ const FILTERS: Readonly<Record<RoadClass, string>> = {
 
 /** The origins the app may call (the same two as OpenGlance, and the network whitelist of app.json). */
 export const OVERPASS_ORIGINS: readonly string[] = ["https://overpass-api.de", "https://overpass.private.coffee"];
-export const OVERPASS_URLS: readonly string[] = OVERPASS_ORIGINS.map((origin) => `${origin}/api/interpreter`);
+export const PUBLIC_OVERPASS_URLS: readonly string[] = OVERPASS_ORIGINS.map((origin) => `${origin}/api/interpreter`);
+
+/**
+ * The owner's own Overpass (private build only, `VITE_OVERPASS_URL`, as in OpenGlance). The public servers answered
+ * 406 / not at all on the glasses (22.10.2026: a map with the route line and no streets), so an own one goes first;
+ * when it cannot be reached the public ones are still asked. Empty in the public build.
+ */
+const BUILD_OVERPASS_URL: string | undefined = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_OVERPASS_URL;
+
+/**
+ * An Overpass address as the app calls it: http(s) only, trailing slashes dropped, `/api/interpreter` appended
+ * when missing (a bare host is what people type). Anything else gives "" (= not set).
+ */
+export function normalizeOverpassUrl(raw: string | undefined): string {
+  const url = (raw ?? "").trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(url)) return "";
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname || parsed.search || parsed.hash) return "";
+  } catch {
+    return "";
+  }
+  return url.endsWith("/api/interpreter") ? url : url + "/api/interpreter";
+}
+
+/** The build's own Overpass (`VITE_OVERPASS_URL`), normalised; "" in the public build. */
+export function ownOverpassUrl(raw: string | undefined = BUILD_OVERPASS_URL): string {
+  return normalizeOverpassUrl(raw);
+}
+
+/**
+ * The order the street source asks in: the user's own server from the phone page, then the build's own one
+ * (private builds), then the public ones. A server listed twice is asked once.
+ */
+export function overpassUrlsFor(userUrl: string | undefined, buildUrl: string | undefined = BUILD_OVERPASS_URL): string[] {
+  const urls = [normalizeOverpassUrl(userUrl), normalizeOverpassUrl(buildUrl), ...PUBLIC_OVERPASS_URLS].filter((url) => url !== "");
+  return [...new Set(urls)];
+}
+
+/** Without a server from the phone page. */
+export const OVERPASS_URLS: readonly string[] = overpassUrlsFor("");
 
 /** Above this the map is too zoomed out for minor roads to be anything but noise. */
 export const MINOR_MAX_SPAN_M = 4_000;
@@ -213,7 +254,8 @@ export type StreetsError = "timeout" | "busy" | "server" | "oversized" | "offlin
 export interface StreetsOutcome { readonly streets: readonly Street[]; readonly error: StreetsError | null }
 
 export interface StreetSourceConfig {
-  readonly urls?: readonly string[];
+  /** Endpoints in order; a function is asked again on every load, so a changed phone setting applies at once. */
+  readonly urls?: readonly string[] | (() => readonly string[]);
   readonly fetchImpl?: typeof fetch;
   /** One endpoint's share. */
   readonly timeoutMs?: number;
@@ -234,7 +276,7 @@ export interface StreetSource {
  * any box inside it.
  */
 export function createStreetSource(config: StreetSourceConfig = {}): StreetSource {
-  const urls = config.urls ?? OVERPASS_URLS;
+  const urlsNow = (): readonly string[] => (typeof config.urls === "function" ? config.urls() : config.urls ?? OVERPASS_URLS);
   const maxChars = config.maxChars ?? MAX_RESPONSE_CHARS;
   let cache: { box: BBox; classes: readonly RoadClass[]; streets: readonly Street[] } | null = null;
 
@@ -274,13 +316,14 @@ export function createStreetSource(config: StreetSourceConfig = {}): StreetSourc
       const query = buildOverpassQuery(box, classes);
       const deadline = Date.now() + (config.totalMs ?? STREETS_TOTAL_MS);
       let last: StreetsError = "server";
-      for (const url of urls) {
+      for (const url of urlsNow()) {
         const left = deadline - Date.now();
         if (left < 300) { last = "timeout"; break; }
         const outcome = await fetchOne(url, query, Math.min(config.timeoutMs ?? STREETS_ENDPOINT_MS, left));
         if ("error" in outcome) {
-          // Offline means every endpoint would fail the same way.
-          if (outcome.error === "offline") return { streets: [], error: "offline" };
+          // Offline means every public endpoint would fail the same way - but an own server (phone page or
+          // build) may only be out of reach (tailnet / home network down) while the public ones still answer.
+          if (outcome.error === "offline" && PUBLIC_OVERPASS_URLS.includes(url)) return { streets: [], error: "offline" };
           last = outcome.error;
           continue;
         }

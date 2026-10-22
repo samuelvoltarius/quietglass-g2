@@ -47,7 +47,7 @@ import type { Planner } from "./route/planner";
 import { DEMO_PLACES, DEMO_POSITION, demoBackend, demoFromUrl, demoPlanner, demoPosition, demoWalkRoute } from "./demo/demo";
 import { OFF_ROUTE_METRES, fetchWalkRoute, project, walkNav, type WalkNav, type WalkRoute } from "./route/walk";
 import { cameraFor, settleView, type Settled } from "./map/camera";
-import { classesFor, containsBox, createStreetSource, legBox, type BBox, type Street } from "./map/streets";
+import { classesFor, containsBox, createStreetSource, legBox, overpassUrlsFor, type BBox, type Street } from "./map/streets";
 import type { WalkMapInput } from "./map/draw";
 
 /**
@@ -289,7 +289,8 @@ async function boot(): Promise<void> {
     readonly streets: readonly Street[];
   }
   let streetState: StreetState | null = null;
-  const streetSource = createStreetSource();
+  // Asked per load: a server entered on the phone page applies from the next load on, without a restart.
+  const streetSource = createStreetSource({ urls: () => overpassUrlsFor(settings.overpassUrl) });
   // The map view that is on the glasses: it moves on only when the walker moved noticeably (src/map/camera.ts).
   let mapSettled: { readonly key: string; readonly settled: Settled } | null = null;
 
@@ -1488,6 +1489,8 @@ async function boot(): Promise<void> {
       const backendChanged = next.backend !== settings.backend
         || next.oebbUrl !== settings.oebbUrl
         || next.motisUrl !== settings.motisUrl;
+      // A new map server gets a fresh try at streets that failed (the guide tick loads them again).
+      if (next.overpassUrl !== settings.overpassUrl && streetState?.status === "failed") streetState = null;
       settings = next;
       await save(bridge, next);
       scheduleRefresh();

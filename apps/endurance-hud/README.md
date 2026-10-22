@@ -1,14 +1,16 @@
 # Endurance HUD
 
-**Quietglass** · Live-Lauf- und Raddaten für die Even Realities G2.
+**Quietglass** · Live running and cycling data for the Even Realities G2.
 
-Je nach Sport erscheint ein eigenes monochromes Lauf- oder Fahrrad-Pixelpiktogramm neben den Live-Werten.
+> **Auf Deutsch, kurz:** Endurance HUD zeigt Lauf- und Raddaten live auf der Even G2: Tempo oder Pace, Leistung, Puls, Kadenz, Distanz und Trainingszeit. Eine lokale Bridge nimmt die Werte als JSON entgegen, etwa von Garmin oder einem Radcomputer. Tippen aktualisiert, Wischen wechselt die Sportart, 2× beendet.
 
-Endurance HUD zeigt Tempo oder Pace, Leistung, Herzfrequenz, Kadenz, Distanz und Trainingszeit. Die lokale Bridge nimmt schlankes JSON von Garmin Connect IQ, einem Cloudflare Worker, Radcomputer oder eigenen Sensor-Gateway entgegen.
+Depending on the sport, a monochrome pixel pictogram of a runner or a bike appears next to the live values.
 
-![Endurance HUD im Even-Hub-Simulator](docs/screenshot.png)
+Endurance HUD shows speed or pace, power, heart rate, cadence, distance and workout time. The local bridge accepts slim JSON from Garmin Connect IQ, a Cloudflare Worker, a bike computer or your own sensor gateway.
 
-## Start
+![Endurance HUD in the Even Hub simulator](docs/screenshot.png)
+
+## Getting started
 
 ```bash
 npm install
@@ -19,14 +21,14 @@ npm run dev
 npm run sim
 ```
 
-Live-Daten senden:
+Send live data:
 
 ```bash
 curl -X POST http://127.0.0.1:8792/live -H "Content-Type: application/json" -d '{"sport":"bike","speedKph":32.1,"powerWatts":245,"heartRate":151,"cadence":92,"distanceKm":18.4,"elapsedSeconds":2200,"source":"garmin"}'
 ```
 
-Bedienung: Tippen aktualisiert, Wischen wechselt die Sportart (Rad / Laufen), Halten öffnet die Hilfe, 2× beendet (in der Hilfe: zurück). Das Seitenmenü der Brille ist vorerst aus (SIDE_MENU), weil seine Klicks auf der echten Brille nie ankommen. Die Wischrichtung lässt sich im Handy-Tab „Brille“ umkehren. Kommen länger als 10 s keine neuen Werte, zeigt die Brille `STALE 12s` statt Live. Optional schützt `ENDURANCE_TOKEN` den POST-Endpunkt. Deutsch, Englisch, Französisch, Spanisch und Italienisch werden unterstützt. Die App ist kein Medizinprodukt und noch nicht auf echter G2-Hardware geprüft.
+Controls: tap refreshes, swipe switches the sport (bike / run), hold opens the help, 2× exits (in the help: back). The glasses' side menu is off for now (SIDE_MENU), because its clicks never arrive on the real glasses. You can reverse the swipe direction in the phone tab "Glasses". If no new values arrive for more than 10 s, the glasses show `STALE 12s` instead of live. Optionally, `ENDURANCE_TOKEN` protects the POST endpoint. German, English, French, Spanish and Italian are supported. The app is not a medical device and has not yet been tested on real G2 hardware.
 
-## Datenschutz
+## Privacy
 
-Welche Daten wohin gehen, was gespeichert wird und wie du es löschst: [docs/PRIVACY.md](docs/PRIVACY.md).
+Which data goes where, what is stored and how to delete it: [docs/PRIVACY.md](docs/PRIVACY.md).
