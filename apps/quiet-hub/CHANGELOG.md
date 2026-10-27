@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.13.3] — 2026-10-27
+
+### Behoben
+
+- **Nur noch eine „Übersicht“:** Die Seitenwahl des Rings hatte die Startseite und das alte Agenten-Cockpit beide als „Übersicht“. Das Cockpit ist dort raus. Die Seitenwahl folgt jetzt der Kachel-Reihenfolge: Übersicht, Agenten, Zuhause, Auto, Drucker, Server, Tag, Meldungen.
+- Seitennamen wie auf den Kacheln: „Agenten“ statt „Agent“, „Tag“ statt „Tagesstart“.
+
+## [0.13.2] — 2026-10-27
+
+### Neu: Zuhause und Agenten als Bild (Alfred: „TV hat keine Übersicht“)
+
+- **Zuhause:** Favoriten und Räume sind Kacheln, sechs pro Seite, mit Seitenzähler oben. Jede Kachel hat ein Bild: Lampe an/aus, TV, Steckdose, Rollo, Schloss, Szene, Thermometer, Haus. Darunter stehen der Zustand bzw. Wert groß und beim TV die App mit Lautstärke.
+- **TV/Beamer geöffnet:** das TV-Bild von TV Glance (Play/Pause/Power auf dem Schirm) mit Lautstärkebalken. Rechts die Tasten Lauter · Leiser · Stumm · Play/Pause · Aus als Zellen, die gewählte ist umrahmt („TIPPEN“).
+- **Licht/Rollo geöffnet:** Ring mit Helligkeit bzw. Öffnung, die Stufen als Zellen.
+- **Agentenliste:** jeder Agent als Kachel mit eigenem Gesicht in seiner Stimmung (wartet, arbeitet, bereit, offline schlafend), dazu der Rechner. Freigaben, Sitzungen und Gespräche bleiben Lesetext.
+- Bedienung unverändert, alte Daemons ohne Zuhause-Ansicht bekommen weiter die Textliste.
+
+## [0.13.1] — 2026-10-27
+
+### Neu
+
+- **Zuckerkurve der letzten 3 Stunden** (wie Sugar Glass): Unter „Tag“ ist Seite 2 die Kurve mit Zielbereich, Höchst- und Tiefstwert, Trendpfeil und Zeitmarken. Rechts stehen Status (IM BEREICH/HOCH/NIEDRIG), Stand, Ziel, Nacht, Minuten unter und über dem Bereich. Danach folgen die Textseiten.
+- Daemon: Der Zuckerblock im Tagesstart enthält jetzt `curve` (letzte 3 h, älteste zuerst). Quelle ist wie bisher die Nightscout-Lesebrücke auf ns1 (`BRIEF_SUGAR_URL`).
+
+## [0.13.0] — 2026-10-27
+
+### Neu: Grafik statt Textwand (Alfred: „Animationen und Grafiken fehlen“)
+
+- **Startseite als Bild:** sechs Kacheln (2×3) mit Bild und einem großen Wert.
+  - Agenten: animiertes Gesicht, „6/8“
+  - Auto: Akku-Ring, pulsiert beim Laden
+  - Zuhause: Lampe an/aus
+  - Drucker: Fortschrittsring mit laufender Marke beim Drucken
+  - Server: ein Ring-Segment pro Rechner
+  - Tag: Wetter-Piktogramm von Rain Lens und Temperatur
+
+  Der Cursor ist ein dicker Rahmen. Warnungen stehen als Balken oben und sind wählbar wie bisher. Kacheln mit Handlungsbedarf (Auto offen, Server aus) haben einen dünnen Rahmen.
+- **Bereichsseiten als Cockpit im Look der Einzel-Apps:**
+  - Auto: Akku-Ring von BYD Glass. Überschrift ZUGESPERRT/OFFEN, Zellen Reichweite, Türen, Laden, Klima, Außen, Stand. Der gewählte Befehl steht unten links.
+  - Server: Segment-Ring von Status Glass, eine Zelle pro Rechner.
+  - Drucker: Fortschrittsring, Zellen Datei, Schicht, Rest, Düse, Bett, die gewählte Aktion unten links.
+  - Tag: Seite 1 ist das Wetterbild mit Max/Min, Regen, Terminen, nächstem Termin, Zucker und Stand. Wischen blättert zu den Textseiten.
+- Es werden nur geänderte Kacheln gesendet, nie während der Beenden-Dialog offen sein kann. Gemeinsame Bausteine liegen in `src/cockpit/widgets.ts`, sie kommen aus BYD Glass, Status Glass und Rain Lens, die Renderer sind byte-gleich.
+- Tests: `tests/pictures.test.ts` (Kacheln, Seitenmodelle, Animation ändert nur die betroffene Kachel).
+
+## [0.12.1] — 2026-10-27
+
+### Behoben
+
+- **Auto: Schloss, Akku und Reichweite kommen jetzt von Panoptes selbst** (Daemon liest `GET /api/ha/v1/zustand` alle 30 s mit der Kopplung, nur lesend; `unlocked_lf` 0 = zu). Vorher kam der Wert aus der alten BYD-Brücke des Tagesstarts und konnte „offen“ zeigen, obwohl das Auto zu war. Ohne Kopplung bleibt der Tagesstart die Quelle. Neu im Report: `car` (nur Anzeige-Werte, nie Token oder Adresse).
+
+## [0.12.0] — 2026-10-27
+
+### Neu: Auto steuern (Freigabe der Panoptes-Koordination, 27.10.)
+
+- **Auto-Seite mit Befehlen**, sobald der Daemon mit Panoptes gekoppelt ist (`carControl` im Report): Zusperren · Vorheizen 21° · 15 min · Klima aus · Aufsperren. Wischen wählt, **jeder Befehl braucht zwei Tipps** (Fußzeile „Nochmal tippen = …“, Aufsperren als „AUFSPERREN“); Wischen oder Warten entschärft. Hupe, Licht, Blinker, „Auto finden“ und Alarm gibt es nicht.
+- **Ehrliches Ergebnis:** „bestätigt“ nur mit dem Echo des Autos, sonst „gesendet · keine Bestätigung“ oder „abgelehnt · Grund“ (z. B. „Auto aus, Cloud fehlt“ beim Vorheizen, bis die BYD-Cloud in Panoptes eingetragen ist).
+- **Daemon `quiet-hub-car.mjs`:** einziger Weg ist Panoptes' Handy-API `/api/handy/v1` (nicht die byd-bridge, nicht die BYD-Cloud). Kopplung einmalig mit `node examples/quiet-hub-car.mjs pair` (Art `handy`, Name „Quiet Hub“, Prüfzahl, Erlauben in Telegram/am Display). Eigener P-256-Schlüssel und Kopplungs-JWT nur in `CAR_IDENTITY` (Rechte 600). Aufsperren wird erst beim zweiten Tipp signiert (`panoptes-handy-v1|aufsperren|…`, frische Nonce, keine Wiederholung). Sitzung täglich erneuert. Neu: `POST /car/action`, Env `CAR_URL`, `CAR_IDENTITY`, `CAR=off`.
+- Tests: `tests/car.test.mjs` (Kopplung, Signatur prüfbar mit dem gemeldeten Schlüssel, nur erlaubte Aktionen, ehrliche Antworten, Daemon-Route), Auto-Seite in `tests/zentrale.test.ts`.
+
+## [0.11.0] — 2026-10-27
+
+### Neu (Kommandozentrale, Konzept 27.10.)
+
+- **Brille, Startseite = sechs Bereiche mit je einer Live-Zeile:** Agenten (online/aktiv/wartet), Zuhause (Lichter, TV, Schalter), Auto (Akku, Reichweite, Schloss, Laden), Drucker (bereit/druckt %/Pause/aus), Server (ok/ausgefallen, Hinweise, neue Geräte), Tag (Temperatur, Regen, Termine, Zucker). **Darüber nur, was jetzt zählt** (höchstens zwei Zeilen mit `!`): wartende Freigabe, neue Meldungen, Server ausgefallen, Auto nicht zugesperrt, Zucker außerhalb des Bereichs, Druckerfehler (ein ausgeschalteter Drucker ist keine Warnung). Der Cursor hängt am Bereich, nicht an der Zeilennummer: kommt oder geht eine Warnung, bleibt er stehen; 2× aus einem Bereich landet auf dessen Zeile. Meldungen und das Cockpit haben keine eigene Zeile mehr (Meldungen kommen als Warnung, das Cockpit bleibt in der Seitenwahl des Rings).
+- **Auto und Server als eigene Seiten (nur Anzeige):** aus dem Tagesstart des Daemons (`BRIEF_BYD_URL`, `BRIEF_STATUS_URLS`), Tippen = aktualisieren. Am Auto wird nichts gesteuert (Panoptes-Regeln).
+- **Zuhause: TV und Beamer** (Daemon `HA_MEDIA`, oben in der Liste): Tippen öffnet die Fernbedienung – Lauter · Leiser · Stumm · Play/Pause · Aus (aus: An). Lauter/Leiser bleiben offen (tippen, tippen, tippen); mit `remote.<gleiche id>` ist ein Schritt ein Tastendruck (wie TV Glance 0.2.2), sonst `media_player.volume_up/down`. Der Token bleibt im Daemon.
+- **Zuhause ohne Halten:** Tippen auf ein Licht oder Rollo öffnet direkt die Auswahl (Licht an: Cursor auf „Aus“, aus: auf der hellsten Stufe), weil Halten vom Bügel nie ankommt. Kein Hinweis „Halten“ mehr auf der Seite.
+- **Selbstfindung der Zentrale (privater Build):** `VITE_HUB_CANDIDATES` (Pi zuerst). Ohne eingestellte Adresse nimmt die App die erste, merkt sich die funktionierende und sucht nach drei Fehlschlägen die Liste neu ab. Eine am Handy gesetzte Adresse wird nie ersetzt. Keine Adress- oder Token-Eingabe nötig (Tailscale-Login).
+- Die Live-Zeilen holen den Tagesstart nach der ersten Antwort und dann alle 3 min (Daemon-Cache).
+- Tests: `tests/zentrale.test.ts` (Selbstfindung, Bereichszeilen, Warnungen, Auto-/Server-Seite, TV-Fernbedienung), Daemon `HA_MEDIA` in `tests/home-daemon.test.mjs`.
+
 ## [0.10.0] — 2026-10-20
 
 ### Geändert (Quietglass-UI-Standard QUS v1, „keine Textwand“)

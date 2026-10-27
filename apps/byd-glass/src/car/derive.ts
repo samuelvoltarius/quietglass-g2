@@ -3,8 +3,10 @@
  * mirrored in TypeScript. The app uses it for demo mode, so the demo shows
  * exactly what the bridge would send; the tests run both on the same samples.
  *
- * Input: raw telemetry as Overdrive publishes it (field -> string), plus
+ * Input: raw telemetry as Panoptes publishes it under `surfmate/vehicle/telemetry/<field>`
+ * (field -> string; the old Overdrive names `locked` / `door_open` are still read), plus
  * `_age` (seconds since the last message). Output: the `/state` JSON shape.
+ * A field a model does not report stays null - never 0, never a warning.
  */
 
 export type Telemetry = Readonly<Record<string, string | number | null | undefined>>;
@@ -19,9 +21,10 @@ export interface Thresholds {
 
 export const DEFAULT_THRESHOLDS: Thresholds = { tyreLowKpa: 210, v12Low: 12.2, socLow: 15, staleS: 120, unlockedMin: 10 };
 
-/** Overdrive's "no value" placeholders. */
+/** Panoptes'/Overdrive's "no value" placeholders. */
 const SENTINELS = new Set([65535, 1048575, -10011, 104857.5]);
 const WHEELS = ["fl", "fr", "rl", "rr"] as const;
+const DOORS = ["lf", "rf", "lr", "rr"] as const;
 
 export interface Memo {
   wasCharging?: boolean;
@@ -47,6 +50,23 @@ const flag = (t: Telemetry, key: string): boolean | null => {
   return v === null ? null : v >= 1;
 };
 const r1 = (v: number | null): number | null => (v === null ? null : Math.round(v * 10) / 10);
+const firstNum = (t: Telemetry, ...keys: string[]): number | null => {
+  for (const key of keys) { const v = num(t, key); if (v !== null) return v; }
+  return null;
+};
+/** True when one field reports 1, false when all known ones are 0, null without any value. */
+const anyOpen = (t: Telemetry, keys: readonly string[]): boolean | null => {
+  const known = keys.map((key) => flag(t, key)).filter((v): v is boolean => v !== null);
+  return known.length === 0 ? null : known.some(Boolean);
+};
+
+/** Overdrive: `locked` (1 = locked). Panoptes: `unlocked_lf` (1 = driver door unlocked). */
+export function carLocked(t: Telemetry): boolean | null {
+  const locked = flag(t, "locked");
+  if (locked !== null) return locked;
+  const unlocked = flag(t, "unlocked_lf");
+  return unlocked === null ? null : !unlocked;
+}
 
 export function modeOf(t: Telemetry): "driving" | "charging" | "parked" {
   const speed = num(t, "speed") ?? 0;
@@ -73,19 +93,23 @@ export function deriveRaw(t: Telemetry, nowS: number, memo: Memo = {}, limits: T
   else if (memo.wasCharging) { memo.wasCharging = false; memo.chargeDoneAt = nowS; }
   const chargeDone = memo.chargeDoneAt !== undefined && nowS - memo.chargeDoneAt < 1800 && mode !== "driving";
 
-  const locked = flag(t, "locked");
-  const doorOpen = flag(t, "door_open");
+  const locked = carLocked(t);
+  const doorOpen = anyOpen(t, ["door_open", ...DOORS.map((d) => "door_open_" + d)]);
+  const trunkOpen = flag(t, "trunk_open");
+  const hoodOpen = flag(t, "hood_open");
   if (locked === false && mode !== "driving") memo.unlockedSince ??= nowS;
   else delete memo.unlockedSince;
 
-  const tyres: Record<string, { kpa: number | null; leak: boolean; low: boolean }> = {};
+  const tyres: Record<string, { kpa: number | null; leak: boolean; low: boolean; temp: number | null }> = {};
   for (const w of WHEELS) {
     const kpa = num(t, "tyre_p_" + w);
     const state = num(t, "tyre_p_state_" + w);
+    const temp = num(t, "tyre_t_" + w);
     tyres[w] = {
       kpa: kpa === null ? null : Math.round(kpa),
       leak: flag(t, "tyre_leak_" + w) === true,
       low: (kpa !== null && kpa < limits.tyreLowKpa) || (state !== null && state > 0),
+      temp: temp === null ? null : Math.round(temp),
     };
   }
 
@@ -96,9 +120,11 @@ export function deriveRaw(t: Telemetry, nowS: number, memo: Memo = {}, limits: T
     else if (tyre.low) warnings.push({ code: "tyre_low", wheel: w, kpa: tyre.kpa, level: "warn" });
   }
   if (doorOpen) warnings.push({ code: "door_open", level: mode === "driving" ? "crit" : "warn" });
+  if (trunkOpen) warnings.push({ code: "trunk_open", level: mode === "driving" ? "crit" : "warn" });
+  if (hoodOpen) warnings.push({ code: "hood_open", level: mode === "driving" ? "crit" : "warn" });
   const v12 = num(t, "volt_12v");
   if (v12 !== null && v12 > 5 && v12 < limits.v12Low) warnings.push({ code: "v12_low", volt: r1(v12), level: "warn" });
-  if (locked === false && memo.unlockedSince !== undefined && mode === "parked" && !doorOpen) {
+  if (locked === false && memo.unlockedSince !== undefined && mode === "parked" && !doorOpen && !trunkOpen) {
     const minutes = Math.floor((nowS - memo.unlockedSince) / 60);
     if (minutes >= limits.unlockedMin) warnings.push({ code: "unlocked", minutes, level: "warn" });
   }
@@ -107,6 +133,9 @@ export function deriveRaw(t: Telemetry, nowS: number, memo: Memo = {}, limits: T
 
   const gear = parseValue(t["gear"]);
   const range = num(t, "ev_range_km");
+  const odometer = num(t, "odometer");
+  const fan = firstNum(t, "ac_fan", "ac_wind");
+  const acOn = flag(t, "ac_on") ?? flag(t, "climate_on");
   return {
     v: 1,
     mode,
@@ -133,6 +162,7 @@ export function deriveRaw(t: Telemetry, nowS: number, memo: Memo = {}, limits: T
       cell_t_min: r1(num(t, "cell_t_min")),
       cell_t_max: r1(num(t, "cell_t_max")),
       volt_12v: r1(v12),
+      odometer_km: odometer === null ? null : Math.trunc(odometer),
     },
     charge: {
       active: charging,
@@ -146,10 +176,13 @@ export function deriveRaw(t: Telemetry, nowS: number, memo: Memo = {}, limits: T
       locked,
       lock_src: locked === null ? null : "car",
       door_open: doorOpen,
+      trunk_open: trunkOpen,
+      hood_open: hoodOpen,
       ext_temp: r1(num(t, "ext_temp")),
-      ac_on: flag(t, "ac_on"),
+      ac_on: acOn,
+      ac_fan: fan === null ? null : Math.trunc(fan),
+      // The climate SETPOINT (17-33, 25 = neutral), not a cabin temperature; the app never shows it.
       setpoint: r1(num(t, "climate_setpoint")),
-      klima_mode: null,
     },
     tyres,
     warnings,

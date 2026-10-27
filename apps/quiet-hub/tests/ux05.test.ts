@@ -43,12 +43,15 @@ describe("overview shows everything at a glance", () => {
       approvals: [{ ...card, agentId: "hermes-spark" }],
     };
     const body = buildView(model("root", report), "de", T0).body;
-    expect(body).toHaveLength(5);
-    expect(body[0]).toBe("> Agenten · 2/3 online · 1 wartet");
-    expect(body[1]).toBe("  Meldungen · 1");
-    expect(body[2]).toBe("  Übersicht");
-    expect(body[3]).toBe("    Zuhause");
-    expect(body[4]).toBe("    Drucker");
+    expect(body).toHaveLength(7);
+    // What needs the wearer first, then one live row per area.
+    expect(body[0]).toBe("> ! hermes-spark wartet auf Freigabe");
+    expect(body[1]).toBe("  ! 1 neue Meldung");
+    expect(body[2]).toBe("  Agenten · 2/3 online · 1 wartet");
+    expect(body[3]).toMatch(/^ {2}Zuhause · 2 Lichter an/);
+    expect(body[4]).toMatch(/^ {2}Auto · \d+ % · \d+ km/);
+    expect(body[5]).toMatch(/^ {2}Drucker · druckt \d+ %/);
+    expect(body[6]).toMatch(/^ {2}Server · /);
   });
 
   it("explains in one line what is missing", () => {

@@ -8,6 +8,11 @@ import { activeWarnings, cells as cellTemps, errorReason, pageFooter, type ViewS
  * (QUS v1): headline, label/value cells, the battery ring of the left half,
  * the caption and the one hint line. compose.ts only lays this out.
  * Three pages share it: drive, charge and status (parked).
+ *
+ * Panoptes serves many BYD models: a value the car does not report is not
+ * drawn as "–" or 0, its cell is left out and the next known one moves up.
+ * Climate shows on/off and the fan level only - never a temperature (the
+ * Dolphin Surf has no cabin sensor; the setpoint is not a reading).
  */
 
 export type Tone = "ok" | "warn" | "critical" | "offline";
@@ -61,6 +66,22 @@ export function carTone(state: ViewState, car: CarState): Tone {
 
 const yes = (state: ViewState, value: boolean | null, on: string, off: string): string => (value === null ? DASH : t(state.locale, value ? on : off));
 
+/** At most this many cells: three columns, two rows. */
+export const MAX_CELLS = 6;
+
+/** "AN · STUFE 2", "AN", "AUS", or – when the car does not report it. */
+export function climateText(state: ViewState, car: CarState): string {
+  const { acOn, acFan } = car.body;
+  if (acOn === null) return DASH;
+  if (!acOn) return t(state.locale, "g.cp.off");
+  return acFan !== null && acFan > 0 ? t(state.locale, "g.cp.onFan", { fan: Math.round(acFan) }) : t(state.locale, "g.cp.on");
+}
+
+/** Leaves out the cells whose value is unknown, keeps the order, at most MAX_CELLS. */
+function known(list: readonly CockpitCell[]): CockpitCell[] {
+  return list.filter((cell) => cell.value !== DASH).slice(0, MAX_CELLS);
+}
+
 /** The state of the four tyres in one word; the cell is framed when one is low or leaking. */
 function tyreCell(state: ViewState, car: CarState): { value: string; alert: boolean } {
   const all = Object.values(car.tyres);
@@ -81,36 +102,47 @@ export function cockpitCells(state: ViewState, car: CarState): CockpitCell[] {
   const loc = state.locale;
   const tyres = tyreCell(state, car);
   const num = (value: number | null, digits = 0): string => (value === null ? DASH : dec(value, digits, loc));
+  const open = car.body.doorOpen === true || car.body.trunkOpen === true || car.body.hoodOpen === true;
+  const doors = car.body.doorOpen === null && car.body.trunkOpen === null && car.body.hoodOpen === null
+    ? DASH : t(loc, open ? "g.cp.open" : "g.cp.closed");
+  const v12 = car.battery.volt12 === null ? DASH : `${num(car.battery.volt12, 1)} V`;
+  const soh = car.battery.soh === null ? DASH : `${Math.round(car.battery.soh)}%`;
   switch (state.page) {
     case "drive":
-      return [
+      return known([
         { label: L("g.cp.power"), value: car.drive.powerKw === null ? DASH : `${num(car.drive.powerKw, Math.abs(car.drive.powerKw) >= 10 ? 0 : 1)} kW` },
         { label: L("g.cp.cons"), value: num(car.drive.cons50, 1) },
         { label: L("g.cp.range"), value: car.battery.rangeKm === null ? DASH : `${Math.round(car.battery.rangeKm)} km` },
-        { label: L("g.cp.climate"), value: yes(state, car.body.acOn, "g.cp.on", "g.cp.off") },
+        { label: L("g.cp.climate"), value: climateText(state, car) },
         { label: L("g.cp.outside"), value: car.body.extTemp === null ? DASH : `${num(car.body.extTemp)}°` },
         { label: L("g.cp.trip"), value: car.drive.tripKm === null ? DASH : `${num(car.drive.tripKm, 1)} km` },
-      ];
+        { label: L("g.cp.v12"), value: v12 },
+      ]);
     case "charge": {
       const c = car.charge;
-      return [
+      const cellText = car.battery.cellTMin === null && car.battery.cellTMax === null ? DASH : cellTemps(car, loc).replace(" °C", "°");
+      return known([
         { label: L("g.cp.range"), value: car.battery.rangeKm === null ? DASH : `${Math.round(car.battery.rangeKm)} km` },
         { label: L("g.cp.charged"), value: c.kwh === null ? DASH : `${num(c.kwh, 1)} kWh` },
-        { label: L("g.cp.eta"), value: c.active ? duration(c.etaMin) : DASH },
+        { label: L("g.cp.eta"), value: c.active && c.etaMin !== null ? duration(c.etaMin) : DASH },
         { label: L("g.cp.type"), value: c.active ? (c.dc ? "DC" : "AC") : DASH },
-        { label: L("g.cp.cells"), value: cellTemps(car, loc).replace(" °C", "°") },
+        { label: L("g.cp.cells"), value: cellText },
         { label: L("g.cp.stand"), value: standText(state, car) },
-      ];
+        { label: L("g.cp.soh"), value: soh },
+      ]);
     }
     default:
-      return [
-        { label: L("g.cp.km"), value: car.battery.odometerKm === null ? DASH : String(Math.round(car.battery.odometerKm)) },
-        { label: L("g.cp.climate"), value: yes(state, car.body.acOn, "g.cp.on", "g.cp.off") },
+      return known([
         { label: L("g.cp.lock"), value: yes(state, car.body.locked, "g.cp.locked", "g.cp.unlocked"), ...(car.body.locked === false ? { alert: true } : {}) },
-        { label: L("g.cp.doors"), value: yes(state, car.body.doorOpen, "g.cp.open", "g.cp.closed"), ...(car.body.doorOpen === true ? { alert: true } : {}) },
+        { label: L("g.cp.doors"), value: doors, ...(open ? { alert: true } : {}) },
         { label: L("g.cp.tyres"), value: tyres.value, ...(tyres.alert ? { alert: true } : {}) },
+        { label: L("g.cp.climate"), value: climateText(state, car) },
+        { label: L("g.cp.km"), value: car.battery.odometerKm === null ? DASH : String(Math.round(car.battery.odometerKm)) },
         { label: L("g.cp.stand"), value: standText(state, car) },
-      ];
+        { label: L("g.cp.v12"), value: v12 },
+        { label: L("g.cp.outside"), value: car.body.extTemp === null ? DASH : `${num(car.body.extTemp)}°` },
+        { label: L("g.cp.soh"), value: soh },
+      ]);
   }
 }
 

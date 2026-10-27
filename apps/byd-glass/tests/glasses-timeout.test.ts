@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
-import { INITIAL_CONTROL } from "../src/pages";
 import { installPage, sendTile, COCKPIT_TILES, IMAGE_CALL_MS, PAGE_CALL_MS, TEXT_CALL_MS, updatePage } from "../src/glasses/render";
 import { buildView, type ViewState } from "../src/glasses/views";
 
@@ -9,7 +8,7 @@ import { buildView, type ViewState } from "../src/glasses/views";
 
 const never = <T>(): Promise<T> => new Promise<T>(() => undefined);
 const state = (extra: Partial<ViewState> = {}): ViewState => ({
-  locale: "de", demo: true, connection: { kind: "loading" }, car: null, page: "status", control: INITIAL_CONTROL, overlay: null, local: null, now: 1_000, ...extra,
+  locale: "de", demo: true, connection: { kind: "loading" }, car: null, page: "status", overlay: null, now: 1_000, ...extra,
 });
 const view = buildView(state());
 const nextView = buildView(state({ connection: { kind: "error", code: "unreachable" } }));

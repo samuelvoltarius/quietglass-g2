@@ -16,6 +16,7 @@ import type { VocabEntry } from "../companion/vocab";
 import type { HelperToggle, OverviewInput } from "../companion/overview";
 import type { PopupKind } from "../companion/popups";
 import { cuesHtml, type CueCard } from "../companion/cues";
+import { lineWho } from "../companion/roles";
 
 /** A popup as kept for the phone: labelled like on the glasses. */
 export type PhoneInsight = Insight & { readonly kind?: PopupKind };
@@ -49,6 +50,12 @@ export interface ConversationState {
   readonly customerId?: string | null;
   /** 1.0.0: the "Meine Stimme" card. */
   readonly voice?: VoiceUiState;
+  /** 1.1.1: mark lines "Ich" / "Gegenüber" (Gespräch, switch "Sprecher erkennen (Brille)" on). */
+  readonly roles?: boolean;
+  /** 1.1.1: a voice profile is in force (it wins over the glasses' role). */
+  readonly profile?: boolean;
+  /** 1.1.1: speaker letters on. Absent = shown as sent (older callers). */
+  readonly speakers?: boolean;
 }
 
 /** The "Meine Stimme" card: trained or not, and the step of a running enrollment or deletion. */
@@ -208,11 +215,15 @@ export function conversationInner(state: ConversationState, locale: Locale): str
   const shown = state.log.slice(-300);
   const lines = shown.map((entry) => {
     // 0.8.0: the user's own voice ("ME") is named "Ich"/"Me" in a colour of its own.
-    const who = entry.speaker === "ME"
+    // 1.1.1: in Gespräch with "Sprecher erkennen (Brille)" on: "Ich" / "Gegenüber" (profile first, then the glasses' role).
+    const mark = lineWho(entry, { speakers: state.speakers !== false, roles: state.roles === true, profile: state.profile === true });
+    const who = !mark
+      ? ""
+      : mark.kind === "me"
       ? `<b class="spk spk-me">${escapeHtml(x("g.me"))}</b> `
-      : entry.speaker
-      ? `<b class="spk spk-${Math.max(0, SPEAKER_CLASSES.indexOf(entry.speaker)) % 4}">${escapeHtml(entry.speaker)}</b> `
-      : "";
+      : mark.kind === "them"
+      ? `<b class="spk spk-them">${escapeHtml(x("p.them"))}</b> `
+      : `<b class="spk spk-${Math.max(0, SPEAKER_CLASSES.indexOf(mark.letter)) % 4}">${escapeHtml(mark.letter)}</b> `;
     const translated = entry.translated ? `<br><small>${escapeHtml(entry.translated)}</small>` : "";
     // 0.5.0: own sentence translated to read out, and the reply idea after the other's line.
     const own = entry.own
@@ -626,6 +637,8 @@ function template(data: BabelData, notice: string, locale: Locale, conversation:
     ${check("insights", data.insights, "p.insights")}
     ${check("reply-suggestions", data.replySuggestions, "p.replies")}
     ${check("cue-cards", data.cueCards !== false, "p.cues")}
+    ${check("speaker-role", data.speakerRole !== false, "p.speakerRole")}
+    <p class="hint">${x("p.speakerRoleHint")}</p>
     ${check("translate-own", data.translateOwn, "p.translateOwn")}
     <p class="hint">${x("p.translateOwnHint")}</p>
     ${check("auto-summary", data.autoSummary, "p.autoSummary")}
@@ -748,6 +761,10 @@ function wire(root: UiRoot, ports: PhoneUiPorts, render: (notice?: string) => vo
 
   byId<HTMLInputElement>("cue-cards")?.addEventListener("change", (event) => {
     commit({ cueCards: (event.target as HTMLInputElement).checked });
+  });
+
+  byId<HTMLInputElement>("speaker-role")?.addEventListener("change", (event) => {
+    commit({ speakerRole: (event.target as HTMLInputElement).checked });
   });
 
   byId<HTMLSelectElement>("my-speaker")?.addEventListener("change", (event) => {

@@ -1,0 +1,33 @@
+{
+  "package_id": "glass.quiet.speechprobe",
+  "edition": "202601",
+  "name": "Speech Probe",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "desc": "Test B records 5 seconds from the glasses microphone and transcribes them on the phone. Audio never leaves the phone."
+    },
+    {
+      "name": "phone-microphone",
+      "desc": "Test A tries the phone's built-in speech recognition with the phone microphone."
+    },
+    {
+      "name": "network",
+      "desc": "Downloads the Whisper model (Hugging Face) and the ONNX runtime (jsDelivr) for on-phone transcription.",
+      "whitelist": [
+        "https://huggingface.co",
+        "https://us.aws.cdn.hf.co",
+        "https://cas-bridge.xethub.hf.co",
+        "https://cdn-lfs.hf.co",
+        "https://cdn.jsdelivr.net"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "en"
+  ]
+}

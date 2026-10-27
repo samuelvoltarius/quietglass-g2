@@ -27,7 +27,9 @@ describe("Zuhause list: favourites first, then areas", () => {
     expect(v.body[4]).toBe("  → Wohnzimmer");
     expect(v.side?.[0]).toBe("Abendlicht");
     expect(v.side).toContain("Tippen = starten");
-    expect(v.footer).toBe("Tippen = schalten · Halten = Details · 2× = zurück");
+    expect(v.footer).toBe("Tippen = schalten · Wischen = wählen · 2× = zurück");
+    // Hold never reaches the app from the temple: nothing on the page may offer it.
+    expect([...v.body, ...(v.side ?? []), v.footer].join(" ")).not.toMatch(/Halten/);
   });
 
   it("an area row summarises lights, blinds, sensors and motion", () => {
@@ -205,7 +207,8 @@ describe("Zuhause: lock / alarm / garage need the daemon's second step", () => {
   it("the token never confirms another row and is dropped by a swipe or 2×", () => {
     const armed = withHomePending(home({ index: 2 }), "lock.haustuer", { token: "tok-1", label: "x", expiresInMs: 30_000 }, T0);
     const other = decide({ ...armed, zh: { ...armed.zh!, index: 1 } }, "click", T0);
-    expect(other.effect).toMatchObject({ kind: "homeAction", target: "light.buero" });
+    expect(other.effect).toBeUndefined();
+    expect(other.model.zh).toMatchObject({ level: "detail", detailId: "light.buero", pending: null });
     expect(decide(armed, "scrollDown", T0).model.zh?.pending).toBeNull();
     expect(decide(armed, "doubleClick", T0).model.confirm).toBeNull();
   });

@@ -13,6 +13,11 @@
  * the next light / cover of the same list; a tap opens a small choice list
  * (light: Aus · 30 % · 60 % · 100 %, plus An when no level is known; cover:
  * Auf · Zu · Stopp), swipe moves in it, tap runs the chosen entry, 2× closes it.
+ *
+ * Hold never reaches the app from the temple (only from the R1 ring), so a tap on a light,
+ * cover or TV in the list opens that choice list directly (`openDetail`). TV / projector
+ * (kind "media", daemon HA_MEDIA): Lauter · Leiser · Stumm · Play/Pause · Aus; the list
+ * stays open after a volume step, so tap, tap, tap turns it up step by step.
  */
 import { tr, type Locale } from "../i18n";
 import { messages } from "../messages";
@@ -129,6 +134,13 @@ export function stateText(entity: HomeEntity, locale: Locale): string {
     case "alarm": return t(entity.on ? "zh.armed" : "zh.disarmed");
     case "scene": return t("zh.scene");
     case "motion": return t(entity.on ? "zh.motion" : "zh.still");
+    case "media": {
+      if (!entity.on) return t("zh.off");
+      const parts = [entity.value !== undefined && entity.value !== "" ? entity.value : t("zh.on")];
+      if (entity.muted === true) parts.push(t("zh.muted"));
+      else if (typeof entity.volume === "number") parts.push(`${entity.volume} %`);
+      return parts.join(" · ");
+    }
     default: return entity.value !== undefined && entity.value !== "" ? entity.value : entity.state;
   }
 }
@@ -177,6 +189,8 @@ export function listRows(state: ZuhauseState, view: HomeView, locale: Locale): s
       rows.push("", `[${levelBar(level)}] ${level} %`);
     } else if ((entity.kind === "cover" || entity.kind === "garage") && typeof entity.position === "number") {
       rows.push("", `[${levelBar(entity.position)}] ${entity.position} %`);
+    } else if (entity.kind === "media" && typeof entity.volume === "number") {
+      rows.push("", `[${levelBar(entity.volume)}] ${entity.volume} %`);
     }
     return rows;
   }
@@ -212,6 +226,7 @@ function tapHint(entity: HomeEntity, locale: Locale): string {
     case "cover":
     case "garage": return t("zh.hintCover");
     case "scene": return t("zh.hintScene");
+    case "media": return t("zh.hintMedia");
     default: return t("zh.readOnly");
   }
 }
@@ -258,8 +273,7 @@ export function sideRows(state: ZuhauseState, view: HomeView, locale: Locale): s
         lines = [entityLabel(entity, locale), stateText(entity, locale)];
         if (entity.group === true) lines.push(t("zh.members", { n: entity.members?.length ?? 0 }));
         else if (entity.kind === "light" && entity.on && typeof entity.brightness === "number") lines.push(`${levelBar(entity.brightness)}`);
-        lines.push("", tapHint(entity, locale));
-        if (canDetail(entity)) lines.push(t("zh.holdDetail"));
+        lines.push("", canDetail(entity) ? t("zh.detailTap") : tapHint(entity, locale));
       }
     }
   }
@@ -271,10 +285,25 @@ export function sideRows(state: ZuhauseState, view: HomeView, locale: Locale): s
 
 // ---- actions -----------------------------------------------------------------
 
-/** Lights (not groups) and covers have a detail level; sensitive ones never (always two-step). */
+/** Lights (not groups), covers and TVs have a detail level; sensitive ones never (always two-step). */
 export function canDetail(entity: HomeEntity): boolean {
   if (entity.sensitive === true || !entity.available) return false;
-  return (entity.kind === "light" && entity.group !== true) || entity.kind === "cover";
+  return (entity.kind === "light" && entity.group !== true) || entity.kind === "cover" || entity.kind === "media";
+}
+
+/**
+ * Tap on a list row with a detail: the detail opens with its choice list, the cursor on the likely
+ * wish (a light that is on: "Aus"; off: the brightest level / "An"; a TV that is off: "An").
+ */
+export function openDetail(state: ZuhauseState, entity: HomeEntity, locale: Locale): ZuhauseState {
+  const choices = detailChoices(entity, locale);
+  const choice = entity.kind === "light" && !entity.on ? choices.length - 1 : 0;
+  return { ...state, pending: null, level: "detail", detailId: entity.id, choice };
+}
+
+/** A TV keeps its choice list open after these (tap, tap, tap = three steps louder). */
+export function keepsChoice(action: HomeAction): boolean {
+  return action === "volume_up" || action === "volume_down" || action === "mute";
 }
 
 /** One entry of the detail choice list and the daemon action it runs (the same calls as before). */
@@ -290,6 +319,16 @@ export const LIGHT_LEVELS = [30, 60, 100] as const;
  */
 export function detailChoices(entity: HomeEntity, locale: Locale): DetailChoice[] {
   const t = (key: string): string => tr(messages, locale, key);
+  if (entity.kind === "media") {
+    if (!entity.on) return [{ label: t("zh.choiceOn"), action: "turn_on" }];
+    return [
+      { label: t("zh.louder"), action: "volume_up" },
+      { label: t("zh.quieter"), action: "volume_down" },
+      { label: t(entity.muted === true ? "zh.unmute" : "zh.mute"), action: "mute" },
+      { label: t("zh.playPause"), action: "play_pause" },
+      { label: t("zh.choiceOff"), action: "turn_off" },
+    ];
+  }
   if (entity.kind === "light") {
     const knownLevel = typeof entity.brightness === "number" && entity.brightness > 0;
     return [
@@ -333,6 +372,7 @@ export function tapAction(entity: HomeEntity): HomeAction | null {
     case "lock":
     case "alarm": return "toggle";
     case "scene": return "run";
+    case "media": return "toggle";
     default: return null;
   }
 }
@@ -347,7 +387,8 @@ export function applyHomeAction(view: HomeView, target: string, action: HomeActi
     if (action === "brightness") return (value ?? 0) > 0;
     return action === "turn_on" || action === "open";
   };
-  if (action === "run" || action === "stop") return view;
+  if (action === "run" || action === "stop" || action === "volume_up" || action === "volume_down" || action === "play_pause") return view;
+  if (action === "mute") return entity.kind === "media" ? { ...view, entities: { ...view.entities, [target]: { ...entity, muted: entity.muted !== true } } } : view;
   const entities: Record<string, HomeEntity> = { ...view.entities };
   for (const id of ids) {
     const e = entities[id];

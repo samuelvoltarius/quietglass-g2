@@ -79,6 +79,7 @@ export const messages: Messages = {
     "g.cp.barPhone": "Handy",
     "g.cp.barSensor": "Sensor",
     "g.cp.hours": "letzte 3 Std.",
+    "g.cp.now": "jetzt",
     "g.cp.demo": "Demo · {age}",
 
     "g.f.reload": "neu laden",
@@ -246,6 +247,7 @@ export const messages: Messages = {
     "g.cp.barPhone": "Phone",
     "g.cp.barSensor": "Sensor",
     "g.cp.hours": "last 3 h",
+    "g.cp.now": "now",
     "g.cp.demo": "Demo · {age}",
 
     "g.f.reload": "refresh",

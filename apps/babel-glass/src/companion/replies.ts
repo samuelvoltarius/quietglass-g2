@@ -49,6 +49,8 @@ export interface OwnerContext {
   readonly ownLanguage: string | null;
   /** 0.8.0: the server knows the user's voice: the user's lines come as "ME", letters are the others. */
   readonly voiceEnrolled?: boolean;
+  /** 1.1.1: use the glasses' speaker role (switch "Sprecher erkennen (Brille)"); the profile still wins. */
+  readonly roles?: boolean;
 }
 
 /**
@@ -57,9 +59,12 @@ export interface OwnerContext {
  * wins when the user named theirs; otherwise the detected language (own
  * language = the user, any other = the other person).
  */
-export function lineOwner(entry: Pick<TranscriptEntry, "speaker" | "language">, ctx: OwnerContext): LineOwner {
+export function lineOwner(entry: Pick<TranscriptEntry, "speaker" | "language" | "role">, ctx: OwnerContext): LineOwner {
   if (entry.speaker === OWNER_SPEAKER) return "me";
   if (ctx.voiceEnrolled && ctx.speakers && entry.speaker) return "other";
+  // 1.1.1: the glasses' role, when it names one; "unknown" falls through to the older guesses.
+  if (ctx.roles && entry.role === "self") return "me";
+  if (ctx.roles && entry.role === "other") return "other";
   if (ctx.speakers && ctx.mySpeaker !== "auto" && entry.speaker) return entry.speaker === ctx.mySpeaker ? "me" : "other";
   if (ctx.ownLanguage && entry.language && entry.language !== AUTO) {
     return sameLanguage(entry.language, ctx.ownLanguage) ? "me" : "other";

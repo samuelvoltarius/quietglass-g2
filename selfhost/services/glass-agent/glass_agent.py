@@ -120,6 +120,21 @@ APPROVAL_DEFAULT = os.environ.get("GLASS_AGENT_APPROVAL", "auto").strip().lower(
 if APPROVAL_DEFAULT not in APPROVAL_MODES:
     APPROVAL_DEFAULT = "auto"
 APPROVAL_TTL = float(os.environ.get("GLASS_AGENT_APPROVAL_TTL", "90"))
+# Routing nach Art der Frage (siehe classify): "jetzt" beantwortet der Dienst selbst, "wissen" geht direkt an
+# ein schnelles Modell (ohne Agent), "nachschauen" an den Agenten, "tun" an den Agenten mit TASK_MODEL.
+ROUTING = os.environ.get("GLASS_AGENT_ROUTING", "1") != "0"
+FAST_URL = os.environ.get("GLASS_AGENT_FAST_URL", "")
+FAST_KEY = os.environ.get("GLASS_AGENT_FAST_KEY", "")
+FAST_MODEL = os.environ.get("GLASS_AGENT_FAST_MODEL", "")
+TASK_MODEL = os.environ.get("GLASS_AGENT_TASK_MODEL", "")
+TASK_APPROVAL = os.environ.get("GLASS_AGENT_TASK_APPROVAL", "mixed").strip().lower()
+PROFILE_FILE = os.environ.get("GLASS_AGENT_PROFILE_FILE", "")
+PROFILE_CHARS = 1500
+TZ_NAME = os.environ.get("GLASS_AGENT_TZ", "Europe/Vienna")
+# "server": Status-Server (reference-server.mjs, GET /status) direkt fragen statt den Agenten suchen zu lassen.
+# Format: "Name,alias,alias|https://host:8451/status;Name2|url2"
+STATUS_SOURCES = os.environ.get("GLASS_AGENT_STATUS_SOURCES", "")
+STATUS_TIMEOUT = 4.0
 RESULT_TTL = 10 * 60       # so lange wird ein Hintergrund-Ergebnis fuer die naechste Aeusserung gemerkt
 POLL_S = 0.5
 BUSY_TEXT = "Ich bin noch dran – frag gleich mit „und?“ nach."
@@ -128,6 +143,16 @@ DIRECT_NOTE = ("Du hast keine Werkzeuge und keine Live-Daten. Wenn die Frage akt
 # Nachhaken nach einem Hintergrund-Ergebnis: nur die ganze Aeusserung ("und morgen?" ist eine neue Frage).
 FOLLOW_RE = re.compile(r"^\s*(und|und jetzt|und nun|na|ergebnis|das ergebnis|fertig|schon fertig|bist du fertig|"
                        r"weiter|und weiter|was ist rausgekommen|was kam raus|and|result|done)\s*[?.!]*\s*$", re.I)
+# Ungeduldiges Nachfragen ("ich warte immer noch auf deine Antwort", "hallo?") zaehlt wie "und?" -
+# sonst geht es als neue Frage an den Agenten, der dann ziellos sucht, worauf gewartet wird.
+WAIT_RE = re.compile(r"^\s*(hallo\s*\?+|bist du (noch )?da|noch da|und jetzt|und was ist|was ist (jetzt|nun)|"
+                     r"wo bleibt (die|deine) antwort|(ich )?warte( immer)?( noch)?( auf (die|deine) antwort)?|"
+                     r"ich warte (immer )?noch( auf (die|deine) antwort)?|antwort|hello|still there)\s*[?.!]*\s*$", re.I)
+# Ohne offenen Vorgang: diese Nachfragen ehrlich beantworten statt sie dem Agenten zu geben.
+# ("weiter", "na" und "und weiter" bleiben normale Aeusserungen.)
+NOTHING_OPEN_RE = re.compile(r"^\s*(und|ergebnis|das ergebnis|fertig|schon fertig|bist du fertig|"
+                             r"was ist rausgekommen|was kam raus|result|done)\s*[?.!]*\s*$", re.I)
+NOTHING_OPEN_TEXT = "Gerade ist nichts offen – stell die Frage bitte nochmal."
 
 SYSTEM_DE = (
     "Deine Antwort erscheint auf einer Datenbrille (Even Realities G2, 576x288 Pixel, "
@@ -150,6 +175,202 @@ YES_RE = re.compile(r"^\s*(ja|jawohl|jo|ok|okay|mach|mach das|mach es|machs|best
 NO_RE = re.compile(r"^\s*(nein|nee|stopp?|abbrechen|brich ab|abbruch|no|nope|nicht machen|lass es|cancel)"
                    r"(\s+(bitte|danke))?\s*[.!]*\s*$", re.I)
 
+# Routing: feste Regeln, kein zusaetzlicher KI-Aufruf. Reihenfolge jetzt > tun > nachschauen > wissen;
+# was keine Regel trifft, geht wie bisher an den Agenten ("nachschauen").
+TIME_RE = re.compile(r"^\s*(wie sp[aä]t( ist es)?|wie ?viel uhr( ist es)?|welche uhrzeit( ist es)?|uhrzeit|"
+                     r"what time is it)\s*(gerade|jetzt)?\s*[?.!]*\s*$", re.I)
+DATE_RE = re.compile(r"^\s*(welcher tag ist (heute|es|gerade)|welches datum( ist (heute|es))?|"
+                     r"der wievielte ist (heute|es)|welcher wochentag( ist (heute|es))?|"
+                     r"was f[uü]r ein tag ist (heute|es)|datum|what day is it|what'?s the date)\s*(heute)?"
+                     r"\s*[?.!]*\s*$", re.I)
+TASK_RE = re.compile(r"^\s*(bitte\s+|kannst du\s+|k[oö]nntest du\s+|nova,?\s+|hermes,?\s+)?"
+                     r"(schreib|schick|send|sende|starte?\b|stopp|stoppe|beende|erinner|erstell|leg\b|l[oö]sch|"
+                     r"mach\b|bau\b|deploy|installier|[aä]nder|setz|plan|buch|ruf\b|trag\b|notier|merk dir|f[uü]g|"
+                     r"[oö]ffne|schalt|aktivier|deaktivier|aktualisier|repar|richte|verschieb|kopier|"
+                     r"benenn|archivier|remind|create|write|delete|start\b|stop\b)", re.I)
+LOOKUP_RE = re.compile(r"(termin|kalender|heute|morgen|gestern|wochenende|woche|dashboard|aufgabe|todo|"
+                       r"wetter|regen|temperatur|grad\b|server|dienst|status|l[aä]uft|nachricht|mail|telegram|"
+                       r"whatsapp|wiki|notiz|news|neuigkeit|aktuell|preis|kurs|akku|reichweite|auto\b|byd|"
+                       r"drucker|\btv\b|fernseh|beamer|licht|zuhause|spark|\bpi\b|pi5|ns1|\bvm\b|\bnas\b|"
+                       r"projekt|\bstand\b|erinnerung|such|pr[uü]f|check|finde|wo ist|letzte|zuletzt|offen|"
+                       r"sitzung|session|agent|hermes|claude|codex|quiet|glance|brille|xaventra|quietglass|"
+                       r"weather|calendar|today|tomorrow|latest)", re.I)
+KNOW_RE = re.compile(r"^\s*(wer bin ich|wer bist du|was ist|was sind|was hei(ß|ss)t|was bedeutet|wer war|"
+                     r"wie funktioniert|warum|wieso|weshalb|erkl[aä]r|[uü]bersetz|wie sagt man|rechne|"
+                     r"wie ?viel (ist|sind|ergibt)|was ergibt|wie gro(ß|ss)|wie weit|wie alt|wie hoch|wie lang|"
+                     r"wie schreibt man|hauptstadt|definier|nenn mir|gib mir ein beispiel|"
+                     r"who am i|who are you|what is|what are|why|how does|explain|translate)", re.I)
+SERVER_RE = re.compile(r"(server|rechner|maschine|l[aä]uft|laufen|online|offline|erreichbar|status|auslastung|"
+                       r"speicher|platte|festplatte|temperatur|\bram\b|\bcpu\b|abgest[uü]rzt|down\b|\bup\b)", re.I)
+WEEKDAYS = ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
+
+
+def classify(question):
+    """Art der Frage: "jetzt" (Uhrzeit/Datum), "tun", "nachschauen" oder "wissen"."""
+    if TIME_RE.match(question) or DATE_RE.match(question):
+        return "jetzt"
+    if TASK_RE.match(question):
+        return "tun"
+    if STATUS_HOSTS:
+        named = status_targets(question)
+        if (SERVER_RE.search(question) and (named or re.search(r"(server|rechner|alle|alles)", question, re.I))) or (
+                named and re.search(r"(wie geht('?s| es)|was macht|alles ok|alles gut|in ordnung)", question, re.I)):
+            return "server"
+    if LOOKUP_RE.search(question):
+        return "nachschauen"
+    if KNOW_RE.match(question):
+        return "wissen"
+    return "nachschauen"
+
+
+def parse_status_sources(raw):
+    """"Pi5,pi|url;ns1,mail|url" -> [{"name", "aliases", "url"}]."""
+    hosts = []
+    for entry in [e.strip() for e in (raw or "").split(";") if e.strip()]:
+        names, _, url = entry.partition("|")
+        names = [n.strip() for n in names.split(",") if n.strip()]
+        if names and url.strip():
+            hosts.append({"name": names[0], "aliases": [_squash(n) for n in names], "url": url.strip()})
+    return hosts
+
+
+def _squash(text):
+    """Klein, ohne Leerzeichen/Punkte, "eins" -> "1" (Spracherkennung: "NS eins", "n.s. 1", "Pi 5")."""
+    text = re.sub(r"\beins\b", "1", text.lower())
+    text = re.sub(r"\bf[uü]nf\b", "5", text)
+    return re.sub(r"[\s.\-_]+", "", text)
+
+
+STATUS_HOSTS = parse_status_sources(STATUS_SOURCES)
+
+
+def status_targets(question, hosts=None):
+    """Die in der Frage genannten Rechner (leer = keiner genannt)."""
+    hosts = STATUS_HOSTS if hosts is None else hosts
+    squashed = _squash(question)
+    tokens = re.findall(r"[a-z0-9]+", re.sub(r"\bf[uü]nf\b", "5", re.sub(r"\beins\b", "1", question.lower())))
+    # auch zusammengesetzt aus bis zu drei Woertern: "NS eins" -> "ns1", "n.s. 1" -> "ns1"
+    words = {"".join(tokens[i:i + n]) for n in (1, 2, 3) for i in range(len(tokens) - n + 1)}
+    found = []
+    for host in hosts:
+        for alias in host["aliases"]:
+            # kurze Namen ("pi") nur als ganzes Wort, laengere auch zusammengeschrieben
+            if (alias in words) if len(alias) <= 3 else (alias in squashed):
+                found.append(host)
+                break
+    return found
+
+
+def fetch_status(host, opener=urllib.request.urlopen):
+    request = urllib.request.Request(host["url"], headers={"Accept": "application/json"})
+    try:
+        with opener(request, timeout=STATUS_TIMEOUT) as response:
+            return json.loads(response.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+
+
+def _number(value):
+    return ("%d" % round(value)) if abs(value) >= 10 or value == int(value) else ("%.1f" % value).replace(".", ",")
+
+
+def status_warnings(data):
+    """Was auffaellt: Werte ueber warn (bzw. unter warn bei lowerIsWorse), ausgefallene Dienste, Zustand != ok."""
+    found = []
+    for metric in data.get("metrics") or []:
+        label = metric.get("label") or metric.get("id") or "?"
+        if metric.get("id") == "failed":
+            if metric.get("value"):
+                found.append("%s ausgefallen%s" % (
+                    "1 Dienst" if metric["value"] == 1 else "%d Dienste" % metric["value"],
+                    (" (" + metric["detail"] + ")") if metric.get("detail") else ""))
+            continue
+        if metric.get("state") and metric["state"] != "ok":
+            found.append("%s: %s" % (label, metric.get("detail") or metric["state"]))
+            continue
+        value, warn = metric.get("value"), metric.get("warn")
+        if not isinstance(value, (int, float)) or not isinstance(warn, (int, float)):
+            continue
+        if (value <= warn) if metric.get("lowerIsWorse") else (value >= warn):
+            found.append("%s %s %s" % (label, _number(value), metric.get("unit") or ""))
+    return [re.sub(r"\s+", " ", f).strip() for f in found]
+
+
+def status_summary(host, data):
+    if data is None:
+        return "%s nicht erreichbar." % host["name"]
+    metrics = {m.get("id"): m for m in data.get("metrics") or []}
+    parts = []
+    for key, label in (("cpu", "CPU"), ("memory", "RAM"), ("disk:/", "Platte"), ("temp", "")):
+        metric = metrics.get(key)
+        if metric and isinstance(metric.get("value"), (int, float)):
+            unit = metric.get("unit") or ""
+            parts.append(("%s %s%s" % (label, _number(metric["value"]), " " + unit if unit != "%" else " %")).strip())
+    uptime = metrics.get("uptime", {}).get("value")
+    if isinstance(uptime, (int, float)):
+        parts.append("seit %d Tagen" % (uptime // 24) if uptime >= 48 else "seit %d Stunden" % uptime)
+    warnings = status_warnings(data)
+    return "%s läuft%s.%s" % (host["name"], (": " + ", ".join(parts)) if parts else "",
+                             (" Achtung: " + "; ".join(warnings) + ".") if warnings else "")
+
+
+def answer_status(question, hosts=None, opener=urllib.request.urlopen):
+    hosts = STATUS_HOSTS if hosts is None else hosts
+    targets = status_targets(question, hosts) or hosts
+    results = {}
+
+    def one(host):
+        results[host["name"]] = fetch_status(host, opener)
+    threads = [threading.Thread(target=one, args=(host,), daemon=True) for host in targets]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(STATUS_TIMEOUT + 1)
+    if len(targets) == 1:
+        return status_summary(targets[0], results.get(targets[0]["name"]))
+    down = [h["name"] for h in targets if results.get(h["name"]) is None]
+    notes = []
+    for host in targets:
+        data = results.get(host["name"])
+        if data is not None:
+            warnings = status_warnings(data)
+            if warnings:
+                notes.append("%s: %s" % (host["name"], "; ".join(warnings)))
+    up = len(targets) - len(down)
+    head = ("Alle %d laufen." % up) if not down else ("%d von %d laufen, nicht erreichbar: %s."
+                                                       % (up, len(targets), ", ".join(down)))
+    return head + ((" " + ". ".join(notes) + ".") if notes else "")
+
+
+def local_now(now=time.time):
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.datetime.fromtimestamp(now(), ZoneInfo(TZ_NAME))
+    except Exception:  # noqa: BLE001 - ohne Zeitzonendaten: Rechnerzeit
+        return datetime.datetime.fromtimestamp(now())
+
+
+def answer_now(question, now=time.time):
+    stamp = local_now(now)
+    if TIME_RE.match(question):
+        return "Es ist %d:%02d Uhr." % (stamp.hour, stamp.minute)
+    return "Heute ist %s, der %d.%d.%d." % (WEEKDAYS[stamp.weekday()], stamp.day, stamp.month, stamp.year)
+
+
+def read_profile(path=None):
+    """Kurzer Steckbrief (z. B. Hermes' USER.md) fuer den direkten Weg - der kennt sonst niemanden."""
+    path = PROFILE_FILE if path is None else path
+    if not path:
+        return ""
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return ""
+    text = re.sub(r"\s*§\s*", " ", text)
+    return re.sub(r"\s+", " ", text).strip()[:PROFILE_CHARS]
+
 # --------------------------------------------------------------------------
 # Antwort fuer die Brille aufbereiten
 # --------------------------------------------------------------------------
@@ -163,6 +384,7 @@ _BOX_RE = re.compile("[─-▟■-◿]+")
 
 def clean_for_glasses(text, budget=CHAR_BUDGET):
     """Markdown/Emojis raus, Leerraum zusammen, auf `budget` Zeichen am Satzende kuerzen."""
+    text = re.sub(r"(?s)<think>.*?</think>", "", text or "")
     t = str(text or "")
     t = re.sub(r"```.*?```", " ", t, flags=re.S)            # Codebloecke
     t = re.sub(r"`([^`]*)`", r"\1", t)
@@ -327,6 +549,25 @@ def parse_routes(primary_url, primary_key, primary_provider, primary_model, fall
 
 
 ROUTES = parse_routes(UPSTREAM_URL, UPSTREAM_KEY, UPSTREAM_PROVIDER, UPSTREAM_MODEL, FALLBACKS)
+
+
+def fast_routes(routes=None):
+    """"wissen": erst das schnelle Modell direkt, scheitert es, die normalen Wege."""
+    routes = ROUTES if routes is None else routes
+    if not FAST_URL:
+        return routes
+    return [{"name": "schnell:" + (FAST_MODEL or "?"), "url": FAST_URL, "key": FAST_KEY, "provider": "",
+             "model": FAST_MODEL, "direct": True}] + list(routes)
+
+
+def task_routes(routes=None):
+    """"tun": der Agent mit dem staerkeren Modell, danach die normalen Wege."""
+    routes = ROUTES if routes is None else routes
+    if not TASK_MODEL or not routes or routes[0].get("direct"):
+        return routes
+    first = dict(routes[0], model=TASK_MODEL)
+    first["name"] = (first["provider"] + "/" if first["provider"] else "") + TASK_MODEL
+    return [first] + list(routes)
 _resting = {}   # Weg-Name -> Zeitpunkt, bis zu dem er uebersprungen wird
 
 # Ein Agent wie Hermes meldet ein leeres Kontingent oft als normale Antwort - daran erkennen.
@@ -658,7 +899,7 @@ def ask_agent_runs(question, turns, model, conversation, opener=urllib.request.u
 
 
 CONVERSATION = Conversation(path=STATE_FILE)
-LAST_ROUTE = {"name": ""}
+LAST_ROUTE = {"name": "", "kind": ""}
 
 
 def log_content(question, turns, route, text, seconds):
@@ -740,7 +981,7 @@ def handle_pending(question, pending, conversation, opener, now, sleep, budget):
     antwort != None -> genau das zeigen; sonst die Aeusserung normal beantworten, `vorspann` davor."""
     kind = pending.get("kind")
     age = now() - float(pending.get("t") or 0)
-    follow = bool(FOLLOW_RE.match(question))
+    follow = bool(FOLLOW_RE.match(question) or WAIT_RE.match(question))
     if kind == "approval":
         if age > APPROVAL_TTL or not (YES_RE.match(question) or NO_RE.match(question)):
             cancel_pending(pending, opener)        # verfallen oder neue Frage: Schweigen ist kein Ja
@@ -837,12 +1078,42 @@ def answer(body, ask=ask_upstream, conversation=CONVERSATION, opener=urllib.requ
             prefix, reply = "", None
         if reply is not None:
             return reply, model
+    if not prefix and (WAIT_RE.match(question) or NOTHING_OPEN_RE.match(question)):
+        return NOTHING_OPEN_TEXT, model
+    kind = classify(question) if ROUTING else "nachschauen"
+    LAST_ROUTE["kind"] = kind
+    if kind == "jetzt" and not prefix:
+        LAST_ROUTE["name"] = "selbst"
+        return answer_now(question, now), model
+    if kind == "server" and not prefix:
+        LAST_ROUTE["name"] = "status"
+        text = clean_for_glasses(answer_status(question))
+        conversation.add(question, text)
+        return text, model
     room = max(120, CHAR_BUDGET - len(prefix) - (7 if prefix else 0))
     turns = conversation.history()
     started = time.time()
     LAST_ROUTE["name"] = ""
     final = None
-    if conversation.approval_mode() in ("mixed", "ask"):
+    mode = conversation.approval_mode()
+    if kind == "tun" and TASK_MODEL:
+        routes = task_routes(routes)
+        task_mode = TASK_APPROVAL if TASK_APPROVAL in APPROVAL_MODES else "auto"
+        if APPROVAL_MODES.index(task_mode) > APPROVAL_MODES.index(mode):
+            mode = task_mode
+    if kind == "wissen" and FAST_URL:
+        fast = fast_routes(routes)
+        profile = read_profile()
+        extra = SYSTEM_EXTRA + ((" Was du ueber Alfred weisst: " + profile) if profile else "")
+        result = ask_in_background(lambda: ask(build_messages(question, turns, extra=extra), model, routes=fast),
+                                   conversation, question, budget, now)
+        if result is None:
+            text = BUSY_TEXT
+        elif result[0] == "error":
+            text = error_text(result[1])
+        else:
+            final = result[1]
+    elif mode in ("mixed", "ask"):
         try:
             art, raw = ask_agent_runs(question, turns, model, conversation, opener, routes, now, sleep, budget)
         except Exception as error:  # noqa: BLE001
@@ -852,7 +1123,8 @@ def answer(body, ask=ask_upstream, conversation=CONVERSATION, opener=urllib.requ
         else:
             text = raw
     else:
-        result = ask_in_background(lambda: ask(build_messages(question, turns), model),
+        chosen = {} if routes is None else {"routes": routes}
+        result = ask_in_background(lambda: ask(build_messages(question, turns), model, **chosen),
                                    conversation, question, budget, now)
         if result is None:
             text = BUSY_TEXT
@@ -922,15 +1194,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": {"message": "invalid json"}})
             return
         started = time.time()
+        # Ohne Inhalte: wie die Even-App fragt (App-Version, Streaming, Felder) - fuer Aenderungen der App.
+        sys.stderr.write("[glass-agent] Anfrage: ua=%s stream=%s accept=%s felder=%s\n"
+                         % ((self.headers.get("User-Agent") or "-")[:60], body.get("stream"),
+                            (self.headers.get("Accept") or "-")[:40], ",".join(sorted(body.keys()))[:120]))
         text, model = answer(body)
         sys.stderr.write("[glass-agent] App schickte %d Nachricht(en); frage %d Zeichen (Verlauf %d) -> antwort %d Zeichen"
-                         " in %.1f s via %s\n"
+                         " in %.1f s via %s (%s)\n"
                          % (len(body.get("messages") or []), len(last_user_text(body)), len(CONVERSATION.turns),
-                            len(text), time.time() - started, LAST_ROUTE["name"] or "-"))
+                            len(text), time.time() - started, LAST_ROUTE["name"] or "-", LAST_ROUTE.get("kind") or "-"))
         try:
             self._send(200, completion(text, model))
         except (BrokenPipeError, ConnectionResetError):
-            sys.stderr.write("[glass-agent] Even-App hatte schon aufgegeben (Antwort zu spaet)\n")
+            sys.stderr.write("[glass-agent] Even-App hatte schon aufgegeben (Verbindung zu nach %.1f s)\n"
+                             % (time.time() - started))
 
     def log_message(self, *args):  # keine Pfade/Inhalte ins Log
         pass
@@ -978,8 +1255,8 @@ def selftest():
     check("Verlauf verfaellt nach TTL", len(seen[2]) == 2)
     r, _ = answer({"messages": [{"role": "user", "content": "Neues Gespräch"}]}, fake, conv)
     check("Neues Gespraech setzt zurueck", r == "Gut, neues Gespräch." and conv.history() == [])
-    answer({"messages": [{"role": "user", "content": "Neues Gespräch, wie spät ist es?"}]}, fake, conv)
-    check("Reset mit Frage danach", seen[-1][-1]["content"] == "wie spät ist es?" and len(seen[-1]) == 2)
+    answer({"messages": [{"role": "user", "content": "Neues Gespräch, wie wird das Wetter?"}]}, fake, conv)
+    check("Reset mit Frage danach", seen[-1][-1]["content"] == "wie wird das Wetter?" and len(seen[-1]) == 2)
     for i in range(5):
         answer({"messages": [{"role": "user", "content": "f%d" % i}]}, fake, conv)
     check("max_turns begrenzt", len(conv.history()) == 2)
@@ -1144,9 +1421,9 @@ def selftest():
     check("nein -> abgelehnt und gestoppt",
           r.startswith("Abgebrochen") and hermes.runs["run_3"]["denied"] and hermes.runs["run_3"]["stopped"])
     run_answer("schreib maria", conv)
-    r = run_answer("wie spät ist es", conv)
+    r = run_answer("wie wird das wetter", conv)
     check("andere Frage -> Rueckfrage verfaellt, neue Frage beantwortet",
-          hermes.runs["run_4"]["denied"] and r == "Run: wie spät ist es")
+          hermes.runs["run_4"]["denied"] and r == "Run: wie wird das wetter")
     run_answer("schreib maria", conv)
     clock3[0] += APPROVAL_TTL + 1
     r = run_answer("ja", conv)
@@ -1216,6 +1493,105 @@ def selftest():
     threading.Timer(0.2, gate.set).start()
     r = answer(say("fertig?"), slow, conv_bg, budget=3.0)[0]
     check("'fertig?' wartet nochmal auf den laufenden Agenten", r == "Spät, aber da.")
+    gate.clear()
+    answer(say("Server prüfen"), slow, conv_bg, budget=0.2)
+    threading.Timer(0.2, gate.set).start()
+    r = answer(say("Ich warte immer noch auf deine Antwort."), slow, conv_bg, budget=3.0)[0]
+    check("'ich warte noch' holt das Ergebnis wie 'und?'", r == "Spät, aber da.")
+    asked = []
+    r = answer(say("und?"), lambda m, model: asked.append(m) or "x", Conversation())[0]
+    check("'und?' ohne offenen Vorgang -> ehrlicher Hinweis, Agent nicht gefragt", r == NOTHING_OPEN_TEXT and not asked)
+    r = answer(say("Hallo?"), lambda m, model: asked.append(m) or "x", Conversation())[0]
+    check("'Hallo?' ohne offenen Vorgang -> Hinweis", r == NOTHING_OPEN_TEXT and not asked)
+    r = answer(say("weiter"), lambda m, model: asked.append(m) or "weiter gehts", Conversation(), budget=1.0)[0]
+    check("'weiter' bleibt eine normale Aeusserung", r == "weiter gehts" and asked)
+
+    # Routing nach Art der Frage
+    kinds = {"Wie spät ist es?": "jetzt", "welcher Tag ist heute": "jetzt", "Wer bin ich?": "wissen",
+             "Was ist die Hauptstadt von Australien?": "wissen", "Was steht heute an?": "nachschauen",
+             "Wie wird das Wetter morgen?": "nachschauen", "Läuft der Server?": "nachschauen",
+             "Schreib Maria, dass ich später komme": "tun", "Erinner mich um 8 an den Müll": "tun",
+             "Kannst du den Drucker pausieren": "nachschauen", "Mach das Licht aus": "tun",
+             "Erzähl mir einen Witz": "nachschauen"}
+    wrong = {q: classify(q) for q, k in kinds.items() if classify(q) != k}
+    check("Fragen werden richtig eingeordnet", not wrong)
+    if wrong:
+        print("     ", wrong)
+    asked = []
+    r = answer(say("Wie spät ist es?"), lambda m, model, **kw: asked.append(m) or "x", Conversation())[0]
+    check("Uhrzeit beantwortet der Dienst selbst", re.match(r"^Es ist \d{1,2}:\d\d Uhr\.$", r) and not asked)
+    saved = {k: globals()[k] for k in ("FAST_URL", "FAST_KEY", "FAST_MODEL", "TASK_MODEL", "TASK_APPROVAL", "PROFILE_FILE")}
+    profile = os.path.join(tempfile.mkdtemp(), "USER.md")
+    with open(profile, "w", encoding="utf-8") as handle:
+        handle.write("Alfred baut Xaventra.\n§\nMag ehrliches Feedback.")
+    globals().update(FAST_URL="http://schnell/v1/chat/completions", FAST_KEY="k", FAST_MODEL="flash",
+                     TASK_MODEL="stark", TASK_APPROVAL="auto", PROFILE_FILE=profile)
+    try:
+        used = []
+
+        def routed(messages, model, routes=None):
+            used.append((routes or ROUTES)[0]["name"])
+            used.append(messages[0]["content"])
+            return "ok"
+        answer(say("Wer bin ich?"), routed, Conversation(), budget=1.0)
+        check("'wissen' geht zuerst an das schnelle Modell, mit Steckbrief",
+              used[0] == "schnell:flash" and "Alfred baut Xaventra. Mag ehrliches Feedback." in used[1])
+        used.clear()
+        answer(say("Was steht heute an?"), routed, Conversation(), budget=1.0)
+        check("'nachschauen' geht wie bisher an den Agenten", used[0] == ROUTES[0]["name"])
+        used.clear()
+        answer(say("Schreib Maria eine Nachricht"), routed, Conversation(), budget=1.0)
+        check("'tun' nimmt das staerkere Modell", used and used[0].endswith("stark"))
+        check("ohne Steckbrief-Datei kein Fehler", read_profile("/gibt/es/nicht") == "")
+        hosts = parse_status_sources("Pi5,pi,raspberry|http://pi/status;ns1,mail|http://ns1/status;"
+                                     "Spark,gx10|http://spark/status")
+        globals()["STATUS_HOSTS"] = hosts
+        check("Server-Fragen erkannt", classify("Läuft der Server ns1?") == "server"
+              and classify("Läuft NS eins?") == "server" and classify("Wie ist die Auslastung vom Pi?") == "server"
+              and classify("Laufen alle Server?") == "server" and classify("Was läuft heute im Kino?") == "nachschauen"
+              and classify("Starte den Server neu") == "tun" and classify("Wie geht es dem Pi?") == "server"
+              and classify("Wie geht es dir?") != "server")
+        check("Rechner aus der Frage", [h["name"] for h in status_targets("läuft n.s. 1 noch?", hosts)] == ["ns1"]
+              and [h["name"] for h in status_targets("wie geht es dem Pi", hosts)] == ["Pi5"]
+              and status_targets("Pinguine", hosts) == [])
+        ns1 = {"name": "ns1", "metrics": [
+            {"id": "cpu", "label": "CPU", "value": 2.4, "unit": "%", "warn": 85},
+            {"id": "memory", "label": "RAM", "value": 36.7, "unit": "%", "warn": 85},
+            {"id": "disk:/", "label": "/", "value": 56.3, "unit": "%", "warn": 90},
+            {"id": "temp", "label": "Temp", "value": 46.5, "unit": "°C", "warn": 80},
+            {"id": "freemem", "label": "Free", "value": 85.4, "unit": "GB", "warn": 2, "lowerIsWorse": True},
+            {"id": "failed", "label": "Failed units", "value": 2, "warn": 1, "detail": "certbot, osm"},
+            {"id": "tailscale", "label": "Tailscale", "state": "ok"},
+            {"id": "uptime", "label": "Up", "value": 1788, "unit": "h"}]}
+
+        class FakeStatus:
+            def __init__(self, data):
+                self.data = data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(self.data).encode()
+
+        def status_opener(request, timeout):
+            if "spark" in request.full_url:
+                raise urllib.error.URLError("weg")
+            return FakeStatus(ns1 if "ns1" in request.full_url else {"name": "Pi5", "metrics": []})
+        one = answer_status("Läuft ns1?", hosts, status_opener)
+        check("ein Rechner: Werte und Warnungen",
+              one == "ns1 läuft: CPU 2,4 %, RAM 37 %, Platte 56 %, 46 °C, seit 74 Tagen. "
+                     "Achtung: 2 Dienste ausgefallen (certbot, osm).")
+        every = answer_status("Laufen alle Server?", hosts, status_opener)
+        check("alle Rechner: Kopf, Ausfall, Warnungen",
+              every == "2 von 3 laufen, nicht erreichbar: Spark. ns1: 2 Dienste ausgefallen (certbot, osm).")
+        globals()["STATUS_HOSTS"] = []
+        check("ohne Status-Quellen keine Server-Art", classify("Läuft der Server ns1?") == "nachschauen")
+    finally:
+        globals().update(saved)
 
     seen_routes = []
 

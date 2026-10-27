@@ -52,6 +52,15 @@ export type CockpitGraphic =
     readonly top: string;
     readonly bottom: string;
     readonly tone: Tone;
+    /** Optional numbers on the chart (all already formatted): the band's two values, the curve's highest and
+     *  lowest point, and time marks spread evenly under the curve (they replace `bottom`). */
+    readonly labels?: {
+      readonly bandLow?: string;
+      readonly bandHigh?: string;
+      readonly max?: string;
+      readonly min?: string;
+      readonly ticks?: readonly string[];
+    };
   }
   /** A ring filled to `value` (0..1), the centre says what it is. */
   | { readonly kind: "gauge"; readonly value: number | null; readonly center: string; readonly sub: string; readonly tone: Tone };
@@ -257,6 +266,10 @@ function drawSpark(frame: Frame, graphic: Extract<CockpitGraphic, { kind: "spark
     const low = Math.min(SPARK.bottom, sparkY(graphic.band.low, graphic.points, graphic.band));
     dashedLine(frame, SPARK.left, high, SPARK.right, high, LEVELS.dim, { dash: 2, gap: 4 });
     dashedLine(frame, SPARK.left, low, SPARK.right, low, LEVELS.dim, { dash: 2, gap: 4 });
+    // The band's values at the left end, just above (high) and below (low) their lines.
+    const small = { size: 15, weight: 600 } as const;
+    if (graphic.labels?.bandHigh) drawText(frame, backend, graphic.labels.bandHigh, SPARK.left, Math.max(SPARK.top - 2, high - 18), small, { level: LEVELS.label, halo: true });
+    if (graphic.labels?.bandLow) drawText(frame, backend, graphic.labels.bandLow, SPARK.left, Math.min(SPARK.bottom - 14, low + 3), small, { level: LEVELS.label, halo: true });
   }
   const at = sparkPoints(graphic.points, graphic.band);
   if (at.length === 0) {
@@ -266,10 +279,36 @@ function drawSpark(frame: Frame, graphic: Extract<CockpitGraphic, { kind: "spark
     for (let index = 1; index < at.length; index += 1) line(frame, at[index - 1]!.x, at[index - 1]!.y, at[index]!.x, at[index]!.y, level, 2);
     const last = at[at.length - 1]!;
     fillCircle(frame, Math.min(last.x, SPARK.right - 3), last.y, 4, LEVELS.text);
+    // Highest and lowest point: a small number right at the point (above the peak, below the dip).
+    if (at.length > 2) {
+      const values = graphic.points;
+      const iMax = values.indexOf(Math.max(...values)); const iMin = values.indexOf(Math.min(...values));
+      const mark = (index: number, text: string | undefined, above: boolean): void => {
+        if (!text || iMax === iMin) return;
+        const p = at[index]!;
+        const w = backend.measure(text, { size: 15, weight: 700 });
+        const x = Math.max(SPARK.left + 30, Math.min(SPARK.right - w - 22, p.x - Math.round(w / 2)));
+        const y = above ? Math.max(SPARK.top - 4, p.y - 20) : Math.min(SPARK.bottom - 12, p.y + 6);
+        drawText(frame, backend, text, x, y, { size: 15, weight: 700 }, { level: LEVELS.text, halo: true });
+      };
+      mark(iMax, graphic.labels?.max, true);
+      mark(iMin, graphic.labels?.min, false);
+    }
   }
   drawText(frame, backend, graphic.top, SPARK.left, 6, { size: 22, weight: 700 }, { level: LEVELS.label, maxWidth: width - 50 });
   if (graphic.arrow !== undefined) arrow(frame, SPARK.right - 18, 22, 30, graphic.arrow, LEVELS.text, 3);
-  drawText(frame, backend, graphic.bottom, SPARK.left, SPARK.bottom + 10, { size: 15, weight: 600 }, { level: LEVELS.dim, maxWidth: width });
+  const ticks = graphic.labels?.ticks;
+  if (ticks && ticks.length > 1) {
+    // Time marks evenly under the curve: first left-aligned, last right-aligned, the rest centred.
+    ticks.forEach((tick, index) => {
+      const x = SPARK.left + Math.round((index * width) / (ticks.length - 1));
+      const align = index === 0 ? "left" : index === ticks.length - 1 ? "right" : "center";
+      line(frame, x, SPARK.bottom + 3, x, SPARK.bottom + 9, LEVELS.dim, 1);
+      drawText(frame, backend, tick, x, SPARK.bottom + 10, { size: 15, weight: 600 }, { level: LEVELS.label, align });
+    });
+  } else {
+    drawText(frame, backend, graphic.bottom, SPARK.left, SPARK.bottom + 10, { size: 15, weight: 600 }, { level: LEVELS.dim, maxWidth: width });
+  }
 }
 
 function drawLeft(frame: Frame, model: CockpitModel, backend: TextBackend): void {

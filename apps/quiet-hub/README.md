@@ -448,6 +448,9 @@ HA_TOKEN=<long-lived token>
 HA_FAVORITES=scene.abend=Abendlicht,light.buero,cover.wohnzimmer,sensor.aussen_temperatur
 # auto = every HA area (default) | off = favourites only | names or ids in this order
 HA_AREAS=Wohnzimmer,Büro,Schlafzimmer
+# TV / projector, shown first (tap = remote: louder, quieter, mute, play/pause, off).
+# With a remote.<same object id> (Android TV Remote) a volume step is ONE key press.
+HA_MEDIA=media_player.living_room=TV,media_player.projector=Projector
 # never show these
 HA_EXCLUDE=switch.server_power
 # lock, alarm, garage: hidden unless named here; then always two-step
@@ -487,6 +490,20 @@ notification can be mirrored to the glasses by the Even app. `HA_NOTIFY_SERVICE`
 (e.g. `notify.mobile_app_pixel`) pins the service; otherwise the daemon finds
 the first `notify.mobile_app_*` through a read-only `GET /api/services`. No
 service found = nothing is sent. `HA_NOTIFY=off` disables it.
+
+## Car (Panoptes, 0.12)
+
+With a car running Panoptes, the daemon can lock, pre-heat, switch
+the climate off and unlock through Panoptes' phone API (`/api/handy/v1`) - nothing else (no horn, lights or
+alarm). Set `CAR_URL` and pair once on the daemon machine:
+
+```bash
+node examples/quiet-hub-car.mjs pair    # prints a 4-digit check number; allow it in Telegram or on the car display
+```
+
+The daemon keeps its own P-256 key and the pairing token in `CAR_IDENTITY` (mode 600); the glasses only learn
+that commands are possible. Every command needs two taps on the glasses; unlock is signed only at the second tap.
+Whether this pairing may unlock at all is decided in Panoptes when you allow it.
 
 ## Printer (Moonraker)
 

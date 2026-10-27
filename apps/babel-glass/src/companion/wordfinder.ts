@@ -4,6 +4,7 @@ import { AUTO, languageName } from "../text/languages";
 import type { Result } from "./llm";
 import { speakerLine, type TranscriptEntry } from "./transcript";
 import { OWNER_SPEAKER } from "../stt/voice";
+import type { SpeakerRole } from "../stt/role";
 
 /**
  * Wortfinder (0.4.0): the user is talking and cannot find a word. A hold
@@ -69,6 +70,8 @@ export interface WordContextOptions {
   /** The provisional line the recogniser is still writing (often the sentence with the gap). */
   readonly pending?: string | null;
   readonly windowMs?: number;
+  /** 1.1.1: prefer the lines the glasses classified as the user's own ("self"). */
+  readonly selfRole?: boolean;
 }
 
 /**
@@ -82,6 +85,9 @@ export function wordContext(log: readonly TranscriptEntry[], options: WordContex
   if (recent.length === 0) recent = log.slice(-3);
   if (options.speaker) {
     const own = recent.filter((entry) => entry.speaker === options.speaker);
+    if (own.length) recent = own;
+  } else if (options.selfRole) {
+    const own = recent.filter((entry) => entry.role === "self");
     if (own.length) recent = own;
   }
   const lines = recent.map(speakerLine);
@@ -265,6 +271,13 @@ export interface StuckInput {
    * already holds "ME" lines. Then only the user's own FINAL lines can make him "stuck".
    */
   readonly voiceProfile?: boolean;
+  /**
+   * 1.1.1, only without a voice profile: the glasses' speaker role is the gate. Only a final line the glasses
+   * classified "self", or a provisional line whose frames so far are "self" (`pendingRole`), makes the user stuck.
+   */
+  readonly roleGate?: boolean;
+  /** Role of the provisional line's frames so far (see stt/role peek). */
+  readonly pendingRole?: SpeakerRole;
   /** A lookup is running. */
   readonly busy: boolean;
   /** A popup is on the glasses now. */
@@ -324,6 +337,15 @@ export function stuckReason(input: StuckInput): { reason: StuckReason; text: str
     // is talking right now and the newest text is not (yet) known to be the user's: wait for its final.
     if (pending || last?.speaker !== OWNER_SPEAKER) return null;
     text = tidy(last.text);
+  } else if (input.roleGate) {
+    // Only MY speech: the provisional line by its frames so far, else the newest final line by its role.
+    if (pending) {
+      if (input.pendingRole !== "self") return null;
+      text = pending;
+    } else {
+      if (last?.role !== "self") return null;
+      text = tidy(last.text);
+    }
   } else if (pending || last) {
     if (input.speaker && last?.speaker !== input.speaker) return null;
     text = pending || tidy(last?.text ?? "");

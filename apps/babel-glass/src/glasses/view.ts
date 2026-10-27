@@ -7,6 +7,7 @@ import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { armedFooter, footer as gestureFooter, menuArmedFooter, ROW_WIDTH } from "./footer";
 import { SIDE_MENU, type MenuArmed } from "../input/menu-confirm";
+import { lineWho, whoLabel } from "../companion/roles";
 
 /**
  * What the glasses show.
@@ -80,6 +81,10 @@ export interface ViewOptions {
   readonly locale: Locale;
   /** Prefix lines with the speaker label ("A: …") when the server sends one. */
   readonly speakers?: boolean;
+  /** 1.1.1 (Gespräch, switch "Sprecher erkennen (Brille)"): mark lines "Ich:" / "Ggü:" by voice profile or glasses role. */
+  readonly roles?: boolean;
+  /** 1.1.1: a voice profile is in force (it wins over the glasses' role). */
+  readonly profile?: boolean;
   /** Clock for the header; omitted = no time shown. */
   readonly now?: number;
   /** A short explanation (or, kind "word", the Wortfinder result) shown on top of the captions. */
@@ -275,9 +280,10 @@ function composeView(buffer: CaptionBuffer, options: ViewOptions): CaptionView {
     const translated = options.translating && line.translated !== undefined
       ? line.translated
       : original;
+    const who = line === pending ? null : lineWho(line, { speakers: options.speakers === true, roles: options.roles === true, profile: options.profile === true });
     const prefix = line === pending
       ? PENDING_MARK
-      : options.speakers && line.speaker ? speakerPrefix(line.speaker, options.locale) : "";
+      : who ? whoLabel(who, (key) => t(options.locale, key)) + ": " : "";
     const primary = prefix + translated;
     body.push(...wrap(primary, preset.width));
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ImageRawDataUpdateResult } from "@evenrealities/even_hub_sdk";
-import { buildView, createModel, decide, ROOT_ITEMS, BIG_ROOT_ITEMS, startRows, type HubModel } from "../src/hub/model";
+import { buildView, createModel, decide, mergeReport, ROOT_ITEMS, startRows, type HubModel } from "../src/hub/model";
 import { demoReport } from "../src/api/demo";
 import type { HubReport } from "../src/api/types";
 import { cockpitCaption, cockpitCells, cockpitHint, cockpitModel, durationText, hubState, modelKey } from "../src/cockpit/model";
@@ -91,27 +91,39 @@ describe("cockpit cells", () => {
 describe("start page", () => {
   const report = demoReport();
 
-  it("three big entries (Agenten, Meldungen, Übersicht) and the other pages indented below", () => {
-    expect(BIG_ROOT_ITEMS).toBe(3);
-    expect(ROOT_ITEMS.slice(0, 3)).toEqual(["agent", "inbox", "cockpit"]);
+  it("six areas with one live row each, warnings above them (0.11 command centre)", () => {
+    expect(ROOT_ITEMS).toEqual(["agent", "home", "car", "printer", "server", "brief"]);
     const rows = startRows(report, "de");
-    expect(rows).toHaveLength(ROOT_ITEMS.length);
-    expect(rows.slice(0, 3).every((row) => !row.startsWith(" "))).toBe(true);
-    expect(rows.slice(3).every((row) => row.startsWith("  "))).toBe(true);
-    expect(rows[0]).toMatch(/^Agenten · \d+\/\d+ online/);
-    expect(rows[1]).toMatch(/^Meldungen · \d+$/);
-    expect(rows[2]).toBe("Übersicht");
-    expect(startRows(report, "en")[1]).toMatch(/^Alerts · \d+$/);
+    expect(rows).toHaveLength(7);
+    expect(rows[0]).toBe("! 1 neue Meldung");
+    expect(rows.slice(1).map((row) => row.split(" · ")[0])).toEqual(["Agenten", "Zuhause", "Auto", "Drucker", "Server", "Tag"]);
+    expect(rows[1]).toMatch(/^Agenten · \d+\/\d+ online/);
+    expect(startRows(report, "en").slice(1).map((row) => row.split(" · ")[0])).toEqual(["Agents", "Home", "Car", "Printer", "Servers", "Day"]);
+    for (const row of [...rows, ...startRows(report, "en")]) expect(row).not.toMatch(/Halten|Hold/);
   });
 
-  it("renders a dot-less marker cursor, at most five visible rows, header `Modus · state`, one footer line", () => {
+  it("renders a dot-less marker cursor, header `Modus · state`, one footer line", () => {
     const view = buildView(createModel(report), "de", NOW);
     expect(view.header).toBe("Quiet Hub · Demo");
-    expect(view.body.length).toBeLessThanOrEqual(5);
+    expect(view.body.length).toBeLessThanOrEqual(7);
     expect(view.body[0]!.startsWith("> ")).toBe(true);
     expect(view.footer).toBe("Tippen = öffnen · Wischen = wählen · 2× = Ende");
-    const last = buildView({ ...createModel(report), rootSelected: ROOT_ITEMS.length - 1 }, "de", NOW);
-    expect(last.body.at(-1)).toMatch(/^>\s+Tagesstart$/);
+    const last = buildView({ ...createModel(report), rootKey: "area:brief" }, "de", NOW);
+    expect(last.body.at(-1)).toMatch(/^> Tag · /);
+  });
+
+  it("the cursor stays on its area when a warning row comes or goes", () => {
+    const onHome: HubModel = { ...createModel(report), rootKey: "area:home" };
+    const quiet = mergeReport(onHome, { ...report, inbox: { selected: 0, events: [] } });
+    expect(buildView(quiet, "de", NOW).body.find((row) => row.startsWith("> "))).toMatch(/^> Zuhause/);
+    expect(buildView(onHome, "de", NOW).body.find((row) => row.startsWith("> "))).toMatch(/^> Zuhause/);
+    // 2x from an area page lands on that area's row.
+    const car = decide({ ...createModel(report), rootKey: "area:car" }, "click", NOW, "de");
+    expect(car.model.screen).toBe("car");
+    expect(car.effect).toEqual({ kind: "brief", refresh: false });
+    const back = decide(car.model, "doubleClick", NOW, "de").model;
+    expect(back.screen).toBe("root");
+    expect(buildView(back, "de", NOW).body.find((row) => row.startsWith("> "))).toMatch(/^> Auto/);
   });
 
   it("the first-start demo adds its hint line", () => {
@@ -119,9 +131,9 @@ describe("start page", () => {
     expect(view.body.at(-1)).toContain("Demo · Verbindung am Handy einrichten");
   });
 
-  it("Übersicht opens the cockpit; a tap there opens the agents, a swipe changes nothing, 2x goes back to the start page", () => {
-    const m = { ...createModel(report), rootSelected: ROOT_ITEMS.indexOf("cockpit") };
-    const opened = decide(m, "click", NOW, "de").model;
+  it("the cockpit (ring picker): a tap there opens the agents, a swipe changes nothing, 2x goes back to the start page", () => {
+    const m = createModel(report);
+    const opened: HubModel = { ...m, screen: "cockpit" };
     expect(opened.screen).toBe("cockpit");
     expect(decide(opened, "scrollDown", NOW, "de").model.screen).toBe("cockpit");
     expect(decide(opened, "doubleClick", NOW, "de").model.screen).toBe("root");

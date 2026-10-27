@@ -63,3 +63,49 @@ describe("place search of the private build", () => {
     expect(geocoderUrlOf(EMPTY_DATA, "")).toBe("https://photon.komoot.io");
   });
 });
+
+describe("own map server from the phone page (22.10.: public Overpass 406 / no answer)", () => {
+  it("normalises what people type, refuses anything that is no http(s) address", async () => {
+    const { normalizeOverpassUrl } = await import("../src/overpass/own");
+    expect(normalizeOverpassUrl("https://maps.example/")).toBe("https://maps.example/api/interpreter");
+    expect(normalizeOverpassUrl(" https://maps.example/api/interpreter ")).toBe("https://maps.example/api/interpreter");
+    expect(normalizeOverpassUrl("ftp://maps.example")).toBe("");
+    expect(normalizeOverpassUrl("https://maps.example/?x=1")).toBe("");
+    expect(normalizeOverpassUrl("")).toBe("");
+  });
+
+  it("asks the phone's server first everywhere, then the build's own one in its countries, then the public ones", async () => {
+    const { overpassUrlsFor } = await import("../src/overpass/own");
+    const USER = "https://mine.example/api/interpreter";
+    const salzburg = [{ lat: 47.8, lon: 13.04 }];
+    const paris = [{ lat: 48.86, lon: 2.35 }];
+    expect(overpassUrlsFor(salzburg, PUBLIC, OWN, USER)).toEqual([USER, OWN, ...PUBLIC]);
+    expect(overpassUrlsFor(paris, PUBLIC, OWN, USER)).toEqual([USER, ...PUBLIC]);
+    expect(overpassUrlsFor(salzburg, PUBLIC, OWN, OWN)).toEqual([OWN, ...PUBLIC]);
+    expect(overpassUrlsFor(paris, PUBLIC, "", "")).toEqual(PUBLIC);
+  });
+
+  it("an unreachable phone server falls back to the public ones instead of giving up", async () => {
+    const { setUserOverpassUrl } = await import("../src/overpass/own");
+    setUserOverpassUrl("https://mine.example");
+    try {
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.startsWith("https://mine")) throw new TypeError("Failed to fetch");
+        return new Response(JSON.stringify({ elements: [] }), { status: 200 });
+      });
+      const outcome = await createStreetSource({ fetchImpl: fetchImpl as never, ownUrl: "" }).load({ south: 47.79, west: 13.03, north: 47.81, east: 13.05 }, ["major"]);
+      expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toBe("https://mine.example/api/interpreter");
+      expect(fetchImpl.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(outcome.error).toBeNull();
+    } finally {
+      setUserOverpassUrl("");
+    }
+  });
+
+  it("keeps the address in the saved settings", async () => {
+    const { parseData, EMPTY_DATA } = await import("../src/storage/persist");
+    expect(parseData(JSON.stringify({ ...EMPTY_DATA, overpassUrl: "https://mine.example" })).overpassUrl).toBe("https://mine.example/api/interpreter");
+    expect(parseData(JSON.stringify({ ...EMPTY_DATA, overpassUrl: "nonsense" })).overpassUrl).toBe("");
+    expect(parseData("{}").overpassUrl).toBe("");
+  });
+});

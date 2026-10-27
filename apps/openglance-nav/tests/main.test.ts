@@ -1,3 +1,4 @@
+import { PEAKS_VIEW } from "../src/glasses/picker";
 import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
@@ -551,7 +552,8 @@ describe("openglance lifecycle", () => {
     expect(JSON.parse(fake.state.saved).recent[0].label).toBe("Fast One");
   });
 
-  it("shows peaks nearby on a compass band, lists them by distance and navigates to one; the area is asked for once", async () => {
+  // The peaks view is switched off (PEAKS_VIEW, 15.10.); this test comes back with it.
+  it.skipIf(!PEAKS_VIEW)("shows peaks nearby on a compass band, lists them by distance and navigates to one; the area is asked for once", async () => {
     const fake = fakeBridge({ peaks: true, peakRadiusKm: 10 });
     await boot(fake);
     fake.gesture(SWIPE_DOWN);

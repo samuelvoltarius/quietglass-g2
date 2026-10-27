@@ -36,7 +36,7 @@ export function ageText(locale: Locale, seconds: number | null): string {
   return t(locale, "g.age.h", { h: Math.floor(minutes / 60), m: String(minutes % 60).padStart(2, "0") });
 }
 
-const KNOWN = new Set(["tyre_leak", "tyre_low", "door_open", "v12_low", "unlocked", "soc_low", "charge_done"]);
+const KNOWN = new Set(["tyre_leak", "tyre_low", "door_open", "trunk_open", "hood_open", "v12_low", "unlocked", "soc_low", "charge_done"]);
 
 function vars(locale: Locale, w: CarWarning, long: boolean): Record<string, string | number> {
   return {

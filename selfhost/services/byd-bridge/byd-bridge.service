@@ -1,4 +1,4 @@
-# BYD Glass bridge: BYD telemetry (Overdrive MQTT) + a few checked commands for the G2.
+# BYD Glass bridge: BYD telemetry (Panoptes MQTT, surfmate/vehicle/telemetry) for the G2; commands only with BYD_CONTROL=1 (guards always on).
 # systemd --user unit (runs as the same user as the broker / pybyd-mqtt bridge):
 #   mkdir -p ~/byd-bridge
 #   cp byd_bridge.py ~/byd-bridge/
@@ -7,7 +7,7 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now byd-bridge
 #   tailscale serve --bg --https=8471 http://127.0.0.1:8472   # never "serve reset"
 [Unit]
-Description=BYD Glass bridge (BYD telemetry + checked commands for the Even G2)
+Description=BYD Glass bridge (BYD telemetry for the Even G2, read only unless BYD_CONTROL=1)
 After=network-online.target
 
 [Service]

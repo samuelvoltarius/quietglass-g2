@@ -151,7 +151,7 @@ describe("QIS footers", () => {
 
   it("the header is APPNAME · state on every page", () => {
     for (const [, make] of screens) {
-      expect(buildView(make(), "de", T0).header).toMatch(/^(QUIET HUB|Quiet Hub|Agent|Zuhause|Drucker|Meldungen|Tagesstart|Übersicht)( · |$)/);
+      expect(buildView(make(), "de", T0).header).toMatch(/^(QUIET HUB|Quiet Hub|Agenten|Zuhause|Drucker|Meldungen|Tag|Auto|Server)( · |$)/);
       expect(buildView(make(), "en", T0).header.length).toBeLessThanOrEqual(ROW_WIDTH);
     }
   });

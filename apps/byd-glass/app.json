@@ -2,14 +2,14 @@
   "package_id": "glass.quiet.bydglass",
   "edition": "202601",
   "name": "BYD Glass",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Reads your car's state from your own BYD Glass bridge (the address you enter in the phone app) and sends the climate/lock commands you confirm on the glasses to it. No other server is contacted.",
+      "desc": "Reads your car's state from your own BYD Glass bridge (the address you enter in the phone app). If you enabled control on your bridge, the app asks it to lock, unlock or preheat (two taps each); the bridge decides. No other server is contacted.",
       "whitelist": [
         "http://*",
         "https://*"

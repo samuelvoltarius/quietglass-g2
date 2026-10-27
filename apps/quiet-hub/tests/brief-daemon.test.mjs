@@ -171,6 +171,14 @@ describe("glucose night", () => {
     expect(sugar.current).toMatchObject({ mgdl: 110, direction: "Flat", ageMin: 0 });
   });
 
+  it("carries the last 3 h as a curve, oldest first (Sugar Glass draws it)", () => {
+    const sugar = shapeSugar(series((t) => Math.round((t - vienna(21, 30, 13)) / 60_000) % 200 + 60), NOW, ZONE);
+    // Every 5 min for 3 h = 37 readings (both ends), oldest first.
+    expect(sugar.curve).toHaveLength(37);
+    expect(sugar.curve.at(-1)).toBe(sugar.current.mgdl);
+    expect(shapeSugar([], NOW, ZONE).curve).toEqual([]);
+  });
+
   it("does not count a sensor gap as low", () => {
     const readings = [{ at: vienna(1), mgdl: 60 }, { at: vienna(4), mgdl: 100 }];
     expect(nightStats(readings, vienna(22, 0, 13), vienna(7)).belowMin).toBe(15);

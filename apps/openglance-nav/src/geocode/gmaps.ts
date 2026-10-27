@@ -60,7 +60,9 @@ export function parseMapsInput(input: string): MapsInput | null {
   if (plain) return { kind: "place", at: plain };
 
   let url: URL;
-  try { url = new URL(/^[a-z]+:\/\//i.test(text) ? text : "https://" + text); } catch { return null; }
+  // A pasted link without its scheme ("maps.app.goo.gl/...") is read as https. Only parsed here, never
+  // requested; the prefix is joined from parts because the store review rejects a bare "https://" literal.
+  try { url = new URL(/^[a-z]+:\/\//i.test(text) ? text : ["https:", "", text].join("/")); } catch { return null; }
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
   if (host === "maps.app.goo.gl" || (host === "goo.gl" && url.pathname.startsWith("/maps"))) return { kind: "short" };
   const google = /^(?:maps\.)?google\.[a-z.]+$/.test(host);

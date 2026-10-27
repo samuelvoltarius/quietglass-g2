@@ -104,6 +104,30 @@ export function cockpitHint(locale: Locale, page: Page): string {
   return footer(locale, { tap: t(locale, "g.f.reload"), swipe: t(locale, page === "glucose" ? "g.f.toPump" : "g.f.toValue") }, "back", `${index}/${PAGES.length}`);
 }
 
+/**
+ * Numbers on the curve (Alfred 22.10.2026: "only a line that says little"): the target band's values, the highest
+ * and lowest reading of the window, and hour marks under the curve once it covers most of the three hours (the
+ * points are spread by index, so marks on a short or gappy curve would lie).
+ */
+export function curveLabels(state: ViewState): NonNullable<Extract<CockpitGraphic, { kind: "spark" }>["labels"]> {
+  const { unit, locale } = state;
+  const points = curvePoints(state);
+  const readings = state.data?.readings ?? [];
+  const newest = readings[0];
+  const inWindow = newest ? readings.filter((reading) => newest.at - reading.at <= CURVE_HOURS * 3_600_000) : [];
+  const span = inWindow.length > 1 ? newest!.at - inWindow[inWindow.length - 1]!.at : 0;
+  const steady = inWindow.length >= 24; // about one reading per 5 min over 2 h and more
+  const ticks = span >= 2.5 * 3_600_000 && steady
+    ? ["-3h", "-2h", "-1h", t(locale, "g.cp.now")]
+    : undefined;
+  return {
+    bandLow: glucose(state.limits.targetLow, unit, locale),
+    bandHigh: glucose(state.limits.targetHigh, unit, locale),
+    ...(points.length > 2 ? { max: glucose(Math.max(...points), unit, locale), min: glucose(Math.min(...points), unit, locale) } : {}),
+    ...(ticks ? { ticks } : {}),
+  };
+}
+
 export function glucoseModel(state: ViewState): CockpitModel {
   const { locale, unit } = state;
   const list = currentAlerts(state);
@@ -119,6 +143,7 @@ export function glucoseModel(state: ViewState): CockpitModel {
     top: unitLabel(unit),
     bottom: t(locale, "g.cp.hours"),
     tone,
+    labels: curveLabels(state),
   };
   return {
     title: t(locale, "g.app").toUpperCase(),

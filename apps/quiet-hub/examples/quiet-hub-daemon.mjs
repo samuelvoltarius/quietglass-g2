@@ -34,6 +34,7 @@ import { pathToFileURL } from "node:url";
 import { createHomeAssistant, createMoonraker, parseDevices } from "./quiet-hub-adapters.mjs";
 import { createController, nodeSpawn } from "./quiet-hub-agents.mjs";
 import { createHomeView, parseHomeConfig } from "./quiet-hub-home.mjs";
+import { createCar, parseCarConfig } from "./quiet-hub-car.mjs";
 import { createBrief, parseBriefConfig, parsePlace } from "./quiet-hub-brief.mjs";
 
 const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den Tag zusammen"];
@@ -194,6 +195,9 @@ export function createHub(options = {}) {
     : null;
   if (ha && parseDevices(env.HA_DEVICES).length === 0 && !options.haDevices) log("HA_URL set but HA_DEVICES is empty: no devices are exposed on the legacy list");
   // "Zuhause": favourites, areas, groups, sensors. Same URL/token, which stay in this process.
+  // Auto (Panoptes phone API): only after `node examples/quiet-hub-car.mjs pair`; key and JWT stay in CAR_IDENTITY.
+  const carConfig = parseCarConfig({ ...env, ...(options.carEnv ?? {}) });
+  const car = options.car ?? (carConfig.enabled ? createCar({ url: carConfig.url, file: carConfig.file, fetchImpl, now, log }) : null);
   const homeConfig = parseHomeConfig({ ...env, ...(options.homeEnv ?? {}) });
   const homeView = haConfigured && String(options.homeEnv?.HA_HOME ?? env.HA_HOME ?? "on") !== "off"
     ? createHomeView({ url: options.haUrl ?? env.HA_URL, token: options.haToken ?? env.HA_TOKEN, config: homeConfig, fetchImpl, lang: cfg.lang, now, log })
@@ -256,6 +260,12 @@ export function createHub(options = {}) {
   function startBackground() {
     if (ha) { void ha.refresh(); timers.push(setInterval(() => void ha.refresh(), 10_000)); }
     // Polled server-side every few seconds; the report revision (long-poll) carries changes to the glasses.
+    if (car) {
+      void car.renew();
+      timers.push(setInterval(() => void car.renew(), 60 * 60_000));
+      // The car's own state from Panoptes (lock, battery, range): every 30 s, read-only.
+      if (car.refresh) { void car.refresh().then(changed); timers.push(setInterval(() => void car.refresh().then(changed), options.carPollMs ?? 30_000)); }
+    }
     if (homeView) { void homeView.refresh().then(changed); timers.push(setInterval(() => void homeView.refresh().then(changed), homeConfig.pollMs)); }
     if (moon) { void moon.refresh().then(watchPrinter); timers.push(setInterval(() => void moon.refresh().then(watchPrinter), options.moonPollMs ?? 5_000)); }
     timers.push(setInterval(sweep, 10_000));
@@ -704,6 +714,9 @@ export function createHub(options = {}) {
       approvals: [...approvals.values()].map(({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: texts, options: choices }) => ({ id, agentId, title, detail, tool, createdAt, expiresAt, suggestions: texts ?? [], options: choices ?? [] })),
       home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
       ...(homeView ? { homeView: homeView.view() } : {}),
+      // Only whether the glasses may offer car commands; never the address, the key or the JWT.
+      ...(car && car.configured() ? { carControl: true } : {}),
+      ...(car && car.state && car.state() ? { car: car.state() } : {}),
       printer: moon ? moon.printer() : printerDemo,
       inbox: { events: state.events, selected: 0 },
       // Only what is already cached (cheap); the page asks GET /brief itself.
@@ -1159,6 +1172,16 @@ export function createHub(options = {}) {
       const { token } = await readJson(req, 4096);
       const outcome = await homeView.confirm(token);
       sendJson(res, outcome.status, outcome.ok ? { ok: true } : { error: outcome.error });
+      return;
+    }
+
+    if (post && path === "/car/action") {
+      if (!car) { sendJson(res, 503, { ok: false, grund: "nicht_eingerichtet" }); return; }
+      const { aktion, tempC, minuten } = await readJson(req, 1024);
+      log("car:", String(aktion).slice(0, 20));
+      const outcome = await car.action(aktion, { tempC, minuten });
+      log("car:", String(aktion).slice(0, 20), "->", outcome.result.ok ? `ok ${outcome.result.weg} bestaetigt=${outcome.result.bestaetigt}` : outcome.result.grund);
+      sendJson(res, outcome.status, outcome.result, req);
       return;
     }
 

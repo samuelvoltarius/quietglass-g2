@@ -7,6 +7,17 @@ import { describeActivity } from "../hub/activity";
 import { footer } from "../glasses/footer";
 import { moodFor } from "../glasses/icons";
 import type { Mood } from "../glasses/mascot";
+import type { Tone as WidgetTone } from "./widgets";
+
+/** The left half of an area page instead of the mascot (car ring, server segments, printer ring, pictogram). */
+export type PageGraphic =
+  | { readonly kind: "ring"; readonly percent: number | null; readonly tone: WidgetTone; readonly center: string; readonly sub: string; readonly pulse?: boolean; readonly spin?: boolean }
+  | { readonly kind: "segments"; readonly segments: readonly WidgetTone[]; readonly center: string; readonly sub: string }
+  | { readonly kind: "icon"; readonly rows: readonly string[]; readonly dim?: boolean }
+  /** TV Glance: the TV with its screen state and the volume bar. */
+  | { readonly kind: "tv"; readonly screen: import("./widgets").TvScreen; readonly volume: number | null; readonly muted: boolean; readonly volumeLabel: string; readonly volumeText: string }
+  /** Sugar Glass curve: points oldest first, the target band dashed, an arrow for the trend. */
+  | { readonly kind: "spark"; readonly points: readonly number[]; readonly band: { readonly low: number; readonly high: number }; readonly arrow?: number; readonly top: string; readonly ticks: readonly string[] };
 
 /**
  * What the cockpit shows, in words and numbers, decided without drawing (QUS v1): the headline (the state),
@@ -37,6 +48,8 @@ export interface CockpitModel {
   readonly hint: string;
   readonly tone: Tone;
   readonly state: HubState;
+  /** Area pages: a picture instead of the mascot. */
+  readonly graphic?: PageGraphic;
 }
 
 const DASH = "–";

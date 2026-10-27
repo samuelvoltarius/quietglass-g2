@@ -60,6 +60,10 @@ import {
   createVoiceEnrollment, ENROLL_MS, nextPersons, othersFor, OWNER_SPEAKER, voiceCommand, type VoiceEnrollment, type VoiceReply,
 } from "./stt/voice";
 import { voiceSheetCancels, voiceSheetRows, type VoiceSheet } from "./companion/myvoice";
+import { createRoleTracker, normalizeRole, segmentLog } from "./stt/role";
+import { profileActive, profileVerdict, rolesOn, wordGate, type WordGate } from "./companion/roles";
+import { diag, startDiag } from "./diag/diag";
+import { VERSION } from "./version";
 
 /** The microphone goes off when the speech server stays away this long. */
 export const NO_SERVER_MS = 60_000;
@@ -76,6 +80,10 @@ export const MENU = { voice: 6, voiceDelete: 7, persons: 8 } as const;
 
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
+  // Private step log (VITE_TRAFFIC_URL, tailnet only): per segment the speaker-role tally, never audio or text.
+  startDiag((import.meta as { env?: Record<string, string | undefined> }).env?.["VITE_TRAFFIC_URL"] ?? "", VERSION);
+  /** 1.1.1: the glasses' speaker role per audio frame, tallied per caption segment (see stt/role). */
+  const roleTracker = createRoleTracker();
   /** audioPcm arrives as Uint8Array, number[] or base64 depending on the host
    * bridge; normalize it or every chunk is silently dropped (empty recording). */
   const toBytes = (pcm: unknown): Uint8Array | null => {
@@ -321,6 +329,7 @@ async function boot(): Promise<void> {
       mySpeaker: live.mySpeaker,
       ownLanguage: translationEnabled(live) ? live.targetLanguage : null,
       voiceEnrolled: live.voiceEnrolled,
+      roles: rolesOn(live),
       foreign: translationEnabled(live) ? foreignLanguage(live.sourceLanguage, live.targetLanguage, log) : null,
     };
   };
@@ -335,6 +344,8 @@ async function boot(): Promise<void> {
     userSpeaking: () => {
       const pending = buffer.pending;
       if (!pending) return false;
+      // 1.1.1: the glasses hear the user's own voice in the provisional line's frames.
+      if (gateNow().role && roleTracker.peek().role === "self") return true;
       const own = ownCtx().ownLanguage;
       return !pending.language || !own || sameLanguage(pending.language, own);
     },
@@ -467,6 +478,8 @@ async function boot(): Promise<void> {
   let popupWasOpen = false;
   /** The user's speaker letter for the word finder; null = speakers off, all speech is his. */
   const wordSpeaker = (): string | null => (data.speakers ? (data.voiceEnrolled ? OWNER_SPEAKER : resolveSpeaker(log, data.mySpeaker)) : null);
+  /** 1.1.1: the word finder's gate: voice profile, else the glasses' role (switch on and the glasses classify), else the old guess. */
+  const gateNow = (): WordGate => wordGate({ profile: profileActive(data), rolesOn: rolesOn(data), seenKnown: roleTracker.seenKnown });
   /** 1.0.0: automatic in "Englisch sprechen" whatever the phone switch says, else the switch decides. */
   const wordAutoOn = (): boolean => data.wordAuto || talkMode() === "learn";
   /** `auto`: started by `stuckReason` — no "searching" popup, and a miss stays silent. */
@@ -479,7 +492,12 @@ async function boot(): Promise<void> {
       showWord(usesMockStt(data) ? [x("g.wordDemo")] : [x("g.wordNoLlm")], usesMockStt(data) ? WORD_POPUP_MS : WORD_NOTE_MS);
       return;
     }
-    const context = wordContext(log, { now: Date.now(), speaker: wordSpeaker(), pending: buffer.pending?.text ?? null });
+    const gate = gateNow();
+    const context = wordContext(log, {
+      now: Date.now(), speaker: gate.role ? null : wordSpeaker(), selfRole: gate.role,
+      // A provisional line of somebody else is not the user's sentence with the gap.
+      pending: gate.role && roleTracker.peek().role !== "self" ? null : buffer.pending?.text ?? null,
+    });
     if (!context.trim()) { if (!auto) showWord([x("g.wordNone")], WORD_NOTE_MS); return; }
     wordBusy = true;
     const run = ++wordRun;
@@ -520,6 +538,7 @@ async function boot(): Promise<void> {
     const stuck = stuckReason({
       now, log, pending: buffer.pending?.text ?? null, lastTextAt,
       speaker: wordSpeaker(), voiceProfile: data.voiceEnrolled && data.speakers,
+      roleGate: gateNow().role, pendingRole: roleTracker.peek().role,
       language: conversationLanguage(log, md().sourceLanguage),
       lastAutoAt, lastText: lastWordText, busy: wordBusy, popupOpen: open, popupClosedAt,
     });
@@ -629,6 +648,8 @@ async function boot(): Promise<void> {
     customers: customerList.state === "ready" ? customerList.entries.map((entry) => ({ id: entry.id, name: entry.name })) : [],
     customerId: sessionCustomer?.id ?? null,
     voice: voiceUiState(),
+    roles: rolesOn(data) && talkMode() === "client",
+    profile: profileActive(data),
   });
 
   let phoneTimer: ReturnType<typeof setTimeout> | undefined;
@@ -726,6 +747,9 @@ async function boot(): Promise<void> {
       translateError,
       locale,
       speakers: data.speakers,
+      // 1.1.1: "Ich:" / "Ggü:" in Gespräch while "Sprecher erkennen (Brille)" is on.
+      roles: rolesOn(data) && talkMode() === "client",
+      profile: profileActive(data),
       now: Date.now(),
       popup: popupNow(),
       help: help === null ? null : { rows: sheetRowsNow(), page: help, ...sheetTitle() },
@@ -895,7 +919,16 @@ async function boot(): Promise<void> {
     // 0.9.0: a repeated partial is no new text (the automatic word finder waits for silence).
     const seen = transcript.text.trim();
     if (seen && seen !== lastSeenText) { lastTextAt = now; lastSeenText = seen; }
-    buffer = applyTranscript(buffer, transcript, now);
+    // 1.1.1: a final line closes the segment of audio frames since the previous one; their roles decide its role.
+    const segment = transcript.final ? roleTracker.take() : null;
+    const role = segment && segment.frames > 0 ? segment.role : undefined;
+    if (segment && transcript.text.trim()) {
+      diag("seg", segmentLog(segment, {
+        profile: profileVerdict(data.speakers ? transcript.speaker : undefined, profileActive(data)),
+        used: rolesOn(data), mode: talkMode(),
+      }));
+    }
+    buffer = applyTranscript(buffer, transcript, now, {}, role);
     // New speech pulls the view back to the live edge; reading history while
     // someone is talking is not what the user meant to do.
     if (transcript.final) {
@@ -906,12 +939,15 @@ async function boot(): Promise<void> {
           text, at: now,
           ...(transcript.language ? { language: transcript.language } : {}),
           ...(data.speakers && transcript.speaker ? { speaker: transcript.speaker } : {}),
+          ...(role ? { role } : {}),
         });
         if (data.insights) watcher.onFinal(log);
         replies.onFinal(log);
         keepConversation(true);
         const entry = log[log.length - 1];
-        if (talkMode() === "learn" && entry?.speaker === OWNER_SPEAKER) {
+        // 1.1.1: without a voice profile the glasses' "self" also marks the user's own English (switch on).
+        const mineByRole = !profileActive(data) && rolesOn(data) && entry?.role === "self";
+        if (talkMode() === "learn" && (entry?.speaker === OWNER_SPEAKER || mineByRole)) {
           // "Englisch sprechen": the user's own English is not translated, only the other person.
         } else if (data.translateOwn && talkMode() !== "learn" && translationEnabled(md()) && entry && isOwnLine(entry, ownCtx())) {
           // The user's own line goes the other way: into the conversation language.
@@ -976,6 +1012,7 @@ async function boot(): Promise<void> {
       return;
     }
     listening = true;
+    roleTracker.reset();
     listeningSince = Date.now();
     serverMissingSince = null;
     cueWatcher.start(listeningSince);
@@ -1261,13 +1298,22 @@ async function boot(): Promise<void> {
     if (isFinalExit(step)) { shutDown(); return; }
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) { void onMenu(menuId); return; }
-    const audio = (event as { audioEvent?: { audioPcm?: unknown } }).audioEvent;
+    const audio = (event as { audioEvent?: { audioPcm?: unknown; speakerRole?: unknown; direction?: unknown; source?: unknown } }).audioEvent;
     const pcm = audio?.audioPcm;
     const bytes = listening || enrollMic ? toBytes(pcm) : null;
     if (bytes && bytes.length > 0) {
       // 0.8.0: while "Meine Stimme" records, the audio goes only to the enrollment.
       if (enrollMic) enrollment?.send(bytes);
-      else stt?.send(bytes);
+      else {
+        stt?.send(bytes);
+        // 1.1.1: the frame's role (the Even app's guess, not a firmware fact) and raw direction tag.
+        roleTracker.add({
+          role: normalizeRole(audio?.speakerRole),
+          direction: typeof audio?.direction === "number" ? audio.direction : null,
+          ...(typeof audio?.source === "string" ? { source: audio.source } : {}),
+          pcm: bytes,
+        });
+      }
       return;
     }
 

@@ -36,15 +36,18 @@ import { messages } from "../messages";
 import type { AgentEvent, AgentInfo, Approval, ApprovalOption, HomeSnapshot, HubReport, InboxSnapshot, PrinterSnapshot, SessionInfo } from "../api/types";
 import { normalizeReport } from "../api/normalize";
 import {
-  applyHomeAction, areaEntries, canDetail, clampZuhause, detailChoices, entityLabel, moveDetail, homeViewOf, initialZuhause, listEntries, listRows,
+  applyHomeAction, areaEntries, canDetail, clampZuhause, detailChoices, entityLabel, keepsChoice, moveDetail, homeViewOf, initialZuhause, listEntries, listRows, openDetail,
   selectedEntity, sideRows, stateText, tapAction, type ZuhauseState, type ZuhauseView,
 } from "./zuhause";
 import type { Brief, HomeAction, HomeEntity } from "../api/types";
-import { briefBlocks, briefFooter, briefHeader, briefPages, type BriefLoad } from "./brief";
+import { briefBlocks, briefFooter, briefHeader, briefPages, briefPictureCount, type BriefLoad } from "./brief";
 import { armedFooter, footer, type FooterEnd, type FooterParts } from "../glasses/footer";
+import { AREAS, carBrief, cursorIndex, startEntries, type AreaScreen } from "./areas";
+import { CAR_COMMANDS, carRows, serverRows, type CarCommand } from "./status-pages";
 
-export type Screen = "root" | "agent" | "home" | "printer" | "inbox" | "brief" | "cockpit";
-export const SCREENS: readonly Screen[] = ["root", "agent", "home", "printer", "inbox", "brief", "cockpit"];
+export type Screen = "root" | "agent" | "home" | "printer" | "inbox" | "brief" | "cockpit" | "car" | "server";
+/** New screens go last: saved UI states and the picker order stay valid. */
+export const SCREENS: readonly Screen[] = ["root", "agent", "home", "printer", "inbox", "brief", "cockpit", "car", "server"];
 /**
  * The glasses' side menu (menuObject, QIS v1.2). Off: its clicks never reach the app and, while a page carries it,
  * a hold opens it instead of reaching the app (step log from the real glasses, 15.10.2026). Off means: the pages
@@ -55,10 +58,12 @@ export const SIDE_MENU = false;
 
 /** A row of the overview menu: a page, or the help overlay (last row while there is no side menu). */
 export type RootItem = Exclude<Screen, "root"> | "help";
-/** Rows of the overview menu, in row order (new rows go last: older saved selections stay valid). */
-export const ROOT_ITEMS: readonly RootItem[] = ["agent", "inbox", "cockpit", "home", "printer", "brief"];
-/** The first rows of the start page are the three big entries; the rest hang under them, indented (QUS v1). */
-export const BIG_ROOT_ITEMS = 3;
+/**
+ * The areas of the start page (0.11, command centre): Agenten, Zuhause, Auto, Drucker, Server, Tag, one live
+ * row each, warnings above them (src/hub/areas.ts). Meldungen and the cockpit are no rows of their own any more:
+ * new alerts come up as a warning row, the cockpit stays in the ring's page picker.
+ */
+export const ROOT_ITEMS: readonly RootItem[] = AREAS;
 
 /** How long a confirming double tap stays armed. */
 export const CONFIRM_MS = 4000;
@@ -150,6 +155,10 @@ export interface HubModel {
   readonly briefLoad?: BriefLoad;
   /** First start without a server: demo data and the hint line "Demo · Verbindung am Handy einrichten" (QIS v1.2 #7). */
   readonly setupHint?: boolean;
+  /** Start page cursor as a stable key ("area:home", "warn:approval"); rootSelected is its row at the last move. */
+  readonly rootKey?: string | null;
+  /** Selected command on the car page (when the daemon is paired with Panoptes). */
+  readonly carIndex?: number;
 }
 
 /** The voice note owns the screen: not parked, or parked and its conversation is open again. */
@@ -209,7 +218,9 @@ export type Effect =
   /** The glasses menu switched "quiet while the agent works": main persists it in the settings. */
   | { readonly kind: "quietSetting"; readonly on: boolean }
   /** Tagesstart: fetch the briefing (refresh = the daemon asks every source again). */
-  | { readonly kind: "brief"; readonly refresh: boolean };
+  | { readonly kind: "brief"; readonly refresh: boolean }
+  /** Auto: one command through the daemon (armed by the first tap, sent by the second). */
+  | { readonly kind: "car"; readonly aktion: CarCommand["aktion"]; readonly tempC?: number; readonly minuten?: number };
 
 export function createModel(report: HubReport): HubModel {
   return {
@@ -267,7 +278,8 @@ function briefFrom(model: HubModel, next: Brief | null | undefined): Partial<Hub
 export function withBrief(model: HubModel, brief: Brief | null, load: BriefLoad, locale: Locale = "de", now = Date.now()): HubModel {
   if (brief !== null) {
     const pages = briefPages(briefBlocks(brief, "ready", locale, now)).length;
-    return { ...model, brief, briefLoad: "ready", briefPage: Math.min(model.briefPage ?? 0, pages - 1) };
+    // The pictures first (day, glucose curve), the text pages after them.
+    return { ...model, brief, briefLoad: "ready", briefPage: Math.min(model.briefPage ?? 0, pages + briefPictureCount(brief) - 1) };
   }
   if (model.brief !== null && model.brief !== undefined && load === "error") {
     return model.screen === "brief" ? say({ ...model, briefLoad: "ready" }, tr(messages, locale, "brief.failed"), now) : model;
@@ -365,6 +377,8 @@ function openScreen(model: HubModel, target: Screen, now: number, locale: Locale
     const has = model.brief !== null && model.brief !== undefined;
     return { model: { ...base, briefPage: 0, briefLoad: has ? "ready" : "loading" }, effect: { kind: "brief", refresh: false } };
   }
+  // Auto and Server live from the briefing: ask for it (the daemon answers from its cache when fresh).
+  if (target === "car" || target === "server") return { model: base, effect: { kind: "brief", refresh: false } };
   const only = report.agents[0];
   // One agent: skip straight to its session page.
   if (target === "agent" && report.agents.length === 1 && only !== undefined) return openSessions({ ...base, agentIndex: 0 }, only);
@@ -502,7 +516,7 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
 
   // Page picker (R1 ring double tap).
   if (gesture === "ringDoubleClick" && model.picker === null) {
-    return { model: { ...model, picker: Math.max(0, SCREENS.indexOf(model.screen)) + report.approvals.length, confirm: null } };
+    return { model: { ...model, picker: Math.max(0, PICKER_SCREENS.indexOf(model.screen)) + report.approvals.length, confirm: null } };
   }
   if (model.picker !== null) {
     const entries = pickerEntries(model, locale);
@@ -548,6 +562,27 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
     const handled = decideBrief(model, gesture, now, locale);
     if (handled !== null) return handled;
   }
+  if (model.screen === "car" && report.carControl === true) {
+    // Paired with Panoptes: swipe picks a command, a tap arms it, the second tap on the same row sends it.
+    // Unlock is the same two taps; the daemon signs it only when the second tap arrives (Panoptes rule).
+    const index = clampIndex(model.carIndex ?? 0, CAR_COMMANDS.length);
+    if (gesture === "scrollUp" || gesture === "scrollDown") return { model: { ...model, confirm: null, carIndex: cycle(CAR_COMMANDS.length, index, gesture === "scrollUp" ? -1 : 1) } };
+    if (gesture === "longPress") return { model: say({ ...model, confirm: null }, tr(messages, locale, "brief.refreshing"), now), effect: { kind: "brief", refresh: true } };
+    if (gesture === "click") {
+      const command = CAR_COMMANDS[index]!;
+      const what = `car:${command.aktion}`;
+      if (model.confirm !== null && model.confirm.until > now && model.confirm.what === what) {
+        const effect: Effect = command.tempC === undefined ? { kind: "car", aktion: command.aktion } : { kind: "car", aktion: command.aktion, tempC: command.tempC, minuten: command.minuten ?? 15 };
+        return { model: say({ ...model, confirm: null }, tr(messages, locale, "car.sending"), now), effect };
+      }
+      return { model: { ...model, message: null, confirm: { what, label: tr(messages, locale, `car.confirm.${command.aktion}`), until: now + CONFIRM_MS } } };
+    }
+  }
+  if (model.screen === "car" || model.screen === "server") {
+    // Read-only status pages (not paired: the car is not steered): tap asks every source again, swipe does nothing.
+    if (gesture === "click" || gesture === "longPress") return { model: say({ ...model, confirm: null }, tr(messages, locale, "brief.refreshing"), now), effect: { kind: "brief", refresh: true } };
+    if (gesture === "scrollUp" || gesture === "scrollDown") return { model: { ...model, confirm: null } };
+  }
 
   if (gesture === "longPress") {
     if (model.screen === "agent") {
@@ -570,7 +605,9 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
   if (gesture === "scrollUp" || gesture === "scrollDown") {
     const step = gesture === "scrollUp" ? -1 : 1;
     if (model.screen === "root") {
-      return { model: { ...model, rootSelected: cycle(ROOT_ITEMS.length, model.rootSelected, step), confirm: null } };
+      const entries = startEntries(report, model.brief ?? report.brief, locale);
+      const next = cycle(entries.length, cursorIndex(entries, model.rootKey, model.rootSelected), step);
+      return { model: { ...model, rootSelected: next, rootKey: entries[next]?.key ?? null, confirm: null } };
     }
     if (model.screen === "agent") {
       if (model.agentView === "list") {
@@ -598,9 +635,10 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
 
   if (gesture === "click") {
     if (model.screen === "root") {
-      const target = ROOT_ITEMS[model.rootSelected] ?? "agent";
-      if (target === "help") return { model: { ...model, help: true, message: null } };
-      return openScreen(model, target, now, locale, false);
+      const entries = startEntries(report, model.brief ?? report.brief, locale);
+      const at = cursorIndex(entries, model.rootKey, model.rootSelected);
+      const entry = entries[at];
+      return openScreen({ ...model, rootSelected: at, rootKey: entry?.key ?? null }, entry?.screen ?? "agent", now, locale, false);
     }
     if (model.screen === "agent") {
       const agent = selectedAgent(model);
@@ -699,7 +737,12 @@ export function decide(model: HubModel, gesture: HubGesture, now: number, locale
     if (model.agentView === "ask" && agent !== undefined) return openSessions({ ...model, message: null }, agent);
     if (model.agentView === "sessions" && report.agents.length > 1) return { model: { ...model, agentView: "list", message: null } };
   }
-  return { model: { ...model, screen: "root", confirm: null, message: null } };
+  return { model: { ...model, screen: "root", confirm: null, message: null, rootKey: areaKey(model.screen, model.rootKey) } };
+}
+
+/** Back on the start page the cursor sits on the area that was just left. */
+function areaKey(screen: Screen, current: string | null | undefined): string | null {
+  return (AREAS as readonly Screen[]).includes(screen) ? `area:${screen as AreaScreen}` : current ?? null;
 }
 
 // ---- Zuhause --------------------------------------------------------------------
@@ -723,7 +766,9 @@ function homeAct(model: HubModel, view: ZuhauseView, entity: HomeEntity, action:
   }
   const next = applyHomeAction(view, entity.id, action, value);
   const after = next.entities[entity.id] ?? entity;
-  const text = action === "brightness" && (value ?? 0) > 0 ? t("zh.dim", { label, n: value ?? 0 })
+  const mediaWord = { volume_up: "zh.louder", volume_down: "zh.quieter", mute: entity.muted === true ? "zh.unmute" : "zh.mute", play_pause: "zh.playPause" }[action as string];
+  const text = mediaWord !== undefined ? t("zh.media", { label, what: t(mediaWord) })
+    : action === "brightness" && (value ?? 0) > 0 ? t("zh.dim", { label, n: value ?? 0 })
     : action === "stop" ? t("zh.stopped", { label })
       : action === "run" ? `${label} »`
         : t("zh.sent", { label, state: stateText(after, locale) });
@@ -774,7 +819,8 @@ function decideHome(model: HubModel, gesture: HubGesture, now: number, locale: L
       const choices = detailChoices(entity, locale);
       // The list can shrink while open ("An" goes once the light reports a level): stay on its last row.
       const choice = choices[Math.min(zh.choice ?? 0, choices.length - 1)];
-      const closed: HubModel = { ...model, zh: { ...zh, choice: null } };
+      // A TV's volume / mute keeps the list open: tap, tap, tap = three steps.
+      const closed: HubModel = choice !== undefined && keepsChoice(choice.action) ? model : { ...model, zh: { ...zh, choice: null } };
       if (choice === undefined || !entity.available) return { model: say(closed, t("zh.unavailable"), now) };
       return homeAct(closed, view, entity, choice.action, now, locale, choice.value);
     }
@@ -794,7 +840,7 @@ function decideHome(model: HubModel, gesture: HubGesture, now: number, locale: L
 
   if (gesture === "doubleClick") {
     if (zh.level === "area") return { model: { ...clearPending(model), message: null, zh: { ...zh, pending: null, level: "list", areaId: null, areaIndex: 0 } } };
-    return { model: { ...clearPending(model), screen: "root", message: null } };
+    return { model: { ...clearPending(model), screen: "root", message: null, rootKey: "area:home" } };
   }
 
   if (gesture === "click") {
@@ -805,6 +851,8 @@ function decideHome(model: HubModel, gesture: HubGesture, now: number, locale: L
     }
     const entity = selectedEntity(zh, view);
     if (entity === undefined) return { model: say(model, t("ack.nothing"), now) };
+    // Hold never reaches the app from the temple: a tap opens the choices of a light, cover or TV.
+    if (canDetail(entity) && view.legacy !== true) return { model: { ...clearPending(model), message: null, zh: openDetail(zh, entity, locale) } };
     const action = tapAction(entity);
     if (action === null || !entity.available) return { model: say(model, t(entity.available ? "zh.noAction" : "zh.unavailable"), now) };
     if (entity.sensitive === true && view.legacy !== true) {
@@ -841,7 +889,8 @@ export function briefPageRows(model: HubModel, locale: Locale, now: number): str
 /** Swipe pages through the blocks, tap (or hold) reloads, double tap goes back (generic). */
 function decideBrief(model: HubModel, gesture: HubGesture, now: number, locale: Locale): { model: HubModel; effect?: Effect } | null {
   if (gesture === "scrollUp" || gesture === "scrollDown") {
-    const pages = briefPageRows(model, locale, now).length;
+    // The pictures (day, glucose curve), then the text pages.
+    const pages = briefPageRows(model, locale, now).length + briefPictureCount(model.brief);
     const page = Math.max(0, Math.min(pages - 1, (model.briefPage ?? 0) + (gesture === "scrollUp" ? -1 : 1)));
     return { model: { ...model, confirm: null, briefPage: page } };
   }
@@ -860,8 +909,8 @@ function backToOverview(model: HubModel): HubModel {
   const unread = unreadEvents(model.report.inbox).length > 0;
   return {
     ...model, screen: "root", origin: null, cardIndex: 0, confirm: null, message: null, chatScroll: 0, picker: null,
-    // A waiting card first (one tap opens it again), else the next unread alert.
-    rootSelected: model.report.approvals.length > 0 ? ROOT_ITEMS.indexOf("agent") : unread ? ROOT_ITEMS.indexOf("inbox") : model.rootSelected,
+    // A waiting card first (one tap opens it again), else the next unread alert, else the agents.
+    rootKey: model.report.approvals.length > 0 ? "warn:approval" : unread ? "warn:inbox" : model.rootKey ?? null,
   };
 }
 
@@ -902,10 +951,16 @@ function stopAgent(model: HubModel, agent: AgentInfo, now: number, locale: Local
 
 interface PickerEntry { readonly screen: Screen; readonly label: string }
 
+/**
+ * Pages of the ring's page picker, in the start page's order. The old agents' cockpit is not one of them
+ * any more: it was a second "Übersicht" next to the start page (Alfred 27.10.).
+ */
+export const PICKER_SCREENS: readonly Screen[] = ["root", ...AREAS, "inbox"];
+
 /** Pending permission cards first (they all lead to the agent page), then the pages. */
 export function pickerEntries(model: HubModel, locale: Locale): PickerEntry[] {
   const cards = model.report.approvals.map((card): PickerEntry => ({ screen: "agent", label: tr(messages, locale, "picker.card", { title: card.title }) }));
-  const pages = SCREENS.map((screen): PickerEntry => ({ screen, label: tr(messages, locale, `screen.${screen}`) }));
+  const pages = PICKER_SCREENS.map((screen): PickerEntry => ({ screen, label: tr(messages, locale, `screen.${screen}`) }));
   return [...cards, ...pages];
 }
 
@@ -1173,10 +1228,6 @@ function printerPercent(printer: PrinterSnapshot): number {
   return printer.progress ?? (printer.layers > 0 ? Math.round((printer.layer / printer.layers) * 100) : 0);
 }
 
-function unreadCount(inbox: InboxSnapshot): number {
-  return inbox.events.filter((event) => !event.read).length;
-}
-
 /** "3 Lichter an" when the devices are lights, else a plain count of what is on. */
 export function homeSummary(home: HomeSnapshot, locale: Locale): string {
   const lights = home.devices.filter((device) => /^light[._]/.test(device.id) || /licht|light|lamp|lampe/i.test(device.label));
@@ -1192,28 +1243,17 @@ export function homeSummary(home: HomeSnapshot, locale: Locale): string {
  * The start page (QUS v1): three big entries - Agenten, Meldungen, Übersicht (the cockpit) - and under them,
  * indented, the other pages (Zuhause, Drucker, Tagesstart). At most five rows are visible, the cursor is a dot.
  */
-export function startRows(report: HubReport, locale: Locale): string[] {
-  const t = (key: string, vars: Record<string, string | number> = {}): string => tr(messages, locale, key, vars);
-  const waiting = waitingAgents(report);
-  const online = report.agents.filter((agent) => agent.online).length;
-  const busy = report.agents.filter((agent) => agent.busy && !waiting.has(agent.id)).length;
-  const extra = report.approvals.length > 0 ? t("start.waitN", { n: report.approvals.length }) : busy > 0 ? t("start.busyN", { n: busy }) : "";
-  const labels: Record<RootItem, string> = {
-    agent: report.agents.length === 0 ? t("start.agentNone") : t("start.agent", { online, total: report.agents.length, extra }),
-    inbox: t("start.inbox", { count: unreadCount(report.inbox) }),
-    cockpit: t("start.cockpit"),
-    home: t("start.home"),
-    printer: t("start.printer"),
-    brief: t("start.brief"),
-    help: t("root.help"),
-  };
-  return ROOT_ITEMS.map((item, index) => (index < BIG_ROOT_ITEMS ? "" : "  ") + labels[item]);
+export function startRows(report: HubReport, locale: Locale, brief: Brief | null | undefined = report.brief): string[] {
+  return startEntries(report, brief, locale).map((entry) => (entry.warn ? `! ${entry.text}` : entry.text));
 }
 
-function rootRows(report: HubReport, selected: number, locale: Locale, _now: number, _brief: Brief | null | undefined = report.brief, setupHint = false): string[] {
-  const rows = startRows(report, locale).map((row, index) => marked(row, index === selected));
-  const list = windowed(rows, selected, 5);
-  return setupHint ? [...list, "  " + tr(messages, locale, "root.demoHint")] : list;
+function rootRows(model: HubModel, locale: Locale): string[] {
+  const brief = model.brief ?? model.report.brief;
+  const entries = startEntries(model.report, brief, locale);
+  const selected = cursorIndex(entries, model.rootKey, model.rootSelected);
+  const rows = startRows(model.report, locale, brief).map((row, index) => marked(row, index === selected));
+  const list = windowed(rows, selected, model.setupHint === true ? 6 : 7);
+  return model.setupHint === true ? [...list, "  " + tr(messages, locale, "root.demoHint")] : list;
 }
 
 function eventMark(event: AgentEvent, locale: Locale): string {
@@ -1337,7 +1377,7 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       ? footer_(locale, end, tr(messages, locale, "f.scanQr"))
       : ft(locale, { tap: "f.again" }, end);
   } else if (model.screen === "root" || model.screen === "cockpit") {
-    body = rootRows(report, model.rootSelected, locale, now, model.brief ?? report.brief, model.setupHint === true);
+    body = rootRows(model, locale);
     footer = model.screen === "cockpit" ? ft(locale, { tap: "f.agents" }) : ft(locale, { tap: "f.open", swipe: "f.select" }, "exit");
   } else if (model.screen === "agent") {
     const card = pendingApproval(report);
@@ -1367,15 +1407,22 @@ export function buildView(model: HubModel, locale: Locale, now: number): ScreenV
       body = listRows(zh, view, locale);
       side = sideRows(zh, view, locale);
       const detail = zh.level === "detail" && zh.detailId !== null ? view.entities[zh.detailId] : undefined;
-      footer = detail === undefined ? ft(locale, { tap: "f.switch", swipe: "f.select", hold: "f.detail" })
+      footer = detail === undefined ? ft(locale, { tap: "f.switch", swipe: "f.select" })
         : typeof zh.choice === "number" ? ft(locale, { tap: "f.run", swipe: "f.select" })
           : ft(locale, { tap: "f.choose", swipe: "f.device" });
     }
+  } else if (model.screen === "car" || model.screen === "server") {
+    const brief = model.brief ?? report.brief;
+    const control = model.screen === "car" && report.carControl === true;
+    body = model.screen === "car" ? carRows(carBrief(report, brief), locale, now, control ? clampIndex(model.carIndex ?? 0, CAR_COMMANDS.length) : null) : serverRows(brief, locale, now);
+    footer = control ? ft(locale, { tap: "f.run", swipe: "f.select" }) : ft(locale, { tap: "f.refresh" });
   } else if (model.screen === "brief") {
+    // The picture pages are drawn by main; as text (overlays, tests) they show the first text page.
     const pages = briefPageRows(model, locale, now);
-    const page = Math.max(0, Math.min(model.briefPage ?? 0, pages.length - 1));
-    body = pages[page] ?? [];
-    footer = briefFooter(page, pages.length, locale);
+    const pictures = briefPictureCount(model.brief);
+    const at = Math.max(0, Math.min(model.briefPage ?? 0, pages.length + pictures - 1));
+    body = pages[Math.max(0, at - pictures)] ?? [];
+    footer = briefFooter(at, pages.length + pictures, locale);
   } else if (model.screen === "printer") {
     body = printerRows(report.printer, locale);
     footer = ft(locale, { tap: "f.action", swipe: "f.select" });

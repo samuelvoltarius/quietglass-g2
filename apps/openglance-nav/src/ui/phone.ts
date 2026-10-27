@@ -1,3 +1,4 @@
+import { normalizeOverpassUrl } from "../overpass/own";
 import { clampUsableKwh } from "../car/byd";
 import { buildSugarUrl } from "../sugar/glucose";
 import { briefConfigured } from "../appointments/appointments";
@@ -116,7 +117,7 @@ function applyTab(root: HTMLElement, active: string): void {
 }
 
 /** Text inputs whose unsaved contents are carried across a redraw. */
-const DRAFT_FIELDS = ["url", "geocoder", "label", "coords", "query", "plan-query", "plan-name", "rename"] as const;
+const DRAFT_FIELDS = ["url", "geocoder", "overpass", "label", "coords", "query", "plan-query", "plan-name", "rename"] as const;
 
 export interface SearchState {
   readonly busy: boolean;
@@ -373,6 +374,9 @@ function template(
     <label for="geocoder">${t("p.geocoderUrl")}</label>
     <input id="geocoder" type="text" inputmode="url" value="${escapeHtml(data.geocoderUrl)}" placeholder="${DEFAULT_GEOCODER_URL}" />
     <p class="hint">${escapeHtml(t("p.geocoderHint"))}</p>
+    <label for="overpass">${t("p.overpassUrl")}</label>
+    <input id="overpass" type="text" inputmode="url" spellcheck="false" value="${escapeHtml(data.overpassUrl)}" placeholder="${escapeHtml(t("p.overpassPlaceholder"))}" />
+    <p class="hint">${escapeHtml(t("p.overpassHint"))}</p>
     <button id="save-url" type="button">${t("p.saveServers")}</button>
     <label class="check"><input id="demo" type="checkbox"${data.demo ? " checked" : ""} /> ${t("p.demo")}</label>
   </section>
@@ -427,8 +431,11 @@ function wire(root: HTMLElement, ports: PhoneUiPorts, data: NavData, locale: Loc
   byId<HTMLButtonElement>("save-url")?.addEventListener("click", () => {
     const url = byId<HTMLInputElement>("url")?.value.trim() ?? "";
     const geocoder = byId<HTMLInputElement>("geocoder")?.value.trim() ?? "";
-    if (!validateRouterUrl(url).valid || !validateRouterUrl(geocoder).valid) { hooks.notify(t("p.urlInvalid")); return; }
-    commit({ ...data, valhallaUrl: url, geocoderUrl: geocoder });
+    // Empty = the public map servers (and a private build's own one); stored with /api/interpreter.
+    const overpassText = byId<HTMLInputElement>("overpass")?.value.trim() ?? "";
+    const overpass = normalizeOverpassUrl(overpassText);
+    if (!validateRouterUrl(url).valid || !validateRouterUrl(geocoder).valid || (overpassText !== "" && overpass === "")) { hooks.notify(t("p.urlInvalid")); return; }
+    commit({ ...data, valhallaUrl: url, geocoderUrl: geocoder, overpassUrl: overpass });
   });
 
   byId<HTMLInputElement>("demo")?.addEventListener("change", (event) => {

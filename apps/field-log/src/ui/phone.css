@@ -213,3 +213,17 @@ button.remove.danger { background: color-mix(in srgb, var(--danger) 18%, transpa
 .note-card.sev-minor { border-top-color: var(--warning); } .note-card.sev-minor em { color: var(--warning); }
 .note-card.sev-major { border-top-color: var(--danger); } .note-card.sev-major em { color: #fca5a5; }
 .banner.tone-none { border-left-color: var(--muted); }
+
+/* Checklist (0.10): rooms, items, the export warning */
+.checks li { align-items: flex-start; }
+.checks li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.checks li.check-ok small { color: var(--accent); }
+.checks li.check-defect small { color: var(--warning); }
+.checks li.photo-missing { border-left: 3px solid var(--warning); padding-left: 8px; }
+button.item-photo.done { color: var(--muted); }
+.checklist textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+.warn-box {
+  margin: 0 0 12px; padding: 12px 14px; border-radius: 12px; background: var(--soft);
+  border-left: 3px solid var(--warning);
+}
+.warn-box p { margin: 0 0 8px; overflow-wrap: anywhere; }

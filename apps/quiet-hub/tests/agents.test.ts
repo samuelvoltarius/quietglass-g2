@@ -131,7 +131,9 @@ describe("approval cards", () => {
 
   it("shows the pending count on the overview", () => {
     const root = { ...withCard(), screen: "root" as const };
-    expect(buildView(root, "de", T0).body[0]).toContain("1 wartet");
+    const body = buildView(root, "de", T0).body;
+    expect(body[0]).toBe("> ! claude-win wartet auf Freigabe");
+    expect(body.find((row) => row.includes("Agenten"))).toContain("1 wartet");
   });
 });
 

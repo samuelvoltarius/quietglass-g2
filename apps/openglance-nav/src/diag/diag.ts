@@ -49,6 +49,12 @@ export function startDiag(trafficUrl: string, appVersion: string, now: () => num
     expected = now() + LAG_TICK_MS;
   }, LAG_TICK_MS);
   const g = globalThis as { addEventListener?: (type: string, fn: (e: unknown) => void) => void };
+  // Phone locked / Even app in the background (15.10.: the app was ended by the system 4 min after
+  // locking): every change of visibility is logged and sent at once, before the phone may suspend us.
+  const doc = (globalThis as { document?: { visibilityState?: string; addEventListener?: (type: string, fn: () => void) => void } }).document;
+  doc?.addEventListener?.("visibilitychange", () => { diag("vis", { state: doc.visibilityState ?? "" }); void flushDiag(); });
+  g.addEventListener?.("pagehide", () => { diag("vis", { state: "pagehide" }); void flushDiag(); });
+  g.addEventListener?.("pageshow", () => { diag("vis", { state: "pageshow" }); });
   g.addEventListener?.("error", (e) => diag("error", { msg: errorText((e as { error?: unknown; message?: string }).error ?? (e as { message?: string }).message) }));
   g.addEventListener?.("unhandledrejection", (e) => diag("error", { msg: "unhandled: " + errorText((e as { reason?: unknown }).reason) }));
 }

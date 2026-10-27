@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.0] — 2026-10-23
+
+### Neu (Entscheidung Alfred 23.10.2026, Regeln der Panoptes-Abstimmung)
+
+- **Seite „Steuern“ auf der Brille** (QUS v1, Textliste): genau **Zusperren**, **Aufsperren** und **Vorheizen 10 / 20 / 30 min**. Kein Klima-aus (die Sitzung endet von selbst), keine Temperaturwahl. Die Seite gibt es nur, solange die Bridge `control.enabled` meldet, und sie zeigt nur die Einträge, die die Bridge annimmt; schaltet die Bridge ab, verschwindet sie sofort.
+- **Jeder Befehl braucht zwei Taps:** der erste fragt die Bridge (sie prüft alles und sendet nichts; eine Ablehnung zeigt die Brille mit dem Text der Bridge, z. B. „Auto ist an – am Display bedienen“), der zweite **binnen 4 s** sendet. Wischen oder 2× bricht ab, nach 4 s verfällt die Frage („nicht gesendet“). Keine Fußzeile bietet „Halten“ an.
+- **Ergebniszeile nur aus der Bridge:** „gesendet – warte auf das Auto …“, dann „bestätigt“ oder „nicht bestätigt“ (die Bridge bestätigt nur aus frischer Telemetrie nach dem Befehl). Bleibt die Antwort auf den zweiten Tap aus: „keine Antwort – unklar, ob gesendet“, bis der Befehlsstand der Bridge Klarheit bringt. Nie ein falscher Erfolg.
+- Handy, Tab „Auto“: Karte „Steuern“ (was die Bridge erlaubt, ob das Auto aus ist, wie der letzte Befehl ausging). Das Handy selbst sendet nichts.
+- Die Demo bietet keine Steuerung und sendet nie etwas.
+
+### Bridge (`selfhost/services/byd-bridge`)
+
+- Befehle nur mit `BYD_CONTROL=1` (weiterhin Standard `0`), Aufsperren zusätzlich `BYD_ALLOW_UNLOCK=1`, Vorheizen `BYD_PREHEAT=1`. **Immer aktiv, nicht abschaltbar, fail-closed:** frisches `power_level` 0 von `surfmate/vehicle/telemetry/power_level` (live, ≤ 180 s, retained zählt nie), Rückfrage mit Einmalwert (8 s), ≥ 15 s Abstand, ≤ 6 Befehle pro Stunde (in `BYD_RATE_FILE`, übersteht Neustarts), Telegram-Meldung **vor** jedem Aufsperren (fehlt sie oder schlägt fehl: abgelehnt), kein Klima-aus, JSONL-Log ohne Einmalwert/Geheimnis/Token.
+- Steuerweg nur noch der signierte Kanal von pybyd-mqtt: Zusperren und Vorheizen über `cmd/signed`, Aufsperren über das eigene Thema `brille/unlock`. Unsignierte Themen und `BYD_ACTION_URL` entfallen (`BYD_LOCK_TOPICS`, `BYD_CLIMATE_TEMP_TOPIC`, `BYD_ACTION_URL` werden ignoriert).
+- Vorschlag für pybyd-mqtt / `befehl_gate.py` (Vorheizen mit Dauer, Aufsperren nur von der Brillen-Quelle, Telegram durch das Gate selbst) liegt als Patch unter `proposed/` – nur gemeinsam mit der Panoptes-Sitzung einspielen. Bis dahin funktioniert von der Brille nur Zusperren.
+
+## [0.6.0] — 2026-10-23
+
+### Geändert (Panoptes-Abstimmung 23.10.2026, verbindlich)
+
+- **Daten von Panoptes statt Overdrive.** Die Auto-App Panoptes (Nachfolger von Overdrive, für viele BYD-Modelle) meldet unter `surfmate/vehicle/telemetry/<feld>`. Die byd-bridge liest standardmäßig dieses Thema (`BYD_TOPIC`, Overdrive bleibt per Umgebung möglich). Neue Zuordnung: Schloss aus `unlocked_lf` (statt `locked`), Türen aus `door_open_lf/rf/lr/rr` (statt `door_open`), dazu Kofferraum/Motorhaube (`trunk_open`, `hood_open`, mit Warnung), Kilometerstand direkt aus `odometer`, Gebläsestufe (`ac_fan`, sonst `ac_wind`), Reifentemperaturen (`tyre_t_*`). Die alten Overdrive-Namen werden weiter gelesen.
+- **Keine Fahrzeugbefehle mehr von der Brille.** Seite „Steuerung“ (Klima an/aus, Zusperren, Aufsperren) samt Rückfragen entfernt, ebenso die Steuer-Karte am Handy und der Befehlsaufruf im Client. Keine Fußzeile und keine Hilfezeile bietet einen Befehl an. Die Bridge lehnt `POST /command` standardmäßig mit `403 control_disabled` ab (`BYD_CONTROL` ist jetzt `0`; `1` nur mit Freigabe der Panoptes-Abstimmung) und sendet dann nichts an den Broker.
+- **Keine „Innentemperatur“.** Der Dolphin Surf hat keinen Innenraumfühler; `climate_setpoint` ist der Sollwert (17–33, 25 = neutral). Brille und Handy zeigen beim Klima nur noch an/aus und die Stufe („AN · STUFE 2“), nie eine Temperatur.
+- **Fehlende Werte werden weggelassen, nie als 0 gezeigt.** Panoptes läuft auf vielen Modellen: Cockpit-Zellen ohne Wert fallen weg und der nächste bekannte Wert rückt nach (z. B. 12 V, Außen, SoH); am Handy verschwinden Zeilen, Kennzahlen und Reifenkarten ohne Wert. Der Status-Kopf lässt ein unbekanntes Schloss weg.
+- Fußzeilen bieten kein „Halten“ mehr an (vom Bügel kommt Halten nie an, Schrittprotokoll 21.10.): „Tippen = Warnungen · Wischen = Seite · 2× = Ende“. Die Hilfeseite bleibt per Ring-Halten erreichbar und listet nur Tippen, Wischen, 2×.
+- Store-Text, Berechtigungstext und Datenschutz auf „nur Anzeige“ angepasst; Vorschau-Bilder neu erzeugt.
+- Bridge: neue Tests `test_byd_bridge.py` (Themen-Zuordnung mit echter Panoptes-Stichprobe, fehlende Felder, Befehle standardmäßig abgelehnt – nur Fakes, kein Broker).
+
 ## [0.5.0] — 2026-10-20
 
 ### Geändert (QUS v1 „keine Textwand“)

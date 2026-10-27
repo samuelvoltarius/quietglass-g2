@@ -1,0 +1,23 @@
+{
+  "package_id": "glass.quiet.tvglance",
+  "edition": "202601",
+  "name": "TV Glance",
+  "version": "0.2.3",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Controls your TV through the Home Assistant or the TV Glance bridge whose address you enter in the phone app: reads its state and sends play/pause, volume, input, app and D-pad commands. No other server is contacted.",
+      "whitelist": [
+        "http://*",
+        "https://*"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "de",
+    "en"
+  ]
+}

@@ -36,6 +36,13 @@ export type ListItem =
   /** "Wo ist mein Auto": the car's last place from the BYD cloud (private build); minutes since it was reported. */
   | { readonly kind: "car"; readonly at: LatLng; readonly ageMin: number | null };
 
+/**
+ * The peaks view (compass band of the peaks nearby) is off: Alfred 15.10. -
+ * without a compass the direction only follows the GPS course, so it is of
+ * little use on foot. The code stays; this switch brings it back.
+ */
+export const PEAKS_VIEW = false;
+
 /** Id of the car's place while it is the destination: never shown as a row of its own, replaced on every walk to the car. */
 export const CAR_DESTINATION_ID = "car";
 
@@ -72,7 +79,7 @@ export function listItems(data: NavData, appts: readonly ListAppt[] = []): ListI
     ...data.routes.map((route) => ({ kind: "route" as const, route })),
     ...(carSpot ? [{ kind: "car" as const, at: carSpot.at, ageMin: carSpot.ageMin }] : []),
     ...(data.chargers ? [{ kind: "chargers" as const }] : []),
-    ...(data.peaks ? [{ kind: "peaks" as const }] : []),
+    ...(PEAKS_VIEW && data.peaks ? [{ kind: "peaks" as const }] : []),
   ];
 }
 

@@ -15,7 +15,11 @@
  * Only actions that fit an entity's kind are accepted, and only on entities in
  * the current view - the glasses can never call an arbitrary HA service.
  *
- * Env: HA_FAVORITES (entity_id[=label], comma list; falls back to HA_DEVICES),
+ * TV / projector (media_player, kind "media"): on/off, play/pause, mute and volume steps. When HA has a
+ * `remote.<same object id>` (Android TV Remote), a volume step is ONE remote key press (VOLUME_UP/DOWN);
+ * `media_player.volume_up` may jump 10 % on some TVs (TV Glance 0.2.2).
+ *
+ * Env: HA_MEDIA (media_player[=label], comma list; shown first), HA_FAVORITES (entity_id[=label], comma list; falls back to HA_DEVICES),
  * HA_AREAS (auto | off | comma list of area names/ids, in order),
  * HA_EXCLUDE (entity ids to hide), HA_SENSITIVE (lock,alarm,garage),
  * HA_POLL_MS (default 5000), HA_HOME=off disables the view.
@@ -32,21 +36,28 @@ const MAX_FAVORITES = 12;
 const SENSOR_CLASSES = new Set(["temperature", "humidity", "battery"]);
 const MOTION_CLASSES = new Set(["motion", "occupancy", "presence"]);
 const GARAGE_CLASSES = new Set(["garage", "gate"]);
-const KIND_ORDER = ["light", "switch", "cover", "garage", "lock", "alarm", "scene", "sensor", "motion"];
+const KIND_ORDER = ["media", "light", "switch", "cover", "garage", "lock", "alarm", "scene", "sensor", "motion"];
 
 /** All areas with their entities in one template call (HA has no REST area registry). */
 export const AREA_TEMPLATE = '{% set ns = namespace(a=[]) %}{% for id in areas() %}{% set ns.a = ns.a + [{"id": id, "name": area_name(id), "entities": area_entities(id)}] %}{% endfor %}{{ ns.a | tojson }}';
+
+/** States in which a TV / projector counts as off. */
+const MEDIA_OFF = new Set(["off", "standby", "unavailable", "unknown"]);
+/** Actions a media entity accepts (besides toggle / turn_on / turn_off). */
+export const MEDIA_ACTIONS = ["volume_up", "volume_down", "mute", "play_pause"];
 
 const list = (text) => String(text ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 
 /** Daemon config from env (or options). Nothing here is secret. */
 export function parseHomeConfig(env = {}) {
-  const favorites = parseDevices(env.HA_FAVORITES ?? "").length > 0 ? parseDevices(env.HA_FAVORITES) : parseDevices(env.HA_DEVICES ?? "");
+  const plain = parseDevices(env.HA_FAVORITES ?? "").length > 0 ? parseDevices(env.HA_FAVORITES) : parseDevices(env.HA_DEVICES ?? "");
+  const media = parseDevices(env.HA_MEDIA ?? "").filter((spec) => spec.entity.startsWith("media_player."));
+  const favorites = [...media, ...plain.filter((spec) => !media.some((m) => m.entity === spec.entity))];
   const areasRaw = String(env.HA_AREAS ?? "auto").trim();
   const areas = areasRaw === "" || areasRaw.toLowerCase() === "auto" ? "auto" : areasRaw.toLowerCase() === "off" ? "off" : list(areasRaw);
   const sensitive = new Set(list(env.HA_SENSITIVE).map((k) => k.toLowerCase()).filter((k) => SENSITIVE_KINDS.includes(k)));
   const pollMs = Math.max(2000, Number(env.HA_POLL_MS ?? 5000) || 5000);
-  return { favorites: favorites.slice(0, MAX_FAVORITES), areas, exclude: new Set(list(env.HA_EXCLUDE)), sensitive, pollMs };
+  return { favorites: favorites.slice(0, MAX_FAVORITES), areas, exclude: new Set(list(env.HA_EXCLUDE)), sensitive, pollMs, media: new Set(media.map((spec) => spec.entity)) };
 }
 
 /** Which Quiet Hub kind an HA entity is, or null when it is not shown at all. */
@@ -56,6 +67,7 @@ export function kindOf(state) {
   const deviceClass = String(state?.attributes?.device_class ?? "");
   switch (domain) {
     case "light": return "light";
+    case "media_player": return "media";
     case "switch":
     case "input_boolean":
     case "fan": return "switch";
@@ -86,6 +98,12 @@ export function entityFromState(state, label = "", lang = "de") {
   if (kind === "light") {
     entity.on = raw === "on";
     entity.brightness = entity.on && typeof attrs.brightness === "number" ? pct(attrs.brightness / 255 * 100) : entity.on ? null : 0;
+  } else if (kind === "media") {
+    entity.on = !MEDIA_OFF.has(raw);
+    entity.volume = typeof attrs.volume_level === "number" ? pct(attrs.volume_level * 100) : null;
+    entity.muted = attrs.is_volume_muted === true;
+    const what = String(attrs.app_name ?? attrs.source ?? attrs.media_title ?? "").trim();
+    if (entity.on && what !== "") entity.value = what.slice(0, 24);
   } else if (kind === "switch" || kind === "motion") {
     entity.on = raw === "on";
   } else if (kind === "cover" || kind === "garage") {
@@ -132,6 +150,10 @@ export function buildHomeView({ states, areas = [], config, lang = "de", error =
     if (!state) return false;
     const entity = entityFromState(state, label, lang);
     if (entity === null || !shown(entity.kind)) return false;
+    // A TV / projector only when HA_MEDIA names it (an area's every speaker would crowd the page).
+    if (entity.kind === "media" && !(config.media ?? new Set()).has(id)) return false;
+    // TV / projector: the matching remote.* carries the single-step volume keys.
+    if (entity.kind === "media" && index.has(`remote.${id.slice("media_player.".length)}`)) entity.remote = `remote.${id.slice("media_player.".length)}`;
     entities[id] = entity;
     return true;
   };
@@ -179,6 +201,19 @@ export function serviceCall(entity, action, value, entities = {}) {
     return service ? { domain: "cover", service, data: { entity_id: members } } : null;
   }
   switch (entity.kind) {
+    case "media":
+      if (action === "toggle" || action === "turn_on" || action === "turn_off") {
+        const service = action === "toggle" ? (entity.on ? "turn_off" : "turn_on") : action;
+        return { domain: "media_player", service, data: { entity_id: id } };
+      }
+      if (action === "volume_up" || action === "volume_down") {
+        return entity.remote
+          ? { domain: "remote", service: "send_command", data: { entity_id: entity.remote, command: action === "volume_up" ? "VOLUME_UP" : "VOLUME_DOWN" } }
+          : { domain: "media_player", service: action, data: { entity_id: id } };
+      }
+      if (action === "mute") return { domain: "media_player", service: "volume_mute", data: { entity_id: id, is_volume_muted: entity.muted !== true } };
+      if (action === "play_pause") return { domain: "media_player", service: "media_play_pause", data: { entity_id: id } };
+      return null;
     case "light":
       if (action === "brightness") {
         const n = Number(value);
@@ -233,6 +268,7 @@ function applyLocally(view, entity, call) {
     else if (call.service === "lock") e.on = false;
     else if (call.service === "alarm_arm_away") e.on = true;
     else if (call.service === "alarm_disarm") e.on = false;
+    else if (call.service === "volume_mute") e.muted = call.data.is_volume_muted === true;
   }
   for (const group of Object.values(view.entities).filter((e) => e.group === true)) {
     const members = group.members.map((m) => view.entities[m]).filter(Boolean);

@@ -10,6 +10,9 @@
 import type { Locale } from "../i18n";
 import { severityName, t } from "../messages";
 import { joinCsv, localDateTime, textCell, type CsvFormat } from "../csv";
+import {
+  checklistProgress, hasPhoto, itemState, roomProgress, type Checklist, type ItemCheck,
+} from "../checklist/checklist";
 
 export type Severity = "note" | "minor" | "major";
 
@@ -30,6 +33,8 @@ export interface LogEntry {
   /** Section of the walk, e.g. a room or an assembly. */
   readonly section?: string;
   readonly attachment?: Attachment;
+  /** The checklist item this entry belongs to (a defect or a photo for it). */
+  readonly itemId?: string;
 }
 
 export interface Inspection {
@@ -40,6 +45,10 @@ export interface Inspection {
   readonly entries: readonly LogEntry[];
   /** Current section; new entries inherit it. */
   readonly section: string;
+  /** Room-by-room checklist of this walk (optional; free-form walks have none). */
+  readonly checklist?: Checklist;
+  /** State of each checklist item, by item id. Kept when the checklist text is edited. */
+  readonly checks?: Readonly<Record<string, ItemCheck>>;
 }
 
 export function startInspection(id: string, title: string, now: number): Inspection {
@@ -51,16 +60,20 @@ export function addEntry(
   text: string,
   severity: Severity,
   now: number,
+  /** A checklist entry: its room as the section, and the item it belongs to. */
+  item?: { readonly section: string; readonly itemId: string },
 ): Inspection {
   const trimmed = text.trim();
   if (!trimmed) return inspection;
 
+  const section = item ? item.section : inspection.section;
   const entry: LogEntry = {
     id: nextEntryId(inspection.entries),
     text: trimmed,
     severity,
     at: now,
-    ...(inspection.section ? { section: inspection.section } : {}),
+    ...(section ? { section } : {}),
+    ...(item ? { itemId: item.itemId } : {}),
   };
   return { ...inspection, entries: [...inspection.entries, entry] };
 }
@@ -141,21 +154,55 @@ export function toMarkdown(inspection: Inspection, withImages = false, locale: L
   lines.push(t(locale, "x.counts", counts));
   lines.push("");
 
-  let section: string | undefined;
-  for (const entry of inspection.entries) {
-    if (entry.section !== section) {
-      section = entry.section;
-      if (section) { lines.push("## " + oneLine(section)); lines.push(""); }
-    }
+  const entryLines = (entry: LogEntry, indent: string): void => {
     const name = severityName(locale, entry.severity);
     const mark = entry.severity === "major" ? "**" + name.toUpperCase() + "**"
       : entry.severity === "minor" ? "*" + name + "*" : name;
-    lines.push("- [" + timeOf(entry.at) + "] " + mark + " — " + oneLine(entry.text));
+    lines.push(indent + "- [" + timeOf(entry.at) + "] " + mark + " — " + oneLine(entry.text));
     if (entry.attachment) {
-      lines.push(withImages
+      lines.push(indent + (withImages
         ? "  ![" + t(locale, "x.photoAlt") + "](" + entry.attachment.dataUri + ")"
-        : "  " + t(locale, "x.photoRef", { kb: Math.round(entry.attachment.size / 1024) }));
+        : "  " + t(locale, "x.photoRef", { kb: Math.round(entry.attachment.size / 1024) })));
     }
+  };
+
+  // With a checklist the report is grouped by room: every item with its state, its defects and photos below it.
+  const checklist = inspection.checklist;
+  const itemIds = new Set<string>();
+  if (checklist) {
+    const total = checklistProgress(inspection);
+    lines.push(t(locale, "x.checkSummary", { done: total.done, total: total.total }));
+    lines.push("");
+    for (const room of checklist.rooms) {
+      const progress = roomProgress(inspection, room);
+      lines.push("## " + oneLine(room.name) + " (" + progress.done + "/" + progress.total + ")");
+      lines.push("");
+      for (const item of room.items) {
+        itemIds.add(item.id);
+        const state = itemState(inspection, item);
+        const label = t(locale, "x.state." + state);
+        const flags = [
+          ...(item.critical ? [t(locale, "x.critical")] : []),
+          ...(item.photo ? [t(locale, hasPhoto(inspection, item) ? "x.photoGiven" : "x.photoMissing")] : []),
+        ];
+        lines.push("- " + (state === "ok" ? label : "**" + label + "**") + " — " + oneLine(item.text)
+          + (flags.length > 0 ? " (" + flags.join(", ") + ")" : ""));
+        for (const entry of inspection.entries) if (entry.itemId === item.id) entryLines(entry, "  ");
+      }
+      lines.push("");
+    }
+  }
+
+  // Everything not filed under an item: grouped by section, as in a free-form walk.
+  const rest = inspection.entries.filter((entry) => !(entry.itemId !== undefined && itemIds.has(entry.itemId)));
+  if (checklist && rest.length > 0) { lines.push("## " + t(locale, "x.otherNotes")); lines.push(""); }
+  let section: string | undefined;
+  for (const entry of rest) {
+    if (entry.section !== section) {
+      section = entry.section;
+      if (section) { lines.push((checklist ? "### " : "## ") + oneLine(section)); lines.push(""); }
+    }
+    entryLines(entry, "");
   }
 
   return lines.join("\n") + "\n";

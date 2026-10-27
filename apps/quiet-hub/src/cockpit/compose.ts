@@ -2,7 +2,11 @@ import { createFrame, type Frame } from "../screen/frame";
 import { dashedLine, fillRect, strokeRect } from "../screen/draw";
 import { drawText, fitFont, fitText, type Font, type TextBackend } from "../screen/text";
 import { mascotFrame } from "../glasses/mascot";
-import type { CockpitCell, CockpitModel } from "./model";
+import type { CockpitCell, CockpitModel, PageGraphic } from "./model";
+import { drawPictogram, drawRingAt, drawRingText, drawSegmentsAt, drawSpark, drawTv, W_LEVELS } from "./widgets";
+
+/** The ring of the area pages (BYD Glass geometry). */
+export const RING = { x: 144, y: 104, radius: 82, thickness: 12 } as const;
 
 /**
  * The cockpit view (QUS v1): the whole display as one frame, sent as four tiles. Same grid as Rain Lens.
@@ -94,8 +98,28 @@ export function drawMascot(frame: Frame, model: CockpitModel, now: number): void
   });
 }
 
+/** An area page's picture in the left half. */
+function drawGraphic(frame: Frame, graphic: PageGraphic, backend: TextBackend, now: number): void {
+  const inner = RING.radius - RING.thickness;
+  if (graphic.kind === "ring") {
+    drawRingAt(frame, RING.x, RING.y, RING.radius, RING.thickness, graphic.percent, graphic.tone, now, { pulse: graphic.pulse === true, spin: graphic.spin === true });
+    drawRingText(frame, backend, RING.x, RING.y, inner, graphic.center, graphic.sub);
+  } else if (graphic.kind === "tv") {
+    drawTv(frame, backend, graphic.screen, graphic.volume, graphic.muted, graphic.volumeLabel, graphic.volumeText);
+  } else if (graphic.kind === "spark") {
+    drawSpark(frame, backend, graphic.points, graphic.band, graphic.top, graphic.ticks, graphic.arrow);
+  } else if (graphic.kind === "segments") {
+    drawSegmentsAt(frame, RING.x, RING.y, RING.radius, RING.thickness, graphic.segments);
+    drawRingText(frame, backend, RING.x, RING.y, inner, graphic.center, graphic.sub);
+  } else {
+    // 12 x 12 pictogram at 14 px per cell = 168 px, centred over the caption.
+    drawPictogram(frame, graphic.rows, RING.x - 84, RING.y - 84, 14, graphic.dim === true ? W_LEVELS.dim : W_LEVELS.text);
+  }
+}
+
 function drawLeft(frame: Frame, model: CockpitModel, backend: TextBackend, now: number): void {
-  drawMascot(frame, model, now);
+  if (model.graphic !== undefined) drawGraphic(frame, model.graphic, backend, now);
+  else drawMascot(frame, model, now);
   drawText(frame, backend, model.caption, 12, CAPTION_Y, { size: 22, weight: 700 }, { level: LEVELS.text, maxWidth: HALF - 20 });
   dashedLine(frame, HALF, 4, HALF, RULE_Y - 4, LEVELS.grid, { dash: 2, gap: 4 });
 }

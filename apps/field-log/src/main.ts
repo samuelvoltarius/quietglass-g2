@@ -10,9 +10,11 @@ import { buildWav } from "./audio/wav";
 import { addEntry, attachToLatest, startInspection, type Inspection, type Severity } from "./log/entries";
 import { gestureFromCode, gestureFromEvent, menuItemIdFromEvent } from "./input/gestures";
 import {
-  notesView, pickView, readPageCount, readView, reviewView, startRows, startView,
-  type FieldNotice, type LiveView, type LogView, type Phase, type ReviewChoice,
+  itemView, notesView, pickView, readPageCount, readView, reviewView, roomsView, startRows, startView,
+  type ChecklistRow, type FieldNotice, type LiveView, type LogView, type Phase, type ReviewChoice,
 } from "./glasses/view";
+import { checklistProgress, findItem, firstOpenItem, firstOpenRoom, setCheck, type CheckRoom } from "./checklist/checklist";
+import { afterAnswer, tapOk, walkStart, walkSwipe, type OkKind, type WalkCursor } from "./checklist/walk";
 import { sameView } from "./glasses/diff";
 import {
   COCKPIT_TILES, createCockpitPage, createTextPage, forgetPage, guardedTileSend, updateTextPage, type MenuSpec,
@@ -112,8 +114,16 @@ async function boot(): Promise<void> {
   /** Review: 0 = keep, 1 = keep and photo, 2 = discard. A swipe only moves between them. */
   let reviewChoice: ReviewChoice = 0;
   /** Where the glasses are while no dictation, quick-note list or review is running (QUS v1). */
-  type Screen = "start" | "recorder" | "notes" | "read";
+  type Screen = "start" | "recorder" | "notes" | "read" | "rooms" | "item";
   let screen: Screen = "start";
+  /** Checklist (0.10): the highlighted room of the overview, and where the walk through that room stands. */
+  let roomCursor = 0;
+  let walk: WalkCursor = walkStart();
+  /** OK on a critical item waits here for its second tap (FlowList pattern). */
+  let pendingOk: PendingConfirm<OkKind> | null = null;
+  let okTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The quick-note list records a defect of this checklist item (null: an ordinary quick note). */
+  let pickFor: string | null = null;
   let startCursor = 0;
   /** Index into the notes, newest first. */
   let notesCursor = 0;
@@ -127,6 +137,21 @@ async function boot(): Promise<void> {
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
   const inspection = (): Inspection | null => activeInspection(data);
+  /** The start list's checklist row: only for a walk that has a checklist. */
+  const checklistRow = (): ChecklistRow | null => {
+    const current = inspection();
+    if (!current?.checklist) return null;
+    const progress = checklistProgress(current);
+    return { done: progress.done, total: progress.total };
+  };
+  const currentRoom = (): CheckRoom | null => inspection()?.checklist?.rooms[roomCursor] ?? null;
+  /** Drops an armed OK (a swipe, 2x, the timeout or leaving the item). */
+  const disarmOk = (): boolean => {
+    const was = pendingOk !== null;
+    pendingOk = null;
+    clearTimeout(okTimer);
+    return was;
+  };
   /**
    * Dictation needs a speech server (the phone setting or the private build's
    * default). Without one, a tap offers quick notes instead — the app is fully
@@ -156,7 +181,18 @@ async function boot(): Promise<void> {
     if ((screen === "notes" || screen === "read") && count === 0) screen = "start";
     if (screen === "read" && notesCursor >= count) screen = "notes";
     notesCursor = Math.min(notesCursor, Math.max(0, count - 1));
-    if (phase === "pick") return { kind: "text", view: pickView({ locale, severity: data.severity, quickNotes: notes(), pickIndex }) };
+    // The phone may have removed or edited the checklist under the walk.
+    const rooms = current?.checklist?.rooms ?? [];
+    if ((screen === "rooms" || screen === "item") && rooms.length === 0) screen = "start";
+    roomCursor = Math.min(roomCursor, Math.max(0, rooms.length - 1));
+    const room = rooms[roomCursor];
+    if (room) walk = { item: Math.min(walk.item, Math.max(0, room.items.length - 1)), choice: walk.choice };
+    if (phase === "pick") {
+      const target = pickFor !== null && current?.checklist ? findItem(current.checklist, pickFor) : null;
+      return { kind: "text", view: pickView({
+        locale, severity: data.severity, quickNotes: notes(), pickIndex, ...(target ? { forItem: target.item.text } : {}),
+      }) };
+    }
     if (phase === "review") {
       return { kind: "text", view: reviewView({
         locale, severity: data.severity, pending, reviewChoice, truncated,
@@ -175,10 +211,16 @@ async function boot(): Promise<void> {
       readPage = Math.min(readPage, readPageCount(current, notesCursor, locale) - 1);
       return { kind: "text", view: readView(current, notesCursor, readPage, locale) };
     }
+    if (current && room && screen === "rooms") return { kind: "text", view: roomsView(current, roomCursor, locale) };
+    if (current && room && screen === "item") {
+      return { kind: "text", view: itemView(current, room, walk, activeConfirm(pendingOk, Date.now()) !== null, locale) };
+    }
     screen = "start";
-    const rows = startRows(count);
+    const rows = startRows(count, checklistRow());
     startCursor = Math.min(startCursor, rows.length - 1);
-    return { kind: "text", view: startView(startCursor, { locale, voice: voice(), demo: DEMO, severity: data.severity, entryCount: count }) };
+    return { kind: "text", view: startView(startCursor, {
+      locale, voice: voice(), demo: DEMO, severity: data.severity, entryCount: count, checklist: checklistRow(),
+    }) };
   };
 
   /** Set once the phone page is mounted; redraws it after a change made on the glasses. */
@@ -300,6 +342,7 @@ async function boot(): Promise<void> {
     }
     phase = "pick";
     pickIndex = 0;
+    pickFor = null;
     await draw();
   };
 
@@ -307,11 +350,48 @@ async function boot(): Promise<void> {
   const pickNote = async (): Promise<void> => {
     const current = inspection();
     const note = notes()[pickIndex];
+    const forItem = pickFor;
     phase = "idle";
-    screen = "start";
     pickIndex = 0;
+    pickFor = null;
+    if (forItem !== null) {
+      // A defect of a checklist item: filed under its room and item, the item is answered and the walk moves on.
+      // "Cancel" goes back to the item unchanged.
+      screen = "item";
+      const target = current?.checklist ? findItem(current.checklist, forItem) : null;
+      if (current && target && note) {
+        const now = Date.now();
+        const filed = addEntry(current, target.item.text + ": " + note, target.item.critical ? "major" : "minor", now,
+          { section: target.room.name, itemId: target.item.id });
+        await persist(setCheck(filed, target.item.id, "defect", now));
+        advanceWalk();
+      }
+      await draw();
+      return;
+    }
+    screen = "start";
     if (current && note) await persist(addEntry(current, note, data.severity, Date.now()));
     await draw();
+  };
+
+  /** After an item was answered: the next item of the room, or the overview at the end of it (cursor on the next room). */
+  const advanceWalk = (): void => {
+    const room = currentRoom();
+    const next = room ? afterAnswer(room, walk) : null;
+    if (next) { walk = next; return; }
+    const rooms = inspection()?.checklist?.rooms.length ?? 0;
+    if (rooms > 0) roomCursor = Math.min(roomCursor + 1, rooms - 1);
+    walk = walkStart();
+    screen = "rooms";
+  };
+
+  /** Opens a room of the checklist where there is something left to do. */
+  const openRoom = (): void => {
+    const current = inspection();
+    const room = currentRoom();
+    if (!current || !room) return;
+    walk = walkStart(firstOpenItem(current, room));
+    screen = "item";
   };
 
   // Let in-flight PCM blocks land before closing the capture (drain rule).
@@ -527,8 +607,9 @@ async function boot(): Promise<void> {
    * Photos come from the phone camera, which the SDK exposes as a
    * user-initiated picker. The glasses have no camera.
    */
-  const attachPhoto = async (): Promise<void> => {
+  const attachPhoto = async (itemId?: string): Promise<void> => {
     if (!inspection()) return;
+    if (itemId !== undefined) { await attachItemPhoto(itemId); return; }
     const asset = await bridge.captureImageFromCamera().catch(() => null);
     // Read again: an entry may have been filed while the camera was open.
     let current = inspection();
@@ -552,6 +633,27 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  /**
+   * A photo for one checklist item, taken from the phone page: it becomes an entry of that item
+   * ("Fenster und Rahmen: Foto"), filed under its room, which is what a photo-required item waits for.
+   */
+  const attachItemPhoto = async (itemId: string): Promise<void> => {
+    const asset = await bridge.captureImageFromCamera().catch(() => null);
+    const current = inspection();
+    const target = current?.checklist ? findItem(current.checklist, itemId) : null;
+    if (!current || !target) return;
+    if (!asset?.base64) { notice = "noPhoto"; await draw(); return; }
+    notice = null;
+    const filed = addEntry(current, target.item.text + ": " + t(locale, "photoOnly"), "note", Date.now(),
+      { section: target.room.name, itemId: target.item.id });
+    await persist(attachToLatest(filed, {
+      dataUri: "data:" + (asset.mimeType || "image/jpeg") + ";base64," + asset.base64,
+      mimeType: asset.mimeType || "image/jpeg",
+      size: asset.size || Math.round(asset.base64.length * 0.75),
+    }));
+    await draw();
+  };
+
   let clock: ReturnType<typeof setInterval> | undefined;
 
   /** The microphone was paused for the exit dialog and comes back if the user stays. */
@@ -564,6 +666,7 @@ async function boot(): Promise<void> {
     micPausedForExit = false;
     clearInterval(clock);
     clearTimeout(confirmTimer);
+    clearTimeout(okTimer);
     const wasRecording = phase === "recording" || starting;
     abandonRecording();
     if (wasRecording && micMayBeOn) void bridge.audioControl(false).catch(() => undefined);
@@ -699,6 +802,9 @@ async function boot(): Promise<void> {
       pendingDiscard = null;
       clearTimeout(confirmTimer);
       if (wasArmed) void draw();
+      // An armed OK of a critical item: a swipe or 2x only cancels it (the footer says so), nothing else happens.
+      if (activeConfirm(pendingOk, Date.now()) !== null) { disarmOk(); void draw(); return; }
+      disarmOk();
     }
 
     switch (gesture.gesture) {
@@ -709,7 +815,7 @@ async function boot(): Promise<void> {
         if (phase === "review") {
           if (reviewChoice === 0) { background(keepPending(), "saving the entry"); return; }
           // "Keep + photo" is chosen from the list; the camera shutter is the last confirmation.
-          if (reviewChoice === 1) { background(keepPending().then(attachPhoto), "attaching a photo"); return; }
+          if (reviewChoice === 1) { background(keepPending().then(() => attachPhoto()), "attaching a photo"); return; }
           // Discarding takes two single taps on "Discard" within a few seconds; anything else cancels.
           const step = confirmStep(pendingDiscard, "discard", Date.now());
           pendingDiscard = step.pending;
@@ -726,6 +832,32 @@ async function boot(): Promise<void> {
         }
         if (phase !== "idle") return;
         if (screen === "recorder") { background(startMic(), "starting dictation"); return; }
+        if (screen === "rooms") { openRoom(); break; }
+        if (screen === "item") {
+          const current = inspection();
+          const room = currentRoom();
+          const item = room?.items[walk.item];
+          if (!current || !room || !item) break;
+          if (walk.choice === 1) {
+            // "Defect": the quick notes, filed under this item.
+            disarmOk();
+            pickFor = item.id;
+            pickIndex = 0;
+            phase = "pick";
+            break;
+          }
+          const tap = tapOk(item, activeConfirm(pendingOk, Date.now()), Date.now());
+          pendingOk = tap.pending;
+          clearTimeout(okTimer);
+          if (!tap.confirmed) {
+            // First tap on a critical item: armed; it runs out after the window.
+            okTimer = setTimeout(() => { pendingOk = null; void draw(); }, CONFIRM_WINDOW_MS + 50);
+            break;
+          }
+          background(persist(setCheck(current, item.id, "ok", Date.now())), "saving the check");
+          advanceWalk();
+          break;
+        }
         if (screen === "notes") { readPage = 0; screen = "read"; break; }
         if (screen === "read") {
           const count = inspection()?.entries.length ?? 0;
@@ -735,8 +867,14 @@ async function boot(): Promise<void> {
         }
         {
           // The start list: record / notes / type of the next entry (a tap sets the next type).
-          const rows = startRows(inspection()?.entries.length ?? 0);
+          const rows = startRows(inspection()?.entries.length ?? 0, checklistRow());
           const row = rows[Math.min(startCursor, rows.length - 1)];
+          if (row?.kind === "checklist") {
+            const current = inspection();
+            roomCursor = current ? firstOpenRoom(current) : 0;
+            screen = "rooms";
+            break;
+          }
           if (row?.kind === "record") { background(openRecord(), "starting dictation"); return; }
           if (row?.kind === "notes") { notesCursor = 0; screen = "notes"; break; }
           if (row?.kind === "type") {
@@ -765,9 +903,16 @@ async function boot(): Promise<void> {
         if (phase !== "idle") break;
         const current = inspection();
         const count = current?.entries.length ?? 0;
+        const rooms = current?.checklist?.rooms ?? [];
         if (screen === "start") {
-          const rows = startRows(count).length;
+          const rows = startRows(count, checklistRow()).length;
           startCursor = (Math.min(startCursor, rows - 1) + delta + rows) % rows;
+        } else if (screen === "rooms" && rooms.length > 0) {
+          roomCursor = (Math.min(roomCursor, rooms.length - 1) + delta + rooms.length) % rooms.length;
+        } else if (screen === "item") {
+          // Only moves: OK -> Defect -> next item, and back. Never records anything.
+          const room = currentRoom();
+          if (room) walk = walkSwipe(room, walk, delta);
         } else if (screen === "notes" && count > 0) {
           notesCursor = (notesCursor + delta + count) % count;
         } else if (screen === "read" && current) {
@@ -785,9 +930,11 @@ async function boot(): Promise<void> {
       case "doubleClick":
         // 2x is "back one level". It never stops a recording or throws away a transcript, so those
         // phases ignore it; the quick-note list, the notes and the recorder go back, only the start leaves.
-        if (phase === "pick") { phase = "idle"; screen = "start"; pickIndex = 0; break; }
+        if (phase === "pick") { phase = "idle"; screen = pickFor !== null ? "item" : "start"; pickFor = null; pickIndex = 0; break; }
         if (phase === "recording" || phase === "transcribing" || phase === "review") return;
         if (screen === "read") { screen = "notes"; break; }
+        if (screen === "item") { screen = "rooms"; break; }
+        if (screen === "rooms") { screen = "start"; break; }
         if (screen === "notes" || screen === "recorder") { screen = "start"; break; }
         void close();
         return;
@@ -815,7 +962,8 @@ async function boot(): Promise<void> {
     setData: async (next) => {
       data = next;
       // Quick notes or the server may have changed under an open list.
-      if (phase === "pick" && voice()) phase = "idle";
+      // (A defect being picked for a checklist item uses quick notes in every case.)
+      if (phase === "pick" && voice() && pickFor === null) phase = "idle";
       pickIndex = Math.min(pickIndex, notes().length);
       status = "idle";
       await save(bridge, next);
@@ -829,7 +977,7 @@ async function boot(): Promise<void> {
       if (SIDE_MENU) rebuildWanted = true;
       void draw();
     },
-    takePhoto: () => attachPhoto(),
+    takePhoto: (itemId?: string) => attachPhoto(itemId),
   });
   refreshPhone = phone.refresh;
 }

@@ -977,3 +977,77 @@ describe("babel-glass 0.8.0 Meine Stimme + Personen", () => {
     expect(fake.body()).toContain("Me: Ich schaue nach.");
   });
 });
+
+describe("babel-glass 1.1.1 Sprecher erkennen (Brille)", () => {
+  beforeEach(() => {
+    resetGestureDedupe();
+    vi.useFakeTimers();
+    vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null });
+    vi.stubGlobal("navigator", { language: "en-US" });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    VoiceSocket.all = [];
+    vi.stubGlobal("WebSocket", VoiceSocket);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const SERVER = { sttUrl: "wss://speech.example:8449" };
+  /** A voiced 20 ms frame (amplitude 3000). */
+  const loud = (): Uint8Array => {
+    const out = new Uint8Array(640);
+    for (let i = 0; i < 320; i++) { out[2 * i] = 3000 & 0xff; out[2 * i + 1] = 3000 >> 8; }
+    return out;
+  };
+  async function listen(stored: Record<string, unknown>) {
+    const fake = richBridge({ stored: { [SETTINGS_KEY]: JSON.stringify({ ...SERVER, ...stored }) } });
+    harness.bridge = fake.bridge;
+    vi.resetModules();
+    await import("../src/main");
+    await vi.waitFor(() => expect(fake.ready()).toBe(true));
+    await vi.advanceTimersByTimeAsync(50);
+    fake.emit(0); // start the mode under the cursor (the stored one)
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fake.mic.open).toBe(true);
+    const socket = VoiceSocket.all.at(-1)!;
+    const say = async (role: string, text: string, speaker?: string): Promise<void> => {
+      for (let i = 0; i < 10; i++) fake.raw({ audioEvent: { audioPcm: loud(), speakerRole: role, direction: 5, source: "glasses" } });
+      socket.onmessage?.({ data: JSON.stringify({ type: "final", text, final: true, language: "de", ...(speaker ? { speaker } : {}) }) });
+      await vi.advanceTimersByTimeAsync(300);
+    };
+    return { fake, socket, say };
+  }
+
+  it("Gespräch: lines are marked Me / Them by the glasses' role; an unknown line stays; the audio still reaches the server", async () => {
+    const { fake, socket, say } = await listen({ talkMode: "client" });
+    await say("other", "Was kostet das?", "A");
+    await say("self", "Ich schaue nach.", "B");
+    await say("unknown", "Moment bitte.");
+    expect(fake.body()).toContain("Them: Was kostet das?");
+    expect(fake.body()).toContain("Me: Ich schaue nach.");
+    expect(fake.body()).toContain("Moment bitte.");
+    expect(fake.body()).not.toContain(": Moment bitte.");
+    expect(socket.sent.filter((m) => typeof m !== "string")).toHaveLength(30);
+  });
+
+  it("switched off on the phone: the old speaker letters, no Me / Them", async () => {
+    const { fake, say } = await listen({ talkMode: "client", speakerRole: false });
+    await say("other", "Was kostet das?", "A");
+    await say("self", "Ich schaue nach.", "B");
+    expect(fake.body()).toContain("A: Was kostet das?");
+    expect(fake.body()).toContain("B: Ich schaue nach.");
+    expect(fake.body()).not.toContain("Me:");
+  });
+
+  it("Translate mode carries no Me / Them marks", async () => {
+    const { fake, say } = await listen({ talkMode: "translate" });
+    await say("self", "Ich schaue nach.", "B");
+    expect(fake.body()).toContain("B: Ich schaue nach.");
+  });
+
+  it("a voice profile wins: ME is Me although the glasses said other, a letter is Them although they said self", async () => {
+    const { fake, say } = await listen({ talkMode: "client", voiceEnrolled: true });
+    await say("other", "Ich schaue nach.", "ME");
+    await say("self", "Was kostet das?", "A");
+    expect(fake.body()).toContain("Me: Ich schaue nach.");
+    expect(fake.body()).toContain("Them: Was kostet das?");
+  });
+});

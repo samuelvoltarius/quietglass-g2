@@ -23,11 +23,17 @@ describe("decide", () => {
   });
 
   it("uses the root as a selectable menu", () => {
+    // Demo: one unread alert as a warning row on top, then the six areas.
     const root = createModel(demoReport());
-    const selectedHome = decide(root, "scrollDown", T0).model;
-    expect(selectedHome.rootSelected).toBe(1);
-    expect(decide(selectedHome, "click", T0).model.screen).toBe("inbox");
-    expect(decide(root, "scrollUp", T0).model.rootSelected).toBe(5); // wraps to the last row (Tagesstart; QUS v1: no help row)
+    expect(decide(root, "click", T0).model.screen).toBe("inbox");
+    const agents = decide(root, "scrollDown", T0).model;
+    expect(agents.rootKey).toBe("area:agent");
+    expect(decide(agents, "click", T0).model.screen).toBe("agent");
+    const home = decide(agents, "scrollDown", T0).model;
+    expect(decide(home, "click", T0).model.screen).toBe("home");
+    const last = decide(root, "scrollUp", T0).model;
+    expect(last.rootKey).toBe("area:brief"); // wraps to the last row (Tag)
+    expect(decide(last, "click", T0).model.screen).toBe("brief");
   });
 
   it("uses the native Even exit dialog action on the root-page double tap", () => {
@@ -68,10 +74,13 @@ describe("decide", () => {
     expect(outcome.effect).toEqual({ kind: "ask", agentId: "hermes-spark", question: "Mehr Details" });
   });
 
-  it("a light switches with one tap and shows the new state at once", () => {
+  it("a tap on a light opens its choices on 'Aus'; the next tap switches it and shows the new state at once", () => {
     const onHome = { ...model(), screen: "home" as const, zh: { ...initialZuhause(), index: 1 } };
-    const fired = decide(onHome, "click", T0);
-    expect(fired.effect).toEqual({ kind: "homeAction", target: "light.buero", action: "toggle" });
+    const opened = decide(onHome, "click", T0);
+    expect(opened.effect).toBeUndefined();
+    expect(opened.model.zh).toMatchObject({ level: "detail", detailId: "light.buero", choice: 0 });
+    const fired = decide(opened.model, "click", T0 + 100);
+    expect(fired.effect).toEqual({ kind: "homeAction", target: "light.buero", action: "brightness", value: 0 });
     expect(fired.model.report.homeView?.entities["light.buero"]?.on).toBe(false);
   });
 

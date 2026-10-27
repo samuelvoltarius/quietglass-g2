@@ -6,8 +6,10 @@ No account, no analytics, no tracking, no other server.
 ## What the app sends
 
 * `GET /state` (long-poll) to your bridge — no data from you, only a revision number.
-* `POST /command` to your bridge — only after you confirmed a command on the glasses (climate on with a
-  temperature, climate off, lock, unlock).
+* Only on the control page, and only if your bridge has control switched on: `POST /command` with the chosen command
+  (lock, unlock or preheat with its duration) and, for the second tap, the one-time value the bridge handed out.
+
+Nothing else. The app never talks to the car or to BYD itself; your bridge decides and passes the command on.
 
 Authentication is done by `tailscale serve` in front of the bridge (your Tailscale login); the app stores no token.
 
@@ -18,11 +20,12 @@ In the Even app's per-app storage on your phone: the bridge address, the swipe d
 ## What the bridge sees
 
 The bridge (`selfhost/services/byd-bridge`) runs on your own server. It keeps the car's latest telemetry in memory,
-does **not** pass the car's location or VIN to the glasses, and writes one log line per command
-(time, action, value, result, Tailscale login) to a file on that server.
+and does **not** pass the car's location or VIN to the glasses. Its command endpoint is switched off by default.
+When switched on, every command and every refusal is logged as one line (time, command, result, reason) in a file on
+that server, and every unlock is reported to you via your own Telegram bot.
 
 ## Deutsch, kurz
 
 BYD Glass spricht nur mit deiner eigenen byd-bridge. Kein Konto, kein Tracking. Gespeichert wird am Handy nur die
-Bridge-Adresse, die Wischrichtung und die Sprache. Standort und VIN gibt die Bridge nicht an die Brille weiter;
-jeder Befehl wird auf deinem Server protokolliert.
+Bridge-Adresse, die Wischrichtung und die Sprache. Standort und VIN gibt die Bridge nicht an die Brille weiter.
+Befehle (Zusperren, Aufsperren, Vorheizen) gehen nur an deine Bridge und nur, wenn sie dort freigeschaltet sind.

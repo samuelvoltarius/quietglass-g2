@@ -125,11 +125,21 @@ route's own shape as one GET `?json=` (no preflight), 0.1-0.3 s even for a
 300 km route. Those names label the map reliably; the streets *around* the
 route still come from Overpass as below when it answers, and simply join in.
 
-Streets are OpenStreetMap data from the public **Overpass API**: one request
-per route, made only after the overview has been on screen for 1.5 s (so a
-swipe past it costs nothing), with only way geometry asked for and cut to
-the area server-side. A reroute inside the area already loaded asks nothing.
-The answer is held in memory, never stored.
+Streets are OpenStreetMap data from the **Overpass API**, fetched around the
+car (1.9 km by car, 1.2 km on foot) once the overview has been on screen for
+1.5 s (so a swipe past it costs nothing), and again when the car nears the
+edge of what was loaded; only way geometry is asked for, cut to the area
+server-side. The answer is held in memory, never stored.
+
+**Own map server.** On 22.10.2026 the public servers answered every request
+with 406 (overpass-api.de) or not at all (overpass.private.coffee): the map
+showed the route line and no streets. Under *Settings → Servers* you can
+enter your own Overpass server ("Own map server"); a bare host is enough, the
+app adds `/api/interpreter`. It is asked first for map streets, speed cameras
+and charging stations; if it cannot be reached, the public servers are asked.
+Private builds also have `VITE_OVERPASS_URL` (asked inside the countries it
+holds, after the phone entry). The network whitelist carries `https://*` for
+this - whether the glasses honour the wildcard is not verified on hardware.
 
 If the street server is slow (12 s timeout), busy, offline, or answers with
 something oversized (> 3 MB) or broken, the next server is tried once, then

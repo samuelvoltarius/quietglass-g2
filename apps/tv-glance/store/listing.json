@@ -1,0 +1,21 @@
+{
+  "category": "Utilities",
+  "tagline": "A calm TV remote on your G2.",
+  "about": "TV Glance turns your G2 into a calm TV remote. See what is playing and the volume at a glance; tap to play or pause, swipe up or down for louder or quieter, double tap to go back.\n\n• Remote: the app and title in large letters, a volume bar, the TV's state\n• Apps & input: switch on/off (off asks for a second tap), mute, inputs and your favourite apps\n• D-pad: up, down, left, right, OK, back, home\n• Works with your own Home Assistant (any TV it controls) or with the small Android TV bridge included in the source\n• Without setup a demo TV shows how it works\n\nNo account, no tracking, no server of ours. Your Home Assistant token stays on your phone. Setup guide: github.com/samuelvoltarius/quietglass-g2 (apps/tv-glance).\n\n— Deutsch —\n\nTV Glance macht deine G2 zur ruhigen TV-Fernbedienung. Was läuft und wie laut, auf einen Blick; Tippen = Play/Pause, Wischen hoch/runter = lauter/leiser, zweimal Tippen = zurück.\n\n• Fernbedienung: App und Titel groß, Lautstärkebalken, Zustand des Fernsehers\n• Apps & Eingang: Ein/Aus (Ausschalten fragt nach), Ton aus, Eingänge und deine Lieblings-Apps\n• Steuerkreuz: hoch, runter, links, rechts, OK, zurück, Home\n• Mit deinem eigenen Home Assistant (jeder Fernseher, den es steuert) oder der kleinen Android-TV-Bridge aus dem Quellcode\n• Ohne Einrichtung zeigt ein Demo-Fernseher, wie es geht\n\nKein Konto, kein Tracking, kein Server von uns. Dein Home-Assistant-Token bleibt auf dem Handy. Anleitung: github.com/samuelvoltarius/quietglass-g2 (apps/tv-glance).",
+  "tags": [
+    "tv",
+    "remote",
+    "home-assistant",
+    "android-tv",
+    "self-hosted"
+  ],
+  "permissions": [
+    {
+      "name": "network",
+      "why_en": "Reads your TV's state from and sends your commands to the Home Assistant or TV Glance bridge you enter. No other server is contacted.",
+      "why_de": "Liest den Zustand deines Fernsehers und sendet deine Befehle an das Home Assistant bzw. die TV-Glance-Bridge, die du einträgst. Kein anderer Server."
+    }
+  ],
+  "privacy_policy_url": "https://github.com/samuelvoltarius/quietglass-g2/blob/main/apps/tv-glance/docs/PRIVACY.md",
+  "screenshot": "apps/tv-glance/store/screenshots/01-remote-en.png"
+}

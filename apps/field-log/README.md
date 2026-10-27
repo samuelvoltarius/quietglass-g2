@@ -13,6 +13,12 @@
 > 3. Mit Wischen eine Schnellnotiz wählen („Beschädigt“, „Fehlt“ …), tippen zum Speichern.
 >    Am Handy kannst du Notizen auch eintippen, Bereiche setzen, Fotos machen und den Bericht exportieren.
 >
+> **Checkliste Raum für Raum (optional):** Im Tab *Notizen* eine Vorlage (Wohnungsübergabe,
+> Auto-Rückgabe) übernehmen oder selbst schreiben – `# Küche` = Raum, eine Zeile = Punkt,
+> `!` vorne = kritisch, `[foto]` = Foto nötig. An der Brille: Tippen = OK, Wischen = weiter,
+> *Mangel* = Schnellnotiz zum Punkt; kritische Punkte zweimal tippen. Vor dem Export warnt
+> das Handy bei fehlenden Pflichtfotos und offenen kritischen Punkten.
+>
 > **Tabelle (CSV):** Neben dem CSV-Knopf wählst du das Format. „Für Excel (DE/AT)“
 > (Standard bei deutscher App-Sprache) öffnet sich per Doppelklick richtig im deutschen
 > Excel: Strichpunkt, Umlaute korrekt, Zeit wie `07.10.2026 14:05`, genaue Zeit (ISO, UTC)
@@ -56,6 +62,90 @@ within 4 s discards the text.
 
 Severity (`note` · `minor` · `major`) is the *Type* row of the start page (a tap sets the next one) and applies to the next entry. Sections — Kitchen, Axle, Roof — are set on the phone and every
 entry inherits the current one, so the report groups itself.
+
+## Room-by-room checklist (optional)
+
+For a handover you usually know in advance what has to be looked at. An
+inspection can carry a checklist: rooms, and in each room the items to check.
+Without one, FieldLog works exactly as described above.
+
+**On the phone** (tab *Notes*, card *Checklist*) the list is plain text, one
+line per item:
+
+```text
+# Kitchen
+Oven clean
+! Gas turned off
+Window frame [photo]
+
+# Meters and keys
+! Electricity meter read [photo]
+! All keys handed over
+```
+
+| Syntax | Meaning |
+|---|---|
+| `# Name` | starts a room |
+| one line | one item |
+| `!` at the start | critical: on the glasses OK needs a second tap within 4 s, and an open critical item is named before export |
+| `[photo]`, `[foto]` or 📷 anywhere | photo required: the item stays open until a photo is attached to it on the phone |
+| empty lines, `-`, `*`, `- [ ]` | ignored, so a pasted task list works |
+| items before the first `#` | go into a room called *General* |
+
+Two templates — *flat handover* and *car return*, in German and English — are
+copied into the box with one tap and edited there; nothing is saved until
+*Save checklist*. Saving the box empty removes the checklist (the ticks stay
+stored, so saving the same list again brings them back). The state of an item
+is keyed by its room and text, so editing other lines keeps what was already
+checked. Each item that needs a photo gets a camera button; a photo taken on
+the phone right after recording a defect on the glasses also counts for that
+item, because it attaches to the defect entry.
+
+**On the glasses**, the start page then begins with *Checklist · 12/30*
+(the *Type* row goes; still three entries at most). A tap opens the rooms:
+
+```text
+Checklist · 12/30
+● Kitchen 5/7 · 1 [photo] missing
+  Bathroom 0/5 · 1 [photo] missing · 1 ! open
+```
+
+A tap on a room jumps to its first open item:
+
+```text
+Kitchen · 2/7 · critical
+! Gas turned off
+Status: open
+● OK
+  Defect
+Tap = OK (critical) · Swipe = choose · 2× = back
+```
+
+- **Tap on OK** marks the item and moves to the next one; after the last item
+  of the room the overview comes back with the next room selected.
+- **Swipe** only moves: OK → Defect → next item's OK, and back up. It never
+  records anything.
+- **Tap on Defect** opens the quick notes; the chosen note is filed as
+  "*item*: *note*" under the item's room (critical items as major, others as
+  minor) and the walk moves on. *Cancel* or 2× goes back to the item.
+- **Critical items:** the first tap on OK only arms it (`● SURE? OK`, footer
+  `Tap again = confirm OK · Swipe/2× = cancel`); a second single tap within 4 s
+  confirms. A swipe, 2× or waiting cancels and does nothing else.
+- Items that need a photo show `[photo] on the phone` and count as open until
+  the photo is attached. The glasses write `[photo]` rather than 📷: their font
+  draws no emoji.
+- 2× goes back one level (item → rooms → start). No hold anywhere; the exit
+  dialog is unchanged.
+
+German footers: `Tippen = OK · Wischen = wählen · 2× = zurück`,
+`Tippen = OK (kritisch) · …`, `Tippen = Mangel wählen · …`,
+`Nochmal tippen = OK bestätigen · Wischen/2× = abbrechen`, and on the room
+overview `Tippen = öffnen · Wischen = wählen · 2× = zurück`.
+
+**Before export**, if required photos are missing or critical items are still
+open, the phone says so instead of exporting — for example *Before you export:
+3 rooms without a required photo, 1 critical item open*, with the rooms and items
+listed — and offers *Export anyway* or *Back*.
 
 ## Every transcript is confirmed
 
@@ -109,7 +199,7 @@ phone, and the photo attaches to the entry you just made.
 
 | Format | Contains |
 |---|---|
-| **Markdown** | Grouped by section, majors in bold, photos referenced by size |
+| **Markdown** | Grouped by section, majors in bold, photos referenced by size. With a checklist: grouped by room, every item with its state, defects and photos (see below) |
 | **Markdown + photos** | The same with images embedded — self-contained but large |
 | **CSV** | One row per entry, for a spreadsheet |
 
@@ -149,13 +239,29 @@ Major: 1 · Minor: 2 · Notes: 0
 - [09:24] **MAJOR** — Mould behind the sink, spreading to the wall
 ```
 
+With a checklist the report lists every room and item; notes that belong to no
+item follow under *Other notes*. The CSV stays one row per note, with the room
+as the section.
+
+```markdown
+Checklist: 4/6 done
+
+## Kitchen (2/3)
+
+- OK — Oven clean
+- **DEFECT** — Gas turned off (critical)
+  - [09:16] **MAJOR** — Gas turned off: Damaged
+    (photo attached, 412 kB)
+- **OPEN** — Window frame (required photo missing)
+```
+
 ## Controls
 
 | Gesture | Effect |
 |---|---|
-| **Tap** | Open the selected start entry · save the highlighted quick note · open a note · (with a server: dictate · finish · keep) |
-| **Swipe** | Only moves: start list, notes, quick notes, pages of a note, *Keep*/*Keep + photo*/*Discard*. Never deletes or discards anything |
-| **2×** | Back one level (notes, recorder, quick notes); at the start page leave FieldLog. Does nothing while recording or under *Keep this?* |
+| **Tap** | Open the selected start entry · save the highlighted quick note · open a note · checklist: open a room, OK (critical: tap twice within 4 s), Defect · (with a server: dictate · finish · keep) |
+| **Swipe** | Only moves: start list, notes, quick notes, pages of a note, rooms, OK/Defect/next item, *Keep*/*Keep + photo*/*Discard*. Never deletes, discards or checks anything; cancels an armed OK |
+| **2×** | Back one level (notes, recorder, quick notes, item → rooms → start); at the start page leave FieldLog. Does nothing while recording or under *Keep this?*; cancels an armed OK |
 
 The hold never reaches the app on the real glasses, so nothing depends on it.
 
@@ -171,7 +277,7 @@ picker on the phone page. Every glasses string is tested to fit one
 npm install
 npm run dev        # phone UI + app on http://127.0.0.1:5198
 npm run build      # typecheck + production bundle
-npm test           # 104 unit tests
+npm test           # 252 unit tests
 npm run sim        # Even Hub simulator pointed at the dev server
 ```
 
@@ -205,7 +311,7 @@ stays under your control.
 
 - Location stamping per entry, using the SDK's `getAppLocation`.
 - PDF export with photo plates.
-- Re-usable inspection templates with predefined sections.
+- Saving your own checklists as templates for the next walk (today: two built-in templates, copied per walk).
 
 ## Privacy
 

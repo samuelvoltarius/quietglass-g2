@@ -9,7 +9,7 @@
  */
 import { normalizeReport } from "./normalize";
 import { briefPath } from "../hub/place";
-import type { Brief, HomeActionResult, HubApi, HubReport, ReportCursor, SessionList } from "./types";
+import type { Brief, HomeActionResult, HubApi, HubReport, ReportCursor, SessionList, CarResult } from "./types";
 
 /** How long the client waits for a voice upload: 90 s, plus half the audio length for long dictations (16 kHz s16le). */
 export function voiceTimeoutMs(wavBytes: number): number {
@@ -130,6 +130,16 @@ export function createClient(options: ClientOptions): HubApi {
     },
     homeConfirm: async (token) => {
       await call("/home/confirm", { method: "POST", body: JSON.stringify({ token }) });
+    },
+    // The car may take a while to echo (Panoptes waits for it); never retried here.
+    carAction: async (aktion, values = {}) => {
+      try {
+        return await call<CarResult>("/car/action", { method: "POST", body: JSON.stringify({ aktion, ...values }) }, Math.max(timeoutMs, 30_000));
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 503) return { ok: false, grund: "nicht_eingerichtet" };
+        if (error instanceof ApiError && error.status === 404) return { ok: false, grund: "daemon_alt" };
+        throw error;
+      }
     },
     // Collecting every source may take a few seconds on the daemon (each has its own timeout).
     brief: async (refresh = false, place = null) => call<Brief>(briefPath(refresh, place), undefined, Math.max(timeoutMs, 15_000)),

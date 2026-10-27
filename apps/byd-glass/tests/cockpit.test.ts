@@ -10,7 +10,7 @@ import { arcStyle, cellBoxes, composeCockpit, headlineLayout, sweepFor } from ".
 import { frameKey } from "../src/screen/frame";
 import { createTileSender } from "../src/screen/sender";
 import { pixelBackend } from "../src/screen/text";
-import { INITIAL_CONTROL, type Page } from "../src/pages";
+import type { Page } from "../src/pages";
 import { bannerFor, isFirstRun, nowInner, setupInner, TABS } from "../src/ui/phone";
 import { EMPTY_SETTINGS } from "../src/storage/persist";
 import { greenPng } from "./green-png";
@@ -23,13 +23,12 @@ function car(scene: DemoScene, over: Record<string, unknown> = {}): CarState {
   return parseState({
     ...deriveRaw(demoTelemetry(scene, 1_000), 1, {}),
     rev: 1,
-    control: { enabled: true, lock: true, unlock: false, climate_temp: false },
     ...over,
   });
 }
 
 const state = (page: Page, c: CarState | null, extra: Partial<ViewState> = {}): ViewState => ({
-  locale: "de", demo: false, connection: { kind: "ok" }, car: c, page, control: INITIAL_CONTROL, overlay: null, local: null, now: NOW, ...extra,
+  locale: "de", demo: false, connection: { kind: "ok" }, car: c, page, overlay: null, now: NOW, ...extra,
 });
 
 describe("cockpit model", () => {
@@ -38,10 +37,8 @@ describe("cockpit model", () => {
     const model = cockpitModel(state("status", c));
     expect(model.headline[1]).toBe("REICHWEITE");
     expect(model.headline[0]).toMatch(/^\d+ KM$/);
-    expect(model.cells.map((cell) => cell.label)).toEqual(["KM", "KLIMA", "SCHLOSS", "TÜREN", "REIFEN", "STAND"]);
-    expect(model.cells[2]!.value).toBe("ZU");
-    expect(model.cells[3]!.value).toBe("ZU");
-    expect(model.cells[5]!.value).toBe("LIVE");
+    expect(model.cells.map((cell) => cell.label)).toEqual(["SCHLOSS", "TÜREN", "REIFEN", "KLIMA", "KM", "STAND"]);
+    expect(model.cells.map((cell) => cell.value)).toEqual(["ZU", "ZU", "OK", "AUS", "28015", "LIVE"]);
     expect(model.graphic.percent).toBe(c.battery.soc);
     expect(model.graphic.center).toBe(`${Math.round(c.battery.soc!)}%`);
     expect(model.title).toBe("BYD");
@@ -53,6 +50,9 @@ describe("cockpit model", () => {
     const drive = cockpitModel(state("drive", car("drive")));
     expect(drive.headline[0]).toMatch(/^\d+ KM\/H$/);
     expect(drive.cells.map((cell) => cell.label)).toEqual(["LEISTUNG", "VERBR.", "REICHW.", "KLIMA", "AUSSEN", "TRIP"]);
+    // Climate: on/off and the fan level, never a temperature (no cabin sensor; the setpoint is no reading).
+    expect(drive.cells.find((cell) => cell.label === "KLIMA")!.value).toBe("AN · STUFE 2");
+    expect(cockpitModel(state("drive", car("drive"), { locale: "en" })).cells.find((cell) => cell.label === "CLIMATE")!.value).toBe("ON · FAN 2");
     const charging = cockpitModel(state("charge", car("charge")));
     expect(charging.headline[0]).toMatch(/^[\d,]+ KW$/);
     expect(charging.headline[1]).toMatch(/^LÄDT (AC|DC)$/);
@@ -65,16 +65,26 @@ describe("cockpit model", () => {
     expect(idle.headline[1]).toBe("NICHT LADEND");
   });
 
-  it("English labels, and dashes instead of unknown values", () => {
+  it("English labels; a value the car does not report leaves its cell out (other BYD models), never 0", () => {
     const model = cockpitModel(state("status", car("parked"), { locale: "en" }));
     expect(model.headline[1]).toBe("RANGE");
-    expect(model.cells.map((cell) => cell.label)).toEqual(["KM", "CLIMATE", "LOCK", "DOORS", "TYRES", "AS OF"]);
+    expect(model.cells.map((cell) => cell.label)).toEqual(["LOCK", "DOORS", "TYRES", "CLIMATE", "KM", "AS OF"]);
     const c = car("parked");
-    const bare = cockpitModel(state("status", { ...c, battery: { ...c.battery, soc: null, rangeKm: null, odometerKm: null }, body: { ...c.body, acOn: null, locked: null, doorOpen: null } }));
+    const bare = cockpitModel(state("status", {
+      ...c,
+      battery: { ...c.battery, soc: null, rangeKm: null, odometerKm: null },
+      body: { ...c.body, acOn: null, acFan: null, locked: null, doorOpen: null, trunkOpen: null, hoodOpen: null },
+    }));
     expect(bare.headline[0]).toBe("– KM");
     expect(bare.graphic.percent).toBeNull();
     expect(bare.graphic.center).toBe("–");
-    expect(bare.cells.slice(0, 4).map((cell) => cell.value)).toEqual(["–", "–", "–", "–"]);
+    // Lock, doors, climate and km are unknown: they drop out, 12 V, outside and SoH move up.
+    expect(bare.cells.map((cell) => cell.label)).toEqual(["REIFEN", "STAND", "12 V", "AUSSEN", "SOH"]);
+    for (const cell of bare.cells) expect(cell.value).not.toMatch(/^(–|0)$/);
+    // A car that reports nothing but its charge level: no cell invents a value.
+    const empty = parseState({ mode: "parked", stale: false, battery: { soc: 70 } });
+    const only = cockpitModel(state("status", empty));
+    expect(only.cells.map((cell) => cell.label)).toEqual(["STAND"]);
   });
 
   it("an open door, an unlocked car and a leaking tyre frame their cells and name the warning in the caption; a critical warning is critical", () => {
@@ -101,7 +111,7 @@ describe("cockpit model", () => {
         expect(hint.endsWith(locale === "de" ? "2× = Ende" : "2× = exit")).toBe(true);
       }
     }
-    expect(cockpitModel(state("status", car("parked"))).hint).toBe("Wischen = Seite · Halten = Hilfe · 2× = Ende");
+    expect(cockpitModel(state("status", car("parked"))).hint).toBe("Wischen = Seite · 2× = Ende");
   });
 
   it("the key changes with a value and not with the second hand", () => {
@@ -117,7 +127,8 @@ describe("cockpit page and drawing", () => {
     expect(page.imageObject ?? []).toHaveLength(4);
     expect((page.textObject ?? []).filter((c) => c.isEventCapture === 1)).toHaveLength(1);
     expect(validateEvenHubPageContainer(page).valid).toBe(true);
-    const plain = buildPage(buildView(state("control", car("parked"))));
+    const warn = car("warn");
+    const plain = buildPage(buildView(state("status", warn, { overlay: warn.warnings })));
     expect(plain.imageObject ?? []).toHaveLength(0);
     expect(validateEvenHubPageContainer(plain).valid).toBe(true);
   });

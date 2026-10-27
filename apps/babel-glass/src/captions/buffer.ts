@@ -1,4 +1,5 @@
 import type { Transcript } from "../stt/provider";
+import type { SpeakerRole } from "../stt/role";
 
 /**
  * The caption buffer.
@@ -18,6 +19,8 @@ export interface CaptionLine {
   readonly translated?: string;
   /** Speaker label from the server ("A", "B" …), finals only. */
   readonly speaker?: string;
+  /** 1.1.1: the glasses' speaker role, finals only. */
+  readonly role?: SpeakerRole;
 }
 
 export interface CaptionBuffer {
@@ -49,6 +52,7 @@ export function applyTranscript(
   transcript: Transcript,
   now: number,
   options: BufferOptions = {},
+  role?: SpeakerRole,
 ): CaptionBuffer {
   // NFC so that a decomposed "u + combining diaeresis" from a server becomes
   // one "ü": one character on screen, one character for wrapping.
@@ -61,6 +65,7 @@ export function applyTranscript(
     text, at: now,
     ...(transcript.language ? { language: transcript.language } : {}),
     ...(transcript.final && transcript.speaker ? { speaker: transcript.speaker } : {}),
+    ...(transcript.final && role ? { role } : {}),
   };
 
   if (!transcript.final) {

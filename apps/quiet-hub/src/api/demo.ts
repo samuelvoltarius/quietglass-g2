@@ -177,7 +177,11 @@ export function demoBrief(locale: Locale = "de", now = Date.now()): Brief {
       ],
     },
     weather: { status: "ok", place: "here", appts: [{ time: "10:30", label: "Musterdorf", tempC: 9, code: 61, pop: 60, mm: 0.8, windKmh: 12 }], tempC: 9, code: 3, minC: 6, maxC: 15, rain: { kind: "later", from: "14:00", until: "16:30", mm: 2.4 } },
-    sugar: { status: "ok", current: { mgdl: 118, direction: "Flat", ageMin: 3 }, night: { min: 84, max: 192, belowMin: 0, aboveMin: 25, count: 108 }, low: 70, high: 180 },
+    sugar: {
+      status: "ok", current: { mgdl: 118, direction: "Flat", ageMin: 3 }, night: { min: 84, max: 192, belowMin: 0, aboveMin: 25, count: 108 }, low: 70, high: 180,
+      // 3 h every 5 min: a rise after lunch, back into range.
+      curve: Array.from({ length: 37 }, (_, i) => Math.round(110 + 75 * Math.exp(-((i - 16) ** 2) / 40) - (i > 30 ? (i - 30) * 2 : 0))),
+    },
     car: { status: "ok", soc: 78, rangeKm: 296, charging: false, chargeDone: true, etaMin: null, locked: true },
     printer: { status: "ok", state: "printing", file: "esp32_gehaeuse", progress: 72, minutesLeft: 41 },
     servers: { status: "ok", machines: [{ name: "Pi", ok: true, newDevices: 0 }, { name: "NAS", ok: true, newDevices: 1 }, { name: "Spark", ok: true, newDevices: 0 }], down: 0, newDevices: 1 },
@@ -311,6 +315,8 @@ export function createDemoApi(locale: Locale = "de", scene: DemoScene = "default
       report = { ...report, homeView: applyHomeAction(view, target, action, value) };
       return { ok: true };
     },
+    // Demo: every command "works" and is confirmed; nothing leaves the phone.
+    carAction: async () => ({ ok: true, weg: "lokal", bestaetigt: true }),
     homeConfirm: async (token) => {
       const view = report.homeView;
       if (pendingConfirm?.token !== token || view === undefined) return;

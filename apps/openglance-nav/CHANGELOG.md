@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+### Store-Vorbereitung
+
+- `node tools/check-store-urls.mjs openglance-nav` meldet ok: die Origins der Links, die die App wirklich anbietet (OSM-Quellenangabe, ODbL-Lizenz, „Kartenfehler melden“, „In Google Maps öffnen“), stehen exakt in der Netzwerk-Freigabe; beim Lesen eines eingefügten Links ohne Schema entsteht kein `"https://"`-Literal mehr (nur geparst, nie aufgerufen).
+
+## [0.17.16] — 2026-10-22
+
+### Neu
+
+- **Eigener Kartenserver (Overpass) auf der Handy-Seite** (Einstellungen → Server), wie NextStop 0.9.6. Anlass 22.10.2026: overpass-api.de antwortete auf jede Anfrage mit 406, overpass.private.coffee gar nicht – die Karte zeigte nur die Route. Reihenfolge: Eintrag vom Handy (überall) → eigener Server des Builds (`VITE_OVERPASS_URL`, nur in AT/DE/IT) → öffentliche Server. Gilt für Kartenstraßen, Blitzer, Ladestationen (öffentliche Fassung) und Gipfel. Ist der eigene Server nicht erreichbar, fragt die App die öffentlichen, statt abzubrechen. `/api/interpreter` wird ergänzt; Platzhalter ohne URL (Store-Regel). Nach einer Änderung werden Straßen und Blitzer neu geladen.
+- Netzwerk-Freigabe (`app.json`): zusätzlich `https://*` für eigene Server – ob die Brille den Platzhalter durchlässt, ist ungeprüft.
+
+## [0.17.15] — 2026-10-15 (privat, Beta)
+
+### Neu
+
+- **Mautfreie Route in der Auswahl:** hat die schnellste Autoroute Maut, fragt die App zusätzlich ohne Mautstraßen (`use_tolls: 0`) und bietet diese Route an zweiter Stelle an, wenn sie höchstens 1,5× so lange dauert und keine der Router-Alternativen schon mautfrei ist. Anlass: Salzburg → Tamsweg über den Radstädter Tauern (B99, 98 min) wurde neben der A10 (77 min, Tunnelmaut) nie angeboten – Valhallas eigene Alternativen verwerfen so viel langsamere Wege.
+
+## [0.17.14] — 2026-10-15 (privat, Beta)
+
+### Behoben
+
+- **Akku bei Ankunft war zu optimistisch:** gerechnet wurde nur „Rest-km × letzter 50-km-Verbrauch“, flach. Jetzt kommen die Höhenmeter der Route dazu (eigener Valhalla mit Höhendaten, `VITE_HEIGHT_URL`, Höhe je Straßenabschnitt, Tunnel überbrückt): bergauf voll (88 % Antriebswirkungsgrad), bergab 60 % zurück, 1,5 t. Salzburg → Tamsweg: 1398 m hinauf, 806 m hinunter → +4,5 kWh ≈ 10 % Akku, die vorher fehlten. Höhendaten gibt es nur für Österreich; anderswo bleibt die Rechnung flach. Protokoll `elevation`.
+  - Erster Versuch mit Höhenpunkten entlang der Linie maß über den Tunneln den Berg (2236 m, 3445 m „hinauf“) – deshalb je Straßenabschnitt mit Tunnel-Kennzeichen.
+
+### Geändert
+
+- **Gipfel-Ansicht aus** (Brillen-Liste und Handy-Tab; Schalter `PEAKS_VIEW`): ohne Kompass folgt die Richtung nur dem GPS-Kurs.
+
+### Protokoll
+
+- `vis`: Sichtbarkeitswechsel der Seite (Handy gesperrt / Even-App im Hintergrund), sofort gesendet – 15.10. wurde die App ~4 min nach dem Sperren vom System beendet.
+
 ## [0.17.13] — 2026-10-15 (privat, Beta)
 
 ### Behoben

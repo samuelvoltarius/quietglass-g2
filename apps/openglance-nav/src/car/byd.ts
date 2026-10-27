@@ -159,10 +159,15 @@ function batteryUsable(car: CarSnapshot, now: number): boolean {
   return car.batterySource !== "cloud" || (car.cloudAgeMin !== null && car.cloudAgeMin <= CLOUD_BATTERY_MAX_MIN);
 }
 
-/** Now and at arrival, or null when the car has no (recent) battery value. */
-export function batteryEstimate(car: CarSnapshot | null, remainingM: number, usableKwh: number, now: number): BatteryEstimate | null {
+/**
+ * Now and at arrival, or null when the car has no (recent) battery value.
+ * `climbKwh`: extra energy for the height still to climb (see car/elevation.ts;
+ * negative when the way ahead goes down) - 0 when no height profile is known.
+ */
+export function batteryEstimate(car: CarSnapshot | null, remainingM: number, usableKwh: number, now: number, climbKwh = 0): BatteryEstimate | null {
   if (!car || car.soc === null || !batteryUsable(car, now)) return null;
-  const raw = arrivalSoc(car.soc, remainingM / 1000, consumptionOf(car), usableKwh);
+  const climbSoc = usableKwh > 0 && Number.isFinite(climbKwh) ? (climbKwh / usableKwh) * 100 : 0;
+  const raw = arrivalSoc(car.soc, remainingM / 1000, consumptionOf(car), usableKwh) - climbSoc;
   const arrival = Math.max(0, Math.round(raw));
   return { soc: Math.round(car.soc), arrival, low: raw < LOW_ARRIVAL_SOC, ...(car.batterySource === "cloud" ? { cloud: true } : {}) };
 }

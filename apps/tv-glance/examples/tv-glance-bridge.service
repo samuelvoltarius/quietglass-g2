@@ -1,0 +1,33 @@
+# systemd unit for the TV Glance reference bridge (example).
+# Copy to /etc/systemd/system/tv-glance-bridge.service, adjust User, paths and
+# the environment file, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tv-glance-bridge
+#   systemctl is-active tv-glance-bridge
+#
+# /etc/tv-glance-bridge.env (chmod 600), for example:
+#   TV_HOST=192.168.1.50
+#   TV_APPS=YouTube=com.google.android.youtube.tv;Netflix=com.netflix.ninja;Kodi=org.xbmc.kodi
+#   BRIDGE_TAILSCALE_USERS=you@example.com
+#   # or, for LAN use without tailscale serve:
+#   # BRIDGE_HOST=0.0.0.0
+#   # BRIDGE_TOKEN=<long random string>
+[Unit]
+Description=TV Glance bridge (Android TV remote for the Even G2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=tvglance
+EnvironmentFile=/etc/tv-glance-bridge.env
+Environment=TV_CERT_DIR=/var/lib/tv-glance-bridge
+ExecStart=/usr/bin/python3 /opt/tv-glance-bridge/androidtv-bridge.py
+Restart=on-failure
+RestartSec=5
+StateDirectory=tv-glance-bridge
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

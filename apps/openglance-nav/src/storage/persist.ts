@@ -1,3 +1,4 @@
+import { normalizeOverpassUrl } from "../overpass/own";
 import type { EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import type { LatLng } from "../geo/geometry";
 import { DEFAULT_ROUTER_URL, type TravelMode } from "../routing/provider";
@@ -31,6 +32,13 @@ export interface NavData {
   readonly valhallaUrl: string;
   /** Base URL of a Photon instance for place search. Empty uses photon.komoot.io. */
   readonly geocoderUrl: string;
+  /**
+   * The user's own Overpass server (map streets, speed cameras, charging
+   * stations), stored normalised (`…/api/interpreter`). Asked first; when it
+   * cannot be reached the build's own one (private build) and the public
+   * servers are asked. Empty = those alone.
+   */
+  readonly overpassUrl: string;
   /** Demonstration route instead of real routing; nothing leaves the device. */
   readonly demo: boolean;
   /** Next-turn arrow or overview map on the glasses; swipe switches. */
@@ -98,6 +106,7 @@ const KEY = "quietglass.openglance.v1";
 export const EMPTY_DATA: NavData = {
   valhallaUrl: "",
   geocoderUrl: "",
+  overpassUrl: "",
   demo: false,
   glassView: "turns",
   hudLayout: "new",
@@ -298,6 +307,7 @@ export function parseData(raw: string): NavData {
     return {
       valhallaUrl,
       geocoderUrl: url(value.geocoderUrl),
+      overpassUrl: typeof value.overpassUrl === "string" ? normalizeOverpassUrl(value.overpassUrl) : "",
       demo: value.demo === true,
       glassView: value.glassView === "overview" ? "overview" : "turns",
       hudLayout: value.hudLayout === "classic" ? "classic" : "new",

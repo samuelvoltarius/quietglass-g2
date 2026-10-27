@@ -43,6 +43,31 @@ the app appends nothing), **Key** = `GLASS_AGENT_TOKEN`. The phone must be in th
 Further settings (character budget, history duration, extra system text, model name) are at the top of
 `glass_agent.py`.
 
+## Routing by kind of question
+
+Since Even app 2.4.0 the app gives up after about 9 s, so not every question should go through the full agent.
+The service sorts each question with fixed rules (no extra model call) and picks the way:
+
+| Kind | Examples | Way |
+|---|---|---|
+| `jetzt` | "Wie spät ist es?", "Welcher Tag ist heute?" | answered by the service itself (time zone `GLASS_AGENT_TZ`, default Europe/Vienna) |
+| `wissen` | "Wer bin ich?", general knowledge, explaining, translating | `GLASS_AGENT_FAST_URL` directly (no agent, no tools), with a short profile from `GLASS_AGENT_PROFILE_FILE`; if it fails, the normal ways |
+| `server` | "Läuft ns1?", "Laufen alle Server?", "Wie ist die Auslastung vom Pi?" | the status servers of `GLASS_AGENT_STATUS_SOURCES` (`reference-server.mjs`, `GET /status`) directly: values, warnings, unreachable hosts (about 1 s) |
+| `nachschauen` | appointments, dashboard, weather, servers, messages - and everything no rule matches | the agent as before |
+| `tun` | "Schreib …", "Erinner mich …", "Mach … aus" | the agent with `GLASS_AGENT_TASK_MODEL`, approval at least `GLASS_AGENT_TASK_APPROVAL` (default `mixed`) |
+
+```bash
+GLASS_AGENT_FAST_URL=https://<openai-compatible-endpoint>/v1/chat/completions
+GLASS_AGENT_FAST_KEY=<key of that endpoint>
+GLASS_AGENT_FAST_MODEL=<fast model without reasoning>
+GLASS_AGENT_TASK_MODEL=<stronger model for actions>
+GLASS_AGENT_PROFILE_FILE=~/.hermes/memories/USER.md
+GLASS_AGENT_STATUS_SOURCES="Pi5,pi,raspberry|https://<pi>:8451/status;ns1,mail|https://<ns1>:8451/status"
+```
+
+Without `GLASS_AGENT_FAST_URL` and `GLASS_AGENT_TASK_MODEL` only `jetzt` changes anything; `GLASS_AGENT_ROUTING=0`
+turns routing off. The log shows the kind next to the way, for example `via schnell:… (wissen)`.
+
 ## Slow answers
 
 The Even app waits only ~30 s. The service waits `GLASS_AGENT_BUDGET` seconds (default 24) for the

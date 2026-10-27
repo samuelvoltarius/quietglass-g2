@@ -227,6 +227,11 @@ export function briefFooter(page: number, pages: number, locale: Locale): string
   }, "back", pages > 1 ? `${page + 1}/${pages}` : "");
 }
 
+/** Picture pages in front of the text pages of the briefing: the day, and the glucose curve when there is one. */
+export function briefPictureCount(brief: Brief | null | undefined): number {
+  return brief?.sugar?.status === "ok" && (brief.sugar.curve?.length ?? 0) > 1 ? 2 : 1;
+}
+
 /** One-line summary for the overview row. */
 export function briefSummary(brief: Brief | null | undefined, locale: Locale, now: number): string {
   if (brief === null || brief === undefined) return t(locale, "brief.tapToLoad");

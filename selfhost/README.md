@@ -36,6 +36,7 @@ with systemd units and config templates, a config file for your addresses, and a
 | chargers | `GLANCE_TAILSCALE_USERS` (without an allow-list and without `GLANCE_TOKEN`: everything is blocked) |
 | routes | `ROUTES_TAILSCALE_USERS` (without an allow-list and without `ROUTES_TOKEN`: everything is blocked) |
 | glass-traffic | `TRAFFIC_TAILSCALE_USERS` (without an allow-list and without `TRAFFIC_TOKEN`: everything is blocked) |
+| ha-relay | `RELAY_TAILSCALE_USERS` (without an allow-list: everything is blocked) |
 | whisper (WebSocket), babel-llm-proxy | `TAILSCALE_USERS` (takes effect as soon as `TOKEN` is also set) |
 | whisper (HTTP), oebb-proxy, valhalla | no sign-in; reachable only inside the tailnet, access can be restricted with a Tailscale ACL |
 
@@ -71,6 +72,7 @@ service listens on the machine. "Tailscale" is the HTTPS number for `tailscale s
 | [`chargers`](services/chargers) (charging stations from official registers) | 8467 | **8464** | OpenGlance Nav (charging stations; without it, the public Overpass is used) |
 | [`routes`](services/routes) (saved routes + PC planning page) | 8468 | **8465** | OpenGlance Nav (same routes on phone and PC) |
 | [`glass-traffic`](services/glass-traffic) (traffic jams and closures along the route: TomTom, ASFINAG DATEX II) | 8475 | **8474** | OpenGlance Nav (traffic, detours; without it, no traffic) |
+| [`ha-relay`](services/ha-relay) (Home Assistant WebSocket relay, token stays on the server) | 8484 | **8483** | TV Glance, private build (`VITE_HA_RELAY`; no token, devices from `/config`) |
 | Speech output: Piper TTS server with OpenAI-compatible `POST /v1/audio/speech` and CORS (external) | 8014 | **8459** | NextStop (announcements; without it, the phone voice is used) |
 | Agent endpoint (Even Terminal / Hermes bridge / OpenClaw, external) | 8765 | **8446** | Agent Glass |
 | LUMEN (separate project, **not** part of this repo) | – | **8454** | Lumen Glass |

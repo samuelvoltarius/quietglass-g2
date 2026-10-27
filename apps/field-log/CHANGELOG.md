@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.0] — 2026-10-25
+
+### Neu: Checkliste Raum für Raum (Idee aus der Community)
+
+**Handy**
+- **Checkliste pro Rundgang** im Tab *Notizen*: als Text bearbeiten, eine Zeile pro Punkt. `# Küche` beginnt einen Raum, `!` am Zeilenanfang = kritisch, `[foto]` (auch `[photo]` oder 📷) irgendwo in der Zeile = Foto nötig. Leere Zeilen und Listenzeichen (`-`, `*`, `- [ ]`) werden ignoriert, Punkte vor dem ersten Raum landen in „Allgemein“. Leer speichern entfernt die Checkliste; die Häkchen bleiben gespeichert.
+- **Zwei Vorlagen zum Kopieren und Anpassen:** *Wohnungsübergabe* (Flur, Küche, Bad, Wohnzimmer, Schlafzimmer, Zähler und Schlüssel) und *Auto-Rückgabe* (Außen, Innen, Zubehör), auf Deutsch und Englisch.
+- Übersicht je Raum mit Fortschritt (`Küche 5/7 · 1 📷 fehlt · 1 ! offen`), Stand jedes Punkts und bei Foto-Punkten ein Kamera-Knopf: das Foto hängt dann genau an diesem Punkt.
+- **Warnung vor dem Export:** fehlen Pflichtfotos oder sind kritische Punkte offen, steht vor Markdown/CSV z. B. „Vor dem Export: 3 Räume ohne Pflichtfoto, 1 kritischer Punkt offen“, darunter die Räume und Punkte, mit *Trotzdem exportieren* / *Zurück*.
+
+**Brille**
+- Hat der Rundgang eine Checkliste, steht oben auf der Startseite *Checkliste · 12/30* (dafür entfällt dort die Zeile *Art*; weiter höchstens drei Einträge). Tippen öffnet die Raumübersicht (`● Küche 5/7 · 1 [Foto] fehlt`), Tippen auf einen Raum springt zum ersten offenen Punkt.
+- Ein Punkt zeigt Raum und Position (`Küche · 2/7 · kritisch`), den Text, den Stand und bei Foto-Punkten `[Foto] am Handy`, darunter *OK* und *Mangel*. **Tippen auf OK** hakt ab und geht zum nächsten Punkt; am Raumende zurück zur Übersicht. **Wischen** bewegt nur: OK → Mangel → nächster Punkt (und zurück). **Tippen auf Mangel** öffnet die Schnellnotizen; die gewählte Notiz wird als „Punkt: Notiz“ im Raum des Punkts abgelegt (kritisch = Wichtig, sonst Mangel). 2× = zurück.
+- **Kritische Punkte brauchen ein zweites Tippen innerhalb von 4 s** (`● SICHER? OK`, Fußzeile „Nochmal tippen = OK bestätigen · Wischen/2× = abbrechen“). Wischen oder 2× bricht nur ab.
+- Foto-Punkte zählen als offen, bis am Handy ein Foto daran hängt (auch ein Foto am Mangel-Eintrag dieses Punkts zählt). Auf der Brille steht `[Foto]` statt 📷, weil die Brillenschrift keine Emoji zeichnet.
+- Unverändert: kein Halten, kein Seitenmenü, Beenden-Dialog, alle Rundgänge ohne Checkliste.
+
+**Bericht**
+- Mit Checkliste ist der Markdown-Bericht nach Räumen gegliedert: `## Küche (5/7)`, je Punkt `OK` / **MANGEL** / **OFFEN** mit „kritisch“, „Foto da“ oder „Pflichtfoto fehlt“, darunter die Mängel und Fotos des Punkts; alle übrigen Notizen folgen unter „Weitere Notizen“. Die CSV bleibt eine Zeile pro Notiz (Raum als Abschnitt). Rundgänge ohne Checkliste exportieren wie bisher.
+
+### Technik
+- `src/checklist/checklist.ts` (Syntax, Vorlagen, Fortschritt, Export-Warnung, Speicher-Prüfung) und `src/checklist/walk.ts` (Cursor, zweites Tippen über `confirmStep`), beide rein und getestet. Gespeichert wird mit dem Rundgang (`checklist`, `checks`, an Einträgen `itemId`), kein Server nötig.
+- Tests: Syntax, Fortschritt, Warnung, zweites Tippen, Export-Gliederung, Speichern, Bildschirmbreite, Brille (Rundgang, Abbrechen, Mangel, Foto vom Handy) und Handy (Vorlage, Speichern, Warnung).
+
 ## [0.9.0] — 2026-10-20
 
 ### Neu: Quietglass-Bedienstandard QUS v1 („keine Textwand“)

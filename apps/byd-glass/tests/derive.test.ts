@@ -4,11 +4,13 @@ import { parseState, sortWarnings, warningKey } from "../src/car/model";
 import { demoTelemetry } from "../src/car/demo";
 
 // The same samples as `byd_bridge.py --selftest`, so app (demo) and bridge agree.
+// Field names as Panoptes publishes them under surfmate/vehicle/telemetry/<field>.
 const WHEELS = ["fl", "fr", "rl", "rr"];
+const DOORS = { door_open_lf: "0", door_open_rf: "0", door_open_lr: "0", door_open_rr: "0" };
 function sample(over: Record<string, string | number> = {}): Record<string, string | number> {
   const base: Record<string, string | number> = {
     speed: "0.0", gear: "P", is_parked: "1", is_charging: "0", is_dcfc: "0", power: "0.0", soc: "64.0",
-    ev_range_km: "190", consumption_50km: "15.8", locked: "1", door_open: "0", volt_12v: "12.6", soh: "97.0",
+    ev_range_km: "190", consumption_50km: "15.8", unlocked_lf: "0", ...DOORS, volt_12v: "12.6", soh: "97.0",
     cell_t_min: "18.0", cell_t_max: "20.0", ext_temp: "12.0", ac_on: "0", climate_setpoint: "21",
     speed_limit_warning: "0", light_left_turn: "-10011", light_right_turn: "-10011", light_high_beam: "0",
     charging_eta_hours: "0", charging_eta_minutes: "0", charging_capacity_kwh: "0", charge_power: "0.0",
@@ -22,7 +24,7 @@ const state = (over: Record<string, string | number> = {}, memo: Memo = {}, now 
 const codes = (s: ReturnType<typeof state>) => s.warnings.map((w) => warningKey(w));
 
 describe("telemetry values", () => {
-  it("reads Overdrive's placeholders as missing", () => {
+  it("reads Panoptes'/Overdrive's placeholders as missing", () => {
     expect(parseValue("NULL")).toBeNull();
     expect(parseValue("-10011")).toBeNull();
     expect(parseValue("65535")).toBeNull();
@@ -63,7 +65,7 @@ describe("derived state", () => {
   });
 
   it("charging: power comes from -power, not the unreliable charge_power", () => {
-    const s = state({ is_charging: 1, is_dcfc: 1, power: -37, charge_power: 1.3, charging_eta_minutes: 49, charging_capacity_kwh: 8.82, locked: 0 });
+    const s = state({ is_charging: 1, is_dcfc: 1, power: -37, charge_power: 1.3, charging_eta_minutes: 49, charging_capacity_kwh: 8.82, unlocked_lf: 1 });
     expect(s.mode).toBe("charging");
     expect(s.charge).toMatchObject({ active: true, dc: true, kw: 37, etaMin: 49, kwh: 8.8 });
     expect(codes(s)).not.toContain("unlocked");
@@ -79,7 +81,7 @@ describe("derived state", () => {
   });
 
   it("warnings: tyre leak, tyre low, 12 V, door, battery", () => {
-    const s = state({ tyre_leak_fl: 1, tyre_p_rr: 180, volt_12v: 11.8, door_open: 1, soc: 9 });
+    const s = state({ tyre_leak_fl: 1, tyre_p_rr: 180, volt_12v: 11.8, door_open_rr: 1, soc: 9 });
     expect(codes(s)).toEqual(expect.arrayContaining(["tyre_leak:fl", "tyre_low:rr", "v12_low", "door_open", "soc_low"]));
     expect(s.tyres.fl.leak).toBe(true);
     expect(s.tyres.rr.low).toBe(true);
@@ -87,16 +89,55 @@ describe("derived state", () => {
   });
 
   it("an open door while driving is critical", () => {
-    const s = state({ speed: 40, gear: "D", is_parked: 0, door_open: 1 });
+    const s = state({ speed: 40, gear: "D", is_parked: 0, door_open_lf: 1 });
     expect(s.warnings.find((w) => w.code === "door_open")?.level).toBe("crit");
   });
 
   it("unlocked while parked becomes a warning after 10 minutes", () => {
     const memo: Memo = {};
-    expect(codes(state({ locked: 0 }, memo))).not.toContain("unlocked");
-    const s = state({ locked: 0 }, memo, NOW + 11 * 60);
+    expect(codes(state({ unlocked_lf: 1 }, memo))).not.toContain("unlocked");
+    const s = state({ unlocked_lf: 1 }, memo, NOW + 11 * 60);
     expect(codes(s)).toContain("unlocked");
     expect(s.warnings.find((w) => w.code === "unlocked")?.minutes).toBe(11);
+  });
+
+  it("an open boot or bonnet is a warning, critical while driving", () => {
+    expect(codes(state({ trunk_open: 1 }))).toContain("trunk_open");
+    expect(state({ speed: 40, gear: "D", is_parked: 0, hood_open: 1 }).warnings.find((w) => w.code === "hood_open")?.level).toBe("crit");
+  });
+
+  it("old Overdrive names still work (BYD_TOPIC=overdrive/...)", () => {
+    const s = state({ locked: 0, door_open: 1 });
+    expect(s.body.locked).toBe(false);
+    expect(s.body.doorOpen).toBe(true);
+  });
+
+  it("climate: on/off and fan level, never a temperature", () => {
+    const s = state({ ac_on: 1, ac_fan: 3, climate_setpoint: 25 });
+    expect(s.body.acOn).toBe(true);
+    expect(s.body.acFan).toBe(3);
+    expect(Object.keys(s.body)).not.toContain("setpoint");
+    expect(state({ ac_on: "", climate_on: 1, ac_wind: 2 }).body).toMatchObject({ acOn: true, acFan: 2 });
+  });
+
+  it("new Panoptes fields: odometer, tyre temperatures", () => {
+    const s = state({ odometer: 28015.9, tyre_t_fl: 20, tyre_t_rr: 18 });
+    expect(s.battery.odometerKm).toBe(28015);
+    expect(s.tyres.fl.temp).toBe(20);
+    expect(s.tyres.rr.temp).toBe(18);
+    expect(s.tyres.fr.temp).toBeNull();
+  });
+
+  it("another BYD model that reports almost nothing: unknown stays null, no warning, no 0", () => {
+    const s = parseState({ ...deriveRaw({ soc: "70", _age: 3, _online: "online" }, NOW, {}), rev: 1 });
+    expect(s.battery.soc).toBe(70);
+    expect(s.drive.speed).toBeNull();
+    expect(s.drive.powerKw).toBeNull();
+    expect(s.battery.volt12).toBeNull();
+    expect(s.battery.odometerKm).toBeNull();
+    expect(s.body).toMatchObject({ locked: null, doorOpen: null, trunkOpen: null, hoodOpen: null, acOn: null, acFan: null, extTemp: null });
+    expect(s.tyres.fl).toEqual({ kpa: null, leak: false, low: false, temp: null });
+    expect(s.warnings).toEqual([]);
   });
 
   it("old data is stale", () => {
@@ -114,10 +155,11 @@ describe("parseState", () => {
     const s = parseState({ mode: "parked", drive: { speed: "fast" }, tyres: { fl: { kpa: "x" } }, warnings: [{ code: 3 }, { code: "door_open", level: "huh" }], command: { id: "c1", action: "honk" } });
     expect(s.drive.speed).toBeNull();
     expect(s.tyres.fl.kpa).toBeNull();
-    expect(s.tyres.rr).toEqual({ kpa: null, leak: false, low: false });
+    expect(s.tyres.rr).toEqual({ kpa: null, leak: false, low: false, temp: null });
     expect(s.warnings).toHaveLength(1);
     expect(s.warnings[0]?.level).toBe("warn");
-    expect(s.command).toBeNull();
+    expect(s.command).toBeNull(); // unknown action
+    expect(s.control.enabled).toBe(false);
     expect(s.stale).toBe(true);
   });
 });

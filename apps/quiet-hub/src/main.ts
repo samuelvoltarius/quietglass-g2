@@ -1,6 +1,7 @@
 import { AppLocationAccuracy, AudioInputSource, waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import { settleRestore } from "./exit";
 import { createClient, ApiError, classifyError, insecureServer, serverHost, type LinkProblem } from "./api/client";
+import { discoverHub, discoveryOwns, hubCandidates, normalizeUrl, probeOrder, REDISCOVER_AFTER_FAILS } from "./api/discover";
 import { emptyReport } from "./api/empty";
 import { createDemoApi, DEMO_SCENES, type DemoScene } from "./api/demo";
 import type { HubApi } from "./api/types";
@@ -8,7 +9,7 @@ import { rememberLocale, resolveLocale, setLocale, type Locale } from "./i18n";
 import { tr } from "./i18n";
 import { messages } from "./messages";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture, type InputSource } from "./input/gestures";
-import { applyMenu, buildView, createModel, decide, linkBlocks, menuFor, mergeReport, MESSAGE_MS, ROOT_ITEMS, selectedAgent, withBrief, withLink, withLiveText, withHomePending, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
+import { applyMenu, buildView, createModel, decide, linkBlocks, menuFor, mergeReport, MESSAGE_MS, selectedAgent, voiceOwns, withBrief, withLink, withLiveText, withHomePending, withSessions, withVoiceFailed, withVoiceHeard, type Effect, type HubModel, type Screen } from "./hub/model";
 import { morningStart } from "./hub/brief";
 import { createLocator } from "./hub/place";
 import { initialLivePoll, isOlder, noteLongFailure, noteReport, planPoll } from "./api/live-poll";
@@ -16,8 +17,14 @@ import { buildLiveSttUrl, chooseVoicePath, startLiveStt, type LiveSttSession } f
 import { hubGesture, startScreen } from "./hub/entry";
 import { sameView } from "./glasses/diff";
 import { COCKPIT_TILES, createCockpitPage, createPage, guardedTileSend, rebuildCockpitPage, rebuildPage, updatePage } from "./glasses/render";
-import { cockpitModel } from "./cockpit/model";
+import { cockpitModel, hhmm } from "./cockpit/model";
 import { composeCockpit } from "./cockpit/compose";
+import { composeGrid, composeStart, startPicture } from "./cockpit/start";
+import { agentTiles, homeDetail, homeHeader, homeIndex, homeTiles } from "./cockpit/home-pictures";
+import { homeViewOf, initialZuhause } from "./hub/zuhause";
+import { carPage, dayPage, printerPage, serverPage, sugarPage } from "./cockpit/area-pages";
+import { briefPictureCount } from "./hub/brief";
+import type { Frame } from "./screen/frame";
 import { createTileSender } from "./screen/sender";
 import { autoBackend, type TextBackend } from "./screen/text";
 import { pixelIconFor } from "./glasses/icons";
@@ -35,7 +42,9 @@ import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 const DEMO = new URLSearchParams(globalThis.location?.search ?? "").get("demo") === "1";
 const sceneParam = new URLSearchParams(globalThis.location?.search ?? "").get("scene");
 const DEMO_SCENE: DemoScene = DEMO_SCENES.find((scene) => scene === sceneParam) ?? "default";
-const BUILD = "0.10.0";
+const BUILD = "0.13.3";
+/** The start page's live rows (Auto, Server, Tag) come from the briefing: asked for again this often. */
+const BRIEF_REFRESH_MS = 3 * 60_000;
 /** Wait before the next automatic try while the hub is unreachable: 2, 5, 10, then every 30 s. */
 export const BACKOFF_MS = [2000, 5000, 10_000, 30_000] as const;
 /** A voice note is cut off here and sent (10 min dictation); also guards against a lost "release" event. */
@@ -69,6 +78,12 @@ async function boot(): Promise<void> {
     } catch {
       // Some host WebViews do not permit history mutation; setup still worked.
     }
+  }
+  // Self-discovery (private build): no address set (or one of the list's own) -> the list decides, Pi first.
+  const candidates = DEMO ? [] : hubCandidates();
+  if (discoveryOwns(settings.serverUrl, candidates) && settings.serverUrl.trim() === "") {
+    settings = { ...settings, serverUrl: probeOrder(candidates, "")[0] ?? "" };
+    void saveSettings(bridge, settings);
   }
   const finishParam = Number(params.get("finish") ?? "");
   // The phone's position for the Tagesstart weather: rounded to ~1 km, cached 30 min,
@@ -122,7 +137,7 @@ async function boot(): Promise<void> {
   model = { ...model, quietWhileWorking: settings.quietWhileWorking || params.get("quiet") === "1" };
   const savedUi = await loadUiState(bridge);
   let launchSource: "appMenu" | "glassesMenu" | null = null;
-  if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, Math.min(savedUi.rootSelected ?? 0, ROOT_ITEMS.length - 1)) };
+  if (savedUi !== null) model = { ...model, screen: startScreen(null, savedUi.screen), rootSelected: Math.max(0, savedUi.rootSelected ?? 0), rootKey: savedUi.rootKey ?? null };
   // "Tagesstart als Startseite bis 11:00": in the morning every start lands on the briefing.
   if (morningStart(settings.briefMorning === true, new Date())) model = { ...model, screen: "brief", briefPage: 0, briefLoad: "loading" };
   let lastView: ScreenView | null = null;
@@ -242,13 +257,56 @@ async function boot(): Promise<void> {
   const tiles = createTileSender(COCKPIT_TILES, guardedTileSend(bridge, () => !exitDialogAsked && !closed && installed === "cockpit"));
   /** Nothing on the glasses can be trusted (reconnect, foreground): the next draw writes everything again. */
   const forgetShown = (): void => { lastView = null; tiles.reset(); };
-  /** The cockpit image replaces the text page only when nothing else (help, picker, a broken link) owns the screen. */
-  const cockpitShown = (): boolean => model.screen === "cockpit" && !model.help && model.picker === null && !linkBlocks(model.link);
+  /**
+   * Pages drawn as one picture (QUS v1): the start page (six tiles), the agents' cockpit, Auto, Server, Drucker.
+   * Only while nothing else owns the screen (help, picker, a broken link, the microphone, a voice note, quiet mode).
+   */
+  const pictureFor = (now: number): (() => Frame) | null => {
+    if (model.help || model.picker !== null || linkBlocks(model.link) || model.recording || (model.voice !== null && voiceOwns(model)) || isQuiet(model, now)) return null;
+    const hint = (): string => buildView(model, locale, now).footer;
+    const brief = model.brief ?? model.report.brief;
+    textBackend ??= autoBackend();
+    const backend = textBackend;
+    switch (model.screen) {
+      case "root": return () => {
+        const title = model.setupHint === true ? tr(messages, locale, "root.demoHint") : tr(messages, locale, "app.title").toUpperCase();
+        return composeStart({ ...startPicture(model.report, brief, locale, model.rootKey, model.rootSelected, hhmm(now), hint()), title }, backend, now);
+      };
+      case "cockpit": return () => composeCockpit(cockpitModel(model, locale, now), backend, now);
+      // The agent list as faces; a waiting card, the sessions and the conversation stay text (reading is the point).
+      case "agent": return model.agentView === "list" && model.report.approvals.length === 0 && model.report.agents.length > 0
+        ? () => composeGrid(agentTiles(model.report, locale), model.agentIndex, tr(messages, locale, "tile.agent"), hhmm(now), hint(), backend, now)
+        : null;
+      case "home": {
+        // Zuhause as tiles; a light, blind or TV opened as its picture with the choices. Old daemons: the text list.
+        const view = homeViewOf(model.report);
+        if (view === null || view.legacy === true) return null;
+        const zh = model.zh ?? initialZuhause();
+        if (zh.level === "detail") {
+          const entity = zh.detailId === null ? undefined : view.entities[zh.detailId];
+          return entity === undefined ? null : () => composeCockpit(homeDetail(entity, typeof zh.choice === "number" ? zh.choice : null, locale, now, hint()), backend, now);
+        }
+        return () => composeGrid(homeTiles(view, zh, locale), homeIndex(zh), homeHeader(view, zh, locale), hhmm(now), hint(), backend, now);
+      }
+      case "car": return () => composeCockpit(carPage(model.report, brief, model.carIndex ?? 0, locale, now, hint()), backend, now);
+      case "server": return () => composeCockpit(serverPage(brief, locale, now, hint()), backend, now);
+      case "printer": return () => composeCockpit(printerPage(model.report, locale, now, hint()), backend, now);
+      // Tag: the picture first, swipe goes on to the text pages.
+      case "brief": {
+        const page = model.briefPage ?? 0;
+        if (page === 0) return () => composeCockpit(dayPage(brief, locale, now, hint()), backend, now);
+        if (page === 1 && briefPictureCount(brief) === 2) return () => composeCockpit(sugarPage(brief, locale, now, hint()), backend, now);
+        return null;
+      }
+      default: return null;
+    }
+  };
   const drawOnce = async (): Promise<void> => {
     if (exitDialogAsked) return;
     const now = Date.now();
     const menu = menuFor(model, locale);
-    if (cockpitShown()) {
+    const picture = pictureFor(now);
+    if (picture !== null) {
       if (!pageCreated || installed !== "cockpit" || menu.key !== menuKey) {
         const result = pageCreated ? await rebuildCockpitPage(bridge, menu) : await createCockpitPage(bridge, menu);
         if (!result.ok) { console.warn("[quiethub] cockpit page failed:", result.reason); return; }
@@ -260,9 +318,8 @@ async function boot(): Promise<void> {
         // A new page starts with blank images.
         tiles.reset();
       }
-      textBackend ??= autoBackend();
-      // Never awaited: a slow transfer must not hold up the next gesture.
-      void tiles.push(composeCockpit(cockpitModel(model, locale, now), textBackend, now));
+      // Never awaited: a slow transfer must not hold up the next gesture. Unchanged tiles are not sent.
+      void tiles.push(picture());
       return;
     }
     // Quiet while the agent works: empty text at brightness 0/1 and a black (= transparent) face, all in place.
@@ -320,13 +377,38 @@ async function boot(): Promise<void> {
   // The face blinks and looks around, the working line counts up: redraw twice a
   // second on the pages that show them. Unchanged frames cost nothing (see drawOnce).
   setInterval(() => {
-    if (closed || (model.screen !== "agent" && model.screen !== "root" && model.screen !== "cockpit")) return;
+    if (closed || !["agent", "root", "cockpit", "car", "server", "printer"].includes(model.screen)) return;
     // Quiet and already drawn quiet: the face animation is paused, nothing to compute or send.
     if (lastView?.dim === true && isQuiet(model, Date.now())) return;
     void draw();
   }, MASCOT_STEP_MS);
 
   // ---- data --------------------------------------------------------------
+  /** The hub stopped answering: try the other candidates (Pi first), switch to the first that answers. */
+  let discovering = false;
+  const rediscover = async (): Promise<void> => {
+    if (discovering || closed || candidates.length < 2 || !discoveryOwns(settings.serverUrl, candidates)) return;
+    discovering = true;
+    try {
+      const found = await discoverHub(probeOrder(candidates, settings.serverUrl), async (url) => {
+        await createClient({ baseUrl: url, timeoutMs: 5000 }).report();
+        return true;
+      });
+      if (found === null || closed || found === normalizeUrl(settings.serverUrl)) return;
+      console.info("[quiethub] hub found:", serverHost(found));
+      settings = { ...settings, serverUrl: found };
+      void saveSettings(bridge, settings);
+      api = createClient({ baseUrl: settings.serverUrl, token: settings.token });
+      pollGen += 1;
+      pollBusy = false;
+      livePoll = initialLivePoll();
+      conn.fails = 0;
+      schedulePoll(0);
+    } finally {
+      discovering = false;
+    }
+  };
+  let briefAsked = false;
   const poll = async (): Promise<void> => {
     if (closed || pollBusy) return;
     if (!demoMode && problemFor(null) !== "error") {
@@ -353,6 +435,8 @@ async function boot(): Promise<void> {
       firstReport = false;
       newestEventId = nextId;
       applyReport(report, viaLong);
+      // The start page's Auto / Server / Tag rows need the briefing: ask once the hub answers.
+      if (!briefAsked) { briefAsked = true; void runEffect({ kind: "brief", refresh: false }); }
       // A permission card must be answered, so it opens the agent page. A plain
       // "done" notice never pulls the wearer out of a page they are working in:
       // it only opens from the overview (it is waiting in Meldungen otherwise).
@@ -383,6 +467,7 @@ async function boot(): Promise<void> {
       await draw();
       refreshPhone();
       schedulePoll(BACKOFF_MS[Math.min(conn.fails - 1, BACKOFF_MS.length - 1)] ?? 30_000);
+      if (conn.fails >= REDISCOVER_AFTER_FAILS) void rediscover();
       return;
     }
     await draw();
@@ -560,6 +645,19 @@ async function boot(): Promise<void> {
           const result = await api.homeAction(effect.target, effect.action, effect.value);
           // Lock / alarm / garage: nothing happened yet; the next tap on the same row confirms.
           if (result.confirm !== undefined) { model = withHomePending(model, effect.target, result.confirm, Date.now()); watchConfirm(); }
+        }
+      } else if (effect.kind === "car") {
+        if (api.carAction === undefined) {
+          model = { ...model, message: { text: tr(messages, locale, "car.refused", { why: tr(messages, locale, "car.why.daemon_alt") }), until: Date.now() + MESSAGE_MS } };
+        } else {
+          const result = await api.carAction(effect.aktion, effect.tempC === undefined ? {} : { tempC: effect.tempC, minuten: effect.minuten ?? 15 });
+          const what = tr(messages, locale, `car.confirm.${effect.aktion}`);
+          // Exactly what Panoptes answered: "bestätigt" only with the car's echo, a refusal with its reason.
+          const text = result.ok
+            ? tr(messages, locale, result.bestaetigt ? "car.done" : "car.unconfirmed", { what })
+            : tr(messages, locale, "car.refused", { why: carWhy(result.grund, locale) });
+          model = { ...model, message: { text, until: Date.now() + 2 * MESSAGE_MS } };
+          void runEffect({ kind: "brief", refresh: true });
         }
       } else if (effect.kind === "homeConfirm") {
         await api.homeConfirm?.(effect.token);
@@ -811,8 +909,18 @@ async function boot(): Promise<void> {
 
   await draw();
   void poll();
+  setInterval(() => {
+    if (!closed && briefAsked && !exitDialogAsked) void runEffect({ kind: "brief", refresh: false });
+  }, BRIEF_REFRESH_MS);
   // Started on the Tagesstart (morning setting or the page open last time): load it right away.
   if (model.screen === "brief") void runEffect({ kind: "brief", refresh: false });
+}
+
+/** A Panoptes reason in words; an unknown one is shown as it came (never hidden). */
+function carWhy(grund: string, locale: Locale): string {
+  const key = `car.why.${grund.startsWith("cloud_gate") ? "gate" : grund}`;
+  const text = tr(messages, locale, key);
+  return text === key ? grund : text;
 }
 
 /** The exact error text of a failed request ("Load failed", "Failed to fetch", "HTTP 401" ...) - tells a whitelist block from a network error. */
@@ -822,10 +930,10 @@ function rawText(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen; rootSelected?: number } | null> {
+async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen; rootSelected?: number; rootKey?: string | null } | null> {
   try {
     const raw = await bridge.getLocalStorage("quiethub.ui");
-    if (raw !== null && raw !== undefined && raw !== "") return JSON.parse(raw) as { screen: Screen; rootSelected?: number };
+    if (raw !== null && raw !== undefined && raw !== "") return JSON.parse(raw) as { screen: Screen; rootSelected?: number; rootKey?: string | null };
   } catch {
     // A cold start simply falls back to the mandatory root page.
   }
@@ -833,7 +941,7 @@ async function loadUiState(bridge: EvenAppBridge): Promise<{ screen: Screen; roo
 }
 
 function saveUiState(bridge: EvenAppBridge, model: HubModel): void {
-  void bridge.setLocalStorage("quiethub.ui", JSON.stringify({ screen: model.screen, rootSelected: model.rootSelected }))
+  void bridge.setLocalStorage("quiethub.ui", JSON.stringify({ screen: model.screen, rootSelected: model.rootSelected, rootKey: model.rootKey ?? null }))
     .then((ok) => { if (!ok) console.warn("[quiethub] UI state was not persisted"); })
     .catch(() => console.warn("[quiethub] UI state persistence failed"));
 }

@@ -10,6 +10,11 @@ import { lastNoteAt, notesToday } from "../cockpit/model";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { autoTitle, quickNotes, severityName, t } from "../messages";
 import { csvFormatFor } from "../csv";
+import {
+  checklistProgress, checklistText, exportWarning, itemCount, itemState, parseChecklist, photoMissing, roomProgress,
+  templateText, warningSummary,
+} from "../checklist/checklist";
+import type { Inspection } from "../log/entries";
 
 /**
  * The phone companion (QUS v1, the look of Rain Lens and Status Glass):
@@ -30,8 +35,11 @@ export interface PhoneUiPorts {
   readonly locale?: () => Locale;
   /** Called after the user picked another language, so the glasses follow. */
   readonly onLocaleChange?: (locale: Locale) => void;
-  /** Opens the phone camera and files the photo; absent outside the Even app. */
-  readonly takePhoto?: () => Promise<void>;
+  /**
+   * Opens the phone camera and files the photo; absent outside the Even app. With an item id the
+   * photo belongs to that checklist item, otherwise to the latest entry.
+   */
+  readonly takePhoto?: (itemId?: string) => Promise<void>;
 }
 
 export interface PhoneUi {
@@ -43,7 +51,10 @@ export interface PhoneUi {
 const SIZE_WARN_BYTES = 4 * 1024 * 1024;
 
 /** Text fields that hold an unsaved draft and must survive a re-render. */
-const DRAFT_FIELDS = ["title", "note", "quick", "stt", "stt-token", "lang"] as const;
+const DRAFT_FIELDS = ["title", "note", "quick", "stt", "stt-token", "lang", "checklist"] as const;
+
+/** The three exports; with open checklist points the phone names them first. */
+export type ExportKind = "md" | "md-img" | "csv";
 
 /** Exactly three tabs (QUS v1): the state now, the notes, the settings. */
 export const TABS: readonly { id: string; icon: string; key: string }[] = [
@@ -89,7 +100,12 @@ interface View {
   readonly now: number;
   /** The destructive button waiting for its second tap, if any. */
   readonly armed: string | null;
+  /** An export held back by the checklist warning ("export anyway" / "back"). */
+  readonly exportAsk: ExportKind | null;
 }
+
+/** Asks before an export (`kind`), or clears the question (null). */
+type Ask = (kind: ExportKind | null) => void;
 
 export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   const root = document.getElementById("app");
@@ -99,6 +115,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   let locale: Locale = ports.locale?.() ?? getLocale();
   let tab = readTab(isFirstRun(ports.getData()));
   let armed: { key: string; until: number } | null = null;
+  let exportAsk: ExportKind | null = null;
 
   // Re-rendered after every change. Handlers always read the current data:
   // the glasses file entries while this page is open, and a change computed
@@ -106,7 +123,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
   const render = (keepDraft = true): void => {
     const draft = keepDraft ? readDraft(root) : null;
     const armedKey = armed !== null && armed.until > Date.now() ? armed.key : null;
-    root.innerHTML = template(ports.getData(), { locale, notice, canPhoto: Boolean(ports.takePhoto), now: Date.now(), armed: armedKey });
+    root.innerHTML = template(ports.getData(), { locale, notice, canPhoto: Boolean(ports.takePhoto), now: Date.now(), armed: armedKey, exportAsk });
     notice = "";
     if (draft) writeDraft(root, draft);
     const notify = (message: string): void => { notice = message; render(); };
@@ -119,7 +136,7 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
         window.scrollTo({ top: 0 });
       });
     });
-    wire(root, ports, commit, notify, locale, arm);
+    wire(root, ports, commit, notify, locale, arm, ask, exportAsk);
     root.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
       const value = (event.target as HTMLSelectElement).value;
       if (value !== "de" && value !== "en") return;
@@ -137,6 +154,8 @@ export function mountPhoneUi(ports: PhoneUiPorts): PhoneUi {
     render();
     setTimeout(() => { if (armed?.key === key) { armed = null; render(); } }, ARM_MS + 50);
   };
+
+  const ask: Ask = (kind) => { exportAsk = kind; render(); };
 
   const commit: Commit = (next, options = {}) => {
     const saving = ports.setData(next);
@@ -269,6 +288,58 @@ export function setupInner(data: FieldLogData, locale: Locale): string {
     + (server ? "" : `<p class="hint">${esc(x("p.setupDemo"))}</p>`);
 }
 
+/**
+ * The checklist card of the open walk: every room with its progress, every item with its state and,
+ * where a photo is needed, a camera button; below it the plain-text editor with the two templates.
+ */
+export function checklistInner(active: Inspection, view: Pick<View, "locale" | "canPhoto">): string {
+  const { locale } = view;
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  const checklist = active.checklist;
+  const total = checklistProgress(active);
+  const rooms = (checklist?.rooms ?? []).map((room) => {
+    const progress = roomProgress(active, room);
+    const extra = [
+      ...(progress.missingPhotos > 0 ? [x("p.roomPhoto", { n: progress.missingPhotos })] : []),
+      ...(progress.criticalOpen > 0 ? [x("p.roomCritical", { n: progress.criticalOpen })] : []),
+    ];
+    const items = room.items.map((item) => {
+      const state = itemState(active, item);
+      const missing = photoMissing(active, item);
+      const button = item.photo && view.canPhoto
+        ? `<button type="button" class="item-photo secondary${missing ? "" : " done"}" data-id="${esc(item.id)}">${esc(x("p.itemPhoto"))}</button>` : "";
+      return `<li class="check-${state}${missing ? " photo-missing" : ""}"><span>${item.critical ? "<strong>!</strong> " : ""}${esc(item.text)}${item.photo ? (missing ? " 📷?" : " 📷") : ""}<br />
+        <small>${esc(x("p.state." + state))}</small></span><span class="row-actions">${button}</span></li>`;
+    }).join("");
+    return `<h3>${esc(room.name)} ${progress.done}/${progress.total}${extra.map((part) => " · " + esc(part)).join("")}</h3><ul class="scripts checks">${items}</ul>`;
+  }).join("");
+  return `
+    <h2>${esc(x("p.checklist"))}${checklist ? ` · ${total.done}/${total.total}` : ""}</h2>
+    ${checklist ? rooms : `<p class="hint">${esc(x("p.checklistNone"))}</p>`}
+    <details class="fold"${checklist ? "" : " open"}>
+      <summary>${esc(x("p.checklistEdit"))}</summary>
+      <p class="hint">${esc(x("p.checklistHint"))}</p>
+      <button id="tpl-flat" type="button" class="secondary">${esc(x("p.tplFlat"))}</button>
+      <button id="tpl-car" type="button" class="secondary">${esc(x("p.tplCar"))}</button>
+      <textarea id="checklist" rows="10">${esc(checklist ? checklistText(checklist, locale) : "")}</textarea>
+      <button id="save-checklist" type="button" class="big">${esc(x("p.checklistSave"))}</button>
+    </details>`;
+}
+
+/** The warning shown instead of exporting while required photos or critical items are open. */
+export function exportWarningInner(active: Inspection, locale: Locale): string {
+  const warning = exportWarning(active);
+  if (!warning) return "";
+  const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
+  return `<div class="warn-box">
+      <p><strong>${esc(x("p.exportWarnTitle"))}: ${esc(warningSummary(warning, locale))}</strong></p>
+      ${warning.roomsWithoutPhoto.length > 0 ? `<p class="hint">${esc(x("p.exportWarnPhotos", { rooms: warning.roomsWithoutPhoto.join(", ") }))}</p>` : ""}
+      ${warning.criticalOpen.length > 0 ? `<p class="hint">${esc(x("p.exportWarnCritical", { items: warning.criticalOpen.map((open) => open.room + " – " + open.item).join(", ") }))}</p>` : ""}
+      <button id="export-anyway" type="button" class="big">${esc(x("p.exportAnyway"))}</button>
+      <button id="export-back" type="button" class="secondary">${esc(x("p.exportBack"))}</button>
+    </div>`;
+}
+
 function template(data: FieldLogData, view: View): string {
   const { locale } = view;
   const L = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
@@ -315,9 +386,14 @@ function template(data: FieldLogData, view: View): string {
       </ul>`}
   </section>
 
-  ${active.entries.length > 0 ? `
-  <details class="fold card">
+  <section class="card checklist">
+    ${checklistInner(active, view)}
+  </section>
+
+  ${active.entries.length > 0 || active.checklist ? `
+  <details class="fold card"${view.exportAsk && exportWarning(active) ? " open" : ""}>
     <summary>${L("p.exportTitle")}</summary>
+    ${view.exportAsk ? exportWarningInner(active, locale) : ""}
     <button id="md" type="button" class="secondary">${L("p.exportMd")}</button>
     <button id="md-img" type="button" class="secondary">${L("p.exportMdImg")}</button>
     <label for="csv-format">${L("p.csvFormat")}</label>
@@ -437,6 +513,9 @@ function wire(
   notify: (message: string) => void,
   locale: Locale,
   arm: Arm,
+  ask: Ask,
+  /** The export waiting behind the checklist warning, if any. */
+  asked: ExportKind | null,
 ): void {
   const current = ports.getData;
   const byId = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>("#" + id);
@@ -502,7 +581,8 @@ function wire(
   root.querySelectorAll<HTMLButtonElement>(".open").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset["id"];
-      if (id) commit({ ...current(), activeId: id });
+      // Drafts are dropped: the checklist box would carry the other walk's list over.
+      if (id) commit({ ...current(), activeId: id }, { keepDraft: false });
     });
   });
 
@@ -516,25 +596,69 @@ function wire(
 
   const fileName = (extension: string): string => safeName(active()?.title ?? t(locale, "x.file")) + "." + extension;
 
-  byId<HTMLButtonElement>("md")?.addEventListener("click", () => {
+  const runExport = (kind: ExportKind): void => {
     const open = active();
-    if (open) download(fileName("md"), toMarkdown(open, false, locale), "text/markdown");
+    if (!open) return;
+    if (kind === "md") download(fileName("md"), toMarkdown(open, false, locale), "text/markdown");
+    else if (kind === "md-img") download(fileName("full.md"), toMarkdown(open, true, locale), "text/markdown");
+    else {
+      const format = csvFormatFor(current().csvFormat, locale);
+      // Plain ASCII names; the Excel variant says so, so the two cannot be mixed up.
+      download(fileName(format === "excel-de" ? "excel.csv" : "csv"), toCsv(open, locale, format), "text/csv;charset=utf-8");
+    }
+  };
+  /** Required photos missing or critical items open: the phone names them and waits for "export anyway" / "back". */
+  const requestExport = (kind: ExportKind): void => {
+    const open = active();
+    if (!open) return;
+    if (exportWarning(open)) { ask(kind); return; }
+    runExport(kind);
+  };
+  byId<HTMLButtonElement>("export-anyway")?.addEventListener("click", () => {
+    const kind = asked;
+    ask(null);
+    if (kind) runExport(kind);
   });
-  byId<HTMLButtonElement>("md-img")?.addEventListener("click", () => {
+  byId<HTMLButtonElement>("export-back")?.addEventListener("click", () => ask(null));
+  byId<HTMLButtonElement>("md")?.addEventListener("click", () => requestExport("md"));
+  byId<HTMLButtonElement>("md-img")?.addEventListener("click", () => requestExport("md-img"));
+
+  // The checklist: a template is copied into the box (nothing is saved until "Save checklist").
+  byId<HTMLButtonElement>("tpl-flat")?.addEventListener("click", () => {
+    const box = byId<HTMLTextAreaElement>("checklist");
+    if (box) box.value = templateText("flat", locale);
+  });
+  byId<HTMLButtonElement>("tpl-car")?.addEventListener("click", () => {
+    const box = byId<HTMLTextAreaElement>("checklist");
+    if (box) box.value = templateText("car", locale);
+  });
+  byId<HTMLButtonElement>("save-checklist")?.addEventListener("click", () => {
     const open = active();
-    if (open) download(fileName("full.md"), toMarkdown(open, true, locale), "text/markdown");
+    if (!open) return;
+    const parsed = parseChecklist(byId<HTMLTextAreaElement>("checklist")?.value ?? "", locale);
+    if (parsed.rooms.length === 0) {
+      // Empty removes the checklist; the ticks stay stored, so saving the same list again brings them back.
+      const { checklist: _dropped, ...rest } = open;
+      void _dropped;
+      commit(upsertInspection(current(), rest), { keepDraft: false, notice: t(locale, "p.checklistRemoved") });
+      return;
+    }
+    commit(upsertInspection(current(), { ...open, checklist: parsed }), {
+      keepDraft: false, notice: t(locale, "p.checklistSaved", { rooms: parsed.rooms.length, items: itemCount(parsed) }),
+    });
+  });
+  root.querySelectorAll<HTMLButtonElement>(".item-photo").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset["id"];
+      if (!id) return;
+      ports.takePhoto?.(id).catch((error: unknown) => { console.warn("[fieldlog] photo failed:", error); });
+    });
   });
   byId<HTMLSelectElement>("csv-format")?.addEventListener("change", (event) => {
     const value = (event.target as HTMLSelectElement).value;
     commit({ ...current(), csvFormat: value === "excel-de" ? "excel-de" : "standard" });
   });
-  byId<HTMLButtonElement>("csv")?.addEventListener("click", () => {
-    const open = active();
-    if (!open) return;
-    const format = csvFormatFor(current().csvFormat, locale);
-    // Plain ASCII names; the Excel variant says so, so the two cannot be mixed up.
-    download(fileName(format === "excel-de" ? "excel.csv" : "csv"), toCsv(open, locale, format), "text/csv;charset=utf-8");
-  });
+  byId<HTMLButtonElement>("csv")?.addEventListener("click", () => requestExport("csv"));
 
   byId<HTMLButtonElement>("save-quick")?.addEventListener("click", () => {
     const lines = (byId<HTMLTextAreaElement>("quick")?.value ?? "").split("\n").map((line) => line.trim()).filter(Boolean);

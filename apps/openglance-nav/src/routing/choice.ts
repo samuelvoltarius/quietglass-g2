@@ -124,7 +124,23 @@ export function moveChoice(choice: RouteChoice, step: number): RouteChoice {
   return { ...choice, selected: Math.max(0, Math.min(last, choice.selected + step)) };
 }
 
-/** The routes worth a choice: the best one plus the router's alternates, at most three; one = no picker. */
-export function choicesFrom(main: Route, alternates: readonly Route[] | undefined): Route[] {
-  return [main, ...(alternates ?? [])].slice(0, 3);
+/** A toll-free way is offered when it takes at most this much longer than the best one. */
+export const TOLL_FREE_MAX_FACTOR = 1.5;
+
+/**
+ * The routes worth a choice: the best one plus the router's alternates, at
+ * most three; one = no picker. `tollFree` (asked for separately when the best
+ * way has a toll): Valhalla's own alternates leave out a way that is much
+ * slower - Salzburg → Tamsweg over the Radstädter Tauern (B99) takes 98 min
+ * against 77 min on the A10 with its tunnel toll, and was never offered
+ * (15.10.). It gets a place (the second) when the best way has a toll, it has
+ * none, it is no more than TOLL_FREE_MAX_FACTOR slower, and no alternate is
+ * toll-free already.
+ */
+export function choicesFrom(main: Route, alternates: readonly Route[] | undefined, tollFree?: Route | null): Route[] {
+  const others = [...(alternates ?? [])];
+  const offer = tollFree && main.toll === true && tollFree.toll === false
+    && tollFree.duration <= main.duration * TOLL_FREE_MAX_FACTOR
+    && !others.some((route) => route.toll === false);
+  return [main, ...(offer ? [tollFree, ...others] : others)].slice(0, 3);
 }

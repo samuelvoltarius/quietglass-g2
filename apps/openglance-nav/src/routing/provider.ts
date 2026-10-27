@@ -64,6 +64,8 @@ export interface RouteRequest {
    * alternatives for two locations alone).
    */
   readonly alternates?: number;
+  /** Car: a way without toll roads (Valhalla `use_tolls: 0`). */
+  readonly avoidTolls?: boolean;
 }
 
 /** Most other ways asked for before a start (the picker shows at most three routes). */
@@ -144,7 +146,7 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
 
   return {
     name: "valhalla",
-    async route({ from, to, mode, via, alternates }): Promise<RouteOutcome> {
+    async route({ from, to, mode, via, alternates, avoidTolls }): Promise<RouteOutcome> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 15_000);
 
@@ -153,6 +155,7 @@ export function createValhallaProvider(config: ValhallaConfig): RoutingProvider 
           // Stops are "break" locations (Valhalla's default): one leg each, a real stop.
           locations: [from, ...(via ?? []).slice(0, MAX_STOPS), to].map((point) => ({ lat: point.lat, lon: point.lon })),
           costing: COSTING[mode],
+          ...(avoidTolls && mode === "driving" ? { costing_options: { [COSTING[mode]]: { use_tolls: 0 } } } : {}),
           ...(alternates && alternates > 0 && mode === "driving" && !(via?.length)
             ? { alternates: Math.min(MAX_ALTERNATES, Math.floor(alternates)) }
             : {}),

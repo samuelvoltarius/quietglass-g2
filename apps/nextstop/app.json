@@ -9,7 +9,7 @@
   "permissions": [
     {
       "name": "network",
-      "desc": "Load departures, connections and place search from Transitous (MOTIS), walking directions from the OpenStreetMap routing server of FOSSGIS e.V., and the streets for the walking map from OpenStreetMap via the public Overpass API (overpass-api.de, overpass.private.coffee), or from your own Overpass server if you enter one in the phone app.",
+      "desc": "Departures, connections and place search from Transitous (MOTIS), walking directions from FOSSGIS OpenStreetMap routing, and map streets from the public Overpass API or from your own Overpass server if you enter one in the phone app.",
       "whitelist": [
         "https://api.transitous.org",
         "https://valhalla1.openstreetmap.de",

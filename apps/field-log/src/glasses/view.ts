@@ -3,6 +3,8 @@ import { MAX_UPLOAD_SECONDS } from "../stt/provider";
 import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { armedFooter, FOOTER_WIDTH, footer } from "./footer";
+import { checklistProgress, hasPhoto, itemState, roomProgress, type CheckRoom } from "../checklist/checklist";
+import type { WalkCursor } from "../checklist/walk";
 
 export { FOOTER_WIDTH };
 
@@ -64,6 +66,8 @@ export function severityLabel(severity: Severity, locale: Locale = "en"): string
 // ---- start page ---------------------------------------------------------------------
 
 export type StartRow =
+  /** The room-by-room checklist of the walk. Only when the walk has one. */
+  | { readonly kind: "checklist"; readonly done: number; readonly total: number }
   /** Opens the recorder (speech server) or the quick-note list (none). */
   | { readonly kind: "record" }
   /** The notes of the open walk, newest first. Only when there are some. */
@@ -71,13 +75,18 @@ export type StartRow =
   /** The type of the next entry; a tap sets the next one. */
   | { readonly kind: "type" };
 
-/** At most three entries (QUS 1.1): record, the notes (only when there are some), the type. */
-export function startRows(entryCount: number): StartRow[] {
-  return [
-    { kind: "record" },
-    ...(entryCount > 0 ? [{ kind: "notes", count: entryCount } as const] : []),
-    { kind: "type" },
-  ];
+/** Progress of the walk's checklist, for the start list. */
+export interface ChecklistRow { readonly done: number; readonly total: number }
+
+/**
+ * At most three entries (QUS 1.1): record, the notes (only when there are some), the type.
+ * A walk with a checklist starts with it instead, and its type row goes (a defect on a checklist
+ * item takes its type from the item: critical = major, otherwise minor).
+ */
+export function startRows(entryCount: number, checklist: ChecklistRow | null = null): StartRow[] {
+  const notes = entryCount > 0 ? [{ kind: "notes", count: entryCount } as const] : [];
+  if (checklist) return [{ kind: "checklist", done: checklist.done, total: checklist.total }, { kind: "record" }, ...notes];
+  return [{ kind: "record" }, ...notes, { kind: "type" }];
 }
 
 export interface StartOptions {
@@ -86,11 +95,13 @@ export interface StartOptions {
   readonly demo: boolean;
   readonly severity: Severity;
   readonly entryCount: number;
+  readonly checklist?: ChecklistRow | null;
 }
 
 function startLabel(row: StartRow, options: StartOptions): string {
   const { locale } = options;
   switch (row.kind) {
+    case "checklist": return t(locale, "g.start.check", { done: row.done, total: row.total });
     case "record": return t(locale, options.voice ? "g.start.record" : "g.start.quick");
     case "notes": return t(locale, "g.start.notes", { n: row.count });
     case "type": return t(locale, "g.start.type", { severity: severityLabel(options.severity, locale) });
@@ -99,12 +110,12 @@ function startLabel(row: StartRow, options: StartOptions): string {
 
 export function startView(cursor: number, options: StartOptions): LogView {
   const { locale } = options;
-  const rows = startRows(options.entryCount);
+  const rows = startRows(options.entryCount, options.checklist ?? null);
   const at = Math.min(Math.max(0, cursor), rows.length - 1);
   const selected = rows[at];
   const body = rows.map((row, index) => truncate((index === at ? "● " : "  ") + startLabel(row, options), LINE_WIDTH));
   const tap = selected?.kind === "record" ? t(locale, options.voice ? "g.w.speak" : "g.w.pickNote")
-    : selected?.kind === "notes" ? t(locale, "g.w.open")
+    : selected?.kind === "notes" || selected?.kind === "checklist" ? t(locale, "g.w.open")
       : t(locale, "g.w.setType");
   return {
     header: headerLine(locale, t(locale, "g.title"), liveWord(options.voice, options.demo)),
@@ -189,6 +200,8 @@ export interface PickOptions {
   readonly quickNotes: readonly string[];
   /** Highlighted row, the cancel row included. */
   readonly pickIndex: number;
+  /** Recording a defect of this checklist item: the header names it. */
+  readonly forItem?: string;
 }
 
 /** The quick-note list: five rows, a dot on the highlighted one, "Cancel" last. */
@@ -199,7 +212,9 @@ export function pickView(options: PickOptions): LogView {
   const rows = notes.map((note, i) => truncate((i === index ? "● " : "  ") + note, LINE_WIDTH));
   const first = windowStart(rows.length, index, VISIBLE_ROWS);
   return {
-    header: truncate(t(locale, "g.h.pickType", { severity: severityLabel(options.severity, locale) }), HEADER_WIDTH),
+    header: options.forItem !== undefined
+      ? truncate(t(locale, "g.h.defect") + " · " + options.forItem, HEADER_WIDTH)
+      : truncate(t(locale, "g.h.pickType", { severity: severityLabel(options.severity, locale) }), HEADER_WIDTH),
     body: rows.slice(first, first + VISIBLE_ROWS),
     footer: footer(locale, { tap: t(locale, "g.w.save"), swipe: t(locale, "g.w.pick") }, "back"),
   };
@@ -241,6 +256,68 @@ export function reviewView(options: ReviewOptions): LogView {
     footer: armed
       ? armedFooter(locale, t(locale, "g.a.discard"))
       : footer(locale, { tap: t(locale, choice === 0 ? "g.w.keep" : choice === 1 ? "g.w.keepPhoto" : "g.w.discard"), swipe: t(locale, "g.w.choice") }, null),
+  };
+}
+
+// ---- checklist --------------------------------------------------------------------------
+
+/** One room of the overview: `● Küche 5/7 · 1 [Foto] fehlt` — the name gives way, the numbers never. */
+export function roomRow(inspection: Inspection, room: CheckRoom, selected: boolean, locale: Locale): string {
+  const progress = roomProgress(inspection, room);
+  const extra = [
+    ...(progress.missingPhotos > 0 ? [t(locale, "g.room.photo", { n: progress.missingPhotos })] : []),
+    ...(progress.criticalOpen > 0 ? [t(locale, "g.room.critical", { n: progress.criticalOpen })] : []),
+  ];
+  const tail = ` ${progress.done}/${progress.total}` + extra.map((part) => " · " + part).join("");
+  const lead = selected ? "● " : "  ";
+  return truncate(lead + truncate(room.name, Math.max(6, LINE_WIDTH - lead.length - tail.length)) + tail, LINE_WIDTH);
+}
+
+/** The rooms of the checklist with their progress; a tap walks the room. */
+export function roomsView(inspection: Inspection, cursor: number, locale: Locale): LogView {
+  const rooms = inspection.checklist?.rooms ?? [];
+  const total = checklistProgress(inspection);
+  const at = Math.min(Math.max(0, cursor), Math.max(0, rooms.length - 1));
+  const first = windowStart(rooms.length, at, VISIBLE_ROWS);
+  return {
+    header: truncate(t(locale, "g.h.rooms", { done: total.done, total: total.total }), HEADER_WIDTH),
+    body: rooms.slice(first, first + VISIBLE_ROWS).map((room, index) => roomRow(inspection, room, first + index === at, locale)),
+    footer: footer(locale, { tap: t(locale, "g.w.open"), swipe: t(locale, "g.w.pick") }, "back"),
+  };
+}
+
+/** Text rows of the item itself above its state and the two choices. */
+const ITEM_TEXT_ROWS = 2;
+
+/**
+ * One item of a room: its text (`!` when critical), its state, the photo it
+ * needs, and the two choices OK / Defect. On a critical item the first tap on
+ * OK only arms it (`SICHER? OK`, the footer says what a second tap does).
+ */
+export function itemView(inspection: Inspection, room: CheckRoom, cursor: WalkCursor, armed: boolean, locale: Locale): LogView {
+  const index = Math.min(Math.max(0, cursor.item), Math.max(0, room.items.length - 1));
+  const item = room.items[index];
+  if (!item) return { header: truncate(room.name, HEADER_WIDTH), body: [""], footer: footer(locale, {}, "back") };
+  const state = itemState(inspection, item);
+  const position = ` · ${index + 1}/${room.items.length}` + (item.critical ? " · " + t(locale, "g.item.critical") : "");
+  const photo = item.photo ? [t(locale, hasPhoto(inspection, item) ? "g.item.photoGiven" : "g.item.photoNeeded")] : [];
+  const showArmed = armed && cursor.choice === 0;
+  const row = (selected: boolean, text: string): string => (selected ? "● " : "  ") + text;
+  return {
+    header: truncate(room.name, Math.max(6, HEADER_WIDTH - position.length)) + position,
+    body: [
+      ...clampRows(wrap((item.critical ? "! " : "") + item.text, LINE_WIDTH), ITEM_TEXT_ROWS, LINE_WIDTH),
+      t(locale, "g.item." + state),
+      ...photo,
+      row(cursor.choice === 0, (showArmed ? t(locale, "g.choice.sure") : "") + t(locale, "g.choice.ok")),
+      row(cursor.choice === 1, t(locale, "g.choice.defect")),
+    ],
+    footer: showArmed
+      ? armedFooter(locale, t(locale, "g.a.ok"))
+      : footer(locale, {
+        tap: cursor.choice === 1 ? t(locale, "g.w.defect") : t(locale, item.critical ? "g.w.okCritical" : "g.w.ok"),
+        swipe: t(locale, "g.w.pick"),
+      }, "back"),
   };
 }
 

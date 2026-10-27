@@ -3,15 +3,21 @@ import type { CarState } from "../car/model";
 import { getLocale, languageSelect, setLocale, type Locale } from "../i18n";
 import { t } from "../messages";
 import { ageText, bar, deg, dec, duration, km, kw, pct, volt } from "../format";
-import { actionLabel, activeWarnings, lockWord, warningList } from "../glasses/views";
+import { activeWarnings, lockWord, warningList } from "../glasses/views";
 import { BUILD_URL, type Settings } from "../storage/persist";
 import { escapeHtml } from "./html";
 
 /**
  * The phone companion (QUS v1, the look of Rain Lens): exactly three tabs -
- * Jetzt (the car at a glance), Auto (charging, details, control) and
+ * Jetzt (the car at a glance), Auto (charging, details) and
  * Einstellungen (bridge, glasses, language). Without a bridge address the
  * demo runs and Einstellungen opens first with a three-step checklist.
+ *
+ * Control (0.7.0): the "Auto" tab has a small "Steuern" card that says what the
+ * bridge allows and how the last command ended. Commands are given on the
+ * glasses only (two taps); the phone sends nothing.
+ * A value the car does not report is left out, never shown as 0; climate shows
+ * on/off and the fan level, never a temperature (the setpoint is not a reading).
  */
 
 export type PhoneConnection =
@@ -150,6 +156,23 @@ export function bannerFor(connection: PhoneConnection, car: CarState | null, loc
 
 const esc = (text: string): string => escapeHtml(text);
 
+/** "an" / "aus" plus the fan level, or null when the car does not report climate. */
+export function climateParts(car: CarState, locale: Locale): { value: string; unit: string } | null {
+  const { acOn, acFan } = car.body;
+  if (acOn === null) return null;
+  const unit = acOn && acFan !== null && acFan > 0 ? t(locale, "p.k.fan", { fan: Math.round(acFan) }) : "";
+  return { value: t(locale, acOn ? "g.cp.on" : "g.cp.off"), unit };
+}
+
+/** What is open, in words ("Tür offen · Kofferraum offen"), or "". */
+function openText(car: CarState, locale: Locale): string {
+  return [
+    car.body.doorOpen ? t(locale, "p.k.doorOpen") : "",
+    car.body.trunkOpen ? t(locale, "p.k.trunkOpen") : "",
+    car.body.hoodOpen ? t(locale, "p.k.hoodOpen") : "",
+  ].filter(Boolean).join(" · ");
+}
+
 /** "Jetzt": banner, hero card with the charge, 2 x 2 key figures, a card per tyre. */
 export function nowInner(connection: PhoneConnection, car: CarState | null, locale: Locale): string {
   const x = (key: string, vars: Record<string, string | number> = {}): string => t(locale, key, vars);
@@ -158,11 +181,24 @@ export function nowInner(connection: PhoneConnection, car: CarState | null, loca
     `<div${alert ? ' class="alert"' : ""}><span>${esc(label)}</span><b>${esc(value)}</b><small>${esc(unit)}</small></div>`;
   const bad = car ? Object.values(car.tyres).some((tyre) => tyre.leak || tyre.low) : false;
   const tyreKnown = car ? Object.values(car.tyres).some((tyre) => tyre.kpa !== null) : false;
-  const cards = car ? (["fl", "fr", "rl", "rr"] as const).map((wheel) => {
+  // Only wheels the car reports: a model without tyre sensors shows no tyre strip at all.
+  const cards = car ? (["fl", "fr", "rl", "rr"] as const).filter((wheel) => car.tyres[wheel].kpa !== null || car.tyres[wheel].leak || car.tyres[wheel].low).map((wheel) => {
     const tyre = car.tyres[wheel];
     const problem = tyre.leak || tyre.low;
-    return `<div class="host tone-${problem ? "warn" : "ok"}"><b>${esc(t(locale, "g.wheelLong." + wheel))}</b><em>${esc(problem ? x("g.cp.tyresCheck") : x("g.cp.tyresOk"))}</em><span><i>${esc(bar(tyre.kpa, locale))}</i></span></div>`;
+    const temp = tyre.temp === null ? "" : ` · ${deg(tyre.temp, locale)}`;
+    return `<div class="host tone-${problem ? "warn" : "ok"}"><b>${esc(t(locale, "g.wheelLong." + wheel))}</b><em>${esc(problem ? x("g.cp.tyresCheck") : x("g.cp.tyresOk"))}</em><span><i>${esc((tyre.kpa === null ? "" : bar(tyre.kpa, locale)) + temp)}</i></span></div>`;
   }) : [];
+  // Up to four key figures, only the ones the car reports (other BYD models report fewer).
+  const climate = car ? climateParts(car, locale) : null;
+  const opened = car ? openText(car, locale) : "";
+  const figures = car ? [
+    climate ? stat(x("p.k.climate"), climate.value, climate.unit) : "",
+    car.body.locked !== null ? stat(x("p.k.lock"), lockWord(locale, car), opened, car.body.locked === false) : opened ? stat(x("p.k.lock"), "–", opened, true) : "",
+    tyreKnown || bad ? stat(x("p.k.tyres"), x(bad ? "g.cp.tyresCheck" : "g.cp.tyresOk"), "", bad) : "",
+    car.body.extTemp !== null ? stat(x("p.k.outside"), deg(car.body.extTemp, locale), "") : "",
+    car.battery.volt12 !== null ? stat(x("p.k.v12"), volt(car.battery.volt12, locale), "") : "",
+    car.battery.odometerKm !== null ? stat(x("p.k.odometer"), km(car.battery.odometerKm), "") : "",
+  ].filter(Boolean).slice(0, 4) : [];
   return `
     <p class="banner tone-${banner.tone}">${esc(banner.text)}</p>
     <section class="card hero-card">
@@ -170,17 +206,12 @@ export function nowInner(connection: PhoneConnection, car: CarState | null, loca
         <div><span>${esc(x("p.heroSoc"))}</span><strong>${esc(car ? pct(car.battery.soc).replace(" ", "") : "–")}</strong></div>
         <p>${esc(car ? km(car.battery.rangeKm) : "–")}</p>
       </div>
-      <div class="stats">
-        ${stat(x("p.k.climate"), car ? (car.body.acOn === null ? "–" : x(car.body.acOn ? "g.cp.on" : "g.cp.off")) : "–", car && car.body.setpoint !== null ? deg(car.body.setpoint, locale) : "")}
-        ${stat(x("p.k.lock"), car ? lockWord(locale, car) : "–", car?.body.doorOpen ? x("p.k.doorOpen") : "", car?.body.locked === false)}
-        ${stat(x("p.k.tyres"), car && (tyreKnown || bad) ? x(bad ? "g.cp.tyresCheck" : "g.cp.tyresOk") : "–", "", bad)}
-        ${stat(x("p.k.outside"), car ? deg(car.body.extTemp, locale) : "–", "")}
-      </div>
+      ${figures.length > 0 ? `<div class="stats">${figures.join("")}</div>` : ""}
     </section>
     ${cards.length > 0 ? `<h2 class="strip-title">${esc(x("p.k.tyres"))}</h2><div class="strip">${cards.join("")}</div>` : ""}`;
 }
 
-/** "Auto": charging, the car's details and the control status. */
+/** "Auto": charging and the car's details (only what the car reports); display only. */
 export function carInner(car: CarState | null, locale: Locale): string {
   const L = (key: string, vars: Record<string, string | number> = {}): string => esc(t(locale, key, vars));
   const T = (key: string): string => t(locale, key);
@@ -194,46 +225,65 @@ export function carInner(car: CarState | null, locale: Locale): string {
     ${car.battery.src === "cloud" ? `<p class="hint">${esc(t(locale, "p.cloudSrc", { min: car.battery.cloudAgeMin ?? "?" }))}</p>` : ""}
     <table class="keys">
       ${row(T("p.k.charging"), c.active ? `${kw(c.kw, locale)} · ${T(c.dc ? "g.charge.dc" : "g.charge.ac")}` : c.done ? T("p.k.done") : T("p.k.notCharging"))}
-      ${c.active ? row(T("p.k.eta"), duration(c.etaMin)) : ""}
-      ${c.active ? row(T("p.k.added"), `${dec(c.kwh, 1, locale)} kWh`) : ""}
+      ${c.active && c.etaMin !== null ? row(T("p.k.eta"), duration(c.etaMin)) : ""}
+      ${c.active && c.kwh !== null ? row(T("p.k.added"), `${dec(c.kwh, 1, locale)} kWh`) : ""}
     </table>`}
     <details class="advanced"><summary>?</summary><p class="hint">${L("p.chargeHint")}</p></details>
   </section>`;
+  const tyreRow = car ? (["fl", "fr", "rl", "rr"] as const).filter((w) => car.tyres[w].kpa !== null)
+    .map((w) => t(locale, "g.wheel." + w) + " " + bar(car.tyres[w].kpa, locale) + (car.tyres[w].leak || car.tyres[w].low ? " !" : "")).join(" · ") : "";
+  const opened = car ? openText(car, locale) : "";
+  const climate = car ? climateParts(car, locale) : null;
+  const { soh, cellTMin, cellTMax } = car?.battery ?? { soh: null, cellTMin: null, cellTMax: null };
+  const battery = [
+    soh === null ? "" : `SoH ${pct(soh)}`,
+    cellTMin === null && cellTMax === null ? "" : `${deg(cellTMin ?? cellTMax, locale)}${cellTMin !== null && cellTMax !== null && cellTMin !== cellTMax ? " – " + deg(cellTMax, locale) : ""}`,
+  ].filter(Boolean).join(" · ");
   const carCard = car ? `
   <section class="card">
     <h2>${L("p.car")}</h2>
     <table class="keys">
-      ${row(T("p.k.lock"), lockWord(locale, car) + (car.body.doorOpen ? " · " + T("p.k.doorOpen") : ""))}
-      ${row(T("p.k.tyres"), (["fl", "fr", "rl", "rr"] as const).map((w) => t(locale, "g.wheel." + w) + " " + bar(car.tyres[w].kpa, locale) + (car.tyres[w].leak || car.tyres[w].low ? " !" : "")).join(" · "))}
-      ${row(T("p.k.v12"), volt(car.battery.volt12, locale))}
+      ${car.body.locked !== null || opened ? row(T("p.k.lock"), [car.body.locked !== null ? lockWord(locale, car) : "", opened].filter(Boolean).join(" · ")) : ""}
+      ${climate ? row(T("p.k.climate"), climate.value + (climate.unit ? " · " + climate.unit : "")) : ""}
+      ${tyreRow ? row(T("p.k.tyres"), tyreRow) : ""}
+      ${car.battery.volt12 !== null ? row(T("p.k.v12"), volt(car.battery.volt12, locale)) : ""}
       ${car.battery.odometerKm !== null ? row(T("p.k.odometer"), km(car.battery.odometerKm)) : ""}
       ${car.position ? `<tr><td>${esc(T("p.k.position"))}</td><td><a href="https://www.google.com/maps/search/?api=1&amp;query=${car.position.lat},${car.position.lon}" target="_blank" rel="noopener">${esc(T("p.mapLink"))}</a>${car.position.ageMin !== null ? " · " + esc(t(locale, "p.posAge", { min: car.position.ageMin })) : ""}</td></tr>` : ""}
-      ${row(T("p.k.battery"), `SoH ${pct(car.battery.soh)} · ${deg(car.battery.cellTMin, locale)} – ${deg(car.battery.cellTMax, locale)}`)}
-      ${row(T("p.k.cons"), `${dec(car.drive.cons50, 1, locale)} kWh/100 km`)}
+      ${battery ? row(T("p.k.battery"), battery) : ""}
+      ${car.drive.cons50 !== null ? row(T("p.k.cons"), `${dec(car.drive.cons50, 1, locale)} kWh/100 km`) : ""}
     </table>
   </section>` : "";
+  return chargeCard + carCard + controlCard(car, locale);
+}
+
+/** "Steuern": what the bridge allows, whether the car is off, how the last command ended. Sends nothing. */
+export function controlCard(car: CarState | null, locale: Locale): string {
+  const L = (key: string, vars: Record<string, string | number> = {}): string => esc(t(locale, key, vars));
   const ctl = car?.control;
-  const command = car?.command;
-  const controlCard = `
-  <details class="fold card">
-    <summary>${L("p.tabControl")}</summary>
-    <p class="hint">${L("p.controlHint")}</p>
-    ${car?.carOn ? `<p class="notice warn">${L("p.carOnNow")}</p>` : ""}
-    ${ctl ? `<table class="keys">
-      ${row(T("p.k.climate"), ctl.enabled ? (ctl.climateTemp ? T("p.k.climateFree") : T("p.k.climateMapped")) : T("g.reason.readOnly"))}
-      ${row(T("g.ctl.lock"), ctl.enabled && ctl.lock ? T("p.k.ready") : T("g.reason.notSetUp"))}
-      ${row(T("g.ctl.unlock"), ctl.enabled && ctl.unlock ? T("p.k.unlockReady") : T("p.k.unlockOff"))}
-    </table>` : ""}
-    ${command ? `<p class="hint">${L("p.lastCommand", { label: actionLabel(locale, command.action, command.value), status: t(locale, "p.cmd." + command.status) })}</p>` : ""}
-    <h3>${L("p.rules")}</h3>
-    <ul class="rules">
-      <li>${L("p.rule.off")}</li>
-      <li>${L("p.rule.unlock")}</li>
-      <li>${L("p.rule.double")}</li>
-      <li>${L("p.rule.temp")}</li>
-    </ul>
-  </details>`;
-  return chargeCard + carCard + controlCard;
+  if (!car || !ctl || !ctl.enabled) {
+    return `
+  <section class="card">
+    <h2>${L("p.k.readOnly")}</h2>
+    <p class="hint">${L("p.readOnlyHint")}</p>
+  </section>`;
+  }
+  const row = (label: string, value: string): string => `<tr><td>${esc(label)}</td><td>${esc(value)}</td></tr>`;
+  const yes = (on: boolean): string => t(locale, on ? "p.ctl.free" : "p.ctl.notSetUp");
+  const minutes = ctl.preheatMinutes.filter((m) => m === 10 || m === 20 || m === 30).join(" / ");
+  const cmd = car.command;
+  const label = cmd ? t(locale, cmd.action === "preheat" ? "g.ctl.preheat" : cmd.action === "unlock" ? "g.ctl.unlock" : "g.ctl.lock", { min: cmd.value ?? "?" }) : "";
+  return `
+  <section class="card">
+    <h2>${L("p.ctl.title")}</h2>
+    <p class="${ctl.carOff ? "big" : "hint"}">${L(ctl.carOff ? "g.ctl.ready" : "g.ctl.carOn")}</p>
+    <table class="keys">
+      ${row(t(locale, "g.ctl.lock"), yes(ctl.lock))}
+      ${row(t(locale, "g.ctl.unlock"), yes(ctl.unlock) + (ctl.unlock ? " · " + t(locale, "p.ctl.telegram") : ""))}
+      ${row(t(locale, "p.ctl.preheat"), ctl.preheat && minutes ? minutes + " min" : yes(false))}
+      ${cmd ? row(t(locale, "p.ctl.last"), t(locale, "g.ctl.st." + cmd.status, { label })) : ""}
+    </table>
+    <p class="hint">${L("p.ctl.how")}</p>
+  </section>`;
 }
 
 /** First-run checklist: pure, so tests can read it. */
@@ -302,7 +352,6 @@ function template(settings: Settings, connection: PhoneConnection, car: CarState
         <table class="keys">
           <tr><td>${L("p.c.tap")}</td><td>${L("p.c.tap.d")}</td></tr>
           <tr><td>${L("p.c.swipe")}</td><td>${L("p.c.swipe.d")}</td></tr>
-          <tr><td>${L("p.c.hold")}</td><td>${L("p.c.hold.d")}</td></tr>
           <tr><td>${L("p.c.double")}</td><td>${L("p.c.double.d")}</td></tr>
         </table>
       </details>

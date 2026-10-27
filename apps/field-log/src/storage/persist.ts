@@ -4,6 +4,7 @@ import type { Locale } from "../i18n";
 import { t } from "../messages";
 import { isCsvFormat, type CsvFormat } from "../csv";
 import { sttBase } from "../stt/provider";
+import { sanitizeChecklist, sanitizeChecks } from "../checklist/checklist";
 
 /**
  * Inspections live in the Even app's per-app storage on the phone.
@@ -132,6 +133,8 @@ export function parseData(raw: string): FieldLogData {
       for (const candidate of value.inspections) {
         const i = candidate as Partial<Inspection>;
         if (typeof i?.id !== "string" || typeof i.startedAt !== "number") continue;
+        const checklist = sanitizeChecklist(i.checklist);
+        const checks = sanitizeChecks(i.checks);
         inspections.push({
           id: i.id,
           title: typeof i.title === "string" ? i.title : "Inspection",
@@ -139,6 +142,9 @@ export function parseData(raw: string): FieldLogData {
           finishedAt: typeof i.finishedAt === "number" ? i.finishedAt : null,
           entries: Array.isArray(i.entries) ? i.entries : [],
           section: typeof i.section === "string" ? i.section : "",
+          // A free-form walk (every walk before 0.10) simply has neither.
+          ...(checklist ? { checklist } : {}),
+          ...(checks ? { checks } : {}),
         });
       }
     }

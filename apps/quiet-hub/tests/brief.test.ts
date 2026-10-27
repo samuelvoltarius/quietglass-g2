@@ -134,13 +134,14 @@ describe("glasses layout fits", () => {
   it("the worst case needs several pages and the footer says which", () => {
     const view = buildView(onBrief(worstBrief()), "de", NOW);
     expect(view.footer).toMatch(/^1\/\d · Tippen = laden · Wischen = blättern · 2× = zurück$/);
-    expect(view.header).toMatch(/^QUIET HUB · Tagesstart · /);
+    expect(view.header).toMatch(/^QUIET HUB · Tag · /);
   });
 });
 
 describe("Tagesstart page", () => {
   it("opens from the overview row and from the menu, asking the daemon", () => {
-    const root = { ...createModel(demoReport("de")), rootSelected: ROOT_ITEMS.indexOf("brief") };
+    const root = { ...createModel(demoReport("de")), rootKey: "area:brief" };
+    expect(ROOT_ITEMS).toContain("brief");
     const opened = decide(root, "click", NOW, "de");
     expect(opened.model.screen).toBe("brief");
     expect(opened.effect).toEqual({ kind: "brief", refresh: false });
@@ -148,7 +149,7 @@ describe("Tagesstart page", () => {
     expect(viaMenu.model.screen).toBe("brief");
     expect(viaMenu.effect).toEqual({ kind: "brief", refresh: false });
     expect(pickerEntries(root, "de").map((entry) => entry.screen)).toContain("brief");
-    expect(buildView(root, "de", NOW).body[4]).toMatch(/^>   Tagesstart$/);
+    expect(buildView(root, "de", NOW).body.at(-1)).toMatch(/^> Tag · /);
   });
 
   it("swipe pages (clamped), tap and hold refresh, double tap back", () => {

@@ -1,7 +1,7 @@
 {
   "name": "@quietglass/byd-glass",
-  "version": "0.5.0",
-  "description": "Quietglass BYD Glass — your BYD on the Even G2: speed, battery, charging, tyres, warnings, and climate/lock with a confirm step (via your own byd-bridge)",
+  "version": "0.7.0",
+  "description": "Quietglass BYD Glass — your BYD on the Even G2: speed, battery, charging, tyres and warnings, plus lock / unlock / preheat if your own byd-bridge allows it",
   "author": "Quietglass",
   "license": "MIT",
   "private": false,

@@ -1,0 +1,29 @@
+{
+  "name": "@quietglass/speech-probe",
+  "version": "0.1.0",
+  "description": "Quietglass Speech Probe — private test: platform speech recognition and on-device Whisper speed",
+  "author": "Quietglass",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "evenhub-simulator --automation-port 9943 http://127.0.0.1:5244",
+    "pack": "evenhub pack app.json dist -o speech-probe.ehpk"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.16",
+    "@huggingface/transformers": "4.3.1"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "0.9.5",
+    "typescript": "^5.6.0",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

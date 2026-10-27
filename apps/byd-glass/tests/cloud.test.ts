@@ -3,7 +3,6 @@ import { deriveRaw } from "../src/car/derive";
 import { demoTelemetry } from "../src/car/demo";
 import { parseState } from "../src/car/model";
 import { buildView, HEADER_WIDTH } from "../src/glasses/views";
-import { INITIAL_CONTROL } from "../src/pages";
 
 // The bridge (15.10.2026) fills battery values from the BYD cloud while the car
 // itself is silent, and always sends the car's last known position.
@@ -32,12 +31,12 @@ describe("cloud values and the car's position from the bridge", () => {
     const base = raw({}) as unknown as { battery: Record<string, unknown> };
     const car = parseState(raw({ battery: { ...base.battery, soc: 60, src: "cloud", cloud_age_min: 5 } }));
     for (const locale of ["de", "en"] as const) {
-      const view = buildView({ locale, demo: false, connection: { kind: "ok" }, car, page: "status", control: INITIAL_CONTROL, overlay: null, local: null, now: 1_000 });
+      const view = buildView({ locale, demo: false, connection: { kind: "ok" }, car, page: "status", overlay: null, now: 1_000 });
       expect(view.header).toMatch(/60 % (Cloud|cloud)/);
       expect(view.header.length).toBeLessThanOrEqual(HEADER_WIDTH);
     }
     const fromCar = parseState(raw({ battery: { ...base.battery, soc: 60, src: "car" } }));
-    const view = buildView({ locale: "de", demo: false, connection: { kind: "ok" }, car: fromCar, page: "status", control: INITIAL_CONTROL, overlay: null, local: null, now: 1_000 });
+    const view = buildView({ locale: "de", demo: false, connection: { kind: "ok" }, car: fromCar, page: "status", overlay: null, now: 1_000 });
     expect(view.header).not.toMatch(/Cloud/);
   });
 });

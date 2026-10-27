@@ -73,7 +73,7 @@ describe("home view model (pure)", () => {
     expect(kindOf(st("cover.g", "closed", { device_class: "garage" }))).toBe("garage");
     expect(kindOf(st("sensor.p", "1", { device_class: "power" }))).toBeNull();
     expect(kindOf(st("binary_sensor.m", "on", { device_class: "motion" }))).toBe("motion");
-    expect(kindOf(st("media_player.tv", "on"))).toBeNull();
+    expect(kindOf(st("media_player.tv", "on"))).toBe("media");
     expect(entityFromState(st("sensor.t", "21.46", { device_class: "temperature", unit_of_measurement: "°C" }), "", "de").value).toBe("21,5 °C");
     expect(entityFromState(st("light.l", "on", { brightness: 255 })).brightness).toBe(100);
   });
@@ -130,6 +130,27 @@ describe("home view model (pure)", () => {
     expect(serviceCall(e["lock.haustuer"], "toggle").service).toBe("unlock");
     // Group: one on -> all off, sent as one call with the members.
     expect(serviceCall(e["group:wohnzimmer:light"], "toggle", undefined, e)).toEqual({ domain: "light", service: "turn_off", data: { entity_id: ["light.wohnzimmer_decke", "light.wohnzimmer_stehlampe"] } });
+  });
+
+  it("HA_MEDIA shows TV / projector first; volume is one remote key press when a remote exists", () => {
+    const states = [...STATES(), st("remote.tv", "on", { friendly_name: "TV Remote" }),
+      st("media_player.beamer", "off", { friendly_name: "Beamer", volume_level: 0.3 }),
+      st("media_player.tv", "on", { friendly_name: "TV", app_name: "Netflix", volume_level: 0.255, is_volume_muted: false })];
+    const view = buildHomeView({ states, areas: AREAS, config: config({ HA_MEDIA: "media_player.tv=Fernseher,media_player.beamer,light.nope" }) });
+    expect(view.favorites.slice(0, 2)).toEqual(["media_player.tv", "media_player.beamer"]);
+    expect(view.entities["media_player.tv"]).toMatchObject({ kind: "media", name: "Fernseher", on: true, volume: 26, muted: false, value: "Netflix", remote: "remote.tv" });
+    expect(view.entities["media_player.beamer"]).toMatchObject({ kind: "media", on: false });
+    expect(view.entities["media_player.beamer"].remote).toBeUndefined();
+    const tv = view.entities["media_player.tv"];
+    const beamer = view.entities["media_player.beamer"];
+    expect(serviceCall(tv, "volume_up")).toEqual({ domain: "remote", service: "send_command", data: { entity_id: "remote.tv", command: "VOLUME_UP" } });
+    expect(serviceCall(beamer, "volume_down")).toEqual({ domain: "media_player", service: "volume_down", data: { entity_id: "media_player.beamer" } });
+    expect(serviceCall(tv, "toggle").service).toBe("turn_off");
+    expect(serviceCall(beamer, "toggle").service).toBe("turn_on");
+    expect(serviceCall(tv, "mute").data).toEqual({ entity_id: "media_player.tv", is_volume_muted: true });
+    expect(serviceCall(tv, "play_pause").service).toBe("media_play_pause");
+    expect(serviceCall(tv, "brightness", 40)).toBeNull();
+    expect(serviceCall(view.entities["light.wohnzimmer_decke"], "volume_up")).toBeNull();
   });
 
   it("confirm tokens are single-use and expire", async () => {

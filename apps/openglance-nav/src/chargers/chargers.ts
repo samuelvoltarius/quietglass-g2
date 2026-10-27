@@ -2,6 +2,7 @@ import {
   cumulativeMeters, distanceMeters, projectOntoPath, type LatLng,
 } from "../geo/geometry";
 import { DEFAULT_OVERPASS_URLS } from "../overview/streets";
+import { isOwnOverpass, overpassUrlsFor } from "../overpass/own";
 
 /**
  * Charging stations from OpenStreetMap (`amenity=charging_station`) through
@@ -335,7 +336,8 @@ const NEARBY_TTL_MS = 10 * 60_000;
 const NEARBY_REUSE_M = 1_500;
 
 export function createChargerSource(config: ChargerSourceConfig = {}): ChargerSource {
-  const urls = config.urls ?? DEFAULT_OVERPASS_URLS;
+  // Asked per request: the user's own server from the phone page first (see overpass/own.ts).
+  const urlsNow = (): readonly string[] => config.urls ?? overpassUrlsFor([], DEFAULT_OVERPASS_URLS);
   const endpoint = (config.endpoint ?? buildChargersUrl()).replace(/\/+$/, "");
   const doFetch = config.fetchImpl ?? ((input, init) => fetch(input, init));
   const clock = config.clock ?? Date.now;
@@ -380,10 +382,10 @@ export function createChargerSource(config: ChargerSourceConfig = {}): ChargerSo
       return "chargers" in outcome ? { chargers: outcome.chargers, error: null } : { chargers: [], error: outcome.error };
     }
     let last: ChargerError = "server";
-    for (const url of urls) {
+    for (const url of urlsNow()) {
       const outcome = await fetchOne(url, query);
       if ("chargers" in outcome) return { chargers: outcome.chargers, error: null };
-      if (outcome.error === "offline") return { chargers: [], error: "offline" };
+      if (outcome.error === "offline" && !isOwnOverpass(url)) return { chargers: [], error: "offline" };
       last = outcome.error;
     }
     return { chargers: [], error: last };

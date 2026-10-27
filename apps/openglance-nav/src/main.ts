@@ -1,3 +1,4 @@
+import { setUserOverpassUrl } from "./overpass/own";
 import { version as APP_VERSION } from "../app.json";
 import { diag, startDiag } from "./diag/diag";
 import {
@@ -23,7 +24,7 @@ import { buildView, type GlassLayout, type NavView } from "./glasses/view";
 import {
   chargerView, clampCursor, cursorFor, followCursor, helpView, listItems, listView, nextMode, voiceView,
   type ChargerListState, type ListAppt, type VoiceState,
-  CAR_DESTINATION_ID, setCarSpot,
+  CAR_DESTINATION_ID, PEAKS_VIEW, setCarSpot,
 } from "./glasses/picker";
 import { MAX_VOICE_MS, MIN_VOICE_BYTES, pcmBytes, sttBase, transcribe } from "./voice/stt";
 import { buildWav } from "./voice/wav";
@@ -58,6 +59,7 @@ import { mountPhoneUi, type CarLine } from "./ui/phone";
 import { buildHud, hudView, speedBigKey, type AlertKind, type HudState } from "./glasses/hud";
 import { BrakeAdvisor, limitDrops, type LimitDrop } from "./nav/brake";
 import { reckonDistance, SpeedingWatch } from "./nav/speeding";
+import { buildHeightUrl, climbAhead, climbKwh, fetchProfile, type ElevationProfile } from "./car/elevation";
 import { batteryEstimate, batteryRange, buildBydUrl, chooseSpeed, consumptionOf, fetchCar, CAR_POLL_IDLE_MS, CAR_POLL_NAV_MS, type BatteryEstimate, type CarSnapshot } from "./car/byd";
 import { buildTtsUrl, DEFAULT_VOICES, ServerTts } from "./speech/server-tts";
 import { buildSugarToken, buildSugarUrl, fetchSugar, sugarDisplay, SUGAR_POLL_MS, type SugarDisplay, type SugarReading } from "./sugar/glucose";
@@ -153,6 +155,7 @@ async function boot(): Promise<void> {
   let locale: Locale = await resolveLocale(bridge);
   setLocale(locale);
   let data: NavData = await load(bridge);
+  setUserOverpassUrl(data.overpassUrl);
   if (DEMO) {
     // The demo also brings a saved route with one stop, and shows charging stations.
     const demoRoute: SavedRoute = {
@@ -345,6 +348,8 @@ async function boot(): Promise<void> {
   // Car link (private build, VITE_BYD_URL): the byd-bridge's GET /state, read only -
   // the car's speed instead of the GPS and the battery at arrival. Nothing is sent to the car.
   const BYD_URL = DEMO ? "" : buildBydUrl();
+  /** Own Valhalla with heights (private build): the climb goes into the arrival battery. */
+  const HEIGHT_URL = DEMO ? "" : buildHeightUrl();
   let car: CarSnapshot | null = null;
   let carStatus: CarLine["status"] = BYD_URL ? "waiting" : "off";
   let carTimer: ReturnType<typeof setTimeout> | null = null;
@@ -386,7 +391,11 @@ async function boot(): Promise<void> {
     if (!BYD_URL || !nav || data.mode !== "driving") return null;
     const progress = progressOf(nav);
     if (progress.arrived) return null;
-    return batteryEstimate(car, progress.distanceRemaining, data.carUsableKwh, Date.now());
+    // The climb still ahead (own Valhalla with heights): uphill costs, downhill gives a part back.
+    const profile = elevation && elevation.route === routeVersion ? elevation.profile : null;
+    const along = Math.max(0, nav.route.distance - progress.distanceRemaining);
+    const climb = profile ? climbAhead(profile, along) : null;
+    return batteryEstimate(car, progress.distanceRemaining, data.carUsableKwh, Date.now(), climb ? climbKwh(climb.up, climb.down) : 0);
   };
   // Glucose (private build, VITE_SUGAR_URL): the owner's own Nightscout server, read only, once a
   // minute and only while navigating by car. A failed request changes nothing on the glasses; the
@@ -1283,6 +1292,11 @@ async function boot(): Promise<void> {
       ...(alternates ? { alternates } : {}),
     });
     if (seq !== routeSeq) return;
+    // The best car way has a toll: ask once more without toll roads, so a slower free way can be chosen.
+    const tollFree = alternates && outcome.route?.toll === true
+      ? (await router().route({ from, to: current.to, mode: data.mode, avoidTolls: true })).route
+      : null;
+    if (seq !== routeSeq) return;
     rerouting = false;
     startPhase = null;
 
@@ -1291,7 +1305,7 @@ async function boot(): Promise<void> {
       errorKey = routeErrorKey(outcome.code);
       nav = null;
     } else {
-      const choices = choose ? choicesFrom(outcome.route, outcome.alternates) : [];
+      const choices = choose ? choicesFrom(outcome.route, outcome.alternates, tollFree) : [];
       if (choices.length > 1) {
         // More than one way: the wearer picks before anything starts (swipe, tap, 2× back).
         errorKey = null;
@@ -1304,9 +1318,22 @@ async function boot(): Promise<void> {
     await draw();
   };
 
+  /** Height profile of the route for the arrival battery (by car, private build with VITE_HEIGHT_URL). */
+  let elevation: { route: number; profile: ElevationProfile } | null = null;
+  const loadElevation = (route: Route, forRoute: number): void => {
+    if (!HEIGHT_URL || !BYD_URL || data.mode !== "driving") return;
+    const begun = Date.now();
+    void fetchProfile(HEIGHT_URL, route.shape).then((profile) => {
+      const n = profile ? profile.along.length : 0;
+      diag("elevation", { ms: Date.now() - begun, n, up: profile ? Math.round(profile.up[n - 1]!) : null, down: profile ? Math.round(profile.down[n - 1]!) : null });
+      if (profile && !closed && forRoute === routeVersion) { elevation = { route: forRoute, profile }; void draw(); }
+    });
+  };
+
   /** Starts guiding along `route` (a new route, a reroute, a picked or a detour route). */
   const adoptRoute = (route: Route, stops: readonly RoutePoint[]): void => {
     diag("nav.adopt", { shape: route.shape.length, maneuvers: route.maneuvers.length, km: Math.round(route.distance / 1000) });
+    loadElevation(route, routeVersion + 1);
     errorKey = null;
     routeVersion++;
     routedStops = stops;
@@ -2210,6 +2237,12 @@ async function boot(): Promise<void> {
         || next.mode !== data.mode
         || next.demo !== data.demo
         || next.valhallaUrl !== data.valhallaUrl;
+      if (next.overpassUrl !== data.overpassUrl) {
+        // A new map server: streets and cameras are asked for again (from it first).
+        setUserOverpassUrl(next.overpassUrl);
+        aroundBox = null;
+        camerasAskedFor = -1;
+      }
       data = next;
       // A destination picked on the phone moves the cursor of the glasses list onto it.
       if (screen === "list") { shownAppts = apptRows(); cursor = cursorFor(data, shownAppts); }
@@ -2241,11 +2274,14 @@ async function boot(): Promise<void> {
       await routeGate.ready();
       return router().route(request);
     },
-    loadPeaks: async () => {
-      const here = position;
-      if (!here) return { here: null, outcome: { peaks: [], error: null } };
-      return { here, outcome: await loadPeaksAround(here) };
-    },
+    // The peaks tab only with the peaks view (PEAKS_VIEW, off since 15.10.).
+    ...(PEAKS_VIEW ? {
+      loadPeaks: async () => {
+        const here = position;
+        if (!here) return { here: null, outcome: { peaks: [] as never[], error: null } };
+        return { here, outcome: await loadPeaksAround(here) };
+      },
+    } : {}),
     chargersAlong: (line) => (usesMockRouter(data)
       ? Promise.resolve({ chargers: demoChargers(line), error: null })
       : chargerSource.along(line)),

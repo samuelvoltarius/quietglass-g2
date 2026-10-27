@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.1.1] — 2026-10-23
+
+Sprecherrolle der Brille (SDK 0.0.16: jedes Audio-Paket trägt `speakerRole` self/other/unknown – eine Schätzung des Even-App-Algorithmus, keine Firmware-Garantie – und die rohe Richtungsmarke `direction`).
+
+### Brille
+
+- **Gespräch:** Zeilen tragen vorne kurz **„Ich:“** oder **„Ggü:“** (englisch „Me:“ / „Them:“). Eine Zeile, deren Rolle unklar ist, bleibt ohne Marke stehen – es fällt nie eine Zeile weg. Übersetzen und Englisch sprechen behalten die Buchstaben „A:“/„B:“ wie bisher.
+- **Wortfinder („Englisch sprechen“ und automatisch):** Ohne gelernte Stimme hilft er nur noch bei **meinen** Sätzen (Rolle „self“); eine vorläufige Zeile zählt nur, solange ihre Audio-Pakete bisher „self“ sind. Mit gelernter Stimme (ECAPA) entscheidet weiter die Stimme; Abweichungen der Brille werden nur protokolliert. Meldet die Brille in der Sitzung nie „self“ oder „other“ (älteres Even-App, Handy-Mikro), bleibt das bisherige Verhalten.
+- Englisch sprechen: eigene Sätze mit Rolle „self“ werden nicht ins Deutsche übersetzt (wie bisher die „ME“-Zeilen). Antwort-Vorschläge und „Meine Sätze übersetzen“ nehmen die Rolle als Hinweis, wer spricht; die gelernte Stimme hat Vorrang, „unknown“ fällt auf Buchstabe/Sprache zurück.
+
+### Handy
+
+- Neuer Schalter **„Sprecher erkennen (Brille)“** / „Detect speaker (glasses)“ unter Einstellungen → Weitere Optionen, Standard an. Aus = keine Ich/Ggü-Marken, kein Rollen-Tor im Wortfinder, alles wie 1.1.0.
+- Mitschrift: im Gespräch Chip „Ich“ bzw. „Gegenüber“ statt des Buchstabens.
+
+### Technik
+
+- `src/stt/role.ts`: die Rollen der Audio-Pakete werden zwischen zwei fertigen Zeilen gezählt; entschieden wird über die stimmhaften Pakete (Energie), sonst über alle: ≥ 60 % eine Rolle, sonst „unknown“. Die Rolle steht in Untertitel-Zeile und Mitschrift (`role`).
+- `src/companion/roles.ts`: Marke (Profil vor Rolle), Wortfinder-Tor.
+- **Schrittprotokoll** (`src/diag/diag.ts` aus Klipper, `app: "babel"`): nur private Builds mit `VITE_TRAFFIC_URL`. Je Zeile ein Eintrag `seg` mit Paketzahl, stimmhaften Paketen, Anteilen self/other/unknown, gewählter Rolle, gesehenen Richtungswerten, Quelle und – mit gelernter Stimme – deren Urteil und `agree`. Kein Audio, kein Text. Öffentlicher Build: aus.
+- Beenden-Dialog, Seitenaufbau und `bounded()`-Zeitgrenzen unverändert. Tests: `tests/role.test.ts` (Zählung, Entscheidung, Marken, Wortfinder-Tor, Protokollfelder, Version) und vier Ablauf-Tests in `tests/main.test.ts`.
+
 ## [1.1.0] — 2026-10-20
 
 Quietglass UI Standard QUS v1 („keine Textwand“). Aufbau und Funktionen bleiben, Wortfinder, Stimmtraining, Meine Wörter, Spracherkennung und Sprachmodell sind unverändert.

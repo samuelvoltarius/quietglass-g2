@@ -131,6 +131,7 @@ details.advanced summary { cursor: pointer; font-size: 14px; color: var(--muted)
 .spk-2 { background: #fcd34d; }
 .spk-3 { background: #f9a8d4; }
 .spk-me { background: #e5e7eb; }
+.spk-them { background: #c4b5fd; }
 .buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
 button[disabled] { opacity: 0.5; cursor: default; }

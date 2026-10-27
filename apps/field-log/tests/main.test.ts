@@ -2,6 +2,7 @@ import { resetGestureDedupe } from "../src/input/gestures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeRoot, type FakeRoot } from "./fake-dom";
 import { FakeSocket } from "./fake-socket";
+import { parseChecklist } from "../src/checklist/checklist";
 
 // Boots the real app against a fake bridge, so the lifecycle can be checked without hardware.
 const harness = vi.hoisted(() => ({
@@ -789,4 +790,133 @@ describe("fieldlog without a speech server", () => {
   });
 
 
+});
+
+describe("fieldlog checklist on the glasses (0.10)", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { endBooted(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const CHECKLIST = "# Kitchen\nOven clean\n! Gas off\n# Bath\nTiles [photo]";
+
+  function withChecklist(extra: Record<string, unknown> = {}) {
+    return {
+      ...data(""),
+      inspections: [{ id: "i1", title: "Flat 3", startedAt: Date.now(), finishedAt: null, entries: [], section: "",
+        checklist: parseChecklist(CHECKLIST, "en"), ...extra }],
+    };
+  }
+
+  /** The open walk as last saved. */
+  function stored(fake: Fake): { entries: Array<{ text: string; severity: string; section?: string; itemId?: string; attachment?: unknown }>; checks?: Record<string, { status: string }> } {
+    const calls = fake.bridge.setLocalStorage.mock.calls.filter((call) => call[0] === KEY);
+    const saved = JSON.parse(calls[calls.length - 1]?.[1] ?? "{}") as { inspections?: Array<ReturnType<typeof stored>> };
+    return saved.inspections?.[0] ?? { entries: [] };
+  }
+
+  it("walks room by room: tap = OK, a critical item needs a second tap, the room end goes back to the overview", async () => {
+    const fake = fakeBridge(withChecklist());
+    await boot(fake);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("● Checklist · 0/3\n  Quick note"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("● Kitchen 0/2 · 1 ! open\n  Bath 0/1 · 1 [photo] missing"));
+    expect(lastHeader(fake)).toBe("Checklist · 0/3");
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("Oven clean\nStatus: open\n● OK\n  Defect"));
+    expect(lastHeader(fake)).toBe("Kitchen · 1/2");
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Tap = OK · Swipe = choose · 2× = back"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("! Gas off\nStatus: open\n● OK\n  Defect"));
+    await vi.waitFor(() => expect(stored(fake).checks?.["Kitchen/Oven clean"]?.status).toBe("ok"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("● SURE? OK"));
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Tap again = confirm OK · Swipe/2× = cancel"));
+    expect(stored(fake).checks?.["Kitchen/Gas off"]).toBeUndefined();
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("  Kitchen 2/2\n● Bath 0/1 · 1 [photo] missing"));
+    await vi.waitFor(() => expect(stored(fake).checks?.["Kitchen/Gas off"]?.status).toBe("ok"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("Tiles\nStatus: open\n[photo] on the phone\n● OK\n  Defect"));
+    fake.emit(0);
+    // Checked, but the photo is still missing: the item stays open.
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("  Kitchen 2/2\n● Bath 0/1 · 1 [photo] missing"));
+    expect(lastHeader(fake)).toBe("Checklist · 2/3");
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("● Checklist · 2/3\n  Quick note"));
+    expect(fake.bridge.shutDownPageContainer).not.toHaveBeenCalled();
+  });
+
+  it("an armed OK is cancelled by a swipe or 2× (nothing else happens) and runs out after 4 s", async () => {
+    const fake = fakeBridge(withChecklist());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Checklist · 0/3"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Kitchen · 1/2"));
+    fake.emit(2); fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("! Gas off\nStatus: open\n● OK\n  Defect"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("● SURE? OK"));
+    fake.emit(2); // cancels only: the cursor stays on OK
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("! Gas off\nStatus: open\n● OK\n  Defect"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("● SURE? OK"));
+    fake.emit(3); // cancels only: still on the item
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("! Gas off\nStatus: open\n● OK\n  Defect"));
+    expect(lastHeader(fake)).toBe("Kitchen · 2/2 · critical");
+    vi.useFakeTimers();
+    fake.emit(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(lastBody(fake)).toContain("● SURE? OK");
+    await vi.advanceTimersByTimeAsync(4_100);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("! Gas off\nStatus: open\n● OK\n  Defect"));
+    expect(stored(fake).checks?.["Kitchen/Gas off"]).toBeUndefined();
+    fake.emit(3);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Checklist · 0/3"));
+  });
+
+  it("Defect opens the quick notes for the item and files the note under its room and item", async () => {
+    const fake = fakeBridge(withChecklist());
+    await boot(fake);
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Checklist · 0/3"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Kitchen · 1/2"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("● Defect"));
+    await vi.waitFor(() => expect(lastFooter(fake)).toBe("Tap = pick defect · Swipe = choose · 2× = back"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Defect · Oven clean"));
+    fake.emit(3); // back to the item, nothing filed
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Kitchen · 1/2"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastHeader(fake)).toBe("Defect · Oven clean"));
+    fake.emit(2);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("● Damaged"));
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("! Gas off\nStatus: open\n● OK\n  Defect"));
+    await vi.waitFor(() => expect(stored(fake).entries).toHaveLength(1));
+    expect(stored(fake).entries[0]).toMatchObject({ text: "Oven clean: Damaged", severity: "minor", section: "Kitchen", itemId: "Kitchen/Oven clean" });
+    expect(stored(fake).checks?.["Kitchen/Oven clean"]?.status).toBe("defect");
+  });
+
+  it("a photo for an item from the phone page closes its missing photo", async () => {
+    const fake = fakeBridge(withChecklist());
+    fake.bridge.captureImageFromCamera.mockResolvedValue({ base64: "AAAA", mimeType: "image/jpeg", size: 3 } as never);
+    const root = await boot(fake);
+    expect(root.innerHTML).toContain("Bath 0/1 · 1 📷 missing");
+    fake.emit(0);
+    await vi.waitFor(() => expect(lastBody(fake)).toContain("Bath 0/1 · 1 [photo] missing"));
+    root.querySelectorAll(".item-photo")[0]!.fire("click");
+    await vi.waitFor(() => expect(stored(fake).entries).toHaveLength(1));
+    expect(stored(fake).entries[0]).toMatchObject({ text: "Tiles: Photo", section: "Bath", itemId: "Bath/Tiles" });
+    expect(stored(fake).entries[0]!.attachment).toBeDefined();
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("● Kitchen 0/2 · 1 ! open\n  Bath 0/1"));
+  });
+
+  it("a walk without a checklist keeps the old start list", async () => {
+    const fake = fakeBridge(data(""));
+    await boot(fake);
+    await vi.waitFor(() => expect(lastBody(fake)).toBe("● Quick note\n  Type · note"));
+  });
 });

@@ -68,6 +68,13 @@ function fakeBridge(scene: DemoScene = "parked") {
     command: null as Record<string, unknown> | null,
     down: false,
     carOn: false,
+    /** BYD_CONTROL on the bridge; off by default, like the real bridge. */
+    control: false,
+    /** The bridge's refusal for the next arm, e.g. car_on. */
+    refuse: null as string | null,
+    /** Drop the confirm call (no answer). */
+    confirmDown: false,
+    tokens: 0,
   };
   const body = () => ({
     ...deriveRaw(demoTelemetry(state.scene, 1_000), 1, {}),
@@ -75,7 +82,7 @@ function fakeBridge(scene: DemoScene = "parked") {
     at: Date.now(),
     command: state.command,
     car_on: state.carOn,
-    control: { enabled: true, lock: true, unlock: false, climate_temp: true },
+    control: { enabled: state.control, lock: state.control, unlock: state.control, preheat: state.control, preheat_minutes: [10, 15, 20, 25, 30], car_off: !state.carOn, arm_s: 8 },
   });
   const fetchMock = vi.fn(async (input: string, init: RequestInit = {}): Promise<Response> => {
     state.calls.push({ url: input, init });
@@ -90,7 +97,19 @@ function fakeBridge(scene: DemoScene = "parked") {
     if (url.pathname === "/command" && init.method === "POST") {
       const parsed = JSON.parse(String(init.body)) as Record<string, unknown>;
       state.commands.push(parsed);
-      state.command = { id: "c1", action: parsed["action"], value: parsed["value"] ?? null, status: "sent", text: "", at: Date.now() };
+      if (!state.control) return new Response(JSON.stringify({ ok: false, error: "control_disabled" }), { status: 403 });
+      const refuse = state.carOn ? "car_on" : state.refuse;
+      if (refuse) {
+        const message = refuse === "car_on" ? { de: "Auto ist an – am Display bedienen", en: "Car is on – use the car's screen" } : { de: "Abgelehnt: " + refuse, en: "Refused: " + refuse };
+        return new Response(JSON.stringify({ ok: false, error: refuse, message }), { status: 403 });
+      }
+      if (parsed["step"] === "arm") {
+        state.tokens += 1;
+        return new Response(JSON.stringify({ ok: true, armed: "tok" + state.tokens, ttl_s: 8 }), { status: 200 });
+      }
+      if (state.confirmDown) throw new TypeError("Failed to fetch");
+      if (parsed["confirm"] !== "tok" + state.tokens) return new Response(JSON.stringify({ ok: false, error: "confirm_expired" }), { status: 409 });
+      state.command = { id: "c" + state.tokens, action: parsed["action"], value: parsed["minutes"] ?? null, status: "sent", text: "", at: Date.now() };
       state.rev += 1;
       return new Response(JSON.stringify({ ok: true, command: state.command }), { status: 202 });
     }
@@ -230,10 +249,13 @@ describe("BYD Glass lifecycle", () => {
     expect(fake.bridge.rebuildPageContainer.mock.invocationCallOrder[0]).toBeLessThan(fake.bridge.createStartUpPageContainer.mock.invocationCallOrder[0]!);
     // The four cockpit tiles go out once.
     await vi.waitFor(() => expect(new Set(fake.bridge.updateImageRawData.mock.calls.map((c) => c[0].containerName)).size).toBe(4));
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.header()).toBe("BYD · STEUERUNG · Klima aus"));
+    // Status -> drive -> charge -> status: all three are pictures on the same cockpit page, no rebuild.
+    const rebuilds = fake.bridge.rebuildPageContainer.mock.calls.length;
+    for (let i = 0; i < 3; i += 1) { fake.emit(DOWN); await new Promise((resolve) => setTimeout(resolve, 50)); }
     fake.emit(UP);
-    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(fake.kind()).toBe("cockpit");
+    expect(fake.bridge.rebuildPageContainer.mock.calls.length).toBe(rebuilds);
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
     for (const page of fake.pages) expect((page.imageObject ?? []).length).toBeLessThanOrEqual(4);
   });
@@ -264,57 +286,150 @@ describe("BYD Glass lifecycle", () => {
     expect(fake.bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
   });
 
-  it("control: temperature, two confirmations with a pause, one text/plain POST; double tap cancels", async () => {
+  it("control off at the bridge: no gesture reaches a control page or sends anything", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
-    fake.emit(DOWN);
-    // Lock and unlock come first; climate on is two swipes further down.
-    await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Aufsperren"));
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Klima an 21°"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Klima an – Temperatur wählen"));
-    fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Klima an 21°"));
-    expect(fake.exit.calls).toEqual([]);
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Temperatur wählen"));
-    fake.emit(UP);
-    await vi.waitFor(() => expect(fake.body()).toContain("22 °C"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Wirklich Klima an (22 °C)?"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("LETZTE BESTÄTIGUNG"));
-    // Inside the pause a tap is ignored.
-    fake.emit(CLICK);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    for (const gesture of [DOWN, CLICK, CLICK, DOWN, CLICK, DOWN, CLICK, UP, CLICK, CLICK, UP, CLICK]) {
+      fake.emit(gesture);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(fake.kind()).toBe("cockpit");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(server.state.commands).toEqual([]);
-    await vi.waitFor(() => expect(fake.body()).toContain("Tippen = senden"), { timeout: 3_000 });
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(server.state.commands).toEqual([{ action: "climate_on", value: 22 }]));
-    const post = server.state.calls.find((c) => c.init.method === "POST")!;
-    expect(post.init.headers).toBeUndefined();
-    expect(typeof post.init.body).toBe("string");
-    await vi.waitFor(() => expect(fake.body()).toContain("Klima an 22°: gesendet"));
+    expect(server.state.calls.some((c) => c.init.method === "POST" || new URL(c.url).pathname !== "/state")).toBe(false);
+    expect(fake.exit.calls).toEqual([]);
+    const shown = fake.pages.flatMap((page) => (page.textObject ?? []).map((text) => text.content ?? "")).join(" ");
+    expect(shown).not.toMatch(/STEUERN|Zusperren|Aufsperren|Vorheizen/);
   });
 
-  it("car on: the control page says so and no tap ever sends", async () => {
-    server.state.carOn = true;
-    const fake = fakeGlasses(configured());
-    await boot(fake);
+  /** Status page -> one swipe down -> the control page (first entry: Zusperren). */
+  const toControl = async (fake: ReturnType<typeof fakeGlasses>): Promise<void> => {
     await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("Auto ist an – Steuerung nur bei ausgeschaltetem Auto"));
-    for (let i = 0; i < 4; i += 1) {
-      fake.emit(CLICK);
-      await new Promise((resolve) => setTimeout(resolve, 400));
-    }
-    expect(server.state.commands).toEqual([]);
-    expect(server.state.calls.some((c) => c.init.method === "POST")).toBe(false);
-    await vi.waitFor(() => expect(fake.body()).toContain("abgelehnt – Auto ist an"));
+    await vi.waitFor(() => expect(fake.header()).toMatch(/^BYD · STEUERN/));
+  };
+  const posts = () => server.state.calls.filter((c) => c.init.method === "POST").map((c) => JSON.parse(String(c.init.body)) as Record<string, unknown>);
+
+  it("control on: tap asks the bridge, a second tap within 4 s sends; then sent -> confirmed from the bridge", async () => {
+    server.state.control = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    expect(fake.header()).toBe("BYD · STEUERN · Auto aus");
+    expect(fake.body()).toContain("● Zusperren");
+    expect(fake.footer()).toBe("Tippen = Zusperren · Wischen = Eintrag · 2× = Ende");
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toBe("Nochmal tippen = Zusperren · Wischen/2× = abbrechen"));
+    expect(posts()).toEqual([{ action: "lock", step: "arm" }]);
+    expect(server.state.command).toBeNull(); // nothing sent on the first tap
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("Zusperren: gesendet"));
+    expect(posts()).toEqual([{ action: "lock", step: "arm" }, { action: "lock", confirm: "tok1" }]);
+    for (const call of server.state.calls) expect(call.init.headers).toBeUndefined();
+    server.state.command = { ...server.state.command, status: "confirmed" };
+    server.state.rev += 1;
+    await vi.waitFor(() => expect(fake.body()).toContain("Zusperren: bestätigt"));
+    expect(fake.footer()).not.toMatch(/Halten/);
+  });
+
+  it("preheat 20 min sends the duration; no entry offers climate off", async () => {
+    server.state.control = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    expect(fake.body()).not.toMatch(/Klima aus|aus$/m);
+    for (let i = 0; i < 3; i += 1) { fake.emit(DOWN); await new Promise((resolve) => setTimeout(resolve, 40)); }
+    await vi.waitFor(() => expect(fake.body()).toContain("● Vorheizen 20 min"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Nochmal tippen = Vorheizen 20 min/));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("Vorheizen 20 min: gesendet"));
+    expect(posts()).toEqual([{ action: "preheat", minutes: 20, step: "arm" }, { action: "preheat", minutes: 20, confirm: "tok1" }]);
+  });
+
+  it("a second tap after the 4 s window sends nothing", async () => {
+    server.state.control = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.body()).toContain("● Aufsperren"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Nochmal tippen = Aufsperren/));
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 4_500);
+    await vi.waitFor(() => expect(fake.body()).toContain("Aufsperren: nicht gesendet (kein 2. Tippen)"));
+    expect(posts()).toEqual([{ action: "unlock", step: "arm" }]);
+    expect(server.state.command).toBeNull();
+  });
+
+  it("2x or a swipe in the question cancels it; 2x without one leaves", async () => {
+    server.state.control = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Nochmal tippen/));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Tippen = Zusperren/));
+    expect(fake.exit.calls).toEqual([]);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Nochmal tippen/));
+    fake.emit(DOWN);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Tippen = Zusperren/));
+    expect(fake.header()).toMatch(/STEUERN/);
+    fake.emit(CLICK);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(posts().filter((p) => "confirm" in p)).toEqual([]);
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Tippen = Zusperren/));
+    fake.emit(DOUBLE);
+    await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
+  });
+
+  it("the bridge refuses (car on): its text is shown, nothing is armed or sent", async () => {
+    server.state.control = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    server.state.carOn = true;
+    server.state.rev += 1;
+    await vi.waitFor(() => expect(fake.header()).toBe("BYD · STEUERN · nur bei Auto aus"));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("Auto ist an – am Display bedienen"));
+    expect(fake.footer()).toMatch(/^Tippen = Zusperren/);
+    fake.emit(CLICK);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(posts().every((p) => p["step"] === "arm")).toBe(true);
+    expect(server.state.command).toBeNull();
+  });
+
+  it("no answer to the second tap: never claimed as sent", async () => {
+    server.state.control = true;
+    server.state.confirmDown = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.footer()).toMatch(/^Nochmal tippen/));
+    fake.emit(CLICK);
+    await vi.waitFor(() => expect(fake.body()).toContain("unklar, ob gesendet"));
+    expect(fake.body()).not.toMatch(/gesendet –|bestätigt/);
+  });
+
+  it("the bridge switching control off removes the page", async () => {
+    server.state.control = true;
+    const fake = fakeGlasses(configured());
+    await boot(fake);
+    await toControl(fake);
+    server.state.control = false;
+    server.state.rev += 1;
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
+    fake.emit(UP);
+    fake.emit(DOWN);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fake.kind()).toBe("cockpit");
   });
 
   it("new warnings pop up over the page; tap dismisses", async () => {
@@ -328,34 +443,6 @@ describe("BYD Glass lifecycle", () => {
     await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
   });
 
-  it("QIS v1: a swipe or a hold backs out of a car question and nothing is ever sent", async () => {
-    const fake = fakeGlasses(configured());
-    await boot(fake);
-    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
-    // Question 1, then a swipe: back to the list.
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Wirklich zusperren?"));
-    expect(fake.footer()).toBe("Nochmal tippen = weiter · Wischen/2× = abbrechen");
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
-    expect(fake.body()).not.toContain("Wirklich");
-    // Question 1, final confirmation (after its pause), then a hold: back to the list, a later tap asks again.
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Wirklich zusperren?"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("LETZTE BESTÄTIGUNG"));
-    await vi.waitFor(() => expect(fake.body()).toContain("Tippen = senden"), { timeout: 3_000 });
-    expect(fake.footer()).toBe("Nochmal tippen = SENDEN · Wischen/2× = abbrechen");
-    fake.emit(HOLD);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Wirklich zusperren?"));
-    expect(server.state.commands).toEqual([]);
-    expect(fake.exit.calls).toEqual([]);
-  });
-
   it("pages carry no side menu while its clicks do not arrive on the real glasses (step log 15.10.)", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
@@ -365,13 +452,14 @@ describe("BYD Glass lifecycle", () => {
     expect(fake.menuLabels()).toEqual([]);
   });
 
-  it("a hold opens the help page, only 2x leaves it, and 2x there never exits the app", async () => {
+  it("a ring hold opens the help page (never offered in a footer), only 2x leaves it, and 2x there never exits the app", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     fake.emit(HOLD);
     await vi.waitFor(() => expect(fake.header()).toBe("BYD · Hilfe"));
     expect(fake.footer()).toBe("2× = zurück");
+    expect(fake.body()).not.toMatch(/Halten|Steuerung|Befehl wählen/);
     fake.emit(DOWN);
     fake.emit(CLICK);
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -383,20 +471,16 @@ describe("BYD Glass lifecycle", () => {
     await vi.waitFor(() => expect(fake.exit.calls).toEqual([1]));
   });
 
-  it("the menu click handler is kept: Hilfe closes an open car question, so nothing stays armed behind it", async () => {
+  it("the menu click handler is kept: Hilfe opens the help, 2x goes back to the cockpit", async () => {
     const fake = fakeGlasses(configured());
     await boot(fake);
     await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
-    fake.emit(DOWN);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
-    fake.emit(CLICK);
-    await vi.waitFor(() => expect(fake.body()).toContain("Wirklich zusperren?"));
     fake.menu(1);
     await vi.waitFor(() => expect(fake.header()).toBe("BYD · Hilfe"));
     fake.emit(DOUBLE);
-    await vi.waitFor(() => expect(fake.body()).toContain("> Zusperren"));
-    expect(fake.body()).not.toContain("Wirklich");
+    await vi.waitFor(() => expect(fake.kind()).toBe("cockpit"));
     expect(server.state.commands).toEqual([]);
+    expect(fake.exit.calls).toEqual([]);
   });
 
   it("QIS v1: 2x on a warning overlay closes it instead of leaving the app", async () => {

@@ -1,3 +1,5 @@
+import type { SpeakerRole } from "../stt/role";
+
 /**
  * The running transcript of one conversation: every final line, in order, with
  * its speaker. Kept in memory only (like the captions) and capped, so a day of
@@ -8,6 +10,8 @@ export interface TranscriptEntry {
   readonly text: string;
   readonly at: number;
   readonly speaker?: string;
+  /** 1.1.1: the glasses' speaker role for this line (tallied over its audio frames, see stt/role). */
+  readonly role?: SpeakerRole;
   readonly language?: string;
   readonly translated?: string;
   /** 0.5.0: the user's own line translated INTO the conversation language (to read out). */

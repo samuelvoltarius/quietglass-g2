@@ -99,7 +99,7 @@ describe("session page", () => {
   it("with a single agent the overview opens its session page directly", () => {
     const one: HubReport = { ...demoReport(), agents: [demoReport().agents[0]!] };
     const root = createModel(one);
-    const out = decide({ ...root, rootSelected: 0 }, "click", T0);
+    const out = decide({ ...root, rootKey: "area:agent" }, "click", T0);
     expect(out.model.screen).toBe("agent");
     expect(out.model.agentView).toBe("sessions");
     expect(out.effect).toEqual({ kind: "loadSessions", agentId: "hermes-spark" });

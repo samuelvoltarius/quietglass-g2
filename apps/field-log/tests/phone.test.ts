@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mountPhoneUi } from "../src/ui/phone";
 import { EMPTY_DATA, upsertInspection, type FieldLogData } from "../src/storage/persist";
 import { addEntry, startInspection } from "../src/log/entries";
+import { parseChecklist } from "../src/checklist/checklist";
 
 import { fakeRoot } from "./fake-dom";
 
@@ -278,5 +279,79 @@ describe("CSV format choice", () => {
     page.root.get("#csv").fire("click");
     expect(page.anchor.download).toBe("uebergabe-top-3.csv");
     expect(page.blobs[0]?.parts[0]?.startsWith("Zeit,Abschnitt,Art,Text,Foto\n")).toBe(true);
+  });
+});
+
+describe("checklist on the phone (0.10)", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  function mountWalk(locale: "de" | "en", checklistText = "") {
+    const root = fakeRoot();
+    const anchor = { href: "", download: "", click: vi.fn() };
+    vi.stubGlobal("document", { getElementById: () => root, createElement: () => anchor });
+    const blobs: Array<{ parts: string[]; type: string }> = [];
+    vi.stubGlobal("Blob", class {
+      constructor(parts: string[], options: { type: string }) { blobs.push({ parts, type: options.type }); }
+    });
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:x", revokeObjectURL: () => undefined });
+    let inspection = addEntry(startInspection("i1", "Übergabe Top 3", 1_000_000), "Riss", "minor", 1_000_100);
+    if (checklistText) inspection = { ...inspection, checklist: parseChecklist(checklistText, locale) };
+    let data: FieldLogData = { ...upsertInspection(EMPTY_DATA, inspection), activeId: "i1" };
+    const takePhoto = vi.fn(async (_itemId?: string) => undefined);
+    mountPhoneUi({ getData: () => data, setData: async (next) => { data = next; }, locale: () => locale, takePhoto });
+    return { root, anchor, blobs, takePhoto, data: () => data, walk: () => data.inspections[0]! };
+  }
+
+  it("copies a template into the box, saves it as the walk's checklist, and empty removes it (notes kept)", () => {
+    const page = mountWalk("de");
+    expect(page.root.innerHTML).toContain("Keine Checkliste");
+    page.root.get("#tpl-car").fire("click");
+    expect(page.root.get("#checklist").value).toContain("# Außen");
+    expect(page.walk().checklist).toBeUndefined(); // copying saves nothing yet
+    page.root.get("#checklist").value = "# Flur\n! Rauchmelder\nBoden [foto]";
+    page.root.get("#save-checklist").fire("click");
+    expect(page.walk().checklist?.rooms[0]?.items.map((item) => item.text)).toEqual(["Rauchmelder", "Boden"]);
+    expect(page.root.innerHTML).toContain("Checkliste gespeichert · Räume: 1 · Punkte: 2");
+    expect(page.root.innerHTML).toContain("Flur 0/2 · 1 📷 fehlt · 1 ! offen");
+    page.root.get("#checklist").value = "  ";
+    page.root.get("#save-checklist").fire("click");
+    expect(page.walk().checklist).toBeUndefined();
+    expect(page.walk().entries.map((entry) => entry.text)).toEqual(["Riss"]);
+  });
+
+  it("offers a camera button per photo item, for that item", () => {
+    const page = mountWalk("en", "# Hall\nFloor [photo]\nDoor");
+    const buttons = page.root.querySelectorAll(".item-photo");
+    expect(buttons).toHaveLength(1);
+    buttons[0]!.fire("click");
+    expect(page.takePhoto).toHaveBeenCalledWith("Hall/Floor");
+  });
+
+  it("warns before exporting while required photos or critical items are open: back exports nothing, anyway exports", () => {
+    const page = mountWalk("de", "# Küche\n! Gashahn zu\nFenster [foto]\n# Bad\nFliesen [foto]\n# Flur\nBoden");
+    page.root.get("#md").fire("click");
+    expect(page.anchor.click).not.toHaveBeenCalled();
+    expect(page.root.innerHTML).toContain("Vor dem Export: 2 Räume ohne Pflichtfoto, 1 kritischer Punkt offen");
+    expect(page.root.innerHTML).toContain("Ohne Pflichtfoto: Küche, Bad");
+    expect(page.root.innerHTML).toContain("Kritisch offen: Küche – Gashahn zu");
+    page.root.get("#export-back").fire("click");
+    expect(page.root.querySelector("#export-anyway")).toBeNull();
+    expect(page.anchor.click).not.toHaveBeenCalled();
+    page.root.get("#csv").fire("click");
+    page.root.get("#export-anyway").fire("click");
+    expect(page.anchor.click).toHaveBeenCalledTimes(1);
+    expect(page.anchor.download).toBe("uebergabe-top-3.excel.csv");
+    expect(page.root.querySelector("#export-anyway")).toBeNull();
+  });
+
+  it("exports straight away when nothing is open, and a free-form walk as before", () => {
+    const free = mountWalk("de");
+    free.root.get("#md").fire("click");
+    expect(free.anchor.click).toHaveBeenCalledTimes(1);
+    expect(free.blobs[0]?.parts[0]).not.toContain("Checkliste");
+    const page = mountWalk("de", "# Flur\nBoden");
+    page.root.get("#md").fire("click");
+    expect(page.anchor.click).toHaveBeenCalledTimes(1);
+    expect(page.blobs[0]?.parts[0]).toContain("## Flur (0/1)");
   });
 });

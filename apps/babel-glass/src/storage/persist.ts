@@ -80,6 +80,11 @@ export interface BabelData {
   readonly wordAuto: boolean;
   /** 1.0.0 "Englisch sprechen": translate the other person into German on the glasses. On by default. */
   readonly learnTranslate: boolean;
+  /**
+   * 1.1.1 "Sprecher erkennen (Brille)": use the glasses' own speaker role (SDK 0.0.16, self/other per audio
+   * frame) to mark "Ich"/"Gegenüber" and to gate the word finder. Absent = on; only `false` is stored.
+   */
+  readonly speakerRole?: boolean;
 }
 
 /**
@@ -273,6 +278,8 @@ export function parseData(raw: string): BabelData {
       wordAuto: value.wordAuto !== false,
       // New in 1.0.0: absent = on.
       learnTranslate: value.learnTranslate !== false,
+      // New in 1.1.1: absent = on.
+      ...(value.speakerRole === false ? { speakerRole: false } : {}),
     };
   } catch {
     return EMPTY_DATA;

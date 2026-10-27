@@ -142,7 +142,7 @@ export interface HomeSnapshot {
 }
 
 /** Kinds of the "Zuhause" view; lock, alarm and garage only appear when the daemon enables them. */
-export type HomeKind = "light" | "switch" | "cover" | "garage" | "lock" | "alarm" | "scene" | "sensor" | "motion";
+export type HomeKind = "light" | "switch" | "cover" | "garage" | "lock" | "alarm" | "scene" | "sensor" | "motion" | "media";
 
 /** One entity of the daemon's curated Home Assistant view (or a per-area group). */
 export interface HomeEntity {
@@ -158,7 +158,12 @@ export interface HomeEntity {
   readonly brightness?: number | null;
   /** Covers: 0-100 when HA knows the position. */
   readonly position?: number;
-  /** Sensors: formatted value with unit ("21,5 °C"). */
+  /** TV / projector: volume 0-100 (null = unknown) and mute. */
+  readonly volume?: number | null;
+  readonly muted?: boolean;
+  /** TV / projector: the remote.* the daemon presses the volume keys on (absent = media_player volume steps). */
+  readonly remote?: string;
+  /** Sensors: formatted value with unit ("21,5 °C"); TV / projector: the running app or source. */
   readonly value?: string;
   readonly sensorClass?: string;
   /** Actions need a second request with the daemon's confirm token. */
@@ -184,7 +189,7 @@ export interface HomeView {
   readonly error?: string | null;
 }
 
-export type HomeAction = "toggle" | "turn_on" | "turn_off" | "brightness" | "open" | "close" | "stop" | "run";
+export type HomeAction = "toggle" | "turn_on" | "turn_off" | "brightness" | "open" | "close" | "stop" | "run" | "volume_up" | "volume_down" | "mute" | "play_pause";
 
 export interface HomeActionResult {
   readonly ok: boolean;
@@ -288,6 +293,14 @@ export interface BriefCar extends BriefBlockBase {
   readonly etaMin?: number | null;
   /** null = the car does not report it. */
   readonly locked?: boolean | null;
+  /** "parked" | "driving" | "charging" | "on" (bridge word; shown as is when unknown). */
+  readonly mode?: string;
+  /** From Panoptes (daemon 0.12.1+): a door open, climate running, outside temperature, guard state, read time. */
+  readonly doorOpen?: boolean;
+  readonly climateOn?: boolean;
+  readonly outsideC?: number | null;
+  readonly guard?: string | null;
+  readonly at?: number;
 }
 
 export interface BriefSugar extends BriefBlockBase {
@@ -296,6 +309,8 @@ export interface BriefSugar extends BriefBlockBase {
   readonly night?: { readonly min: number; readonly max: number; readonly belowMin: number; readonly aboveMin: number; readonly count: number } | null;
   readonly low?: number;
   readonly high?: number;
+  /** The last 3 h, oldest first, mg/dL (daemon 0.13.1+). */
+  readonly curve?: readonly number[];
 }
 
 export interface BriefPrinter extends BriefBlockBase {
@@ -344,6 +359,10 @@ export interface HubReport {
   readonly live?: { readonly longPoll?: boolean; readonly maxWaitS?: number };
   /** Tagesstart as last collected by the daemon (0.8.0+; null until someone asked for it). */
   readonly brief?: Brief | null;
+  /** The daemon is paired with Panoptes (phone API): the car page offers its commands. */
+  readonly carControl?: boolean;
+  /** The car as Panoptes reports it (daemon 0.12.1+); wins over the briefing's car block. */
+  readonly car?: BriefCar;
 }
 
 /** Where the glasses' copy of the report stands, for the long-poll. */
@@ -382,4 +401,10 @@ export interface HubApi {
   readEvent(id: string, open?: boolean): Promise<void>;
   /** Tagesstart (daemon 0.8.0+): cached up to ~2 min on the daemon; refresh = fetch every source now. */
   brief?(refresh?: boolean, place?: { readonly lat: number; readonly lon: number } | null): Promise<Brief>;
+  /** Auto (daemon 0.11+, Panoptes phone API): one command, answered as Panoptes answered it. */
+  carAction?(aktion: CarAction, values?: { readonly tempC?: number; readonly minuten?: number }): Promise<CarResult>;
 }
+
+export type CarAction = "zusperren" | "klima_an" | "klima_aus" | "aufsperren";
+/** `bestaetigt:false` = sent, but the car's echo is missing: never shown as success. */
+export type CarResult = { readonly ok: true; readonly weg: string; readonly bestaetigt: boolean } | { readonly ok: false; readonly grund: string };

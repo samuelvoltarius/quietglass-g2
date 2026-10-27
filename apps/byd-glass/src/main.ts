@@ -2,26 +2,26 @@ import { waitForEvenAppBridge, type EvenAppBridge } from "@evenrealities/even_hu
 import { settleRestore } from "./exit";
 import { LONG_POLL_S, createClient, toApiError, type CarApi } from "./car/client";
 import { createDemo, DEMO_SCENES, type DemoScene } from "./car/demo";
-import { sortWarnings, warningKey, type Action, type CarState, type CarWarning } from "./car/model";
+import { sortWarnings, warningKey, type CarState, type CarWarning } from "./car/model";
 import { rememberLocale, resolveLocale, getLocale, type Locale } from "./i18n";
 import { gestureFromEvent, menuItemIdFromEvent, type Gesture } from "./input/gestures";
 import { COCKPIT_TILES, forgetPage, guardedTileSend, installPage, updatePage, type MenuSpec } from "./glasses/render";
 import { t } from "./messages";
 import { SIDE_MENU } from "./side-menu";
-import { ICON_STEP_MS, buildView, errorReason, type Connection, type Layout, type LocalResult, type PageView, type ViewState } from "./glasses/views";
+import { ICON_STEP_MS, buildView, errorReason, type Connection, type Layout, type PageView, type ViewState } from "./glasses/views";
 import { cockpitModel } from "./cockpit/model";
 import { composeCockpit } from "./cockpit/compose";
 import { createTileSender } from "./screen/sender";
 import { autoBackend, type TextBackend } from "./screen/text";
 import {
-  INITIAL_CONTROL, PAGES, actionFor, cancelConfirm, controlBusy, expireConfirm, followMode, moveCursor, openConfirm, stepPage, tapControl,
-  CONTROL_ITEMS, type ControlState, type Page,
+  CONFIRM_WINDOW_MS, INITIAL_CONTROL, PAGES, cancelControl, controlBusy, controlItems, expireControl, followMode, itemAction, moveCursor,
+  openArm, startPageFor, stepPage, tapControl, type ControlItem, type ControlState, type Page,
 } from "./pages";
 import { EMPTY_SETTINGS, effectiveUrl, loadSettings, saveSettings, type Settings } from "./storage/persist";
 import { mountPhoneUi, type PhoneConnection } from "./ui/phone";
 
 /** Shown in the phone page footer and logs; keep in step with app.json. */
-export const BUILD = "0.5.0";
+export const BUILD = "0.7.0";
 
 /** Side menu id (QIS v1.2): Hilfe. The app has no settings of its own on the glasses. */
 export const MENU_HELP = 1;
@@ -55,19 +55,19 @@ async function boot(): Promise<void> {
   let connection: Connection = { kind: "loading" };
   let car: CarState | null = null;
   let page: Page = FORCED_PAGE ?? "status";
+  /** The control page: cursor, open question (second tap), result line. */
   let control: ControlState = INITIAL_CONTROL;
   let overlay: CarWarning[] | null = null;
   let overlayUntil = 0;
   let seen = new Set<string>();
-  let local: LocalResult | null = null;
-  /** The help page is open (side menu). */
+  /** The help page is open (ring hold; never offered in a footer). */
   let helpOpen = false;
   let generation = 0;
   let ready = false;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
 
   const viewState = (): ViewState => ({
-    locale, demo: api?.demo ?? false, connection, car, page, control, overlay, local, help: helpOpen, now: Date.now(),
+    locale, demo: api?.demo ?? false, connection, car, page, overlay, help: helpOpen, control, now: Date.now(),
   });
 
   let lastView: PageView | null = null;
@@ -154,8 +154,8 @@ async function boot(): Promise<void> {
     return car ? { kind: "ok" } : { kind: "loading" };
   };
   const updatePhone = (force = false): void => {
-    const signature = JSON.stringify([phoneConnection(), car?.mode, car?.battery.soc, car?.battery.rangeKm, car?.stale, car?.carOn,
-      car?.warnings.map(warningKey), Math.floor(Date.now() / 60_000), locale]);
+    const signature = JSON.stringify([phoneConnection(), car?.mode, car?.battery.soc, car?.battery.rangeKm, car?.stale,
+      car?.warnings.map(warningKey), car?.control, car?.command, Math.floor(Date.now() / 60_000), locale]);
     if (!force && signature === phoneSignature) return;
     const active = (globalThis.document as Document | undefined)?.activeElement as HTMLElement | null | undefined;
     if (!force && active?.matches?.("#app input, #app select")) return;
@@ -169,9 +169,12 @@ async function boot(): Promise<void> {
     const now = Date.now();
     car = next;
     connection = { kind: "ok" };
-    // The car was switched on mid-question: close it, nothing may be sent now.
-    control = expireConfirm(control, now, next);
     if (!FORCED_PAGE) page = followMode(previous, next.mode, page, controlBusy(control, now));
+    // The bridge switched control off: the page goes away and nothing stays armed.
+    if (!next.control.enabled && (page === "control" || control !== INITIAL_CONTROL)) {
+      if (page === "control") page = startPageFor(next.mode);
+      control = INITIAL_CONTROL;
+    }
     const keys = new Set(next.warnings.map(warningKey));
     const fresh = next.warnings.filter((w) => !seen.has(warningKey(w)));
     seen = keys;
@@ -221,23 +224,9 @@ async function boot(): Promise<void> {
     car = null;
     seen = new Set();
     overlay = null;
-    local = null;
+    control = INITIAL_CONTROL;
     connection = { kind: "loading" };
     void loop(generation);
-  };
-
-  const send = async (action: Action, value: number | null): Promise<void> => {
-    const client = api;
-    if (!client) return;
-    const at = Date.now();
-    local = null;
-    try {
-      const reply = await client.command(action, value);
-      if (!reply.ok) local = { action, value, reason: reply.error ?? "other", at };
-    } catch (error) {
-      local = { action, value, reason: toApiError(error).code === "auth" ? "readOnly" : "unreachable", at };
-    }
-    await draw();
   };
 
   // shutDownPageContainer(1) resolves when the dialog is SHOWN (hardware: ~58 ms after the double tap), not when
@@ -284,6 +273,54 @@ async function boot(): Promise<void> {
     clearInterval(tickTimer);
   };
 
+  /** First tap: the bridge checks every guard and sends nothing; a yes opens the 4 s window for the second tap. */
+  const runArm = async (item: ControlItem): Promise<void> => {
+    const client = api;
+    const gen = generation;
+    if (!client) return;
+    const { action, minutes } = itemAction(item);
+    control = { ...control, busy: { item, step: "arm" }, armed: null, result: null, touchedAt: Date.now() };
+    void draw();
+    try {
+      const reply = await client.arm(action, minutes);
+      if (gen !== generation || closed) return;
+      const now = Date.now();
+      control = reply.ok && reply.armed
+        ? { ...control, busy: null, armed: { item, token: reply.armed, until: now + CONFIRM_WINDOW_MS }, touchedAt: now }
+        : { ...control, busy: null, result: { item, kind: "refused", code: reply.error ?? "other", message: reply.message, at: now }, touchedAt: now };
+    } catch (error) {
+      if (gen !== generation || closed) return;
+      control = { ...control, busy: null, result: { item, kind: "failed", reason: toApiError(error).code === "auth" ? "auth" : "unreachable", at: Date.now() } };
+    }
+    void draw();
+  };
+
+  /** Second tap in time: the bridge checks everything again, then sends. Only its `command` says confirmed. */
+  const runConfirm = async (item: ControlItem, token: string): Promise<void> => {
+    const client = api;
+    const gen = generation;
+    if (!client) return;
+    const { action, minutes } = itemAction(item);
+    const at = Date.now();
+    control = { ...control, busy: { item, step: "confirm" }, armed: null, result: null, touchedAt: at };
+    void draw();
+    try {
+      const reply = await client.confirm(action, minutes, token);
+      if (gen !== generation || closed) return;
+      const now = Date.now();
+      control = reply.ok
+        ? { ...control, busy: null, result: { item, kind: "sent", id: reply.id, at: now }, touchedAt: now }
+        : { ...control, busy: null, result: { item, kind: "refused", code: reply.error ?? "other", message: reply.message, at: now }, touchedAt: now };
+    } catch (error) {
+      if (gen !== generation || closed) return;
+      // No answer: it may have gone out. Never "sent", never "not sent" - the bridge's record decides.
+      control = toApiError(error).code === "auth"
+        ? { ...control, busy: null, result: { item, kind: "failed", reason: "auth", at } }
+        : { ...control, busy: null, result: { item, kind: "unknown", at } };
+    }
+    void draw();
+  };
+
   const onGesture = (gesture: Gesture): void => {
     const now = Date.now();
     if (overlay) {
@@ -296,44 +333,36 @@ async function boot(): Promise<void> {
       if (gesture === "doubleClick") { helpOpen = false; void draw(); }
       return;
     }
-    if (page === "control") {
+    const withControl = car?.control.enabled === true && !(api?.demo ?? false);
+    if (page === "control" && withControl && car) {
+      const items = controlItems(car.control);
       switch (gesture) {
         case "scrollDown":
         case "scrollUp": {
-          const moved = moveCursor(control, gesture === "scrollDown" ? 1 : -1, now);
+          const moved = moveCursor(control, gesture === "scrollDown" ? 1 : -1, items.length, now);
           control = moved.state;
-          if (moved.leave !== 0) page = stepPage(page, moved.leave);
+          if (moved.leave !== 0) page = stepPage(page, moved.leave, true);
           void draw();
           return;
         }
         case "click": {
-          const item = control.confirm?.item ?? CONTROL_ITEMS[control.cursor] ?? "climate_on";
-          const result = tapControl(control, now, car, car?.control ?? { enabled: false, lock: false, unlock: false });
-          control = result.state;
-          // Only the armed final confirmation ever reaches here with "send".
-          if (result.kind === "send") void send(result.action, result.value);
-          if (result.kind === "blocked") {
-            const action = actionFor(item);
-            local = { action, value: action === "climate_on" ? control.temp : null, reason: result.reason, at: now };
-          }
-          void draw();
+          const decision = tapControl(control, now, items);
+          if (decision.kind === "arm") void runArm(decision.item);
+          else if (decision.kind === "confirm") void runConfirm(decision.item, decision.token);
           return;
         }
         case "doubleClick": {
-          const cancelled = cancelConfirm(control, now);
+          const cancelled = cancelControl(control, now);
           if (cancelled) { control = cancelled; void draw(); } else requestExit();
           return;
         }
-        case "longPress": {
-          // In a question a hold backs out; in the temperature step it does nothing; otherwise it opens the help
-          // (without the side menu, see SIDE_MENU; with it the help is in the menu, QIS v1.2).
-          const open = openConfirm(control, now);
-          if (open && open.step !== "temp") { control = cancelConfirm(control, now) ?? control; void draw(); return; }
-          if (open || SIDE_MENU) return;
+        case "longPress":
+          // Ring only. An open question lapses first; nothing may stay armed behind the help page.
+          if (openArm(control, now)) { control = cancelControl(control, now) ?? control; void draw(); return; }
+          if (SIDE_MENU) return;
           helpOpen = true;
           void draw();
           return;
-        }
         default:
           return;
       }
@@ -341,15 +370,19 @@ async function boot(): Promise<void> {
     switch (gesture) {
       case "scrollDown":
       case "scrollUp":
-        page = stepPage(page, gesture === "scrollDown" ? 1 : -1);
-        // Entering the control list from below starts at its last item.
-        if (page === "control") control = { ...control, cursor: gesture === "scrollDown" ? 0 : CONTROL_ITEMS.length - 1, confirm: null };
+        page = stepPage(page, gesture === "scrollDown" ? 1 : -1, withControl);
+        // Entering the control list from above starts at its first entry, from below at its last.
+        if (page === "control" && car) {
+          const count = controlItems(car.control).length;
+          control = { ...control, armed: null, cursor: gesture === "scrollDown" ? 0 : Math.max(0, count - 1) };
+        }
         void draw();
         return;
       case "click":
         if (car && car.warnings.length > 0) { overlay = sortWarnings(car.warnings); overlayUntil = now + OVERLAY_MS; void draw(); }
         return;
       case "longPress":
+        // Only the R1 ring delivers a hold; the help is an extra and is never offered in a footer.
         if (SIDE_MENU) return;
         helpOpen = true;
         void draw();
@@ -386,9 +419,9 @@ async function boot(): Promise<void> {
     const menuId = menuItemIdFromEvent(event);
     if (menuId !== null) {
       if (menuId === MENU_HELP && ready) {
-        // Help covers a warning; an open car question lapses so nothing stays armed behind it.
+        // Help covers a warning; an open question lapses so nothing stays armed behind it.
         overlay = null;
-        control = cancelConfirm(control, Date.now()) ?? control;
+        control = cancelControl(control, Date.now()) ?? control;
         helpOpen = true;
         void draw();
       }
@@ -415,12 +448,11 @@ async function boot(): Promise<void> {
   start();
   await draw();
 
-  // The sign and the charge bar animate, blinkers blink, questions and overlays time out;
-  // drawOnce writes only what changed.
+  // The clock moves, the warning header pulses, overlays time out; drawOnce writes only what changed.
   tickTimer = setInterval(() => {
     const now = Date.now();
-    control = expireConfirm(control, now, car);
     if (overlay && now > overlayUntil) overlay = null;
+    control = expireControl(control, now);
     void draw();
     updatePhone();
   }, ICON_STEP_MS);

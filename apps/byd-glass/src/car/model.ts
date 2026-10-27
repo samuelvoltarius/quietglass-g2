@@ -2,16 +2,47 @@
  * The car state as the glasses use it, parsed defensively from the bridge's
  * `/state` JSON (or from the demo, which produces the same JSON). Anything
  * missing or malformed becomes null instead of throwing: one odd field must
- * never blank the whole display.
+ * never blank the whole display. Panoptes serves many BYD models: a value a
+ * model does not report stays null and is hidden, never shown as 0.
+ *
+ * Commands (0.7.0, Alfred 23.10.2026): `control` says which of lock / unlock /
+ * preheat the bridge accepts (all off unless BYD_CONTROL=1), `command` is the
+ * last command and its result. Every guard lives in the bridge; the app only
+ * shows what the bridge reports and never treats anything as confirmed itself.
  */
 
 export type Mode = "driving" | "charging" | "parked";
 export type Wheel = "fl" | "fr" | "rl" | "rr";
 export const WHEELS: readonly Wheel[] = ["fl", "fr", "rl", "rr"];
 export type Level = "crit" | "warn" | "info";
-export type Action = "climate_on" | "climate_off" | "lock" | "unlock";
-export const ACTIONS: readonly Action[] = ["climate_on", "climate_off", "lock", "unlock"];
-export type CommandStatus = "sent" | "pending" | "ok" | "busy" | "error" | "timeout";
+/** The only commands there are: no climate off, no temperature (13.10.2026). */
+export type Action = "lock" | "unlock" | "preheat";
+export const ACTIONS: readonly Action[] = ["lock", "unlock", "preheat"];
+/** sent -> confirmed | not_confirmed | error. Only fresh telemetry after the command confirms (bridge). */
+export type CommandStatus = "sent" | "confirmed" | "not_confirmed" | "error";
+const STATUSES: readonly CommandStatus[] = ["sent", "confirmed", "not_confirmed", "error"];
+
+export interface CommandState {
+  readonly id: string;
+  readonly action: Action;
+  /** Minutes for preheat, else null. */
+  readonly value: number | null;
+  readonly status: CommandStatus;
+  readonly at: number;
+}
+
+export interface Control {
+  /** BYD_CONTROL=1 on the bridge; false hides the control page. */
+  readonly enabled: boolean;
+  readonly lock: boolean;
+  readonly unlock: boolean;
+  readonly preheat: boolean;
+  readonly preheatMinutes: readonly number[];
+  /** A fresh power_level 0 right now (display only; the bridge checks every command again). */
+  readonly carOff: boolean;
+}
+
+export const NO_CONTROL: Control = { enabled: false, lock: false, unlock: false, preheat: false, preheatMinutes: [], carOff: false };
 
 export interface CarWarning {
   readonly code: string;
@@ -27,16 +58,8 @@ export interface Tyre {
   readonly kpa: number | null;
   readonly leak: boolean;
   readonly low: boolean;
-}
-
-export interface CommandState {
-  readonly id: string;
-  readonly action: Action;
-  readonly value: number | null;
-  readonly status: CommandStatus;
-  readonly text: string;
-  readonly at: number;
-  readonly note: string | null;
+  /** Tyre temperature in °C (Panoptes tyre_t_*), null when the model does not report it. */
+  readonly temp: number | null;
 }
 
 export interface CarState {
@@ -46,8 +69,6 @@ export interface CarState {
   readonly online: boolean;
   readonly stale: boolean;
   readonly ageS: number | null;
-  /** The car is switched on: the bridge refuses every command (fail-safe: only `true` counts). */
-  readonly carOn: boolean;
   readonly drive: {
     readonly speed: number | null;
     readonly limitWarn: boolean;
@@ -68,7 +89,7 @@ export interface CarState {
     readonly cellTMin: number | null;
     readonly cellTMax: number | null;
     readonly volt12: number | null;
-    /** Where soc/range come from: the car itself (Overdrive) or the BYD cloud while the car is silent. */
+    /** Where soc/range come from: the car itself (Panoptes) or the BYD cloud while the car is silent. */
     readonly src: "car" | "cloud" | null;
     /** Age of the cloud values in minutes (null without cloud data). */
     readonly cloudAgeMin: number | null;
@@ -88,20 +109,19 @@ export interface CarState {
     readonly locked: boolean | null;
     readonly lockSrc: string | null;
     readonly doorOpen: boolean | null;
+    readonly trunkOpen: boolean | null;
+    readonly hoodOpen: boolean | null;
     readonly extTemp: number | null;
+    /** Climate on/off. There is deliberately no temperature: the Dolphin Surf has no cabin sensor, and
+     *  the climate setpoint (17-33, 25 = neutral) is not a temperature reading, so it is not shown. */
     readonly acOn: boolean | null;
-    readonly setpoint: number | null;
-    readonly klimaMode: string | null;
+    /** Fan level (Panoptes ac_fan / ac_wind). */
+    readonly acFan: number | null;
   };
   readonly tyres: Readonly<Record<Wheel, Tyre>>;
   readonly warnings: readonly CarWarning[];
+  readonly control: Control;
   readonly command: CommandState | null;
-  readonly control: {
-    readonly enabled: boolean;
-    readonly lock: boolean;
-    readonly unlock: boolean;
-    readonly climateTemp: boolean;
-  };
 }
 
 type Json = Record<string, unknown>;
@@ -113,7 +133,6 @@ const nb = (v: unknown): boolean | null => (v === true ? true : v === false ? fa
 const s = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const isWheel = (v: unknown): v is Wheel => v === "fl" || v === "fr" || v === "rl" || v === "rr";
 const LEVELS: readonly Level[] = ["crit", "warn", "info"];
-const STATUSES: readonly CommandStatus[] = ["sent", "pending", "ok", "busy", "error", "timeout"];
 
 export class StateError extends Error {
   constructor() {
@@ -138,11 +157,10 @@ export function parseState(raw: unknown): CarState {
   const ch = obj(r["charge"]);
   const body = obj(r["body"]);
   const ty = obj(r["tyres"]);
-  const ctl = obj(r["control"]);
   const tyres = {} as Record<Wheel, Tyre>;
   for (const w of WHEELS) {
     const t = obj(ty[w]);
-    tyres[w] = { kpa: n(t["kpa"]), leak: b(t["leak"]), low: b(t["low"]) };
+    tyres[w] = { kpa: n(t["kpa"]), leak: b(t["leak"]), low: b(t["low"]), temp: n(t["temp"]) };
   }
   const warnings: CarWarning[] = (Array.isArray(r["warnings"]) ? r["warnings"] : [])
     .map(obj)
@@ -156,16 +174,28 @@ export function parseState(raw: unknown): CarState {
       minutes: n(w["minutes"]),
       soc: n(w["soc"]),
     }));
+  const ctl = obj(r["control"]);
+  const enabled = ctl["enabled"] === true;
+  const control: Control = enabled
+    ? {
+      enabled,
+      lock: b(ctl["lock"]),
+      unlock: b(ctl["unlock"]),
+      preheat: b(ctl["preheat"]),
+      preheatMinutes: (Array.isArray(ctl["preheat_minutes"]) ? ctl["preheat_minutes"] : [])
+        .filter((m): m is number => typeof m === "number" && Number.isInteger(m) && m >= 10 && m <= 30),
+      carOff: b(ctl["car_off"]),
+    }
+    : NO_CONTROL;
   const c = obj(r["command"]);
   const command: CommandState | null = ACTIONS.includes(c["action"] as Action) && typeof c["id"] === "string"
     ? {
       id: c["id"],
       action: c["action"] as Action,
       value: n(c["value"]),
-      status: STATUSES.includes(c["status"] as CommandStatus) ? (c["status"] as CommandStatus) : "pending",
-      text: typeof c["text"] === "string" ? c["text"] : "",
+      // Anything unknown counts as still open, never as confirmed.
+      status: STATUSES.includes(c["status"] as CommandStatus) ? (c["status"] as CommandStatus) : "sent",
       at: n(c["at"]) ?? 0,
-      note: s(c["note"]),
     }
     : null;
   return {
@@ -175,7 +205,6 @@ export function parseState(raw: unknown): CarState {
     online: b(r["online"]),
     stale: r["stale"] !== false,
     ageS: n(r["age_s"]),
-    carOn: b(r["car_on"]),
     drive: {
       speed: n(d["speed"]),
       limitWarn: b(d["limit_warn"]),
@@ -213,20 +242,16 @@ export function parseState(raw: unknown): CarState {
       locked: nb(body["locked"]),
       lockSrc: s(body["lock_src"]),
       doorOpen: nb(body["door_open"]),
+      trunkOpen: nb(body["trunk_open"]),
+      hoodOpen: nb(body["hood_open"]),
       extTemp: n(body["ext_temp"]),
       acOn: nb(body["ac_on"]),
-      setpoint: n(body["setpoint"]),
-      klimaMode: s(body["klima_mode"]),
+      acFan: n(body["ac_fan"]),
     },
     tyres,
     warnings,
+    control,
     command,
-    control: {
-      enabled: b(ctl["enabled"]),
-      lock: b(ctl["lock"]),
-      unlock: b(ctl["unlock"]),
-      climateTemp: b(ctl["climate_temp"]),
-    },
   };
 }
 

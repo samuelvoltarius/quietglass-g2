@@ -1,0 +1,28 @@
+# ha-relay: Home Assistant WebSocket relay for the owner's private TV Glance build, tailnet only.
+# systemd --user unit (any always-on tailnet host with aiohttp installed):
+#   mkdir -p ~/ha-relay
+#   cp ha_relay.py ~/ha-relay/
+#   install -m 600 ha-relay.env.example ~/ha-relay/.env        # then fill it in
+#   install -m 600 /dev/null ~/.ha_token                       # paste the long-lived token into it (never into chat/git)
+#   cp ha-relay.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now ha-relay
+#   tailscale serve status                                     # read first
+#   tailscale serve --bg --https=8483 http://127.0.0.1:8484    # never "serve reset"
+[Unit]
+Description=ha-relay (Home Assistant WebSocket relay for TV Glance, tailnet only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/ha-relay/.env
+Environment=PYTHONPATH=
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 %h/ha-relay/ha_relay.py
+Restart=on-failure
+RestartSec=15
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

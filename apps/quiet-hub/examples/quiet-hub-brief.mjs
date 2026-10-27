@@ -773,15 +773,20 @@ export function nightStats(readings, start, end) {
   return { min: Math.min(...values), max: Math.max(...values), belowMin: Math.round(below / 60_000), aboveMin: Math.round(above / 60_000), count: inside.length };
 }
 
-/** The glucose block: current value and trend, last night's statistics. */
+/** Hours of curve the glasses draw (Sugar Glass: CURVE_HOURS). */
+export const SUGAR_CURVE_HOURS = 3;
+
+/** The glucose block: current value and trend, last night's statistics, the last 3 h as a curve (oldest first). */
 export function shapeSugar(body, nowMs, zone) {
   const readings = readingsFrom(body);
   const latest = readings.at(-1) ?? null;
   const window = nightWindow(nowMs, zone);
+  const from = nowMs - SUGAR_CURVE_HOURS * 3_600_000;
   return {
     status: "ok",
     current: latest === null ? null : { mgdl: latest.mgdl, direction: latest.direction, ageMin: Math.max(0, Math.round((nowMs - latest.at) / 60_000)) },
     night: window.end > window.start ? nightStats(readings, window.start, window.end) : null,
+    curve: readings.filter((r) => r.at >= from).map((r) => r.mgdl).slice(-60),
     low: SUGAR_LOW,
     high: SUGAR_HIGH,
   };
@@ -950,7 +955,8 @@ export function createBrief({ config, fetchImpl = globalThis.fetch, now = () => 
     },
     car: cfg.bydUrl === "" ? null : async () => shapeCar(await fetchJson(fetchImpl, join(cfg.bydUrl, "/state"), { token: cfg.bydToken, timeoutMs: cfg.timeoutMs })),
     sugar: cfg.sugarUrl === "" ? null : async (at) => {
-      const since = nightWindow(at, cfg.zone).start - 30 * 60_000;
+      // From last night (statistics) or 3 h back (curve), whichever is earlier.
+      const since = Math.min(nightWindow(at, cfg.zone).start - 30 * 60_000, at - SUGAR_CURVE_HOURS * 3_600_000);
       const url = join(cfg.sugarUrl, `/api/v1/entries/sgv.json?count=400&find%5Bdate%5D%5B%24gte%5D=${Math.floor(since)}`);
       return shapeSugar(await fetchJson(fetchImpl, url, { token: cfg.sugarToken, timeoutMs: cfg.timeoutMs }), at, cfg.zone);
     },
