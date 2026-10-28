@@ -4,6 +4,7 @@
     { "id": "claude-win", "kind": "claude", "cwd": "C:/work/project", "mode": "ask" },
     { "id": "codex-win", "kind": "codex", "cwd": "C:/work/project", "mode": "ask" },
     { "id": "hermes-spark", "kind": "hermes", "bin": "hermes", "bridge": { "url": "ws://127.0.0.1:8765", "tokenEnv": "EVENHUB_BRIDGE_TOKEN" } },
-    { "id": "claw", "kind": "openclaw", "url": "http://127.0.0.1:18789", "tokenEnv": "OPENCLAW_TOKEN" }
+    { "id": "claw", "kind": "openclaw", "url": "http://127.0.0.1:18789", "tokenEnv": "OPENCLAW_TOKEN" },
+    { "id": "xaventra", "kind": "xaventra", "label": "Xaventra", "tokenFile": "~/.config/xaventra/desktop-token" }
   ]
 }

@@ -185,12 +185,13 @@ opens the Day start directly (also when started from the glasses launcher).
 | Block | Env (daemon) | Source | Shows |
 | --- | --- | --- | --- |
 | Calendar | `BRIEF_ICS_URLS` (comma list, `webcal://` works) | ICS/iCal subscription (e.g. the "private address" from Google/iCloud/Nextcloud) | today's appointments; all-day/multi-day, TZID, DAILY/WEEKLY recurrences (INTERVAL, COUNT, UNTIL, BYDAY), simple MONTHLY/YEARLY, EXDATE, moved single appointments |
-| Calendar (Shoot Day) | `BRIEF_SHOOT_URL` (+ `BRIEF_SHOOT_TOKEN`) | Shoot Day server `GET /api/projects` and `/api/customers` | today's projects (date `2026-10-14 10:30`, `2026-10-14` or `14.10.2026 10:30`) as "customer – project" with place, merged with the ICS appointments (same time + similar title = once) |
+| Calendar (Shoot Day) | `BRIEF_SHOOT_URL` (+ `BRIEF_SHOOT_TOKEN`) | Shoot Day server `GET /api/projects` and `/api/customers` | today's projects (date `2026-10-14 10:30`, `2026-10-14` or `14.10.2026 10:30`) as "customer – project" with place, merged with the ICS appointments (same time + similar title = once); `/brief/appointments` marks them `source: "shoot"` with Shoot Day's `active` flag |
 | Weather | `BRIEF_TZ`; `BRIEF_LAT`/`BRIEF_LON` now only as a fallback place; `BRIEF_GEOCODE_URL` | Open-Meteo (no key) | **here** (phone location, rounded to ~1 km, arrives as `?lat=&lon=`; without a location the fallback place) – now, min/max, "rain from 14:00" – plus, for each appointment today with a place (max. 3), the forecast **for the appointment hour at the appointment place**: `10:30 Musterdorf 9° · Regen 60%` (wind from 30 km/h). Appointments < 10 km from your location get no row of their own. The place (ICS `LOCATION`, Shoot Day place) is found through the Open-Meteo place search (first the whole text, then the part after the last comma, then the place without postcode; only the place text leaves the daemon; remembered for 7 days); one forecast per place, remembered for ~10 min |
 | Car | `BRIEF_BYD_URL` (+ `BRIEF_BYD_TOKEN`) | BYD bridge `GET /state` (`selfhost/services/byd-bridge`) | battery %, range, charging/charged, locked/open |
 | Glucose | `BRIEF_SUGAR_URL` (+ `BRIEF_SUGAR_TOKEN`) | Sugar bridge `GET /api/v1/entries/sgv.json` (`selfhost/services/sugar-bridge`) | value, trend, age; night 22–07: min/max, minutes <70 / >180 |
 | Printer | `BRIEF_KLIPPER_URL` (+ `BRIEF_KLIPPER_TOKEN`) | Klipper Glance bridge `GET /api/printer`; without it: the daemon's `MOONRAKER_URL` | state, file, %, time left |
 | Servers | `BRIEF_STATUS_URLS` = `Name\|URL,…` (+ `BRIEF_STATUS_TOKEN`) | Status Glass reference server `/status` | ok/down per machine, new devices on the home network |
+| Wallbox | `BRIEF_WALLBOX` = HA entity prefix (e.g. `wallbox`), uses `HA_URL`/`HA_TOKEN` | Home Assistant `GET /api/states/<domain>.<prefix>_…` (read-only) | state, charging, plugged in, fault, power kW, session kWh/min, set current A |
 
 Location: The app asks the phone when the Day start loads (permission
 `location`, asked once; 4 s timeout, remembered for 30 min) and sends only the values rounded to
@@ -505,6 +506,13 @@ The daemon keeps its own P-256 key and the pairing token in `CAR_IDENTITY` (mode
 that commands are possible. Every command needs two taps on the glasses; unlock is signed only at the second tap.
 Whether this pairing may unlock at all is decided in Panoptes when you allow it.
 
+Other screens on the hub (`/report.carActions`) may offer lock, climate on/off, seat heating
+(`{"aktion":"sitzheizung","sitz":"fahrer"|"beifahrer","stufe":0|1|2}`, Panoptes 0.1.21+) and the guard
+(`{"aktion":"waechter","zustand":"scharf"|"aus"}`) through `POST /car/action` - never unlocking.
+Read-only, on request: `GET /car/trips` (last 8 trips: distance, energy, duration, no places),
+`GET /car/guard/events` (last 6 sentry recordings, no clips, no places) and `GET /car/guard/thumb`
+(thumbnail of the newest one, kept in memory only). `report.car.guardLast` carries the newest sentry event.
+
 ## Printer (Moonraker)
 
 `MOONRAKER_URL=http://<printer-ip>:7125` in `.env-hub`. The Printer page shows
@@ -515,6 +523,9 @@ job, progress, layer, remaining time and temperatures; pause/resume/cancel go to
 ```bash
 node scripts/find-moonraker.mjs 192.168.0
 ```
+
+`GET /printer/snapshot` passes the printer camera's still through (mjpg_streamer on the Moonraker host,
+`:8080/?action=snapshot`, or `PRINTER_SNAPSHOT_URL`); a printer that is off answers 503 within ~3 s.
 
 ## Limitations
 

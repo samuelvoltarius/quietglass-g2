@@ -34,7 +34,7 @@ import { pathToFileURL } from "node:url";
 import { createHomeAssistant, createMoonraker, parseDevices } from "./quiet-hub-adapters.mjs";
 import { createController, nodeSpawn } from "./quiet-hub-agents.mjs";
 import { createHomeView, parseHomeConfig } from "./quiet-hub-home.mjs";
-import { createCar, parseCarConfig } from "./quiet-hub-car.mjs";
+import { createCar, PANEL_ACTIONS, parseCarConfig } from "./quiet-hub-car.mjs";
 import { createBrief, parseBriefConfig, parsePlace } from "./quiet-hub-brief.mjs";
 
 const QUESTIONS = ["Was steht heute an?", "Wie läuft das Projekt?", "Fass den Tag zusammen"];
@@ -211,6 +211,9 @@ export function createHub(options = {}) {
 
   const moonUrl = options.moonrakerUrl ?? env.MOONRAKER_URL;
   const moon = moonUrl ? createMoonraker({ url: moonUrl, fetchImpl }) : null;
+  // Printer camera still (mjpg_streamer on the printer): PRINTER_SNAPSHOT_URL, else the Moonraker host on :8080.
+  const snapshotUrl = String(options.printerSnapshotUrl ?? env.PRINTER_SNAPSHOT_URL ?? "").trim()
+    || (moonUrl ? (() => { try { const u = new URL(moonUrl); return `${u.protocol}//${u.hostname}:8080/?action=snapshot`; } catch { return ""; } })() : "");
   // Tagesstart: every block optional; URLs and tokens of the sources stay in here.
   const briefConfig = parseBriefConfig({ ...env, ...(options.briefEnv ?? {}) });
   const brief = briefConfig.enabled
@@ -265,6 +268,8 @@ export function createHub(options = {}) {
       timers.push(setInterval(() => void car.renew(), 60 * 60_000));
       // The car's own state from Panoptes (lock, battery, range): every 30 s, read-only.
       if (car.refresh) { void car.refresh().then(changed); timers.push(setInterval(() => void car.refresh().then(changed), options.carPollMs ?? 30_000)); }
+      // The newest sentry recording for report.car.guardLast: the list only, at most every 2 min (cached inside).
+      if (car.guardEvents) { void car.guardEvents().then(changed); timers.push(setInterval(() => void car.guardEvents().then(changed), options.carPollMs ?? 30_000)); }
     }
     if (homeView) { void homeView.refresh().then(changed); timers.push(setInterval(() => void homeView.refresh().then(changed), homeConfig.pollMs)); }
     if (moon) { void moon.refresh().then(watchPrinter); timers.push(setInterval(() => void moon.refresh().then(watchPrinter), options.moonPollMs ?? 5_000)); }
@@ -715,7 +720,7 @@ export function createHub(options = {}) {
       home: { selected: 0, devices: ha ? ha.devices() : homeDemo, demo: !ha },
       ...(homeView ? { homeView: homeView.view() } : {}),
       // Only whether the glasses may offer car commands; never the address, the key or the JWT.
-      ...(car && car.configured() ? { carControl: true } : {}),
+      ...(car && car.configured() ? { carControl: true, carActions: PANEL_ACTIONS } : {}),
       ...(car && car.state && car.state() ? { car: car.state() } : {}),
       printer: moon ? moon.printer() : printerDemo,
       inbox: { events: state.events, selected: 0 },
@@ -799,16 +804,25 @@ export function createHub(options = {}) {
     const data = JSON.stringify(body);
     if (req !== null && data.length > 2048 && /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""))) {
       const packed = gzipSync(data);
-      res.writeHead(status, { "Content-Type": "application/json", "Content-Encoding": "gzip", Vary: "Accept-Encoding", "Content-Length": packed.length, ...cors });
+      res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Encoding": "gzip", Vary: "Accept-Encoding", "Content-Length": packed.length, ...cors });
       res.end(packed);
       return;
     }
     res.writeHead(status, {
-      "Content-Type": "application/json",
+      "Content-Type": "application/json; charset=utf-8",
       "Content-Length": Buffer.byteLength(data),
       ...cors,
     });
     res.end(data);
+  }
+
+  /** An image (printer camera, sentry thumbnail): passed through, never stored, never cached by the client. */
+  function sendBytes(res, type, bytes) {
+    res.writeHead(200, {
+      "Content-Type": type, "Content-Length": bytes.length, "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Private-Network": "true",
+    });
+    res.end(bytes);
   }
 
   function readRaw(req, limit) {
@@ -858,6 +872,40 @@ export function createHub(options = {}) {
     }
     if (req.method === "GET" && path === "/health") {
       sendJson(res, 200, { ok: true, events: state.events.length, agents: agents.size, busy: [...agents.values()].some((a) => a.busy), live });
+      return;
+    }
+    if (req.method === "GET" && path === "/printer/snapshot") {
+      // Read-only still of the printer camera; a printer that is off answers 503 within ~3 s, never hangs.
+      if (snapshotUrl === "") { sendJson(res, 404, { error: "no printer camera" }); return; }
+      try {
+        const answer = await fetchImpl(snapshotUrl, { signal: AbortSignal.timeout(options.snapshotTimeoutMs ?? 3000) });
+        if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
+        const type = String(answer.headers.get("content-type") ?? "").split(";")[0];
+        const bytes = Buffer.from(await answer.arrayBuffer());
+        if (!type.startsWith("image/") || bytes.length === 0 || bytes.length > 4_000_000) throw new Error("no image");
+        sendBytes(res, type, bytes);
+      } catch {
+        sendJson(res, 503, { error: "printer camera unavailable" });
+      }
+      return;
+    }
+    if (req.method === "GET" && (path === "/car/trips" || path === "/car/guard/events" || path === "/car/guard/thumb")) {
+      // Read-only, on request: no clips, no places, the thumbnail only from memory.
+      if (!car || !car.configured()) { sendJson(res, 503, { error: "car not set up" }); return; }
+      try {
+        if (path === "/car/trips") {
+          sendJson(res, 200, { trips: (await car.lastTrips()) ?? [] }, req);
+        } else if (path === "/car/guard/events") {
+          sendJson(res, 200, { events: (await car.guardEvents()) ?? [] }, req);
+        } else {
+          const thumb = await car.guardThumb();
+          if (thumb === null) sendJson(res, 404, { error: "no thumbnail" });
+          else sendBytes(res, thumb.type, thumb.bytes);
+        }
+      } catch (error) {
+        log("car read failed:", path, String(error?.message ?? error).slice(0, 80));
+        sendJson(res, 502, { error: "panoptes unavailable" });
+      }
       return;
     }
     if (req.method === "GET" && path === "/brief/appointments") {
@@ -1072,7 +1120,9 @@ export function createHub(options = {}) {
       const previous = relays.get(name);
       if (previous?.waiter) { clearTimeout(previous.waiter.timer); sendJson(previous.waiter.res, 200, { commands: [] }); }
       for (const [id, agent] of agents) if (agent.relayId === name && !clean.some((s) => s.id === id)) agents.delete(id);
-      relays.set(name, { id: name, machine: name, queue: [], waiter: null, lastSeen: now() });
+      // A relay that lost the connection for a moment registers again: commands it has not fetched yet stay
+      // queued (a dropped question would leave its agent "busy" until the ask timeout).
+      relays.set(name, { id: name, machine: name, queue: previous?.queue ?? [], waiter: null, lastSeen: now() });
       for (const spec of clean) upsertAgent(spec, name, name);
       log(`relay "${name}" registered: ${clean.map((s) => s.id).join(", ")}`);
       sendJson(res, 200, { relayId: name });
@@ -1177,9 +1227,9 @@ export function createHub(options = {}) {
 
     if (post && path === "/car/action") {
       if (!car) { sendJson(res, 503, { ok: false, grund: "nicht_eingerichtet" }); return; }
-      const { aktion, tempC, minuten } = await readJson(req, 1024);
+      const { aktion, tempC, minuten, sitz, stufe, zustand } = await readJson(req, 1024);
       log("car:", String(aktion).slice(0, 20));
-      const outcome = await car.action(aktion, { tempC, minuten });
+      const outcome = await car.action(aktion, { tempC, minuten, sitz, stufe, zustand });
       log("car:", String(aktion).slice(0, 20), "->", outcome.result.ok ? `ok ${outcome.result.weg} bestaetigt=${outcome.result.bestaetigt}` : outcome.result.grund);
       sendJson(res, outcome.status, outcome.result, req);
       return;

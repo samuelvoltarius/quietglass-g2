@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startHub, TOKEN } from "./helpers.mjs";
 import {
   createBrief, createGeocoder, dayBounds, distanceKm, eventsForDay, geocodeCandidates, hourForecast, mergeEvents, parsePlace, parseShootDate, shootEventsForDay, nightStats, nightWindow, parseBriefConfig, parseIcs, parseIcsDate, rainOutlook,
-  readingsFrom, shapeCar, shapeKlipper, shapeMoonraker, shapeStatus, shapeSugar, shapeWeather, weatherQuery, zonedToEpoch,
+  readingsFrom, shapeCar, shapeKlipper, shapeMoonraker, shapeStatus, shapeSugar, shapeWallbox, shapeWeather, weatherQuery, zonedToEpoch,
 } from "../examples/quiet-hub-brief.mjs";
 
 const ZONE = "Europe/Vienna";
@@ -504,6 +504,12 @@ describe("Shoot Day source", () => {
     expect(shootEventsForDay("nope", null, NOW, ZONE)).toEqual([]);
   });
 
+  it("marks shoot days with their source and Shoot Day's active flag", () => {
+    const events = shootEventsForDay([{ ...projects[0], active: true }, projects[1]], customers, NOW, ZONE);
+    expect(events[0]).toMatchObject({ source: "shoot", active: true });
+    expect(events[1]).toMatchObject({ source: "shoot", active: null });
+  });
+
   it("merges with ICS events, dedupes the same slot with a similar title and keeps the place", () => {
     const ical = parseIcs(ics(
       ["UID:a", "SUMMARY:Café Muster Vorgespraech", "DTSTART;TZID=Europe/Vienna:20261014T103000", "DTEND;TZID=Europe/Vienna:20261014T113000"],
@@ -682,5 +688,34 @@ describe("Tagesstart weather per appointment place", () => {
     const e = await createBrief({ config: parseBriefConfig(CFG), fetchImpl: allWeatherDown.fetchImpl, now: () => NOW }).get(false, here);
     expect(e.weather.status).toBe("error");
     expect(e.calendar.status).toBe("ok");
+  });
+});
+
+describe("wallbox (Home Assistant, read-only)", () => {
+  const st = (state) => ({ state });
+  it("shapes the HA states, unknown values become null", () => {
+    expect(shapeWallbox({ state: st("charging"), powerKw: st("7.4"), sessionKwh: st("3.2"), sessionMin: st("unknown"), currentA: st("16"), charging: st("on"), plugged: st("on"), fault: st("off") }))
+      .toEqual({ status: "ok", state: "charging", charging: true, plugged: true, fault: false, powerKw: 7.4, sessionKwh: 3.2, sessionMin: null, currentA: 16 });
+    expect(shapeWallbox({ state: st("unavailable") })).toEqual({ status: "error", error: "unavailable" });
+  });
+
+  it("reads only GET /api/states/<prefix>_* with the HA token and never shows it", async () => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, auth: init.headers.Authorization });
+      const id = url.split("/api/states/")[1];
+      const states = { "sensor.wallbox_status": "sleep", "sensor.wallbox_leistung": "0.0", "binary_sensor.wallbox_angesteckt": "off" };
+      return id in states ? new Response(JSON.stringify({ entity_id: id, state: states[id] })) : new Response("{}", { status: 404 });
+    };
+    const config = parseBriefConfig({ BRIEF_WALLBOX: "wallbox", HA_URL: "http://ha.test:8123", HA_TOKEN: "ha-secret" });
+    const brief = await createBrief({ config, fetchImpl, now: () => NOW }).get();
+    expect(brief.wallbox).toMatchObject({ status: "ok", state: "sleep", powerKw: 0, plugged: false, charging: null });
+    expect(calls.every((c) => c.url.startsWith("http://ha.test:8123/api/states/") && c.auth === "Bearer ha-secret")).toBe(true);
+    expect(JSON.stringify(brief)).not.toMatch(/ha-secret|ha\.test/);
+  });
+
+  it("is off without a prefix or without HA, and a bad prefix is ignored", () => {
+    expect(parseBriefConfig({ HA_URL: "http://ha.test" }).wallboxPrefix).toBe("");
+    expect(parseBriefConfig({ BRIEF_WALLBOX: "../x", HA_URL: "http://ha.test" }).wallboxPrefix).toBe("");
   });
 });

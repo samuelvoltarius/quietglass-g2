@@ -1088,12 +1088,146 @@ function createOpenClawController(agent, ctx) {
   };
 }
 
+// ------------------------------------------------------------ Xaventra
+
+export const XAVENTRA_URL = "http://127.0.0.1:3011";
+export const XAVENTRA_ROOM = "Zentrale";
+export const XAVENTRA_TIMEOUT_MS = 180_000;
+const XAVENTRA_PROGRESS_MS = 3_000;
+
+/** Only loopback: the desktop API carries the owner key and must never leave this machine. */
+export function xaventraBase(url = XAVENTRA_URL) {
+  let parsed;
+  try { parsed = new URL(String(url)); } catch { throw new Error("xaventra: url invalid"); }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("xaventra: url must be http(s)");
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) throw new Error("xaventra: url must be loopback (127.0.0.1 / localhost)");
+  return parsed.origin;
+}
+
+/** Reads the desktop key; the content is never logged and never part of an error. */
+export function readXaventraToken(agent, ctx = {}) {
+  const home = ctx.home ?? homedir();
+  const file = String(agent.tokenFile ?? join(home, ".config", "xaventra", "desktop-token")).replace(/^~(?=$|[\\/])/, home);
+  const read = ctx.readFile ?? ((path) => readFileSync(path, "utf8"));
+  let token = "";
+  try { token = String(read(file)).trim(); } catch { throw new Error(`Xaventra key file not readable (${file})`); }
+  if (!token) throw new Error(`Xaventra key file is empty (${file})`);
+  return token;
+}
+
+/** Text of a progress answer of /api/desktop/fortschritt (string or object, as in the acceptance script). */
+function progressText(stand) {
+  return oneLine(typeof stand === "string" ? stand : (stand?.schritt ?? stand?.text ?? stand?.status ?? stand?.fortschritt ?? ""), 120);
+}
+
+export function createXaventraController(agent, ctx) {
+  const base = xaventraBase(agent.url ?? XAVENTRA_URL);
+  const roomTitle = agent.room ?? XAVENTRA_ROOM;
+  let roomId = null;
+  let freshNext = false; // "new session" from the glasses: the next question opens a new room
+
+  const api = async (method, path, body, signal) => {
+    const res = await ctx.fetch(`${base}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${readXaventraToken(agent, ctx)}`,
+        "Content-Type": "application/json",
+        "x-nova-desktop-client": "quiet-hub-relay",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+    if (res.status === 401 || res.status === 403) throw new Error("Xaventra key rejected (desktop API)");
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+    if (!res.ok) throw new Error(`Xaventra HTTP ${res.status}${json?.error ? `: ${oneLine(json.error, 120)}` : ""}`);
+    return json;
+  };
+  const listRooms = async (signal) => {
+    const data = await api("GET", "/api/desktop/rooms", undefined, signal);
+    return (Array.isArray(data) ? data : data?.rooms ?? []).filter((r) => r && typeof r.id === "string" && !r.archived);
+  };
+  const createRoom = async (title, signal) => {
+    const data = await api("POST", "/api/desktop/rooms", { title, topic: "Alfreds Zentrale (Quiet Hub)", botIds: ["nova"] }, signal);
+    const room = data?.room ?? data;
+    if (typeof room?.id !== "string") throw new Error("Xaventra did not return a room");
+    return room.id;
+  };
+
+  async function run(job, emit) {
+    const controller = new AbortController();
+    job.signal?.addEventListener("abort", () => controller.abort(), { once: true });
+    const timer = setTimeout(() => controller.abort("timeout"), agent.timeoutMs ?? XAVENTRA_TIMEOUT_MS);
+    let watching = true;
+    let wake = () => {};
+    let watcher = Promise.resolve();
+    try {
+      if (job.fresh || freshNext) roomId = await createRoom(`${roomTitle} · ${oneLine(job.title ?? "", 30) || new Date().toISOString().slice(0, 16)}`, controller.signal);
+      else if (job.sessionId) roomId = job.sessionId;
+      if (!roomId) {
+        const found = (await listRooms(controller.signal)).find((r) => r.title === roomTitle);
+        roomId = found?.id ?? await createRoom(roomTitle, controller.signal);
+      }
+      const room = roomId;
+      watcher = (async () => {
+        let last = "";
+        while (watching) {
+          await new Promise((resolve) => { const t = setTimeout(resolve, agent.progressMs ?? XAVENTRA_PROGRESS_MS); wake = () => { clearTimeout(t); resolve(); }; });
+          if (!watching) break;
+          try {
+            const stand = progressText(await api("GET", `/api/desktop/fortschritt?room=${encodeURIComponent(room)}`, undefined, controller.signal));
+            if (stand && stand !== last && watching) { last = stand; emit({ text: "", activity: stand }); }
+          } catch { /* no progress channel: just no activity line */ }
+        }
+      })();
+      freshNext = false;
+      const result = await api("POST", `/api/desktop/rooms/${encodeURIComponent(room)}/messages`, { content: job.prompt }, controller.signal);
+      watching = false; // no late activity line after the answer
+      const replies = Array.isArray(result?.replies) ? result.replies : [];
+      const reply = replies.find((r) => r?.botId === "nova") ?? replies[0];
+      if (reply?.error) return { status: "error", text: "", error: oneLine(`Xaventra: ${reply.error}`, 200), sessionId: room };
+      const content = clip(String(reply?.message?.content ?? reply?.content ?? ""), MAX_TEXT);
+      if (!content.trim()) return { status: "error", text: "", error: "Xaventra returned an empty answer", sessionId: room };
+      emit({ text: content, activity: "" });
+      return { status: "done", text: content, sessionId: room };
+    } catch (error) {
+      if (job.signal?.aborted) return { status: "cancelled", text: "", sessionId: roomId };
+      return { status: "error", text: "", error: controller.signal.aborted ? "timeout" : oneLine(error?.message ?? error, 200), sessionId: roomId };
+    } finally {
+      watching = false;
+      wake();
+      clearTimeout(timer);
+      await watcher;
+    }
+  }
+
+  return {
+    kind: "xaventra",
+    transport: () => "http",
+    run: (job, emit) => run(job, emit).then((r) => ({ ...r, transport: "http" })),
+    async sessions() {
+      const rooms = await listRooms(AbortSignal.timeout(15_000));
+      const items = rooms
+        .map((r) => ({ id: r.id, title: oneLine(r.title ?? "", 60), updated: Math.round((Date.parse(r.updatedAt ?? "") || 0) / 1000) }))
+        .sort((a, b) => b.updated - a.updated)
+        .slice(0, SESSION_LIMIT)
+        .map((i) => ({ ...i, when: whenShort(i.updated) }));
+      return { items, active: roomId ?? "", transport: "http", supported: true };
+    },
+    async newSession() { roomId = null; freshNext = true; return { id: null, title: "" }; },
+    async select(id) { roomId = id || null; freshNext = false; return { lastUser: null, lastAssistant: null }; },
+    close() {},
+  };
+}
+
 export function createController(agent, ctx) {
   const inner = (() => {
     switch (agent.kind) {
       case "claude": return createClaudeController(agent, ctx);
       case "codex": return createCodexController(agent, ctx);
       case "hermes": return createHermesController(agent, ctx);
+      case "xaventra": return createXaventraController(agent, ctx);
       default: return createOpenClawController(agent, ctx);
     }
   })();

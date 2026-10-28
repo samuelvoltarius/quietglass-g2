@@ -152,8 +152,13 @@ export function buildHomeView({ states, areas = [], config, lang = "de", error =
     if (entity === null || !shown(entity.kind)) return false;
     // A TV / projector only when HA_MEDIA names it (an area's every speaker would crowd the page).
     if (entity.kind === "media" && !(config.media ?? new Set()).has(id)) return false;
-    // TV / projector: the matching remote.* carries the single-step volume keys.
-    if (entity.kind === "media" && index.has(`remote.${id.slice("media_player.".length)}`)) entity.remote = `remote.${id.slice("media_player.".length)}`;
+    // TV / projector: the matching remote.* carries the single-step volume keys. Next to a Cast player of the
+    // same name, Android TV Remote's player gets a suffix (media_player.wohnzimmer_2) while its remote keeps none.
+    if (entity.kind === "media") {
+      const object = id.slice("media_player.".length);
+      const remote = [`remote.${object}`, `remote.${object.replace(/_\d+$/, "")}`].find((r) => index.has(r));
+      if (remote) entity.remote = remote;
+    }
     entities[id] = entity;
     return true;
   };

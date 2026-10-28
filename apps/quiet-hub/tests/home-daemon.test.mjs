@@ -132,6 +132,16 @@ describe("home view model (pure)", () => {
     expect(serviceCall(e["group:wohnzimmer:light"], "toggle", undefined, e)).toEqual({ domain: "light", service: "turn_off", data: { entity_id: ["light.wohnzimmer_decke", "light.wohnzimmer_stehlampe"] } });
   });
 
+  it("Android TV Remote's suffixed player next to a Cast player of the same name finds the unsuffixed remote", () => {
+    const states = [...STATES(), st("remote.wohnzimmer", "on", { friendly_name: "Wohnzimmer" }),
+      st("media_player.wohnzimmer", "off", { friendly_name: "Wohnzimmer (Cast)" }),
+      st("media_player.wohnzimmer_2", "on", { friendly_name: "Wohnzimmer", volume_level: 0.2 })];
+    const view = buildHomeView({ states, areas: AREAS, config: config({ HA_MEDIA: "media_player.wohnzimmer_2=TV" }) });
+    const tv = view.entities["media_player.wohnzimmer_2"];
+    expect(tv).toMatchObject({ kind: "media", name: "TV", remote: "remote.wohnzimmer" });
+    expect(serviceCall(tv, "toggle")).toEqual({ domain: "media_player", service: "turn_off", data: { entity_id: "media_player.wohnzimmer_2" } });
+  });
+
   it("HA_MEDIA shows TV / projector first; volume is one remote key press when a remote exists", () => {
     const states = [...STATES(), st("remote.tv", "on", { friendly_name: "TV Remote" }),
       st("media_player.beamer", "off", { friendly_name: "Beamer", volume_level: 0.3 }),

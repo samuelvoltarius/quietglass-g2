@@ -265,6 +265,40 @@ describe("relay protocol with a mocked claude", () => {
     await until(async () => (await h.api("/agents")).json.agents.length === 1, 6000);
     expect(relay.relayId).toBe("win");
   });
+
+  it("a final answer that hits a short hub outage is sent again, not lost (hermes-samuel 28.10.)", async () => {
+    const h = await startHub();
+    let dropped = 0;
+    const fetchImpl = async (url, init = {}) => {
+      // The first final result fails like "fetch failed" while the hub is briefly unreachable.
+      if (String(url).endsWith("/relay/result") && dropped === 0 && JSON.parse(init.body).status === "done") { dropped += 1; throw new TypeError("fetch failed"); }
+      return fetch(url, init);
+    };
+    const spawnImpl = () => { const c = fakeChild(); setImmediate(() => { c.emitLines("OK"); c.exit(0); }); return c; };
+    const relay = createRelay({
+      hub: h.url, token: TOKEN, config: validateConfig({ machine: "samuel", agents: [{ id: "hermes-samuel", kind: "hermes", bin: "hermes" }] }),
+      spawnImpl, fetchImpl, mcpDir: mkdtempSync(join(tmpdir(), "relay-mcp-")), pollTimeoutMs: 2000, resultRetryMs: [50, 50], log: () => undefined,
+    });
+    const loop = relay.start();
+    cleanup.push(async () => { relay.stop(); await loop; await h.close(); });
+    await until(async () => (await h.api("/agents")).json.agents.some((a) => a.online));
+    const asked = await h.api("/agent/ask", { agentId: "hermes-samuel", question: "test" });
+    expect(asked.json).toMatchObject({ answer: "OK", status: "done" });
+    expect(dropped).toBe(1);
+  });
+});
+
+describe("hub: a relay registering again (hermes-serveone 28.10.)", () => {
+  it("keeps the commands it has not fetched yet", async () => {
+    const h = await startHub();
+    cleanup.push(() => h.close());
+    expect((await h.api("/relay/register", { machine: "serveone", agents: [{ id: "hermes-serveone", kind: "hermes" }] })).status).toBe(200);
+    expect((await h.api("/agent/ask", { agentId: "hermes-serveone", question: "test", wait: false })).status).toBe(202);
+    // The connection drops before the relay fetched the question; it registers again.
+    expect((await h.api("/relay/register", { machine: "serveone", agents: [{ id: "hermes-serveone", kind: "hermes" }] })).status).toBe(200);
+    const poll = await h.api("/relay/poll?relay=serveone");
+    expect(poll.json.commands).toEqual([expect.objectContaining({ type: "ask", agentId: "hermes-serveone", prompt: expect.stringContaining("test") })]);
+  });
 });
 
 describe("approval end to end: Claude asks, the glasses answer", () => {

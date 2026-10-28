@@ -133,6 +133,14 @@ Open Klipper Glance in the Even app, enter the https address (and the token,
 if set) and tap **Save and connect**. The page shows the printer state and
 whether control is allowed.
 
+## Tested printers
+
+- Creality K1 (tested by the author)
+- Ender 3 Pro rebuilt as a Voron Switchwire, running Mainsail (user report)
+
+Any Klipper printer with Moonraker should work. Reports for other printers are welcome.
+Deutsch: siehe [docs/SETUP.md](docs/SETUP.md).
+
 ## Development
 
 ```bash

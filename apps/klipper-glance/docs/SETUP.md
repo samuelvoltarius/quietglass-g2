@@ -142,6 +142,14 @@ Aus Sicherheitsgründen standardmäßig **aus**. Einschalten im Dienst mit
 einem `TOKEN`). Ohne eins der beiden lehnt die Bridge Befehle immer ab. Auf der
 Brille braucht jeder Befehl zwei Tipper.
 
+### Getestete Drucker
+
+- Creality K1 (selbst getestet)
+- Ender 3 Pro, umgebaut zum Voron Switchwire, mit Mainsail (Nutzerbericht)
+
+Jeder Klipper-Drucker mit Moonraker sollte funktionieren. Berichte zu weiteren
+Druckern sind willkommen.
+
 ### Wenn's nicht geht
 
 - **Brille zeigt „DEMO“:** Am Handy ist keine Adresse eingetragen.
@@ -241,6 +249,13 @@ OrcaSlicer, PrusaSlicer or SuperSlicer.
 **Off** by default. Add `Environment=KL_ALLOW_CONTROL=1` to the service (plus
 `KL_TAILSCALE_USERS` or a `TOKEN` – without one of them the bridge refuses
 every command). Every command needs two taps on the glasses.
+
+### Tested printers
+
+- Creality K1 (tested by the author)
+- Ender 3 Pro rebuilt as a Voron Switchwire, running Mainsail (user report)
+
+Any Klipper printer with Moonraker should work. Reports for other printers are welcome.
 
 ### Troubleshooting
 

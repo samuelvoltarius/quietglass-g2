@@ -96,6 +96,10 @@ export function parseBriefConfig(env = {}) {
     klipperToken: String(env.BRIEF_KLIPPER_TOKEN ?? ""),
     statusUrls,
     statusToken: String(env.BRIEF_STATUS_TOKEN ?? ""),
+    // Wallbox from Home Assistant (BRIEF_WALLBOX = entity prefix, e.g. "wallbox"); read-only.
+    wallboxPrefix: /^[a-z0-9_]+$/.test(String(env.BRIEF_WALLBOX ?? "").trim()) ? String(env.BRIEF_WALLBOX).trim() : "",
+    haUrl: String(env.HA_URL ?? "").trim(),
+    haToken: String(env.HA_TOKEN ?? ""),
     cacheMs: Math.max(10_000, num(env.BRIEF_CACHE_MS) ?? BRIEF_CACHE_MS),
     timeoutMs: Math.max(1000, num(env.BRIEF_TIMEOUT_MS) ?? BRIEF_TIMEOUT_MS),
   };
@@ -451,9 +455,11 @@ export function shootEventsForDay(projects, customers, nowMs, zone) {
     const who = names.get(String(project?.customerId)) ?? "";
     const title = who !== "" && !name.toLowerCase().includes(who.toLowerCase()) ? (name === "" ? who : `${who} – ${name}`) : (name || who || "(ohne Titel)");
     const place = String(project?.place ?? "").trim();
-    if (when.h === null) { out.push({ title, place, allDay: true, startMs: day.start, endMs: day.end, start: "", end: "" }); continue; }
+    // Status of the shoot day: Shoot Day's own `active` flag (null when it has none).
+    const meta = { source: "shoot", active: typeof project?.active === "boolean" ? project.active : null };
+    if (when.h === null) { out.push({ title, place, allDay: true, startMs: day.start, endMs: day.end, start: "", end: "", ...meta }); continue; }
     const startMs = zonedToEpoch(when.y, when.m, when.d, when.h, when.mi, 0, zone);
-    out.push({ title, place, allDay: false, startMs, endMs: startMs, start: clockIn(startMs, zone), end: "" });
+    out.push({ title, place, allDay: false, startMs, endMs: startMs, start: clockIn(startMs, zone), end: "", ...meta });
   }
   return out;
 }
@@ -587,6 +593,7 @@ export function appointmentOut(event) {
     startIso: String(event.startIso ?? ""),
   };
   if (typeof event.lat === "number" && typeof event.lon === "number") Object.assign(out, { lat: event.lat, lon: event.lon, placeLabel: String(event.placeLabel ?? "") });
+  if (event.source === "shoot") Object.assign(out, { source: "shoot", active: event.active });
   return out;
 }
 
@@ -826,6 +833,27 @@ export function shapeStatus(body) {
   return { ok: true, newDevices: fresh, warn };
 }
 
+// ---------------------------------------------------------------- wallbox
+
+/** HA entities read for the wallbox, as `<domain>.<prefix>_<suffix>` (read-only). */
+export const WALLBOX_ENTITIES = {
+  state: "sensor.%_status", powerKw: "sensor.%_leistung", sessionKwh: "sensor.%_energie_sitzung", sessionMin: "sensor.%_dauer_sitzung",
+  currentA: "sensor.%_ladestrom_soll", charging: "binary_sensor.%_laedt", plugged: "binary_sensor.%_angesteckt", fault: "binary_sensor.%_fehler",
+};
+
+/** HA states by key (as in WALLBOX_ENTITIES) -> the wallbox block; unknown values are null. */
+export function shapeWallbox(states) {
+  const raw = (key) => { const s = states?.[key]?.state; return typeof s === "string" && s !== "unknown" && s !== "unavailable" ? s : null; };
+  const flag = (key) => { const s = raw(key); return s === null ? null : s === "on"; };
+  const value = (key) => { const s = raw(key); return s === null ? null : num(s); };
+  const state = raw("state");
+  if (state === null && raw("powerKw") === null) return { status: "error", error: "unavailable" };
+  return {
+    status: "ok", state, charging: flag("charging"), plugged: flag("plugged"), fault: flag("fault"),
+    powerKw: value("powerKw"), sessionKwh: value("sessionKwh"), sessionMin: value("sessionMin"), currentA: value("currentA"),
+  };
+}
+
 // ---------------------------------------------------------------- fetching
 
 async function fetchWith(fetchImpl, url, { token = "", timeoutMs, accept = "application/json", maxBytes = 2 * 1024 * 1024 } = {}) {
@@ -973,6 +1001,13 @@ export function createBrief({ config, fetchImpl = globalThis.fetch, now = () => 
         }
       }));
       return { status: "ok", machines, down: machines.filter((m) => !m.ok).length, newDevices: machines.reduce((sum, m) => sum + (m.newDevices ?? 0), 0) };
+    },
+    wallbox: cfg.wallboxPrefix === "" || !/^https?:\/\//i.test(cfg.haUrl) ? null : async () => {
+      const entries = await Promise.all(Object.entries(WALLBOX_ENTITIES).map(async ([key, pattern]) => {
+        const id = pattern.replace("%", cfg.wallboxPrefix);
+        try { return [key, await fetchJson(fetchImpl, join(cfg.haUrl, `/api/states/${id}`), { token: cfg.haToken, timeoutMs: cfg.timeoutMs })]; } catch { return [key, null]; }
+      }));
+      return shapeWallbox(Object.fromEntries(entries));
     },
   };
 

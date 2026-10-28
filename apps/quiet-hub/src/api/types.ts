@@ -27,7 +27,7 @@ export interface AgentSnapshot {
   readonly suggestions: readonly string[];
 }
 
-export type AgentKind = "hermes" | "openclaw" | "codex" | "claude" | "other";
+export type AgentKind = "hermes" | "openclaw" | "codex" | "claude" | "xaventra" | "other";
 
 /** One agent known to the hub — local to the daemon or on another machine via a relay. */
 export interface AgentInfo {

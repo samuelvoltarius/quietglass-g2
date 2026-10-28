@@ -1,5 +1,24 @@
 # Changelog
 
+## [Daemon] — 2026-10-28
+
+Nur der Pi-Dienst, die Brillen-App bleibt 0.13.3.
+
+### Neu
+
+- **Wallbox im Tagesstart:** neuer Block `wallbox` in `/brief`, nur lesend aus Home Assistant (`BRIEF_WALLBOX` = Präfix der Einträge, z. B. `wallbox`). Er enthält Zustand, lädt, angesteckt, Fehler, Leistung, Energie und Dauer der Sitzung sowie den Soll-Strom.
+- **Drehtage mit Status:** Shoot-Day-Termine tragen `source: "shoot"` und das `active`-Kennzeichen aus Shoot Day, auch in `/brief/appointments`.
+- **Druckerbild:** `GET /printer/snapshot` reicht das Standbild der Druckerkamera durch. Ist der Drucker aus, kommt nach höchstens ~3 s eine 503.
+- **Auto für andere Bildschirme:** `report.carActions` nennt Zusperren, Klima an/aus, Sitzheizung und Wächter, nie Aufsperren. `POST /car/action` reicht `sitzheizung` (Panoptes 0.1.21+) und `waechter` (scharf/aus, über die HA-Aktionsliste wie die Panoptes-Handy-App) durch.
+- **Wächter und Fahrten, nur lesend:** `report.car.guardLast`, `GET /car/guard/events`, `GET /car/guard/thumb` (Vorschaubild nur im Speicher) und `GET /car/trips`. Keine Clips, keine Orte; die Liste wird höchstens alle 2 min gelesen.
+- **TV-Fernbedienung:** Der Android-TV-Player mit Zusatz (`media_player.wohnzimmer_2`) findet seine Fernbedienung `remote.wohnzimmer`.
+- JSON-Antworten nennen `charset=utf-8`.
+
+### Behoben (hermes-serveone hing, hermes-samuel ohne Antwort)
+
+- **Hub:** Meldet sich ein Relay nach einem kurzen Abriss neu an, bleiben Fragen in der Warteschlange, die es noch nicht abgeholt hat. Vorher gingen sie verloren, und der Agent stand bis zur Zeitgrenze auf „arbeitet“.
+- **Relay:** Die fertige Antwort wird bei einem kurzen Hub-Ausfall etwa eine Minute lang erneut geschickt. Vorher ging sie still verloren.
+
 ## [0.13.3] — 2026-10-27
 
 ### Behoben

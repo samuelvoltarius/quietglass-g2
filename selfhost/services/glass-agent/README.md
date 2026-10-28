@@ -52,8 +52,12 @@ The service sorts each question with fixed rules (no extra model call) and picks
 |---|---|---|
 | `jetzt` | "Wie spät ist es?", "Welcher Tag ist heute?" | answered by the service itself (time zone `GLASS_AGENT_TZ`, default Europe/Vienna) |
 | `wissen` | "Wer bin ich?", general knowledge, explaining, translating | `GLASS_AGENT_FAST_URL` directly (no agent, no tools), with a short profile from `GLASS_AGENT_PROFILE_FILE`; if it fails, the normal ways |
+| `zuhause` | "Schalt den Fernseher ein", "Fernseher 2 lauter", "Licht Küche aus", "Alle Lichter aus", "Ist der Beamer an?" | Home Assistant directly (`GLASS_AGENT_HOME_FILE`), then the state is read back; only the listed devices, never locks, covers, climate, cars, wallboxes or NAS (blocked in code) |
 | `server` | "Läuft ns1?", "Laufen alle Server?", "Wie ist die Auslastung vom Pi?" | the status servers of `GLASS_AGENT_STATUS_SOURCES` (`reference-server.mjs`, `GET /status`) directly: values, warnings, unreachable hosts (about 1 s) |
-| `nachschauen` | appointments, dashboard, weather, servers, messages - and everything no rule matches | the agent as before |
+| `agenten` | "Wie geht's den Agents?", "Läuft Brutus?" | the health URLs of `GLASS_AGENT_AGENTS` (same format as the status sources) in parallel |
+| `nachschauen` | appointments, dashboard, weather, servers, messages - and everything no rule matches | the agent; the fast model is asked first (up to 3.2 s): it answers itself, names one of the read-only sources above (`WETTER`, `HAUS`, `AUTO`, `STROM`, `EINKAUF`, `SERVER`, `AGENTEN`, `ARBEIT`, `UHRZEIT`, then that source answers - never a switching command), or says `AGENT` and the question goes on to the agent (`GLASS_AGENT_FAST_FIRST=0` turns this off) |
+| `erinnern` | "Erinner mich in 20 Minuten an die Wäsche", "um 18 Uhr an den Müll", "Welche Erinnerungen habe ich?" | stored in `GLASS_AGENT_REMINDERS`, sent when due as a Home Assistant notification (`notify` in the device list) - the Even app mirrors phone notifications to the glasses |
+| `strom`, `einkauf`, `auto`, `arbeit`, `haus` | "Wie viel Strom hat die PV gemacht?", "Schreib Milch auf die Einkaufsliste", "Wie voll ist das Auto?", "Was steht an?", "Ist zuhause alles in Ordnung?" | Home Assistant (`pv`, `shopping`, `car`, `holidays` in the device list; the car is read-only) and the control centre (`GLASS_AGENT_ARBEIT_URL`) |
 | `tun` | "Schreib …", "Erinner mich …", "Mach … aus" | the agent with `GLASS_AGENT_TASK_MODEL`, approval at least `GLASS_AGENT_TASK_APPROVAL` (default `mixed`) |
 
 ```bash
@@ -63,16 +67,52 @@ GLASS_AGENT_FAST_MODEL=<fast model without reasoning>
 GLASS_AGENT_TASK_MODEL=<stronger model for actions>
 GLASS_AGENT_PROFILE_FILE=~/.hermes/memories/USER.md
 GLASS_AGENT_STATUS_SOURCES="Pi5,pi,raspberry|https://<pi>:8451/status;ns1,mail|https://<ns1>:8451/status"
+GLASS_AGENT_SYSTEM_URL=https://<control-centre>/api/system   # optional: services + certificates for "Läuft alles?"
+GLASS_AGENT_AGENTS="Nova,hermes|http://127.0.0.1:8642/health;Brutus|http://<ns1>:8642/health"
+GLASS_AGENT_GEOCODER=https://<geocoder>/api/        # Photon-compatible; with ROUTER_URL enables "Reicht der Akku bis Wien?"
+GLASS_AGENT_ROUTER_URL=https://<valhalla>              # Valhalla base URL
+GLASS_AGENT_AGENT_MAX=45   # Hermes runs are streamed and cut after this many seconds (Hermes then stops the run)
 ```
+
+The device list for `zuhause` (`GLASS_AGENT_HOME_FILE`, kept next to the service, not in the repo):
+
+```json
+{"ha_url": "http://<home-assistant>:8123", "token_file": "~/.ha_token", "devices": [
+  {"name": "Fernseher", "words": ["fernseher", "tv"], "kind": "tv",
+   "player": "media_player.living_room", "remote": "remote.living_room"},
+  {"name": "Licht Küche", "words": ["küche", "kueche"], "kind": "light", "entities": ["light.kitchen"]},
+  {"name": "Drucker", "words": ["drucker"], "kind": "switch", "entities": ["switch.printer_socket"],
+   "guard": "sensor.printer_current_print_state"}]}
+```
+
+Read-only extras: `{"name": "NAS", "kind": "nas", "prefix": "sensor.nas_", "words": ["nas"]}` answers from the
+Synology integration (CPU, RAM, volumes, drives, temperature, DSM update) and never switches anything; a `switch` with
+`"printer": "k1_max"` reports the Moonraker sensors (state, file, progress, time left, nozzle/bed) instead of only on/off.
+
+`kind` is `tv` (Android TV: power and apps via the remote of the *Android TV Remote* integration - not the Cast
+player, whose `turn_off` only stops the cast app; volume as key presses on the remote; on/off read back from the
+remote), `light` or `switch`. Apps: "Starte Netflix", "Mach YouTube am Beamer an" start the app with
+`remote.turn_on` + `activity` (switches the device on if needed) and read back `current_activity`. Built-in names:
+Netflix, YouTube, Spotify, Disney, Prime/Amazon, Plex, Twitch, Kodi; more per device with
+`"apps": {"orf": "<package name>"}`. Without a named device the first `tv` is used. State is read back every 0.25 s
+until it matches (at most 2 s). A `guard` sensor that reports `printing` or `paused` blocks switching off.
 
 Without `GLASS_AGENT_FAST_URL` and `GLASS_AGENT_TASK_MODEL` only `jetzt` changes anything; `GLASS_AGENT_ROUTING=0`
 turns routing off. The log shows the kind next to the way, for example `via schnell:… (wissen)`.
+
+## Timing log
+
+`GLASS_AGENT_TRACE=<file>` writes one JSON line per request: kind, way, total time, whether the glasses got
+"noch dran" or the app had already given up (`sent: false`), the gap to the previous request, and every step with
+its duration (`classify`, each Home Assistant call, the read-back rounds, each agent route). Jobs that finish in the
+background get their own `hintergrund` line. The wording of question and answer is only written with
+`GLASS_AGENT_TRACE_TEXT=1`. Summary per kind/action with median and 90 %: `python3 glass_agent.py --trace-report`.
 
 ## Slow answers
 
 The Even app waits only ~30 s. The service waits `GLASS_AGENT_BUDGET` seconds (default 24) for the
 agent. If it takes longer (for example because it uses tools), it keeps working in the background, and the
-glasses show "Ich bin noch dran – frag gleich mit „und?“ nach." ("I'm still on it; ask again in a moment with
+glasses show "Das klärt Hermes, dauert bis zu einer Minute. Frag dann mit „und?“ nach." ("Hermes is on it, up to a minute; then ask with
 "und?" ("and?")."). The result is remembered
 (`GLASS_AGENT_STATE`, 10 minutes) and delivered with your next utterance:
 

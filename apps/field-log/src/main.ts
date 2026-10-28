@@ -13,7 +13,7 @@ import {
   itemView, notesView, pickView, readPageCount, readView, reviewView, roomsView, startRows, startView,
   type ChecklistRow, type FieldNotice, type LiveView, type LogView, type Phase, type ReviewChoice,
 } from "./glasses/view";
-import { checklistProgress, findItem, firstOpenItem, firstOpenRoom, setCheck, type CheckRoom } from "./checklist/checklist";
+import { checklistProgress, findItem, firstOpenItem, firstOpenRoom, parseChecklist, setCheck, templateText, type CheckRoom } from "./checklist/checklist";
 import { afterAnswer, tapOk, walkStart, walkSwipe, type OkKind, type WalkCursor } from "./checklist/walk";
 import { sameView } from "./glasses/diff";
 import {
@@ -73,6 +73,15 @@ async function boot(): Promise<void> {
   }
   let locale: Locale = await resolveLocale(bridge);
   setLocale(locale);
+  if (DEMO && new URLSearchParams(location.search).get("checklist") === "1") {
+    // Store screenshots of the checklist: a flat handover with the first room done and one defect.
+    const now = Date.now();
+    let walk: Inspection = { ...startInspection("demo-list", locale === "de" ? "Wohnungsübergabe" : "Flat handover", now - 900_000),
+      checklist: parseChecklist(templateText("flat", locale), locale) };
+    const items = walk.checklist!.rooms.flatMap((room) => room.items);
+    items.slice(0, 5).forEach((item, i) => { walk = setCheck(walk, item.id, i === 3 ? "defect" : "ok", now - 600_000 + i * 60_000); });
+    data = { ...data, inspections: [walk], activeId: walk.id };
+  }
   let phase: Phase = "idle";
   /** Highlighted quick note; the row after the last note is "Cancel". */
   let pickIndex = 0;

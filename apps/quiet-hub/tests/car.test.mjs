@@ -3,7 +3,7 @@ import { createPublicKey, verify } from "node:crypto";
 import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { actionBody, carResult, carStateFrom, createCar, loadIdentity, pair, signUnlock, unlockMessage } from "../examples/quiet-hub-car.mjs";
+import { actionBody, carResult, carStateFrom, createCar, guardEvent, loadIdentity, PANEL_ACTIONS, pair, signUnlock, tripOut, unlockMessage } from "../examples/quiet-hub-car.mjs";
 import { startHub } from "./helpers.mjs";
 
 const URL_ = "http://car.test:8180";
@@ -130,13 +130,134 @@ describe("daemon /car/action", () => {
     expect(JSON.stringify(report)).not.toMatch(/jwt|privateKey|8180/);
     const done = await hub.api("/car/action", { aktion: "zusperren" });
     expect(done.json).toEqual({ ok: true, weg: "lokal", bestaetigt: true });
-    expect(calls).toEqual([{ aktion: "zusperren", values: { tempC: undefined, minuten: undefined } }]);
+    expect(calls).toEqual([{ aktion: "zusperren", values: { tempC: undefined, minuten: undefined, sitz: undefined, stufe: undefined, zustand: undefined } }]);
+    // Buttons for other screens: never unlocking.
+    expect(report.carActions).toEqual(["zusperren", "klima_an", "klima_aus", "sitzheizung", "waechter"]);
   });
 
   it("needs the hub's own auth", async () => {
     hub = await startHub({ car: { configured: () => true, renew: async () => undefined, action: async () => ({ status: 200, result: { ok: true } }) } });
     const res = await fetch(`${hub.url}/car/action`, { method: "POST", body: "{}" });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("car: seat heating, guard, sentry recordings and trips (fake Panoptes)", () => {
+  const ID = "b".repeat(32);
+  function fakeReads() {
+    const seen = [];
+    const fetchImpl = async (url, init = {}) => {
+      const path = String(url).slice(URL_.length);
+      const body = init.body ? JSON.parse(init.body) : null;
+      seen.push({ path, method: init.method ?? "GET", body });
+      if (path.startsWith("/api/recordings?")) return json({ success: true, recordings: [
+        { id: ID, type: "sentry", timestamp: 1_000, available: true, peakSeverity: "NOTICE", personCount: 1, vehicleCount: null, bucketLabel: "Today", thumbnailUrl: `/thumb/id/${ID}`, videoUrl: `/video/id/${ID}`, place: "Zuhause", startLat: 47.8 },
+        { id: "c".repeat(32), type: "sentry", timestamp: 500, available: false },
+      ] });
+      if (path === `/thumb/id/${ID}`) return new Response(new Uint8Array([0xff, 0xd8, 0xff]), { headers: { "Content-Type": "image/jpeg" } });
+      if (path.startsWith("/api/trips?")) return json({ success: true, trips: [{ id: 1, startTime: 10, endTime: 20, distanceKm: 13.3999, energyUsedKwh: 3.30001, durationSeconds: 1346, startLat: 47.8, startPlace: "Salzburg" }] });
+      if (path === "/api/ha/v1/aktion" || path === "/api/handy/v1/aktion") return json({ ok: true, weg: "lokal", bestaetigt: true, ...(body?.aktion === "sitzheizung" ? { sitz: "fahrer", stufe: 2 } : {}) });
+      return json({ ok: false }, 404);
+    };
+    return { fetchImpl, seen };
+  }
+  async function pairedCar(fetchImpl, now = () => 0) {
+    const file = tmpFile();
+    await pair({ url: URL_, file, fetchImpl: fakePanoptes().fetchImpl, wait: async () => undefined, print: () => undefined });
+    return createCar({ url: URL_, file, fetchImpl, now });
+  }
+
+  it("checks seat heating and guard values; the guard goes over the HA action list", async () => {
+    expect(actionBody("sitzheizung", { sitz: "fahrer", stufe: 2 })).toEqual({ aktion: "sitzheizung", sitz: "fahrer", stufe: 2 });
+    expect(actionBody("sitzheizung", { sitz: "hinten", stufe: 1 })).toBeNull();
+    expect(actionBody("sitzheizung", { sitz: "fahrer", stufe: 3 })).toBeNull();
+    expect(actionBody("sitzheizung", { sitz: "fahrer", stufe: 1.5 })).toBeNull();
+    expect(actionBody("waechter", { zustand: "scharf" })).toEqual({ aktion: "waechter", an: true });
+    expect(actionBody("waechter", { zustand: "aus" })).toEqual({ aktion: "waechter", an: false });
+    expect(actionBody("waechter", { zustand: "an" })).toBeNull();
+    expect(PANEL_ACTIONS).not.toContain("aufsperren");
+    const reads = fakeReads();
+    const car = await pairedCar(reads.fetchImpl);
+    expect((await car.action("sitzheizung", { sitz: "fahrer", stufe: 2 })).result).toEqual({ ok: true, weg: "lokal", bestaetigt: true, sitz: "fahrer", stufe: 2 });
+    expect((await car.action("waechter", { zustand: "scharf" })).result).toMatchObject({ ok: true });
+    expect(reads.seen.map((c) => `${c.method} ${c.path} ${JSON.stringify(c.body)}`)).toEqual([
+      'POST /api/handy/v1/aktion {"aktion":"sitzheizung","sitz":"fahrer","stufe":2}',
+      'POST /api/ha/v1/aktion {"aktion":"waechter","an":true}',
+    ]);
+  });
+
+  it("reads sentry events and trips without clips or places, cached; the thumbnail only from memory", async () => {
+    expect(guardEvent({ timestamp: 5, personCount: 2, vehicleCount: 1, bucketLabel: "Today", peakSeverity: "WARN", videoUrl: "/video/id/x", place: "Zuhause" }))
+      .toEqual({ at: 5, type: "sentry", label: "Today", persons: 2, vehicles: 1, severity: "WARN" });
+    expect(tripOut({ endTime: 20, distanceKm: 13.3999, energyUsedKwh: 3.30001, durationSeconds: 1346, startPlace: "x" })).toEqual({ at: 20, km: 13.4, kwh: 3.3, min: 22 });
+    let t = 0;
+    const reads = fakeReads();
+    const car = await pairedCar(reads.fetchImpl, () => t);
+    const events = await car.guardEvents();
+    expect(events).toHaveLength(2);
+    expect(JSON.stringify(events)).not.toMatch(/video|Zuhause|47\.8|thumb/);
+    const thumb = await car.guardThumb();
+    expect(thumb.type).toBe("image/jpeg");
+    expect([...thumb.bytes]).toEqual([0xff, 0xd8, 0xff]);
+    await car.guardThumb();
+    expect(await car.lastTrips()).toEqual([{ at: 20, km: 13.4, kwh: 3.3, min: 22 }]);
+    await car.lastTrips();
+    // One list read, one thumbnail, one trips read within 2 min; never a clip.
+    const paths = () => reads.seen.map((c) => c.path.split("?")[0]);
+    expect(paths().filter((p) => p === "/api/recordings")).toHaveLength(1);
+    expect(paths().filter((p) => p.startsWith("/thumb/"))).toHaveLength(1);
+    expect(paths().filter((p) => p === "/api/trips")).toHaveLength(1);
+    expect(paths().some((p) => p.startsWith("/video/"))).toBe(false);
+    t = 3 * 60_000;
+    await car.guardEvents();
+    expect(paths().filter((p) => p === "/api/recordings")).toHaveLength(2);
+  });
+});
+
+describe("daemon: printer snapshot, charset and car reads", () => {
+  let hub;
+  afterEach(async () => { await hub?.close(); hub = undefined; });
+  const get = (path) => fetch(`${hub.url}${path}`, { headers: { Authorization: "Bearer test-token-123" } });
+
+  it("passes the printer still through, 503 fast when the printer is off", async () => {
+    let up = true;
+    const fetchImpl = async (url) => {
+      if (String(url) !== "http://printer.test:8080/?action=snapshot") throw new Error(`unexpected ${url}`);
+      if (!up) throw new Error("connect ECONNREFUSED");
+      return new Response(new Uint8Array([0xff, 0xd8]), { headers: { "Content-Type": "image/jpeg" } });
+    };
+    hub = await startHub({ fetchImpl, env: { PRINTER_SNAPSHOT_URL: "http://printer.test:8080/?action=snapshot" } });
+    const res = await get("/printer/snapshot");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([0xff, 0xd8]);
+    up = false;
+    expect((await hub.api("/printer/snapshot")).status).toBe(503);
+    expect((await fetch(`${hub.url}/printer/snapshot`)).status).toBe(401);
+  });
+
+  it("answers JSON as UTF-8 with the charset named", async () => {
+    hub = await startHub();
+    expect((await get("/report")).headers.get("content-type")).toBe("application/json; charset=utf-8");
+  });
+
+  it("serves trips, sentry events and the thumbnail from the car module; 503 without a car", async () => {
+    hub = await startHub();
+    expect((await hub.api("/car/trips")).status).toBe(503);
+    await hub.close();
+    const car = {
+      configured: () => true, renew: async () => undefined, action: async () => ({ status: 200, result: { ok: true } }),
+      lastTrips: async () => [{ at: 1, km: 2, kwh: 0.5, min: 7 }],
+      guardEvents: async () => [{ at: 3, type: "sentry", label: "Today", persons: 1, vehicles: 0, severity: "NOTICE" }],
+      guardThumb: async () => ({ type: "image/jpeg", bytes: Buffer.from([1, 2, 3]) }),
+      state: () => ({ status: "ok", locked: true, guardLast: { at: 3, persons: 1, thumb: true } }),
+    };
+    hub = await startHub({ car });
+    expect((await hub.api("/car/trips")).json).toEqual({ trips: [{ at: 1, km: 2, kwh: 0.5, min: 7 }] });
+    expect((await hub.api("/car/guard/events")).json.events[0]).toMatchObject({ persons: 1 });
+    expect((await get("/car/guard/thumb")).headers.get("content-type")).toBe("image/jpeg");
+    expect((await hub.api("/report")).json.car.guardLast).toMatchObject({ at: 3, thumb: true });
   });
 });
 

@@ -145,6 +145,18 @@ credential only (`auth=none|tailscale|len… fp=…`), never its value.
 Self-hosting (service files, Windows autostart): [`selfhost/services/star-bridge`](../../selfhost/services/star-bridge).
 Test without a telescope: `node examples/mock-nina.mjs` and `STAR_NINA=http://127.0.0.1:1889`.
 
+## FAQ
+
+### Seestar
+
+N.I.N.A. does not talk to the Seestar directly. The community project `seestar_alp`
+exposes the Seestar as an Alpaca device, which N.I.N.A. can then use. This is untested
+with Star Glass, and not every value is guaranteed to be available.
+
+*Deutsch:* N.I.N.A. spricht den Seestar nicht direkt an. Das Community-Projekt
+`seestar_alp` stellt ihn als Alpaca-Gerät bereit, das N.I.N.A. dann nutzen kann.
+Mit Star Glass ungetestet, nicht alle Werte sind garantiert.
+
 ## Private build
 
 ```bash

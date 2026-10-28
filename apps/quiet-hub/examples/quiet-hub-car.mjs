@@ -6,8 +6,11 @@
  *   allows it on the car display or in Telegram, and decides there whether it may unlock.
  * - Its own P-256 key and the pairing JWT live only in CAR_IDENTITY (default
  *   ~/.config/quietglass/quiet-hub-car.json, mode 600). Nothing of it reaches a report or the glasses.
- * - Allowed: zusperren, klima_an (17-33 °C, 5-30 min), klima_aus, aufsperren. Never horn, lights,
- *   indicators, "find car" or the alarm: those actions do not exist here.
+ * - Allowed: zusperren, klima_an (17-33 °C, 5-30 min), klima_aus, sitzheizung (Panoptes 0.1.21+),
+ *   waechter (scharf/aus, over `/api/ha/v1/aktion` like the Panoptes phone app), aufsperren. Never horn,
+ *   lights, indicators, "find car" or the alarm: those actions do not exist here.
+ * - Read only, on request: the last sentry recordings (no clips, no places; one thumbnail kept in memory,
+ *   never on disk) and the last trips (distance, energy, duration; no places).
  * - Aufsperren: the glasses arm it with a tap and send it with a second tap; only then the daemon signs
  *   `panoptes-handy-v1|aufsperren|<kopplungId>|<zeitMs>|<nonce>` - a fresh signature per request, no retry,
  *   never from a timer, a rule or speech.
@@ -22,7 +25,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-export const CAR_ACTIONS = ["zusperren", "klima_an", "klima_aus", "aufsperren"];
+export const CAR_ACTIONS = ["zusperren", "klima_an", "klima_aus", "sitzheizung", "waechter", "aufsperren"];
+/** What other screens (the Zentrale) may offer as buttons: never unlocking. */
+export const PANEL_ACTIONS = CAR_ACTIONS.filter((a) => a !== "aufsperren");
+const SEATS = ["fahrer", "beifahrer"];
+/** Sentry list and trips are read at most this often (never a thumbnail in a loop). */
+const READ_EVERY_MS = 2 * 60_000;
 const PREFIX = "panoptes-handy-v1";
 /** The JWT lives 30 days; renewed once a day while the daemon runs. */
 const RENEW_MS = 24 * 60 * 60_000;
@@ -64,8 +72,15 @@ export function signUnlock(privateKeyPem, kopplungId, zeitMs, nonce = randomByte
 }
 
 /** Body of POST /api/handy/v1/aktion; null = not an allowed action or values out of range. */
-export function actionBody(aktion, { tempC, minuten } = {}) {
+export function actionBody(aktion, { tempC, minuten, sitz, stufe, zustand } = {}) {
   if (!CAR_ACTIONS.includes(aktion)) return null;
+  if (aktion === "sitzheizung") {
+    const level = Number(stufe);
+    if (!SEATS.includes(sitz) || !Number.isInteger(level) || level < 0 || level > 2) return null;
+    return { aktion, sitz, stufe: level };
+  }
+  // The guard goes over the HA action list (`{aktion:"waechter", an}`), as the Panoptes phone app does.
+  if (aktion === "waechter") return zustand === "scharf" || zustand === "aus" ? { aktion, an: zustand === "scharf" } : null;
   if (aktion === "klima_an") {
     const t = Math.round(Number(tempC ?? 21));
     const m = Math.round(Number(minuten ?? 15));
@@ -104,9 +119,35 @@ export function carStateFrom(zustand, at) {
 
 /** Panoptes' answer reduced to what the glasses may see (never a token or a key). */
 export function carResult(answer) {
-  if (answer && answer.ok === true) return { ok: true, weg: String(answer.weg ?? ""), bestaetigt: answer.bestaetigt === true };
+  if (answer && answer.ok === true) {
+    const out = { ok: true, weg: String(answer.weg ?? ""), bestaetigt: answer.bestaetigt === true };
+    if (typeof answer.sitz === "string") out.sitz = answer.sitz.slice(0, 20);
+    if (Number.isInteger(answer.stufe)) out.stufe = answer.stufe;
+    return out;
+  }
   return { ok: false, grund: String(answer?.grund ?? "unbekannt").slice(0, 60) };
 }
+
+/** One sentry recording of Panoptes -> an event without clip, place or path. */
+export function guardEvent(rec) {
+  const count = (v) => (Number.isFinite(Number(v)) && v !== null ? Number(v) : 0);
+  return {
+    at: Number(rec?.timestamp) || 0,
+    type: String(rec?.type ?? "sentry"),
+    label: String(rec?.bucketLabel ?? "").slice(0, 40),
+    persons: count(rec?.personCount),
+    vehicles: count(rec?.vehicleCount),
+    severity: String(rec?.peakSeverity ?? "").slice(0, 20),
+  };
+}
+
+/** One Panoptes trip -> distance, energy and duration only (no coordinates, no places). */
+export function tripOut(trip) {
+  const n = (v, digits) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 10 ** digits) / 10 ** digits : null);
+  return { at: Number(trip?.endTime ?? trip?.startTime) || 0, km: n(trip?.distanceKm, 1), kwh: n(trip?.energyUsedKwh, 1), min: typeof trip?.durationSeconds === "number" ? Math.round(trip.durationSeconds / 60) : null };
+}
+
+const RECORDING_ID = /^[0-9a-f]{32}$/;
 
 export function createCar({ url, file, fetchImpl = globalThis.fetch, now = () => Date.now(), timeoutMs = 20_000, log = () => undefined }) {
   let identity = loadIdentity(file);
@@ -143,6 +184,12 @@ export function createCar({ url, file, fetchImpl = globalThis.fetch, now = () =>
     }
   }
 
+  const get = async (path, accept = "application/json") => {
+    const res = await fetchImpl(`${url}${path}`, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: accept, Authorization: `Bearer ${identity.jwt}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
+  };
+
   /** One command. Unlock is signed here, right before it is sent; nothing is ever retried. */
   async function action(aktion, values = {}) {
     if (identity === null) identity = loadIdentity(file);
@@ -151,7 +198,7 @@ export function createCar({ url, file, fetchImpl = globalThis.fetch, now = () =>
     if (body === null) return { status: 400, result: { ok: false, grund: "aktion" } };
     if (aktion === "aufsperren") body.signatur = signUnlock(identity.privateKey, identity.kopplungId, now());
     try {
-      const { status, json } = await post("/api/handy/v1/aktion", body);
+      const { status, json } = await post(aktion === "waechter" ? "/api/ha/v1/aktion" : "/api/handy/v1/aktion", body);
       if (status === 401 || status === 403) return { status: 200, result: { ok: false, grund: status === 401 ? "kopplung_abgelaufen" : String(json?.grund ?? "nur_handy") } };
       return { status: 200, result: carResult(json) };
     } catch (error) {
@@ -176,7 +223,58 @@ export function createCar({ url, file, fetchImpl = globalThis.fetch, now = () =>
     return last;
   }
 
-  return { action, renew, refresh, state: () => last, configured: () => identity !== null || loadIdentity(file) !== null };
+  /** Last sentry recordings (newest first), read at most every READ_EVERY_MS; the newest id stays internal. */
+  let guard = { at: -Infinity, events: null, lastId: null, lastThumb: false };
+  async function guardEvents() {
+    if (identity === null) identity = loadIdentity(file);
+    if (identity === null) return null;
+    if (guard.events !== null && now() - guard.at < READ_EVERY_MS) return guard.events;
+    try {
+      const body = await (await get("/api/recordings?type=sentry&page=1&pageSize=6")).json();
+      const list = Array.isArray(body?.recordings) ? body.recordings : [];
+      const first = list[0];
+      guard = {
+        at: now(), events: list.map(guardEvent),
+        lastId: RECORDING_ID.test(String(first?.id ?? "")) ? String(first.id) : null,
+        lastThumb: first?.available === true && typeof first?.thumbnailUrl === "string",
+      };
+    } catch (error) {
+      log("car: sentry list failed:", String(error?.message ?? error).slice(0, 80));
+      guard = { ...guard, at: now() - READ_EVERY_MS + 30_000 };
+    }
+    return guard.events;
+  }
+  const guardLast = () => (guard.events && guard.events.length > 0 ? { ...guard.events[0], thumb: guard.lastThumb } : null);
+
+  /** Thumbnail of the newest sentry recording: fetched on request, one kept in memory, never on disk. */
+  let thumbCache = null;
+  async function guardThumb() {
+    await guardEvents();
+    if (guard.lastId === null || !guard.lastThumb) return null;
+    if (thumbCache?.id === guard.lastId) return thumbCache;
+    const res = await get(`/thumb/id/${guard.lastId}`, "image/jpeg");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > 2_000_000) throw new Error("thumbnail size");
+    thumbCache = { id: guard.lastId, bytes, type: String(res.headers.get("content-type") ?? "image/jpeg").split(";")[0] };
+    return thumbCache;
+  }
+
+  /** The last trips (newest first), on request, cached like the sentry list. */
+  let trips = { at: -Infinity, list: null };
+  async function lastTrips() {
+    if (identity === null) identity = loadIdentity(file);
+    if (identity === null) return null;
+    if (trips.list !== null && now() - trips.at < READ_EVERY_MS) return trips.list;
+    const body = await (await get("/api/trips?limit=8")).json();
+    trips = { at: now(), list: (Array.isArray(body?.trips) ? body.trips : []).slice(0, 8).map(tripOut) };
+    return trips.list;
+  }
+
+  return {
+    action, renew, refresh, guardEvents, guardThumb, lastTrips,
+    state: () => (last === null ? null : { ...last, guardLast: guardLast() }),
+    configured: () => identity !== null || loadIdentity(file) !== null,
+  };
 }
 
 /**

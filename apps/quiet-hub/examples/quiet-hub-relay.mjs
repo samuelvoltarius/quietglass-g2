@@ -27,11 +27,17 @@
  *       { "id": "codex-win",  "kind": "codex",  "cwd": "F:\\work", "mode": "ask" },
  *       { "id": "hermes-spark", "kind": "hermes", "bin": "hermes",
  *         "bridge": { "url": "ws://127.0.0.1:8765", "tokenEnv": "EVENHUB_BRIDGE_TOKEN" } },
- *       { "id": "claw", "kind": "openclaw", "url": "http://127.0.0.1:18789", "tokenEnv": "OPENCLAW_TOKEN" } ] }
+ *       { "id": "claw", "kind": "openclaw", "url": "http://127.0.0.1:18789", "tokenEnv": "OPENCLAW_TOKEN" },
+ *       { "id": "xaventra", "kind": "xaventra", "label": "Xaventra" } ] }
  *
  * Hermes "bridge" = the hermes-evenhub-bridge plugin (WebSocket). Its token is
  * read at runtime from the environment or ~/.hermes/.env and never stored here.
  * Without a bridge (or when it is down) the relay falls back to `hermes chat -q`.
+ *
+ * Xaventra = her desktop API on THIS machine (loopback only, default
+ * http://127.0.0.1:3011). The owner key is read from "tokenFile" (default
+ * ~/.config/xaventra/desktop-token) on every request and never logged. The
+ * questions land in the room "Zentrale" (option "room"); a new session opens a new room.
  *
  * Dependency-free: Node 22+ (global fetch / WebSocket).
  */
@@ -39,7 +45,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createController, clip, oneLine, sleep, nodeSpawn } from "./quiet-hub-agents.mjs";
+import { createController, clip, oneLine, sleep, nodeSpawn, xaventraBase } from "./quiet-hub-agents.mjs";
 
 // Everything that used to live here is still importable from this file.
 export * from "./quiet-hub-agents.mjs";
@@ -49,7 +55,7 @@ const BRIEF_DE = "\n\n(Antworte knapp auf Deutsch, ohne Markdown.)";
 
 // ---------------------------------------------------------------- config
 
-export const KINDS = ["claude", "codex", "hermes", "openclaw"];
+export const KINDS = ["claude", "codex", "hermes", "openclaw", "xaventra"];
 export const MODES = ["ask", "auto", "plan", "readonly", "full"];
 
 export function validateConfig(raw) {
@@ -65,6 +71,9 @@ export function validateConfig(raw) {
     if (!MODES.includes(mode)) throw new Error(`agent ${a.id}: mode must be one of ${MODES.join(", ")}`);
     if (a.bridge !== undefined && (a.kind !== "hermes" || typeof a.bridge?.url !== "string" || !/^wss?:\/\//.test(a.bridge.url))) {
       throw new Error(`agent ${a.id}: bridge.url (ws://…) is only valid for kind hermes`);
+    }
+    if (a.kind === "xaventra") {
+      try { xaventraBase(a.url ?? undefined); } catch (error) { throw new Error(`agent ${a.id}: ${error.message}`); }
     }
     return { ...a, mode, brief: a.brief !== false };
   });
@@ -97,6 +106,8 @@ export function createRelay(options) {
   const pollMs = options.pollTimeoutMs ?? 40_000;
   // Answer deltas go to the hub at most this often; the glasses long-poll the hub, so this is the word-by-word latency.
   const streamMs = options.streamMs ?? 250;
+  /** Pauses between tries of a final answer while the hub is unreachable (~1 min in all). */
+  const resultRetryMs = options.resultRetryMs ?? [1000, 2000, 4000, 8000, 15_000, 30_000];
   const ctx = {
     hub, token, fetch: fetchImpl, spawn: options.spawnImpl ?? nodeSpawn, WebSocket: options.WebSocket,
     env: options.env, home: options.home, claudeDir: options.claudeDir, killOptions: options.killOptions,
@@ -143,6 +154,16 @@ export function createRelay(options) {
     const agent = agentCfg.get(command.agentId);
     const controller = controllers.get(command.agentId);
     const post = (payload) => call("/relay/result", { jobId: command.jobId, ...payload }).catch(() => undefined);
+    // The final answer must not get lost in a short hub outage: retried for about a minute (not on 4xx).
+    const postFinal = async (payload) => {
+      for (const delay of resultRetryMs) {
+        const res = await call("/relay/result", { jobId: command.jobId, ...payload }).catch(() => null);
+        if (res && res.status < 500) return;
+        if (stop.signal.aborted) return;
+        await sleep(delay, stop.signal);
+      }
+      log(`answer of ${command.agentId} could not be delivered to the hub`);
+    };
     if (!agent || !controller) { await post({ status: "error", error: "unknown agent" }); return; }
     // A stop just issued may still be tearing the old process down: give it a moment.
     const previous = running.get(agent.id);
@@ -178,7 +199,7 @@ export function createRelay(options) {
     if (timer) clearTimeout(timer);
     running.delete(agent.id);
     release();
-    await post({
+    await postFinal({
       status: result.status, text: clip(result.text ?? "", SEND_TEXT), error: result.error ?? null, activity: "",
       sessionId: result.sessionId ?? null, transport: result.transport ?? controller.transport(),
     });
