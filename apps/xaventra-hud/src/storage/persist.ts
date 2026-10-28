@@ -33,6 +33,16 @@ export function parseSettings(raw: string): Settings {
   }
 }
 
+/**
+ * Private builds name their Xaventra endpoint at build time; it fills an empty
+ * address so the phone only needs the token. A stored address always wins.
+ */
+export function withDefaultServer(settings: Settings, fallback: string | undefined): Settings {
+  const url = (fallback ?? "").trim().replace(/\/+$/, "");
+  if (settings.serverUrl || !url || !validateServerUrl(url).valid) return settings;
+  return { ...settings, serverUrl: url };
+}
+
 export async function loadSettings(bridge: EvenAppBridge): Promise<Settings> {
   return parseSettings(await bridge.getLocalStorage(SETTINGS_KEY).catch(() => ""));
 }

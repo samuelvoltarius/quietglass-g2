@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.1] — 2026-10-28
+
+### Neu
+
+- **Vorgegebene Server-Adresse für private Builds:** `VITE_XAVENTRA_URL` füllt ein leeres Adressfeld, am Handy muss dann nur noch der Token eingetragen werden. Eine gespeicherte Adresse hat immer Vorrang; öffentliche Builds bleiben ohne Vorgabe.
+
 ## [0.7.0] — 2026-10-20
 
 ### Neu: Quietglass-UI-Standard QUS v1 („keine Textwand“)

@@ -18,7 +18,7 @@ import {
   CONFIRM_MS, EMPTY_MODEL, buildView, currentCard, decide, spokenAnswer, type HudAction, type HudGesture, type HudModel,
 } from "./hud/model";
 import type { Answer } from "./api/types";
-import { loadSettings, saveSettings, type Settings } from "./storage/persist";
+import { loadSettings, saveSettings, withDefaultServer, type Settings } from "./storage/persist";
 import { isFinalExit, lifecycleFromEvent } from "./lifecycle";
 import { mountPhoneUi, type ConnectionState } from "./ui/phone";
 import { concat, pcmToWav, toPcm } from "./voice/wav";
@@ -34,6 +34,8 @@ const MAX_PCM_BYTES = 16_000 * 2 * (MAX_RECORD_MS / 1000 + 1);
 const LIVE_REDRAW_MS = 300;
 /** Private builds name their live speech recogniser here; public builds leave it empty. */
 const LIVE_STT_DEFAULT = (import.meta.env.VITE_LIVE_STT_URL as string | undefined) ?? "";
+/** Private builds name their Xaventra endpoint here; public builds leave it empty. */
+const SERVER_DEFAULT = (import.meta.env.VITE_XAVENTRA_URL as string | undefined) ?? "";
 /** Shorter than this is a slip of the finger, not a sentence. */
 const MIN_PCM_BYTES = 16_000 * 2 / 2;
 /** A feedback line stays this long. */
@@ -60,7 +62,7 @@ interface Recording {
 async function boot(): Promise<void> {
   const bridge: EvenAppBridge = await waitForEvenAppBridge();
 
-  let settings: Settings = await loadSettings(bridge);
+  let settings: Settings = withDefaultServer(await loadSettings(bridge), SERVER_DEFAULT);
   let locale: Locale = await resolveLocale(bridge);
   let closed = false;
 
